@@ -1,0 +1,117 @@
+import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import { query } from '../config/db';
+import { success, error } from '../lib/response';
+import { logAction } from '../lib/auditLog';
+import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
+
+// ── GET /api/users ────────────────────────────────────────────
+export async function listUsers(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { page, limit, offset } = parsePagination(req.query);
+    const { search, role, is_active } = req.query;
+
+    let where = 'u.company_id = $1 AND u.is_deleted = false';
+    const params: any[] = [companyId];
+    let idx = 2;
+
+    if (search) { where += ` AND (u.name ILIKE $${idx} OR u.email ILIKE $${idx} OR u.phone ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
+    if (role) { where += ` AND u.role = $${idx}`; params.push(role); idx++; }
+    if (is_active !== undefined) { where += ` AND u.is_active = $${idx}`; params.push(is_active === 'true'); idx++; }
+
+    const countRes = await query(`SELECT COUNT(*) FROM users u WHERE ${where}`, params);
+    const total = parseInt(countRes.rows[0].count);
+
+    const result = await query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_active, u.last_login_at, u.created_at,
+              ep.designation, ep.department, g.name as godown_name
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       LEFT JOIN godowns g ON g.id = ep.godown_id AND g.is_deleted = false
+       WHERE ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limit, offset]
+    );
+
+    res.json(success(buildPaginatedResponse(result.rows, total, page, limit)));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── POST /api/users ───────────────────────────────────────────
+export async function createUser(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { name, email, phone, password, role } = req.body;
+
+    // Check duplicate email within company
+    if (email) {
+      const dup = await query(
+        'SELECT id FROM users WHERE email = $1 AND company_id = $2 AND is_deleted = false', [email.toLowerCase(), companyId]
+      );
+      if (dup.rows.length) return res.status(400).json(error('A user with this email already exists'));
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+    const result = await query(
+      `INSERT INTO users (company_id, name, email, phone, password_hash, role) 
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, phone, role, is_active, created_at`,
+      [companyId, name, email?.toLowerCase(), phone, hash, role || 'staff']
+    );
+
+    await logAction(req.user!.id, companyId, 'create', 'user', result.rows[0].id, null, { name, email, role }, req.ip);
+    res.status(201).json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── PATCH /api/users/:id ──────────────────────────────────────
+export async function updateUser(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+
+    const existing = await query(
+      'SELECT id, name, email, phone, role, is_active FROM users WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+      [id, companyId]
+    );
+    if (!existing.rows.length) return res.status(404).json(error('User not found'));
+
+    const fields = ['name','email','phone','role','is_active','avatar_url'];
+    const updates: string[] = []; const values: any[] = []; let idx = 1;
+    for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = $${idx++}`); values.push(req.body[f]); } }
+
+    if (req.body.password) {
+      updates.push(`password_hash = $${idx++}`);
+      values.push(await bcrypt.hash(req.body.password, 12));
+    }
+
+    if (!updates.length) return res.status(400).json(error('No fields to update'));
+
+    values.push(id, companyId);
+    const result = await query(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING id, name, email, phone, role, is_active`,
+      values
+    );
+
+    await logAction(req.user!.id, companyId, 'update', 'user', id, existing.rows[0], result.rows[0], req.ip);
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── DELETE /api/users/:id ─────────────────────────────────────
+export async function deleteUser(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    if (id === req.user!.id) return res.status(400).json(error('Cannot delete your own account'));
+
+    const result = await query(
+      'UPDATE users SET is_deleted = true, is_active = false WHERE id = $1 AND company_id = $2 RETURNING id',
+      [id, req.user!.company_id]
+    );
+    if (!result.rows.length) return res.status(404).json(error('User not found'));
+
+    await logAction(req.user!.id, req.user!.company_id, 'delete', 'user', id, null, null, req.ip);
+    res.json(success({ message: 'User deleted' }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}

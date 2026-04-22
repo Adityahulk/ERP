@@ -1,0 +1,280 @@
+import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { query } from '../config/db';
+import { success, error } from '../lib/response';
+import { logAction } from '../lib/auditLog';
+import {
+  generateAccessToken, generateRefreshToken, verifyRefreshTokenJWT,
+  storeRefreshToken, validateRefreshToken, removeRefreshToken,
+  JwtPayload,
+} from '../middleware/auth';
+
+// ── POST /api/auth/login ──────────────────────────────────────
+export async function login(req: Request, res: Response) {
+  try {
+    const { email, password } = req.body;
+
+    const result = await query(
+      `SELECT u.*, 
+              c.name as company_name, c.gstin as company_gstin, c.logo_url as company_logo,
+              c.item_terminology, c.item_terminology_plural, c.onboarding_completed,
+              c.plan_type,
+              COALESCE(ep.godown_id, dg.id) as resolved_godown_id
+       FROM users u
+       JOIN companies c ON u.company_id = c.id AND c.is_deleted = false
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
+       WHERE u.email = $1 AND u.is_deleted = false`,
+      [email.toLowerCase().trim()]
+    );
+
+    if (!result.rows.length) {
+      return res.status(401).json(error('Invalid email or password'));
+    }
+
+    const user = result.rows[0];
+
+    if (!user.is_active) {
+      return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json(error('Invalid email or password'));
+    }
+
+    const tokenPayload: JwtPayload = {
+      id: user.id,
+      company_id: user.company_id,
+      role: user.role,
+      godown_id: user.resolved_godown_id || null,
+      email: user.email,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(tokenPayload);
+
+    // Store refresh token in Redis
+    await storeRefreshToken(user.id, refreshToken);
+
+    // Update last login
+    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+
+    // Audit
+    await logAction(user.id, user.company_id, 'login', 'user', user.id, null, null, req.ip, req.get('User-Agent'));
+
+    res.json(success({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        avatar_url: user.avatar_url,
+      },
+      company: {
+        id: user.company_id,
+        name: user.company_name,
+        gstin: user.company_gstin,
+        logo_url: user.company_logo,
+        item_terminology: user.item_terminology,
+        item_terminology_plural: user.item_terminology_plural,
+        onboarding_completed: user.onboarding_completed,
+        plan_type: user.plan_type,
+      },
+      accessToken,
+      refreshToken,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/auth/refresh ────────────────────────────────────
+export async function refresh(req: Request, res: Response) {
+  try {
+    const { refreshToken: token } = req.body;
+    if (!token) return res.status(400).json(error('Refresh token is required'));
+
+    let decoded: JwtPayload;
+    try {
+      decoded = verifyRefreshTokenJWT(token);
+    } catch {
+      return res.status(401).json(error('Invalid or expired refresh token'));
+    }
+
+    const valid = await validateRefreshToken(decoded.id, token);
+    if (!valid) {
+      return res.status(401).json(error('Refresh token has been revoked'));
+    }
+
+    // Fetch fresh user data
+    const result = await query(
+      `SELECT u.role, u.is_active, u.email, u.company_id,
+              COALESCE(ep.godown_id, dg.id) as resolved_godown_id
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
+       WHERE u.id = $1 AND u.is_deleted = false`,
+      [decoded.id]
+    );
+
+    if (!result.rows.length || !result.rows[0].is_active) {
+      await removeRefreshToken(decoded.id);
+      return res.status(401).json(error('Account not found or deactivated'));
+    }
+
+    const user = result.rows[0];
+    const payload: JwtPayload = {
+      id: decoded.id,
+      company_id: user.company_id,
+      role: user.role,
+      godown_id: user.resolved_godown_id || null,
+      email: user.email,
+    };
+
+    const newAccessToken = generateAccessToken(payload);
+    const newRefreshToken = generateRefreshToken(payload);
+    await storeRefreshToken(decoded.id, newRefreshToken);
+
+    res.json(success({ accessToken: newAccessToken, refreshToken: newRefreshToken }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/auth/logout ─────────────────────────────────────
+export async function logout(req: Request, res: Response) {
+  try {
+    if (req.user) {
+      await removeRefreshToken(req.user.id);
+      await logAction(req.user.id, req.user.company_id, 'logout', 'user', req.user.id);
+    }
+    res.json(success({ message: 'Logged out successfully' }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── GET /api/auth/me ──────────────────────────────────────────
+export async function getMe(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.company_id,
+              c.name as company_name, c.legal_name, c.gstin, c.pan, c.logo_url, c.signature_url,
+              c.city, c.state, c.pincode, c.state_code, c.phone as company_phone, c.email as company_email,
+              c.financial_year_start, c.invoice_prefix, c.po_prefix, c.quotation_prefix,
+              c.default_due_days, c.currency, c.timezone,
+              c.item_terminology, c.item_terminology_plural, c.default_gst_rate, c.default_hsn,
+              c.bank_name, c.bank_account_number, c.bank_ifsc, c.bank_branch, c.upi_id,
+              c.terms_and_conditions, c.invoice_notes,
+              c.plan_type, c.onboarding_completed,
+              g.id as godown_id, g.name as godown_name
+       FROM users u
+       JOIN companies c ON u.company_id = c.id
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       LEFT JOIN godowns g ON g.id = COALESCE(ep.godown_id, (SELECT id FROM godowns WHERE company_id = u.company_id AND is_default = true AND is_deleted = false LIMIT 1))
+       WHERE u.id = $1 AND u.is_deleted = false`,
+      [req.user!.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json(error('User not found'));
+    }
+
+    const r = result.rows[0];
+    res.json(success({
+      user: {
+        id: r.id, name: r.name, email: r.email, phone: r.phone,
+        role: r.role, avatar_url: r.avatar_url,
+      },
+      company: {
+        id: r.company_id, name: r.company_name, legal_name: r.legal_name,
+        gstin: r.gstin, pan: r.pan, logo_url: r.logo_url, signature_url: r.signature_url,
+        city: r.city, state: r.state, pincode: r.pincode, state_code: r.state_code,
+        phone: r.company_phone, email: r.company_email,
+        financial_year_start: r.financial_year_start,
+        invoice_prefix: r.invoice_prefix, po_prefix: r.po_prefix, quotation_prefix: r.quotation_prefix,
+        default_due_days: r.default_due_days, currency: r.currency, timezone: r.timezone,
+        item_terminology: r.item_terminology, item_terminology_plural: r.item_terminology_plural,
+        default_gst_rate: r.default_gst_rate, default_hsn: r.default_hsn,
+        bank_name: r.bank_name, bank_account_number: r.bank_account_number,
+        bank_ifsc: r.bank_ifsc, bank_branch: r.bank_branch, upi_id: r.upi_id,
+        terms_and_conditions: r.terms_and_conditions, invoice_notes: r.invoice_notes,
+        plan_type: r.plan_type, onboarding_completed: r.onboarding_completed,
+      },
+      godown: r.godown_id ? { id: r.godown_id, name: r.godown_name } : null,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/auth/forgot-password ────────────────────────────
+export async function forgotPassword(req: Request, res: Response) {
+  try {
+    const { email } = req.body;
+    const result = await query(
+      'SELECT id, company_id FROM users WHERE email = $1 AND is_deleted = false AND is_active = true',
+      [email.toLowerCase().trim()]
+    );
+
+    // Always return success to prevent email enumeration
+    if (!result.rows.length) {
+      return res.json(success({ message: 'If the email exists, a reset link has been sent.' }));
+    }
+
+    const user = result.rows[0];
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await query(
+      'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
+      [resetToken, expires, user.id]
+    );
+
+    // In production: send email with reset link
+    // In dev: return token directly
+    const responseData: any = { message: 'If the email exists, a reset link has been sent.' };
+    if (process.env.NODE_ENV === 'development') {
+      responseData.resetToken = resetToken;
+    }
+
+    res.json(success(responseData));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/auth/reset-password ─────────────────────────────
+export async function resetPassword(req: Request, res: Response) {
+  try {
+    const { token, password } = req.body;
+
+    const result = await query(
+      `SELECT id, company_id FROM users 
+       WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND is_deleted = false`,
+      [token]
+    );
+
+    if (!result.rows.length) {
+      return res.status(400).json(error('Invalid or expired reset token'));
+    }
+
+    const user = result.rows[0];
+    const hash = await bcrypt.hash(password, 12);
+
+    await query(
+      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL WHERE id = $2',
+      [hash, user.id]
+    );
+
+    await removeRefreshToken(user.id);
+    await logAction(user.id, user.company_id, 'reset_password', 'user', user.id);
+
+    res.json(success({ message: 'Password reset successfully. Please login with your new password.' }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
