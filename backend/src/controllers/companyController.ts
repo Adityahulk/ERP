@@ -3,13 +3,22 @@ import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import { getUploadUrl } from '../services/fileUpload';
+import { encryptSecret } from '../lib/credentialsCrypto';
+
+function sanitizeCompany(row: Record<string, unknown>) {
+  const { einvoice_gsp_password_enc: _enc, ...rest } = row;
+  return {
+    ...rest,
+    has_einvoice_gsp_password: Boolean(_enc),
+  };
+}
 
 // ── GET /api/company ──────────────────────────────────────────
 export async function getCompany(req: Request, res: Response) {
   try {
     const result = await query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [req.user!.company_id]);
     if (!result.rows.length) return res.status(404).json(error('Company not found'));
-    res.json(success(result.rows[0]));
+    res.json(success(sanitizeCompany(result.rows[0] as any)));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
@@ -29,6 +38,8 @@ export async function updateCompany(req: Request, res: Response) {
       'item_terminology', 'item_terminology_plural', 'default_gst_rate', 'default_hsn',
       'bank_name', 'bank_account_number', 'bank_ifsc', 'bank_branch', 'upi_id',
       'terms_and_conditions', 'invoice_notes', 'onboarding_completed',
+      'einvoice_enabled', 'einvoice_turnover_above_5cr', 'einvoice_sandbox',
+      'einvoice_gsp_username', 'document_primary_color', 'receipt_footer_message', 'invoice_pdf_template',
     ];
 
     const updates: string[] = [];
@@ -42,6 +53,16 @@ export async function updateCompany(req: Request, res: Response) {
       }
     }
 
+    if (typeof req.body.einvoice_gsp_password === 'string') {
+      const p = req.body.einvoice_gsp_password.trim();
+      if (p.length > 0) {
+        updates.push(`einvoice_gsp_password_enc = $${idx++}`);
+        values.push(encryptSecret(p));
+      } else {
+        updates.push('einvoice_gsp_password_enc = NULL');
+      }
+    }
+
     if (!updates.length) return res.status(400).json(error('No fields to update'));
 
     values.push(companyId);
@@ -51,7 +72,7 @@ export async function updateCompany(req: Request, res: Response) {
     );
 
     await logAction(req.user!.id, companyId, 'update', 'company', companyId, old, result.rows[0], req.ip);
-    res.json(success(result.rows[0]));
+    res.json(success(sanitizeCompany(result.rows[0] as any)));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 

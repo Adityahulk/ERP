@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; padding: 16px; font-size: 12px; }
+    .hdr { display: flex; justify-content: space-between; align-items: flex-start; background: {{PRIMARY_COLOR}}; color: #fff; padding: 12px 16px; border-radius: 6px 6px 0 0; }
+    .hdr h1 { margin: 0; font-size: 18px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
+    table.items { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 11px; }
+    table.items th { background: {{PRIMARY_COLOR}}; color: #fff; padding: 8px 6px; text-align: left; }
+    table.items td { border: 1px solid #e5e7eb; padding: 6px; }
+    .right { text-align: right; }
+    .mono { font-family: ui-monospace, monospace; }
+    .tot { margin-top: 12px; display: flex; justify-content: flex-end; }
+    .tot table { width: 280px; font-size: 12px; }
+    .einv { margin-top: 12px; padding: 10px; border: 1px dashed #6366f1; border-radius: 6px; font-size: 11px; }
+    .foot { margin-top: 16px; font-size: 10px; color: #555; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+    .sign { margin-top: 20px; text-align: right; font-size: 12px; }
+    .flexqr { display: flex; gap: 16px; align-items: flex-start; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div>{{LOGO_BLOCK}}<div style="margin-top:4px;font-weight:700">{{COMPANY_NAME}}</div></div>
+    <div style="text-align:right">
+      <h1>TAX INVOICE</h1>
+      <div>No. <b>{{INVOICE_NUMBER}}</b></div>
+      <div>Date: {{INVOICE_DATE}}</div>
+      <div>Due: {{DUE_DATE}}</div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="box">
+      <b>Seller</b>
+      <p style="margin:6px 0 0">{{COMPANY_NAME}}</p>
+      <p class="mono" style="margin:4px 0">GSTIN: {{COMPANY_GSTIN}}</p>
+      <p style="margin:4px 0">{{COMPANY_ADDRESS}}</p>
+      <p style="margin:4px 0">{{COMPANY_CITY_STATE_PIN}}</p>
+      <p>Ph: {{COMPANY_PHONE}}</p>
+    </div>
+    <div class="box">
+      <b>Buyer</b>
+      <p style="margin:6px 0 0">{{BUYER_NAME}}</p>
+      <p class="mono" style="margin:4px 0">GSTIN: {{BUYER_GSTIN}}</p>
+      <p style="margin:4px 0">{{BUYER_ADDRESS}}</p>
+      <p>Place of supply: {{PLACE_OF_SUPPLY}}</p>
+    </div>
+  </div>
+  <table class="items">
+    <thead>
+      <tr>
+        <th>#</th><th>Description</th><th>HSN</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Disc</th>
+        <th class="right">Taxable</th><th class="right">GST%</th><th class="right">CGST</th><th class="right">SGST/IGST</th><th class="right">Total</th>
+      </tr>
+    </thead>
+    <tbody>{{ITEM_ROWS}}</tbody>
+  </table>
+  <div class="tot">
+    <table>
+      <tr><td>Subtotal</td><td class="right">₹{{SUBTOTAL}}</td></tr>
+      <tr><td>Discount</td><td class="right">₹{{DISCOUNT}}</td></tr>
+      <tr><td>Taxable</td><td class="right">₹{{TAXABLE}}</td></tr>
+      <tr><td>CGST</td><td class="right">₹{{CGST}}</td></tr>
+      <tr><td>SGST</td><td class="right">₹{{SGST}}</td></tr>
+      <tr><td>IGST</td><td class="right">₹{{IGST}}</td></tr>
+      <tr><td>Round off</td><td class="right">₹{{ROUND_OFF}}</td></tr>
+      <tr><td><b>Grand Total</b></td><td class="right"><b>₹{{GRAND_TOTAL}}</b></td></tr>
+    </table>
+  </div>
+  <p><b>Amount in words:</b> {{AMOUNT_WORDS}}</p>
+  <p><b>Bank:</b> {{BANK_LINES}}</p>
+  <div class="flexqr">
+    <div>{{UPI_QR_IMG}}</div>
+    <div>{{EINVOICE_BLOCK}}</div>
+  </div>
+  {{SIGNATURE_BLOCK}}
+  <div class="foot">{{TERMS}} — Computer generated invoice.</div>
+</body>
+</html>

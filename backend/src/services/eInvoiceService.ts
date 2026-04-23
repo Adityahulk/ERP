@@ -1,20 +1,317 @@
-export async function generateEInvoiceNIC(invoiceData: any, companyData: any) {
-  // In reality: Construct NIC schema v1.1
-  // Call GSP API over TLS, exchange token
-  // Await valid JSON response containing AckNo, AckDt, Irn, SignedInvoice, SignedQRCode
-  
-  // MOCK FOR DEVELOPMENT:
-  const mockIrn = '12f34ebc' + Math.random().toString(16).slice(2, 30);
-  const mockAckNumber = Math.floor(Math.random() * 1000000000000000).toString();
-  const mockQrCode = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_qr_code.MOCK';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import QRCode from 'qrcode';
+import { env } from '../config/env';
+import { decryptSecret } from '../lib/credentialsCrypto';
+import { logger } from '../config/logger';
 
-  console.log(`[E-INVOICE EMULATION] Generated IRN for ${invoiceData.invoice_number}`);
+export type NicSupTyp = 'B2B' | 'B2C' | 'SEZWP' | 'SEZWOP' | 'EXPWP' | 'EXPWOP';
+export type NicDocTyp = 'INV' | 'CRN' | 'DBN';
+
+export interface EinvoiceCompany {
+  id: string;
+  name: string;
+  gstin: string | null;
+  registered_address: string | null;
+  city: string | null;
+  pincode: string | null;
+  state_code: string | null;
+  phone?: string | null;
+}
+
+export interface EinvoiceParty {
+  gstin: string | null;
+  name: string;
+  billing_address?: string | null;
+  billing_city?: string | null;
+  billing_pincode?: string | null;
+  billing_state_code?: string | null;
+}
+
+export interface EinvoiceItemRow {
+  item_name: string;
+  item_description?: string | null;
+  hsn_code?: string | null;
+  unit?: string | null;
+  quantity: number | string;
+  unit_price: number;
+  discount_amount: number;
+  taxable_amount: number;
+  gst_rate: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  cess_amount?: number;
+  total_amount: number;
+  item_type?: string | null;
+}
+
+export interface EinvoiceInvoice {
+  id: string;
+  company_id: string;
+  invoice_number: string;
+  invoice_date: string;
+  is_interstate: boolean;
+  place_of_supply?: string | null;
+  subtotal: number;
+  discount_amount: number;
+  taxable_amount: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  cess_amount?: number;
+  round_off: number;
+  total_amount: number;
+  invoice_type?: string;
+}
+
+const UQC_MAP: Record<string, string> = {
+  pcs: 'PCS', pc: 'PCS', piece: 'PCS', pieces: 'PCS', nos: 'NOS', no: 'NOS',
+  kg: 'KGS', kgs: 'KGS', g: 'GMS', gm: 'GMS', gms: 'GMS',
+  l: 'LTR', lt: 'LTR', ltr: 'LTR', litre: 'LTR', liter: 'LTR',
+  m: 'MTR', meter: 'MTR', metre: 'MTR', box: 'BOX', set: 'SET', bundle: 'BDL',
+  bag: 'BAG', pack: 'PAC', hour: 'HRS', dz: 'DOZ', dozen: 'DOZ',
+};
+
+export function mapUnitToUqc(unit: string | null | undefined): string {
+  if (!unit) return 'PCS';
+  const k = unit.trim().toLowerCase();
+  return UQC_MAP[k] || unit.trim().slice(0, 3).toUpperCase() || 'PCS';
+}
+
+function formatNicDate(d: string): string {
+  const [y, m, day] = d.split('T')[0].split('-');
+  return `${day}/${m}/${y}`;
+}
+
+function paiseToRupeesStr(paise: number): string {
+  return (Math.round(paise) / 100).toFixed(2);
+}
+
+export function buildEinvoicePayload(
+  invoice: EinvoiceInvoice,
+  company: EinvoiceCompany,
+  party: EinvoiceParty,
+  items: EinvoiceItemRow[],
+): Record<string, unknown> {
+  const buyerGst = (party.gstin || '').trim().toUpperCase();
+  const supTyp: NicSupTyp = buyerGst && buyerGst !== 'URP' ? 'B2B' : 'B2C';
+  const pos = (invoice.place_of_supply || party.billing_state_code || company.state_code || '96').slice(0, 2);
+
+  const itemList = items.map((it, idx) => {
+    const qty = typeof it.quantity === 'string' ? parseFloat(it.quantity) : it.quantity;
+    const isService = it.item_type === 'service' ? 'Y' : 'N';
+    const gstRt = Number(it.gst_rate) || 0;
+    return {
+      SlNo: String(idx + 1),
+      PrdDesc: (it.item_name || it.item_description || 'Item').slice(0, 300),
+      IsServc: isService,
+      HsnCd: ((it.hsn_code || '').replace(/\D/g, '') || '00000000').padEnd(8, '0').slice(0, 8),
+      UQC: mapUnitToUqc(it.unit || undefined),
+      Qty: qty,
+      FreeQty: 0,
+      UnitPrice: parseFloat(paiseToRupeesStr(it.unit_price)),
+      TotAmt: parseFloat(paiseToRupeesStr(Math.round(qty * it.unit_price))),
+      Discount: parseFloat(paiseToRupeesStr(it.discount_amount || 0)),
+      PreTaxVal: parseFloat(paiseToRupeesStr(it.taxable_amount)),
+      AssAmt: parseFloat(paiseToRupeesStr(it.taxable_amount)),
+      GstRt: gstRt,
+      IgstAmt: parseFloat(paiseToRupeesStr(it.igst_amount || 0)),
+      CgstAmt: parseFloat(paiseToRupeesStr(it.cgst_amount || 0)),
+      SgstAmt: parseFloat(paiseToRupeesStr(it.sgst_amount || 0)),
+      CesRt: 0,
+      CesAmt: parseFloat(paiseToRupeesStr(it.cess_amount || 0)),
+      CesNonAdvlAmt: 0,
+      StateCesRt: 0,
+      StateCesAmt: 0,
+      TotItemVal: parseFloat(paiseToRupeesStr(it.total_amount)),
+    };
+  });
 
   return {
-    irn: mockIrn,
-    ack_number: mockAckNumber,
-    ack_date: new Date().toISOString(),
-    einvoice_status: 'generated',
-    qr_code_url: mockQrCode
+    Version: '1.1',
+    TranDtls: {
+      TaxSch: 'GST',
+      SupTyp: supTyp,
+      RegRev: 'N',
+      IgstOnIntra: 'N',
+    },
+    DocDtls: {
+      Typ: 'INV' as NicDocTyp,
+      No: invoice.invoice_number,
+      Dt: formatNicDate(invoice.invoice_date),
+    },
+    SellerDtls: {
+      Gstin: (company.gstin || '').toUpperCase(),
+      TrdNm: company.name,
+      Addr1: (company.registered_address || company.city || '-').slice(0, 100),
+      Loc: company.city || '-',
+      Pin: parseInt(String(company.pincode || '0').replace(/\D/g, '') || '0', 10) || 100000,
+      Stcd: (company.state_code || '96').slice(0, 2),
+    },
+    BuyerDtls: {
+      Gstin: buyerGst && buyerGst.length === 15 ? buyerGst : 'URP',
+      TrdNm: party.name || 'Customer',
+      Pos: pos,
+      Addr1: (party.billing_address || party.billing_city || '-').slice(0, 100),
+      Loc: party.billing_city || '-',
+      Pin: parseInt(String(party.billing_pincode || '0').replace(/\D/g, '') || '0', 10) || 100000,
+      Stcd: (party.billing_state_code || pos).slice(0, 2),
+    },
+    ItemList: itemList,
+    ValDtls: {
+      AssVal: parseFloat(paiseToRupeesStr(invoice.taxable_amount)),
+      CgstVal: parseFloat(paiseToRupeesStr(invoice.cgst_amount)),
+      SgstVal: parseFloat(paiseToRupeesStr(invoice.sgst_amount)),
+      IgstVal: parseFloat(paiseToRupeesStr(invoice.igst_amount)),
+      CesVal: parseFloat(paiseToRupeesStr(invoice.cess_amount || 0)),
+      StCesVal: 0,
+      Discount: parseFloat(paiseToRupeesStr(invoice.discount_amount || 0)),
+      OthChrg: 0,
+      RndOffAmt: parseFloat(paiseToRupeesStr(invoice.round_off || 0)),
+      TotInvVal: parseFloat(paiseToRupeesStr(invoice.total_amount)),
+      TotInvValFc: 0,
+    },
+  };
+}
+
+function fakeIrn(companyId: string, invoiceNo: string, dateStr: string): string {
+  const h = crypto.createHash('sha256').update(`${companyId}|${invoiceNo}|${dateStr}`).digest('hex');
+  return h.slice(0, 64).toUpperCase();
+}
+
+export interface GenerateIrnResult {
+  irn: string;
+  ack_number: string;
+  ack_date: string;
+  signed_qr_code?: string;
+}
+
+export async function generateIRN(
+  payload: Record<string, unknown>,
+  company: { id: string; einvoice_gsp_username?: string | null; einvoice_gsp_password_enc?: string | null; einvoice_sandbox?: boolean | null },
+): Promise<GenerateIrnResult> {
+  const mode = env.EINVOICE_MODE;
+
+  if (mode === 'mock') {
+    const doc = payload.DocDtls as { No?: string; Dt?: string };
+    const irn = fakeIrn(company.id, String(doc?.No || ''), String(doc?.Dt || ''));
+    const ack_number = `ACK${Date.now()}`;
+    return { irn, ack_number, ack_date: new Date().toISOString() };
   }
+
+  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
+  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
+
+  if (!username || !password) {
+    throw new Error('GSP credentials not configured. Set company e-invoice credentials or EINVOICE_USERNAME / EINVOICE_PASSWORD in environment.');
+  }
+
+  const baseUrl: string =
+    (mode === 'production'
+      ? (env.EINVOICE_PRODUCTION_URL || env.EINVOICE_GSP_URL)
+      : (env.EINVOICE_SANDBOX_URL || env.EINVOICE_GSP_URL || 'https://einv-apisandbox.nic.in')) || '';
+
+  if (!baseUrl) {
+    throw new Error('EINVOICE_GSP_URL or EINVOICE_SANDBOX_URL must be set for sandbox/production modes');
+  }
+
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/GenerateEInvoice`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        client_id: username,
+        client_secret: password,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`GSP returned non-JSON (${res.status}): ${text.slice(0, 200)}`);
+    }
+
+    if (!res.ok) {
+      const msg = json?.ErrorDetails || json?.message || json?.error || text.slice(0, 300);
+      if (res.status === 429) throw new Error('E-invoice rate limited by NIC/GSP. Retry later.');
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+
+    const irn = json?.Irn || json?.Data?.Irn;
+    const ack_number = String(json?.AckNo || json?.Data?.AckNo || '');
+    const ack_date = json?.AckDt || json?.Data?.AckDt || new Date().toISOString();
+    if (!irn) throw new Error('GSP response missing IRN');
+    return { irn, ack_number, ack_date, signed_qr_code: json?.SignedQRCode || json?.Data?.SignedQRCode };
+  } catch (e: any) {
+    logger.error('generateIRN GSP error', e);
+    if (e.code === 'ENOTFOUND' || e.code === 'ECONNREFUSED') {
+      throw new Error('Unable to reach e-invoice API. Check network and GSP URL.');
+    }
+    throw e;
+  }
+}
+
+export async function cancelIRN(
+  irn: string,
+  reasonCode: number,
+  reasonDescription: string,
+  company: { einvoice_gsp_username?: string | null; einvoice_gsp_password_enc?: string | null },
+): Promise<{ cancelled: boolean }> {
+  const mode = env.EINVOICE_MODE;
+  if (mode === 'mock') {
+    return { cancelled: true };
+  }
+
+  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
+  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
+  if (!username || !password) throw new Error('GSP credentials not configured');
+
+  const baseUrl: string =
+    (env.EINVOICE_MODE === 'production'
+      ? (env.EINVOICE_PRODUCTION_URL || env.EINVOICE_GSP_URL)
+      : (env.EINVOICE_SANDBOX_URL || env.EINVOICE_GSP_URL || 'https://einv-apisandbox.nic.in')) || '';
+
+  if (!baseUrl) throw new Error('E-invoice base URL not configured');
+
+  const body = { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) };
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/CancelEInvoice`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      client_id: username,
+      client_secret: password,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Cancel IRN failed (${res.status}): ${t.slice(0, 200)}`);
+  }
+  return { cancelled: true };
+}
+
+export async function generateEinvoiceQR(
+  irn: string,
+  invoice: Pick<EinvoiceInvoice, 'invoice_number' | 'invoice_date' | 'total_amount'>,
+  mode: string,
+  payload?: Record<string, unknown>,
+): Promise<string> {
+  const uploadsDir = path.resolve(env.UPLOAD_DIR, 'einvoice-qr');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+
+  const qrPayload =
+    mode === 'mock'
+      ? JSON.stringify({ irn, inv: invoice.invoice_number, mock: true, payload })
+      : irn;
+
+  const fileName = `${invoice.invoice_number.replace(/[^\w.-]+/g, '_')}-${Date.now()}.png`;
+  const absPath = path.join(uploadsDir, fileName);
+  await QRCode.toFile(absPath, qrPayload, { type: 'png', width: 256, margin: 1 });
+  return `/uploads/einvoice-qr/${fileName}`;
 }

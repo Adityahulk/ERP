@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Edit2, Trash2, Printer, Barcode, AlertTriangle, Loader2 } from 'lucide-react';
 import ItemForm from './ItemForm';
+import { getApiBaseURL } from '@/lib/api';
 
 import toast from 'react-hot-toast';
 
@@ -49,7 +50,7 @@ export default function ItemDetail() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm"><Printer className="w-4 h-4 mr-1" />Print Label</Button>
-          <Button variant="outline" size="sm" onClick={() => window.open(`/api/items/${id}/barcode-image`, '_blank')}><Barcode className="w-4 h-4 mr-1" />Barcode</Button>
+          <Button variant="outline" size="sm" onClick={() => window.open(`${getApiBaseURL()}/items/${id}/barcode-image`, '_blank')}><Barcode className="w-4 h-4 mr-1" />Barcode</Button>
           <Button variant="outline" size="sm" onClick={() => setShowEdit(true)}><Edit2 className="w-4 h-4 mr-1" />Edit</Button>
           <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="w-4 h-4 mr-1" />Delete</Button>
         </div>

@@ -21,6 +21,7 @@ import attendanceRoutes from './attendance';
 import leaveRoutes from './leaves';
 import notificationRoutes from './notifications';
 import labelRoutes from './labels';
+import printRoutes from './print';
 
 const router = Router();
 
@@ -47,8 +48,7 @@ router.use('/attendance', attendanceRoutes);
 router.use('/leaves', leaveRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/labels', labelRoutes);
-// router.use('/employees', employeeRoutes);
-// router.use('/e-invoice', eInvoiceRoutes);
+router.use('/print', printRoutes);
 
 // API info
 router.get('/', (_req, res) => {
@@ -62,7 +62,7 @@ router.get('/', (_req, res) => {
         'item-categories', 'item-units', 'items', 'stock',
         'parties', 'invoices', 'payments', 'expenses', 'reports',
       ],
-      planned: ['quotations', 'employees', 'e-invoice'],
+      planned: ['quotations', 'employees'],
     },
   });
 });

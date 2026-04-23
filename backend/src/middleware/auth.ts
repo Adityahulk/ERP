@@ -1,7 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { env } from '../config/env';
 import { redis } from '../config/redis';
+
+function refreshTokenHash(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 export interface JwtPayload {
   id: string;
@@ -72,7 +77,7 @@ export function verifyRefreshTokenJWT(token: string): JwtPayload {
  * Store refresh token hash in Redis with 7-day TTL
  */
 export async function storeRefreshToken(userId: string, token: string): Promise<void> {
-  await redis.setex(`refresh:${userId}`, 7 * 24 * 60 * 60, token);
+  await redis.setex(`refresh:${userId}`, 7 * 24 * 60 * 60, refreshTokenHash(token));
 }
 
 /**
@@ -80,7 +85,7 @@ export async function storeRefreshToken(userId: string, token: string): Promise<
  */
 export async function validateRefreshToken(userId: string, token: string): Promise<boolean> {
   const stored = await redis.get(`refresh:${userId}`);
-  return stored === token;
+  return stored === refreshTokenHash(token);
 }
 
 /**

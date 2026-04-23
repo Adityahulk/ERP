@@ -16,7 +16,7 @@ export default function PurchaseOrderList() {
     queryFn: async () => {
       const endpoint = tab === 'orders' ? '/purchase/orders' : '/purchase/invoices';
       const res = await api.get(endpoint);
-      return res.data;
+      return res.data?.data ?? res.data;
     }
   });
 
@@ -53,7 +53,7 @@ export default function PurchaseOrderList() {
                  </tr>
                </thead>
                <tbody className="divide-y divide-slate-100">
-                  {data?.data?.map((p: any) => (
+                  {(data as any)?.data?.map((p: any) => (
                     <tr key={p.id} className="hover:bg-slate-50/50">
                        <td className="px-6 py-4 font-medium text-slate-900">{tab === 'orders' ? p.po_number : p.bill_number}</td>
                        <td className="px-6 py-4 text-slate-500">{new Date(tab === 'orders' ? p.po_date : p.bill_date).toLocaleDateString()}</td>
@@ -68,7 +68,7 @@ export default function PurchaseOrderList() {
                        </td>
                     </tr>
                   ))}
-                  {!data?.data?.length && (
+                  {!(data as any)?.data?.length && (
                     <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500">No records found.</td></tr>
                   )}
                </tbody>

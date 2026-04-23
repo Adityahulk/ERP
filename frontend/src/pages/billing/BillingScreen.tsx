@@ -140,27 +140,47 @@ export default function BillingScreen() {
   // Submit Pipeline
   const createInvoiceMut = useMutation({
     mutationFn: async () => {
-      const payload = {
-        invoice_type: 'sale',
-        party_id: customerInfo.id || '00000000-0000-0000-0000-000000000000', // Typically requires real party id. POS might create walk-in party under hood. We will skip party_id validation for "walk-in" on backend ideally, but assuming we select valid party. 
+      const itemsPayload = billItems.map((b) => ({
+        item_id: b.item_id,
+        item_name: b.name,
+        hsn_code: b.hsn_code,
+        quantity: b.quantity,
+        unit_price: b.unit_price,
+        gst_rate: b.gst_rate,
+        discount_amount: b.discount_amount,
+      }));
+      const tenderPaise =
+        paymentMode === 'credit'
+          ? 0
+          : amountTendered === ''
+            ? grandTotal
+            : Math.round(Number(amountTendered) * 100);
+      const payload: Record<string, unknown> = {
+        invoice_type: 'tax_invoice',
         is_interstate: false,
-        items: billItems,
-        discount_amount: discountTotal, // Overal invoice discount
-        amount_paid: amountTendered || 0,
+        items: itemsPayload,
+        discount_amount: discountTotal,
+        amount_paid: tenderPaise,
         payment_mode: paymentMode,
       };
-      
-      // If we don't have a strict Party UUID for Walk-in, we just strip it so the controller gracefully handles null party (requires DB schema to allow null party_id on invoices API, which it does).
-      if (!customerInfo.id) delete (payload as any).party_id;
-
-      return await api.post('/invoices', payload);
+      if (customerInfo.id) payload.party_id = customerInfo.id;
+      return api.post('/invoices', payload);
     },
-    onSuccess: () => {
+    onSuccess: async (res) => {
       toast.success('Bill Confirmed!');
-      // Typically trigger print modal or thermal print
-      // printThermal(res.data.id);
-      
-      // Reset
+      const inv = res.data?.data ?? res.data;
+      const id = inv?.id;
+      const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
+      if (id && (printer === 'thermal80' || printer === 'thermal58')) {
+        try {
+          const w = printer === 'thermal58' ? '58' : '80';
+          const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
+          const url = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
+          window.open(url, '_blank');
+        } catch {
+          toast.error('Receipt PDF could not be opened');
+        }
+      }
       setBillItems([]);
       setSearchQuery('');
       setAmountTendered('');
@@ -376,7 +396,7 @@ export default function BillingScreen() {
                    value={amountTendered}
                    onChange={e => setAmountTendered(e.target.value ? Number(e.target.value) : '')}
                  />
-                 <Button variant="outline" className="h-12 whitespace-nowrap" onClick={() => setAmountTendered(grandTotal)}>EXACT</Button>
+                 <Button variant="outline" className="h-12 whitespace-nowrap" onClick={() => setAmountTendered(grandTotal / 100)}>EXACT</Button>
                </div>
              )}
           </div>

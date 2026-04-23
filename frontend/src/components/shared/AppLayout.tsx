@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt, 
@@ -52,6 +53,12 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+
+  useEffect(() => {
+    const seg = location.pathname.split('/').filter(Boolean)[0] || 'home';
+    const label = seg.charAt(0).toUpperCase() + seg.slice(1).replace(/-/g, ' ');
+    document.title = `${label} — BizFlow`;
+  }, [location.pathname]);
 
   // Command palette toggle hook
   useEffect(() => {
@@ -187,7 +194,11 @@ export default function AppLayout() {
         </header>
 
         <main className="flex-1 overflow-auto bg-[#F7F7F5] relative">
-          <Outlet />
+          <RouteErrorBoundary>
+            <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>}>
+              <Outlet />
+            </Suspense>
+          </RouteErrorBoundary>
         </main>
       </div>
     </div>

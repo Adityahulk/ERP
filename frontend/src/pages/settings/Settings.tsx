@@ -1,16 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate } from 'react-router-dom';
+import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
+import api from '@/lib/api';
 
 export default function Settings() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'super_admin' || user?.role === 'company_admin';
-  
+  const { data: company, isLoading: companyLoading } = useCompany();
+  const updateCompany = useUpdateCompany();
+
+  const [einvEnabled, setEinvEnabled] = useState(false);
+  const [einvTurnover, setEinvTurnover] = useState(false);
+  const [einvSandbox, setEinvSandbox] = useState(true);
+  const [einvUser, setEinvUser] = useState('');
+  const [einvPass, setEinvPass] = useState('');
+  const [printerType, setPrinterType] = useState<'a4' | 'thermal80' | 'thermal58'>('a4');
+
   if (!isAdmin) {
      return <Navigate to="/dashboard" replace />;
   }
@@ -19,6 +31,55 @@ export default function Settings() {
 
   // Stub states
   const [deleteConf, setDeleteConf] = useState('');
+
+  useEffect(() => {
+    if (!company) return;
+    setEinvEnabled(!!company.einvoice_enabled);
+    setEinvTurnover(!!company.einvoice_turnover_above_5cr);
+    setEinvSandbox(company.einvoice_sandbox !== false);
+    setEinvUser(company.einvoice_gsp_username || '');
+    const saved = localStorage.getItem('bizflow_printer_type') as 'a4' | 'thermal80' | 'thermal58' | null;
+    if (saved === 'thermal80' || saved === 'thermal58' || saved === 'a4') setPrinterType(saved);
+  }, [company]);
+
+  const saveEinvoice = async () => {
+    try {
+      await updateCompany.mutateAsync({
+        einvoice_enabled: einvEnabled,
+        einvoice_turnover_above_5cr: einvTurnover,
+        einvoice_sandbox: einvSandbox,
+        einvoice_gsp_username: einvUser || null,
+        ...(einvPass ? { einvoice_gsp_password: einvPass } : {}),
+      });
+      setEinvPass('');
+      toast.success('e-Invoice settings saved');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const savePrinter = () => {
+    localStorage.setItem('bizflow_printer_type', printerType);
+    toast.success('Printer preference saved');
+  };
+
+  const testPrint = async () => {
+    try {
+      const res = await api.get('/invoices', { params: { page: 1, limit: 1 } });
+      const page = res.data?.data;
+      const first = page?.data?.[0];
+      if (!first?.id) {
+        toast.error('No invoice found for sample print');
+        return;
+      }
+      const w = printerType === 'thermal58' ? '58' : '80';
+      const pdfRes = await api.get(`/print/receipt/${first.id}`, { params: { width: w }, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Test print failed');
+    }
+  };
 
   const TABS = [
      { id: 'company', label: 'Company Profile', icon: Building2 },
@@ -62,6 +123,7 @@ export default function Settings() {
                {tab === 'company' && (
                   <CardContent className="p-6 space-y-6">
                      <h2 className="text-xl font-bold mb-4">Company Profile</h2>
+                     {companyLoading && <p className="text-sm text-muted-foreground">Loading company…</p>}
                      <div className="grid md:grid-cols-2 gap-6 border-b pb-6">
                         <div>
                            <label className="text-sm font-medium text-slate-700 block mb-2">Company Status</label>
@@ -100,6 +162,34 @@ export default function Settings() {
                         </div>
                      </div>
                      <div className="pt-4"><Button>Save Profile</Button></div>
+
+                     <div className="border-t pt-8 space-y-4">
+                        <h3 className="font-semibold text-slate-900">e-Invoice (GST / NIC)</h3>
+                        <p className="text-xs text-slate-500">GSP password is encrypted at rest. Leave password blank to keep the current secret.</p>
+                        <div className="flex items-center justify-between gap-4 max-w-md">
+                           <span className="text-sm">Enable e-Invoice</span>
+                           <Switch checked={einvEnabled} onCheckedChange={setEinvEnabled} />
+                        </div>
+                        <div className="flex items-center justify-between gap-4 max-w-md">
+                           <span className="text-sm">Turnover above ₹5 Cr (mandatory threshold)</span>
+                           <Switch checked={einvTurnover} onCheckedChange={setEinvTurnover} />
+                        </div>
+                        <div className="flex items-center justify-between gap-4 max-w-md">
+                           <span className="text-sm">Sandbox mode</span>
+                           <Switch checked={einvSandbox} onCheckedChange={setEinvSandbox} />
+                        </div>
+                        <div className="grid md:grid-cols-2 gap-4 max-w-xl">
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">GSP username</label>
+                              <Input className="mt-1" value={einvUser} onChange={(e) => setEinvUser(e.target.value)} />
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">GSP password</label>
+                              <Input type="password" className="mt-1" value={einvPass} onChange={(e) => setEinvPass(e.target.value)} placeholder={company?.has_einvoice_gsp_password ? '••••••••' : ''} />
+                           </div>
+                        </div>
+                        <Button onClick={saveEinvoice} disabled={updateCompany.isPending}>Save e-Invoice settings</Button>
+                     </div>
                   </CardContent>
                )}
 
@@ -167,6 +257,24 @@ export default function Settings() {
                         <div>
                            <label className="text-sm font-medium text-slate-700">Default Terms & Conditions</label>
                            <textarea className="w-full mt-1 border rounded-md p-3 h-32 text-sm" defaultValue="1. Goods once sold will not be taken back.\n2. Subject to Mumbai Jurisdiction.\n3. Interest @ 18% p.a. will be charged if payment is delayed."/>
+                        </div>
+                        <div className="border-t pt-6 space-y-3 max-w-md">
+                           <h3 className="font-semibold">Printer</h3>
+                           <label className="text-sm font-medium text-slate-700">Printer type</label>
+                           <select
+                              className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm"
+                              value={printerType}
+                              onChange={(e) => setPrinterType(e.target.value as typeof printerType)}
+                           >
+                              <option value="a4">A4 Laser</option>
+                              <option value="thermal80">80mm Thermal</option>
+                              <option value="thermal58">58mm Thermal</option>
+                           </select>
+                           <div className="flex gap-2">
+                              <Button type="button" variant="outline" onClick={savePrinter}>Save printer preference</Button>
+                              <Button type="button" variant="secondary" onClick={testPrint}>Test print</Button>
+                           </div>
+                           <p className="text-xs text-slate-500">Saved in this browser (localStorage). POS uses it after checkout.</p>
                         </div>
                         <Button>Save Preferences</Button>
                      </div>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; color: #111; font-size: 13px; }
+    h1 { color: {{PRIMARY_COLOR}}; margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: {{PRIMARY_COLOR}}; color: #fff; }
+    .right { text-align: right; }
+    .tot { margin-top: 16px; text-align: right; font-size: 15px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Invoice</h1>
+  <p><b>{{COMPANY_NAME}}</b><br/>{{COMPANY_ADDRESS}}<br/>{{COMPANY_CITY_STATE_PIN}}</p>
+  <p>Invoice <b>{{INVOICE_NUMBER}}</b> &nbsp; Date: {{INVOICE_DATE}}</p>
+  <p>Bill to: <b>{{BUYER_NAME}}</b><br/>{{BUYER_ADDRESS}}</p>
+  <table>
+    <thead><tr><th>#</th><th>Item</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
+    <tbody>{{ITEM_ROWS}}</tbody>
+  </table>
+  <div class="tot">Total: ₹{{GRAND_TOTAL}} ({{AMOUNT_WORDS}})</div>
+  <p style="margin-top:24px;font-size:11px;color:#666">{{TERMS}}</p>
+</body>
+</html>

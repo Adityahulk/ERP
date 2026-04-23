@@ -1,9 +1,9 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import AppLayout from '@/components/shared/AppLayout';
 
 // Pages
-// Removed legacy DashboardPage
 import ItemList from '@/pages/items/ItemList';
 import ItemDetail from '@/pages/items/ItemDetail';
 import StockList from '@/pages/inventory/StockList';
@@ -11,20 +11,25 @@ import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
 import PartyList from '@/pages/parties/PartyList';
 import InvoiceList from '@/pages/sales/InvoiceList';
-import InvoiceCreate from '@/pages/invoices/InvoiceCreate'; // We'll use this as bulk form
+import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
 import PurchaseOrderList from '@/pages/purchases/PurchaseOrderList';
 import PurchaseOrderForm from '@/pages/purchases/PurchaseOrderForm';
 import GRNScreen from '@/pages/purchases/GRNScreen';
 import ExpenseList from '@/pages/expenses/ExpenseList';
-import BillingScreen from '@/pages/billing/BillingScreen';
-import ReportsHome from '@/pages/reports/ReportsHome';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import AttendancePage from '@/pages/hr/AttendancePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
-import Settings from '@/pages/settings/Settings';
+
+const BillingScreen = lazy(() => import('@/pages/billing/BillingScreen'));
+const ReportsHome = lazy(() => import('@/pages/reports/ReportsHome'));
+const Settings = lazy(() => import('@/pages/settings/Settings'));
+
+const pageFallback = (
+  <div className="flex h-48 items-center justify-center text-muted-foreground text-sm">Loading…</div>
+);
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState } from 'react';
@@ -114,7 +119,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
 
         {/* Sales & Billing */}
-        <Route path="/billing" element={<BillingScreen />} />
+        <Route path="/billing" element={<Suspense fallback={pageFallback}><BillingScreen /></Suspense>} />
         <Route path="/sales" element={<InvoiceList />} />
         <Route path="/sales/new" element={<InvoiceCreate />} />
         <Route path="/sales/:id" element={<InvoiceDetail />} />
@@ -127,7 +132,7 @@ export default function App() {
         {/* Expenses */}
         <Route path="/expenses" element={<ExpenseList />} />
         {/* Reports & Accounting */}
-        <Route path="/reports" element={<ReportsHome />} />
+        <Route path="/reports" element={<Suspense fallback={pageFallback}><ReportsHome /></Suspense>} />
         <Route path="/gst-filing" element={<GSTDashboard />} />
         <Route path="/accounting" element={<AccountingDashboard />} />
 
@@ -135,7 +140,7 @@ export default function App() {
         <Route path="/attendance" element={<AttendancePage />} />
 
         {/* Global Config */}
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={<Suspense fallback={pageFallback}><Settings /></Suspense>} />
 
       </Route>
 

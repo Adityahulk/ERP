@@ -33,15 +33,22 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json(error('Invalid email or password'));
     }
 
-    const user = result.rows[0];
-
-    if (!user.is_active) {
-      return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
+    // Same email can exist in multiple companies; pick the row whose password matches.
+    let user: (typeof result.rows)[0] | undefined;
+    for (const row of result.rows) {
+      const valid = await bcrypt.compare(password, row.password_hash);
+      if (valid) {
+        user = row;
+        break;
+      }
     }
 
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
+    if (!user) {
       return res.status(401).json(error('Invalid email or password'));
+    }
+
+    if (user.is_active === false) {
+      return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
     }
 
     const tokenPayload: JwtPayload = {

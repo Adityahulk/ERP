@@ -19,14 +19,14 @@ export default function InvoiceList() {
   const { data, isLoading } = useQuery({
     queryKey: ['salesInvoices', tab, search],
     queryFn: async () => {
-      const parts = ['invoice_type=sale'];
+      const parts: string[] = [];
       if (tab !== 'all') {
         if (tab === 'overdue') parts.push('overdue=true');
         else parts.push(`status=${tab}`);
       }
       if (search) parts.push(`search=${search}`);
       const res = await api.get(`/invoices?${parts.join('&')}`);
-      return res.data;
+      return res.data?.data ?? res.data;
     }
   });
 
@@ -51,8 +51,8 @@ export default function InvoiceList() {
     cancelled: 'bg-slate-200 text-slate-500 line-through',
   };
 
-  const meta = data?.meta || {};
-  const invoices = data?.data || [];
+  const meta = (data as any)?.meta || {};
+  const invoices = (data as any)?.data || [];
 
   return (
     <div className="space-y-6">

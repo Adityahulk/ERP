@@ -87,6 +87,15 @@ const IDS = {
   partyTechSource: uuidv4(),
   partyFarmFresh: uuidv4(),
 
+  // Purchase orders (demo POs for GRN / list testing)
+  poDemoDraft: uuidv4(),
+  poDemoConfirmedMain: uuidv4(),
+  poDemoConfirmedThane: uuidv4(),
+  poLineDraftRice: uuidv4(),
+  poLineDraftDal: uuidv4(),
+  poLineUsb: uuidv4(),
+  poLineOil: uuidv4(),
+
   // Accounts (chart of accounts)
   accCash: uuidv4(),
   accBank: uuidv4(),
@@ -257,7 +266,8 @@ async function seed(): Promise<void> {
     ];
 
     for (const item of items) {
-      const halfGst = item.gst / 2;
+      // numeric(5,2) for split rates — avoid reusing one placeholder for int + numeric (PG error 42P08)
+      const halfGst = Math.round((item.gst / 2) * 100) / 100;
       await pool.query(`
         INSERT INTO items (
           id, company_id, name, hsn_code, category_id, unit_id,
@@ -269,7 +279,7 @@ async function seed(): Promise<void> {
           $1, $2, $3, $4, $5, $6,
           $7, $8, $9,
           $10, $11,
-          'taxable', $12, $13, $13, $12,
+          'taxable', $12, $13, $13, 0,
           $14, $15, true
         )
       `, [
@@ -322,15 +332,122 @@ async function seed(): Promise<void> {
       ]);
     }
 
-    // ─── 8. Invoices (15 over last 90 days) ─────────────────
-    console.log('  🧾 Creating invoices...');
     const now = new Date();
     const daysAgo = (d: number) => {
       const date = new Date(now);
       date.setDate(date.getDate() - d);
-      return date.toISOString().split('T')[0]; // YYYY-MM-DD
+      return date.toISOString().split('T')[0];
     };
 
+    // ─── 7b. Purchase orders (draft + confirmed for GRN testing) ─
+    console.log('  📝 Creating purchase orders...');
+    const halfRate = (g: number) => Math.round((g / 2) * 100) / 100;
+
+    // DEMO-PO-001 — draft, Farm Fresh, Main godown (edit / confirm / receive flow)
+    const po1Lines = [
+      { id: IDS.poLineDraftRice, item: IDS.itemRice, name: 'Basmati Rice 5kg', hsn: '1006', unit: 'Bag', qty: 100, price: p(350), gst: 5 },
+      { id: IDS.poLineDraftDal, item: IDS.itemDal, name: 'Toor Dal 1kg', hsn: '0713', unit: 'Kg', qty: 50, price: p(120), gst: 5 },
+    ];
+    let po1Sub = 0, po1Cgst = 0, po1Sgst = 0;
+    for (const ln of po1Lines) {
+      const tax = Math.round(ln.qty * ln.price * ln.gst / 100);
+      po1Sub += ln.qty * ln.price;
+      po1Cgst += Math.round(tax / 2);
+      po1Sgst += tax - Math.round(tax / 2);
+    }
+    const po1Total = po1Sub + po1Cgst + po1Sgst;
+    await pool.query(`
+      INSERT INTO purchase_orders (
+        id, company_id, godown_id, po_number, po_date, expected_date, party_id, party_name_snapshot,
+        subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+        status, notes, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$9,$10,$11,0,$12,'draft',$13,$14)
+    `, [
+      IDS.poDemoDraft, IDS.company, IDS.godownMain, 'DEMO-PO-001', daysAgo(12), daysAgo(-3),
+      IDS.partyFarmFresh, 'Farm Fresh Supplies',
+      po1Sub, po1Cgst, po1Sgst, po1Total,
+      'Stock replenishment — groceries', IDS.admin,
+    ]);
+    for (const ln of po1Lines) {
+      const tax = Math.round(ln.qty * ln.price * ln.gst / 100);
+      const cg = Math.round(tax / 2);
+      const sg = tax - cg;
+      const tot = ln.qty * ln.price + tax;
+      const hr = halfRate(ln.gst);
+      await pool.query(`
+        INSERT INTO purchase_order_items (
+          id, po_id, item_id, item_name, hsn_code, unit, quantity_ordered, quantity_received,
+          unit_price, discount_amount, gst_rate, cgst_rate, sgst_rate, igst_rate,
+          cgst_amount, sgst_amount, igst_amount, total_amount
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,$14,$15,0,$16)
+      `, [
+        ln.id, IDS.poDemoDraft, ln.item, ln.name, ln.hsn, ln.unit, ln.qty, 0,
+        ln.price, 0, ln.gst, hr, hr, cg, sg, tot,
+      ]);
+    }
+
+    // DEMO-PO-002 — confirmed, ABC, Main (ready for Receive Stock / GRN)
+    const tax2 = Math.round(300 * p(80) * 18 / 100);
+    const cg2 = Math.round(tax2 / 2);
+    const sg2 = tax2 - cg2;
+    const sub2 = 300 * p(80);
+    const tot2 = sub2 + tax2;
+    await pool.query(`
+      INSERT INTO purchase_orders (
+        id, company_id, godown_id, po_number, po_date, expected_date, party_id, party_name_snapshot,
+        subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+        status, notes, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$9,$10,$11,0,$12,'confirmed',$13,$14)
+    `, [
+      IDS.poDemoConfirmedMain, IDS.company, IDS.godownMain, 'DEMO-PO-002', daysAgo(8), daysAgo(5),
+      IDS.partyABC, 'ABC Distributors Pvt Ltd',
+      sub2, cg2, sg2, tot2,
+      'Cables restock', IDS.admin,
+    ]);
+    const hr18 = halfRate(18);
+    await pool.query(`
+      INSERT INTO purchase_order_items (
+        id, po_id, item_id, item_name, hsn_code, unit, quantity_ordered, quantity_received,
+        unit_price, discount_amount, gst_rate, cgst_rate, sgst_rate, igst_rate,
+        cgst_amount, sgst_amount, igst_amount, total_amount
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,$14,$15,0,$16)
+    `, [
+      IDS.poLineUsb, IDS.poDemoConfirmedMain, IDS.itemUSBC, 'USB-C Charging Cable 1m', '8544', 'Pcs', 300, 0,
+      p(80), 0, 18, hr18, hr18, cg2, sg2, tot2,
+    ]);
+
+    // DEMO-PO-003 — confirmed, XYZ, Thane godown (multi-location receive)
+    const tax3 = Math.round(40 * p(130) * 5 / 100);
+    const cg3 = Math.round(tax3 / 2);
+    const sg3 = tax3 - cg3;
+    const sub3 = 40 * p(130);
+    const tot3 = sub3 + tax3;
+    await pool.query(`
+      INSERT INTO purchase_orders (
+        id, company_id, godown_id, po_number, po_date, expected_date, party_id, party_name_snapshot,
+        subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+        status, notes, created_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$9,$10,$11,0,$12,'confirmed',$13,$14)
+    `, [
+      IDS.poDemoConfirmedThane, IDS.company, IDS.godownThane, 'DEMO-PO-003', daysAgo(5), daysAgo(10),
+      IDS.partyXYZ, 'XYZ Wholesale',
+      sub3, cg3, sg3, tot3,
+      'Oil delivery to Thane warehouse', IDS.admin,
+    ]);
+    const hr5 = halfRate(5);
+    await pool.query(`
+      INSERT INTO purchase_order_items (
+        id, po_id, item_id, item_name, hsn_code, unit, quantity_ordered, quantity_received,
+        unit_price, discount_amount, gst_rate, cgst_rate, sgst_rate, igst_rate,
+        cgst_amount, sgst_amount, igst_amount, total_amount
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,$14,$15,0,$16)
+    `, [
+      IDS.poLineOil, IDS.poDemoConfirmedThane, IDS.itemOil, 'Sunflower Oil 1L', '1512', 'Ltr', 40, 0,
+      p(130), 0, 5, hr5, hr5, cg3, sg3, tot3,
+    ]);
+
+    // ─── 8. Invoices (15 over last 90 days) ─────────────────
+    console.log('  🧾 Creating invoices...');
     const invoiceData = [
       { num: 'INV-2025-001', date: daysAgo(85), due: daysAgo(55), party: IDS.partyRajesh, items: [{ item: IDS.itemIphone, qty: 2, price: p(79900) }], paid: p(159800), status: 'paid' },
       { num: 'INV-2025-002', date: daysAgo(78), due: daysAgo(48), party: IDS.partySharma, items: [{ item: IDS.itemRice, qty: 10, price: p(450) }, { item: IDS.itemDal, qty: 20, price: p(160) }], paid: p(5050), status: 'partial' },
@@ -631,6 +748,11 @@ async function seed(): Promise<void> {
     console.log('   manager@demo.com    / Demo@1234  (manager)');
     console.log('   cashier@demo.com    / Demo@1234  (cashier)');
     console.log('   staff@demo.com      / Demo@1234  (staff)');
+    console.log('\n📦 Purchase orders (Purchases → Purchase Orders):');
+    console.log('   DEMO-PO-001  draft      — Farm Fresh, rice + dal (confirm then GRN)');
+    console.log('   DEMO-PO-002  confirmed  — ABC Distributors, USB cables (use Receive Stock)');
+    console.log('   DEMO-PO-003  confirmed  — XYZ Wholesale, oil → Thane godown (GRN)');
+    console.log('   Suppliers: ABC Distributors, XYZ Wholesale, Tech Source India, Farm Fresh Supplies');
 
   } catch (error) {
     await pool.query('ROLLBACK');

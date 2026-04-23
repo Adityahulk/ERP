@@ -60,6 +60,23 @@ export async function sendWhatsApp(phone: string, template_type: string, variabl
    return { status, twilioRef };
 }
 
+export async function sendWhatsAppInvoiceLink(
+  phone: string,
+  invoiceNumber: string,
+  link: string,
+  companyId: string,
+) {
+  return sendWhatsApp(phone, 'INVOICE_SHARE', {
+    party_name: 'Customer',
+    company_name: 'BizFlow',
+    invoice_number: invoiceNumber,
+    date: new Date().toISOString().split('T')[0],
+    amount: '0',
+    link,
+    phone: '',
+  }, companyId);
+}
+
 export async function sendBulkWhatsApp(messages: { phone: string, template_type: string, variables: Record<string, any>, companyId: string }[]) {
    const results = [];
    for (const msg of messages) {

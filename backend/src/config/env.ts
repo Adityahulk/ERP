@@ -17,8 +17,8 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
   // JWT
-  JWT_SECRET: z.string().min(10, 'JWT_SECRET must be at least 10 characters'),
-  JWT_REFRESH_SECRET: z.string().min(10, 'JWT_REFRESH_SECRET must be at least 10 characters'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
   SHARE_SECRET: z.string().default('bizflow-share-secret'),
   JWT_ACCESS_EXPIRY: z.string().default('15m'),
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
@@ -37,9 +37,14 @@ const envSchema = z.object({
   PUPPETEER_EXECUTABLE_PATH: z.string().optional(),
 
   // E-Invoice / GSP
+  EINVOICE_MODE: z.enum(['mock', 'sandbox', 'production']).default('mock'),
   EINVOICE_USERNAME: z.string().optional(),
   EINVOICE_PASSWORD: z.string().optional(),
   EINVOICE_GSP_URL: z.string().optional(),
+  EINVOICE_SANDBOX_URL: z.string().optional(),
+  EINVOICE_PRODUCTION_URL: z.string().optional(),
+  /** 64 hex chars (32 bytes) for AES-256-GCM storage of GSP passwords at rest */
+  CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

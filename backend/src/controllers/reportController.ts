@@ -11,14 +11,14 @@ export async function getDashboard(req: Request, res: Response) {
     // Today's sales
     const todaySales = await query(
       `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
-       FROM invoices WHERE company_id = $1 AND invoice_type = 'sale' AND invoice_date = $2 AND status != 'cancelled' AND is_deleted = false`,
+       FROM invoices WHERE company_id = $1 AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice') AND invoice_date = $2 AND status != 'cancelled' AND is_deleted = false`,
       [companyId, today]
     );
 
     // This month's sales
     const monthSales = await query(
       `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
-       FROM invoices WHERE company_id = $1 AND invoice_type = 'sale' 
+       FROM invoices WHERE company_id = $1 AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice')
        AND invoice_date >= date_trunc('month', CURRENT_DATE) AND status != 'cancelled' AND is_deleted = false`,
       [companyId]
     );
@@ -70,7 +70,7 @@ export async function getDashboard(req: Request, res: Response) {
     const salesTrend = await query(
       `SELECT d::date as date, COALESCE(SUM(i.total_amount), 0) as total, COUNT(i.id) as count
        FROM generate_series(CURRENT_DATE - interval '6 days', CURRENT_DATE, '1 day') d
-       LEFT JOIN invoices i ON i.invoice_date = d::date AND i.company_id = $1 AND i.invoice_type = 'sale' AND i.status != 'cancelled' AND i.is_deleted = false
+       LEFT JOIN invoices i ON i.invoice_date = d::date AND i.company_id = $1 AND (i.invoice_type = 'sale' OR i.invoice_type = 'tax_invoice') AND i.status != 'cancelled' AND i.is_deleted = false
        GROUP BY d::date ORDER BY d::date`,
       [companyId]
     );
@@ -81,7 +81,7 @@ export async function getDashboard(req: Request, res: Response) {
        FROM invoice_items ii
        JOIN invoices inv ON ii.invoice_id = inv.id
        LEFT JOIN items it ON ii.item_id = it.id
-       WHERE inv.company_id = $1 AND inv.invoice_type = 'sale' AND inv.status != 'cancelled' AND inv.is_deleted = false
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice') AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= date_trunc('month', CURRENT_DATE)
        GROUP BY it.name, it.sku
        ORDER BY total_amount DESC LIMIT 5`,
@@ -128,9 +128,11 @@ export async function profitLoss(req: Request, res: Response) {
     // Revenue
     const revenue = await query(
       `SELECT COALESCE(SUM(subtotal), 0) as gross_revenue,
-              COALESCE(SUM(total_cgst + total_sgst + total_igst), 0) as tax_collected,
+              COALESCE(SUM(cgst_amount + sgst_amount + igst_amount), 0) as tax_collected,
               COALESCE(SUM(discount_amount), 0) as discounts
-       FROM invoices WHERE company_id = $1 AND invoice_type = 'sale' AND status != 'cancelled' AND is_deleted = false
+       FROM invoices WHERE company_id = $1
+         AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice')
+         AND status != 'cancelled' AND is_deleted = false
          AND invoice_date >= $2 AND invoice_date <= $3`,
       [companyId, from, to]
     );
@@ -141,7 +143,7 @@ export async function profitLoss(req: Request, res: Response) {
        FROM invoice_items ii
        JOIN invoices inv ON ii.invoice_id = inv.id
        LEFT JOIN items it ON ii.item_id = it.id
-       WHERE inv.company_id = $1 AND inv.invoice_type = 'sale' AND inv.status != 'cancelled' AND inv.is_deleted = false
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice') AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= $2 AND inv.invoice_date <= $3`,
       [companyId, from, to]
     );
@@ -196,7 +198,7 @@ export async function gstReport(req: Request, res: Response) {
               COALESCE(SUM(cess_amount), 0) as cess
        FROM invoice_items ii
        JOIN invoices inv ON ii.invoice_id = inv.id
-       WHERE inv.company_id = $1 AND inv.invoice_type = 'sale' AND inv.status != 'cancelled' AND inv.is_deleted = false
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice') AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
        GROUP BY gst_rate ORDER BY gst_rate`,
       [companyId, from, to]
@@ -281,7 +283,7 @@ export async function salesRegister(req: Request, res: Response) {
      const result = await query(
        `SELECT i.invoice_date, i.invoice_number, p.name as party_name, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.total_amount, i.payment_status
         FROM invoices i LEFT JOIN parties p ON i.party_id = p.id
-        WHERE i.company_id = $1 AND i.invoice_type = 'sale' AND i.is_deleted = false AND i.invoice_date >= $2 AND i.invoice_date <= $3
+        WHERE i.company_id = $1 AND (i.invoice_type = 'sale' OR i.invoice_type = 'tax_invoice') AND i.is_deleted = false AND i.invoice_date >= $2 AND i.invoice_date <= $3
         ORDER BY i.invoice_date ASC`,
         [req.user!.company_id, from || '1970-01-01', to || '2099-12-31']
      );

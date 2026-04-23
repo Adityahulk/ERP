@@ -4,18 +4,32 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import routes from './routes';
 
 const app = express();
 
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}__${(req.headers.authorization || '').slice(-24)}`,
+  // Mounted at `/api`, so paths are like `/auth/login`, not `/api/auth/login`.
+  skip: (req) => req.path === '/auth/login' || req.path === '/auth/refresh',
+});
+
 // ── Security ──────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  // Dev UI (e.g. localhost:3000) calls API on 127.0.0.1:PORT — avoid CORP blocking the response body.
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 app.use(cors({
   origin: env.CORS_ORIGIN.split(',').map(s => s.trim()),
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
@@ -33,7 +47,7 @@ app.use(morgan('short', {
 app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR)));
 
 // ── API routes ────────────────────────────────────────
-app.use('/api', routes);
+app.use('/api', apiLimiter, routes);
 
 // ── Health check ──────────────────────────────────────
 app.get('/health', (_req, res) => {

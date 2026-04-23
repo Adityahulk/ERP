@@ -48,8 +48,6 @@ services:
     env_file:
       - ./backend/.env
     volumes:
-      - ./backend:/app
-      - /app/node_modules
       - uploads_data:/app/uploads
     restart: unless-stopped
 
@@ -59,12 +57,9 @@ services:
       dockerfile: Dockerfile
     container_name: bizflow_frontend
     ports:
-      - "3000:3000"
+      - "8080:80"
     depends_on:
       - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     restart: unless-stopped
 
 volumes:

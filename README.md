@@ -47,6 +47,7 @@ docker-compose up -d
 # 2. Backend
 cd backend
 cp .env.example .env
+# Edit .env: JWT_SECRET and JWT_REFRESH_SECRET must each be at least 32 characters.
 npm install
 npm run migrate
 npm run seed
@@ -59,9 +60,49 @@ npm run dev
 ```
 
 ### Access
-- **Frontend:** http://localhost:3000
+- **Frontend (dev):** http://localhost:3000
+- **Frontend (Docker compose):** http://localhost:8080 (nginx → `/api` proxied to backend)
 - **API:** http://localhost:5000
 - **Health:** http://localhost:5000/health
+
+### Background worker (BullMQ)
+```bash
+cd backend
+npm run worker
+```
+Starts stub processors for scheduled queues (`overdueInvoiceReminder`, `lowStockAlert`, etc.). Wire real job payloads when schedulers are added.
+
+### Environment variables (backend)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `REDIS_URL` | Yes | Redis URL (refresh sessions + BullMQ) |
+| `JWT_SECRET` | Yes | Access token signing secret (**≥32 chars**) |
+| `JWT_REFRESH_SECRET` | Yes | Refresh token signing secret (**≥32 chars**) |
+| `JWT_ACCESS_EXPIRY` | No | Default `15m` |
+| `JWT_REFRESH_EXPIRY` | No | Default `7d` |
+| `EINVOICE_MODE` | No | `mock` (default), `sandbox`, or `production` |
+| `EINVOICE_USERNAME` / `EINVOICE_PASSWORD` | For GSP | Fallback GSP credentials if not stored per company |
+| `EINVOICE_GSP_URL` | Sandbox/prod | GSP base URL (proxies NIC) |
+| `EINVOICE_SANDBOX_URL` | No | Override NIC sandbox host |
+| `EINVOICE_PRODUCTION_URL` | No | Override NIC production host |
+| `CREDENTIALS_ENCRYPTION_KEY` | No | 64 hex chars (32 bytes) for AES-GCM of stored GSP password |
+| `UPLOAD_DIR` | No | Local uploads root (default `./uploads`) |
+| `PUPPETEER_EXECUTABLE_PATH` | Docker | e.g. `/usr/bin/chromium-browser` |
+| `FRONTEND_URL` | No | Used when building absolute links in PDFs |
+| `TWILIO_*` | No | WhatsApp/SMS when configured |
+
+### Production deployment (Ubuntu 22.04)
+
+1. Install Node 20, PostgreSQL 15, Redis 7, PM2 (`npm i -g pm2`).
+2. Clone repo, configure `backend/.env` (strong JWT secrets, `DATABASE_URL`, `REDIS_URL`).
+3. Run `deploy.sh` from the repo root (adjust paths/sudo as needed), or manually:
+   - `cd backend && npm ci && npm run build && npm run migrate`
+   - `cd frontend && npm ci && npm run build` and sync `frontend/dist` to nginx `root` (e.g. `/var/www/bizflow`).
+4. `pm2 reload ecosystem.config.js --env production` — runs API (cluster) + `worker.js`.
+
+Docker production: `docker compose up -d --build` after setting `backend/.env`. Backend image runs `node dist/server.js` with Chromium for PDFs.
 
 ### Demo Credentials
 | Email | Password | Role |

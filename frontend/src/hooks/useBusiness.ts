@@ -144,3 +144,45 @@ export function useGSTReport(from?: string, to?: string) {
     queryFn: () => api.get('/reports/gst', { params: { from_date: from, to_date: to } }).then(r => r.data),
   });
 }
+
+export function useCompany() {
+  return useQuery({
+    queryKey: ['company'],
+    queryFn: () => api.get('/company').then((r) => r.data.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUpdateCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.patch('/company', data).then((r) => r.data.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['company'] }),
+  });
+}
+
+export function useGenerateEinvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (invoiceId: string) => api.post(`/invoices/${invoiceId}/einvoice/generate`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['invoice', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
+}
+
+export function useCancelEinvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { id: string; reason_code: number; reason_description: string }) =>
+      api.post(`/invoices/${args.id}/einvoice/cancel`, {
+        reason_code: args.reason_code,
+        reason_description: args.reason_description,
+      }).then((r) => r.data),
+    onSuccess: (_, args) => {
+      qc.invalidateQueries({ queryKey: ['invoice', args.id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
+}
