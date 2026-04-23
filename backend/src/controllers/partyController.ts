@@ -275,3 +275,81 @@ export async function searchParties(req: Request, res: Response) {
     res.json(success(result.rows));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
+
+// ── GET /api/parties/:id/statement ────────────────────────────
+export async function getPartyStatement(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const { from_date, to_date } = req.query;
+
+    let where = 'l.party_id = $1 AND l.company_id = $2';
+    const params: any[] = [id, companyId];
+    let idx = 3;
+
+    if (from_date) { where += ` AND l.created_at >= $${idx}::date`; params.push(from_date); idx++; }
+    if (to_date) { where += ` AND l.created_at <= $${idx}::date + interval '1 day'`; params.push(to_date); idx++; }
+
+    // Fetch opening balance specifically before the from_date if from_date exists
+    let openingBalance = 0;
+    if (from_date) {
+        const obRes = await query(
+          `SELECT 
+             COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) as ob
+           FROM party_ledger l WHERE l.party_id = $1 AND l.company_id = $2 AND l.created_at < $3::date`,
+          [id, companyId, from_date]
+        );
+        openingBalance = parseInt(obRes.rows[0].ob);
+    }
+    
+    // Fallback: If no from_date, opening_balance = initial parties opening balance + 0
+    if (!from_date) {
+        const pObRes = await query('SELECT opening_balance, opening_balance_type FROM parties WHERE id = $1', [id]);
+        openingBalance = (pObRes.rows[0]?.opening_balance_type === 'debit' ? 1 : -1) * (pObRes.rows[0]?.opening_balance || 0);
+    }
+
+    const result = await query(
+      `SELECT l.* FROM party_ledger l WHERE ${where} ORDER BY l.created_at ASC, l.id ASC`, params
+    );
+
+    let runningBalance = openingBalance;
+    const statementRows = result.rows.map(r => {
+       runningBalance += (r.type === 'debit' ? r.amount : -r.amount);
+       return { ...r, running_balance: runningBalance };
+    });
+
+    res.json(success({
+       opening_balance: openingBalance,
+       transactions: statementRows,
+       closing_balance: runningBalance
+    }));
+  } catch(err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/parties/:id/aging ────────────────────────────────
+export async function getPartyAging(req: Request, res: Response) {
+  try {
+     const { id } = req.params;
+     const companyId = req.user!.company_id;
+
+     // Calculate buckets dynamically from open invoices (sales & purchases combined conceptually, but split structurally)
+     const agingRes = await query(
+       `SELECT 
+          SUM(balance_due) FILTER (WHERE due_date >= CURRENT_DATE OR due_date IS NULL) as current,
+          SUM(balance_due) FILTER (WHERE CURRENT_DATE - due_date BETWEEN 1 AND 30) as days_0_30,
+          SUM(balance_due) FILTER (WHERE CURRENT_DATE - due_date BETWEEN 31 AND 60) as days_31_60,
+          SUM(balance_due) FILTER (WHERE CURRENT_DATE - due_date BETWEEN 61 AND 90) as days_61_90,
+          SUM(balance_due) FILTER (WHERE CURRENT_DATE - due_date > 90) as days_90_plus
+        FROM invoices WHERE party_id = $1 AND company_id = $2 AND status NOT IN ('paid', 'cancelled') AND is_deleted = false`,
+       [id, companyId]
+     );
+
+     res.json(success({
+       current: agingRes.rows[0].current || 0,
+       days_0_30: agingRes.rows[0].days_0_30 || 0,
+       days_31_60: agingRes.rows[0].days_31_60 || 0,
+       days_61_90: agingRes.rows[0].days_61_90 || 0,
+       days_90_plus: agingRes.rows[0].days_90_plus || 0,
+     }));
+  } catch (err:any) { res.status(500).json(error(err.message)); }
+}

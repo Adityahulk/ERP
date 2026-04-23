@@ -39,5 +39,7 @@ router.get('/:id', ctrl.getParty);
 router.patch('/:id', ctrl.updateParty);
 router.delete('/:id', requireMinRole('manager'), ctrl.deleteParty);
 router.get('/:id/ledger', ctrl.getPartyLedger);
+router.get('/:id/statement', ctrl.getPartyStatement);
+router.get('/:id/aging', ctrl.getPartyAging);
 
 export default router;

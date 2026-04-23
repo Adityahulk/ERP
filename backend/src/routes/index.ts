@@ -12,6 +12,15 @@ import invoiceRoutes from './invoices';
 import paymentRoutes from './payments';
 import expenseRoutes from './expenses';
 import reportRoutes from './reports';
+import quotationRoutes from './quotations';
+import purchaseRoutes from './purchases';
+import accountingRoutes from './accounting';
+import gstRoutes from './gst';
+import employeeRoutes from './employees';
+import attendanceRoutes from './attendance';
+import leaveRoutes from './leaves';
+import notificationRoutes from './notifications';
+import labelRoutes from './labels';
 
 const router = Router();
 
@@ -29,9 +38,15 @@ router.use('/invoices', invoiceRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/expenses', expenseRoutes);
 router.use('/reports', reportRoutes);
-
-// Future modules (uncomment when built):
-// router.use('/quotations', quotationRoutes);
+router.use('/quotations', quotationRoutes);
+router.use('/purchases', purchaseRoutes);
+router.use('/accounting', accountingRoutes);
+router.use('/gst', gstRoutes);
+router.use('/employees', employeeRoutes);
+router.use('/attendance', attendanceRoutes);
+router.use('/leaves', leaveRoutes);
+router.use('/notifications', notificationRoutes);
+router.use('/labels', labelRoutes);
 // router.use('/employees', employeeRoutes);
 // router.use('/e-invoice', eInvoiceRoutes);
 

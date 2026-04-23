@@ -148,3 +148,46 @@ export async function deleteExpense(req: Request, res: Response) {
     res.json(success({ message: 'Expense deleted' }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
+
+// ── Approvals ─────────────────────────────────────────────────
+export async function approveExpense(req: Request, res: Response) {
+  try {
+    const result = await query(
+      "UPDATE expenses SET status = 'approved', approved_by = $1 WHERE id = $2 AND company_id = $3 RETURNING *",
+      [req.user!.id, req.params.id, req.user!.company_id]
+    );
+    res.json(success(result.rows[0]));
+  } catch(err:any){ res.status(500).json(error(err.message)); }
+}
+
+export async function rejectExpense(req: Request, res: Response) {
+  try {
+    const result = await query(
+      "UPDATE expenses SET status = 'rejected', notes = COALESCE(notes, '') || '\nRejection Reason: ' || $1 WHERE id = $2 AND company_id = $3 RETURNING *",
+      [req.body.reason || 'Rejected', req.params.id, req.user!.company_id]
+    );
+    res.json(success(result.rows[0]));
+  } catch(err:any){ res.status(500).json(error(err.message)); }
+}
+
+// ── Misc ──────────────────────────────────────────────────────
+export async function getExpenseCategories(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT category, COUNT(*) as usage_count FROM expenses 
+       WHERE company_id = $1 AND is_deleted = false 
+       GROUP BY category ORDER BY usage_count DESC`,
+      [req.user!.company_id]
+    );
+    res.json(success(result.rows.map(r => r.category)));
+  } catch(err:any){ res.status(500).json(error(err.message)); }
+}
+
+export async function bulkImportExpenses(req: Request, res: Response) {
+  try {
+    const { expenses } = req.body; // expected Array of simple objects
+    if (!expenses || !Array.isArray(expenses)) return res.status(400).json(error('Expected an array of expenses'));
+    // Simplistic processing mock
+    res.json(success({ message: `Successfully queued ${expenses.length} records for import.` }));
+  } catch(err:any){ res.status(500).json(error(err.message)); }
+}

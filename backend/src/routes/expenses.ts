@@ -22,10 +22,15 @@ const createSchema = z.object({
   is_reimbursable: z.boolean().optional(),
 });
 
+router.get('/categories', ctrl.getExpenseCategories);
+router.post('/bulk-import', ctrl.bulkImportExpenses);
+
 router.get('/', ctrl.listExpenses);
 router.post('/', validateBody(createSchema), ctrl.createExpense);
 router.get('/:id', ctrl.getExpense);
 router.patch('/:id', ctrl.updateExpense);
 router.delete('/:id', requireMinRole('manager'), ctrl.deleteExpense);
+router.post('/:id/approve', requireMinRole('manager'), ctrl.approveExpense);
+router.post('/:id/reject', requireMinRole('manager'), ctrl.rejectExpense);
 
 export default router;
