@@ -14,7 +14,7 @@ export default function PurchaseOrderList() {
   const { data, isLoading } = useQuery({
     queryKey: ['purchases', tab],
     queryFn: async () => {
-      const endpoint = tab === 'orders' ? '/purchase/orders' : '/purchase/invoices';
+      const endpoint = tab === 'orders' ? '/purchases/orders' : '/purchases/invoices';
       const res = await api.get(endpoint);
       return res.data?.data ?? res.data;
     }

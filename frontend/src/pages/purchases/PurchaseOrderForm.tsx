@@ -85,7 +85,7 @@ export default function PurchaseOrderForm() {
 
   const createPO = useMutation({
     mutationFn: async () => {
-      return api.post('/purchase/orders', {
+      return api.post('/purchases/orders', {
         party_id: partyId,
         godown_id: godownId,
         po_date: new Date().toISOString().split('T')[0],

@@ -16,7 +16,7 @@ export default function GRNScreen() {
 
   const { data: po, isLoading } = useQuery({
      queryKey: ['po', id],
-     queryFn: async () => (await api.get(`/purchase/orders/${id}`)).data?.data
+     queryFn: async () => (await api.get(`/purchases/orders/${id}`)).data?.data
   });
 
   const receiveAction = useMutation({
@@ -26,7 +26,7 @@ export default function GRNScreen() {
            quantity_received: qty,
            unit_price: 0 // Ideally fetched from PO item explicitly
        }));
-       return api.post(`/purchase/orders/${id}/receive`, {
+      return api.post(`/purchases/orders/${id}/receive`, {
          bill_number: billNumber,
          bill_date: new Date().toISOString().split('T')[0],
          items
