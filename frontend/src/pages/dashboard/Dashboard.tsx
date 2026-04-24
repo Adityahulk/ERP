@@ -18,7 +18,7 @@ export default function Dashboard() {
 
   const { data: rawData } = useQuery({
      queryKey: ['dashboard_hub'],
-     queryFn: async () => (await api.get('/dashboard')).data?.data
+     queryFn: async () => (await api.get('/reports/dashboard')).data?.data
   });
 
   const todaySales = rawData?.today?.sales?.total || 0;
