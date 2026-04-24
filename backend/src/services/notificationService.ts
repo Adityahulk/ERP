@@ -5,7 +5,23 @@ const SID = process.env.TWILIO_ACCOUNT_SID;
 const AUTH = process.env.TWILIO_AUTH_TOKEN;
 const WA_NUM = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
 
-const client = SID && AUTH ? twilio(SID, AUTH) : null;
+function createTwilioClient() {
+  // Twilio is optional in many deployments; never crash app startup on invalid placeholders.
+  if (!SID || !AUTH) return null;
+  if (!SID.startsWith('AC')) {
+    console.warn('[WA] TWILIO_ACCOUNT_SID is invalid (must start with AC). WhatsApp sending disabled.');
+    return null;
+  }
+
+  try {
+    return twilio(SID, AUTH);
+  } catch (err: any) {
+    console.warn(`[WA] Twilio init failed: ${err.message}. WhatsApp sending disabled.`);
+    return null;
+  }
+}
+
+const client = createTwilioClient();
 
 // Built-in basic templates matching the specification
 const TEMPLATES: Record<string, string> = {
