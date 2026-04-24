@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: bizflow
       POSTGRES_PASSWORD: bizflow_dev
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     image: redis:7-alpine
     container_name: bizflow_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -39,7 +39,7 @@ services:
       dockerfile: Dockerfile
     container_name: bizflow_backend
     ports:
-      - "5000:5000"
+      - "${BACKEND_PORT:-5000}:5000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,7 +57,7 @@ services:
       dockerfile: Dockerfile
     container_name: bizflow_frontend
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-18080}:80"
     depends_on:
       - backend
     restart: unless-stopped
