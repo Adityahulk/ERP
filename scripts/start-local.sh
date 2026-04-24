@@ -4,8 +4,8 @@
 # Every run this script will:
 #   1) Start Redis + Postgres (Homebrew)
 #   2) Ensure DB role/database `bizflow`
-#   3) Run `npm run migrate` in backend (applies any pending SQL migrations)
-#   4) Run `npm run seed` only if the `users` table is empty (so login works: admin@demo.com / Demo@1234)
+#   3) Run `npm run migrate:dev` in backend (applies any pending SQL migrations)
+#   4) Run `npm run seed:dev` only if the `users` table is empty (so login works: admin@demo.com / Demo@1234)
 #   5) Start backend + frontend dev servers
 #
 # Usage (from repo root):
@@ -145,8 +145,8 @@ BACKEND_PORT="${BACKEND_PORT:-5001}"
 
 # --- Migrations -------------------------------------------------------------
 if [[ "${SKIP_MIGRATE:-}" != "1" ]]; then
-  echo "→ Applying database migrations (npm run migrate)…"
-  (cd "$ROOT/backend" && npm run migrate)
+  echo "→ Applying database migrations (npm run migrate:dev)…"
+  (cd "$ROOT/backend" && npm run migrate:dev)
 else
   echo "→ Skipping migrations (SKIP_MIGRATE=1)."
 fi
@@ -156,11 +156,11 @@ if [[ "${SKIP_SEED:-}" != "1" ]]; then
   user_count="$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*)::bigint FROM users WHERE is_deleted = false;" 2>/dev/null | tr -d '[:space:]' || true)"
   [[ "$user_count" =~ ^[0-9]+$ ]] || user_count=0
   if [[ "${FORCE_SEED:-}" == "1" ]]; then
-    echo "→ FORCE_SEED=1: running npm run seed (will error if data already exists)…"
-    (cd "$ROOT/backend" && npm run seed)
+    echo "→ FORCE_SEED=1: running npm run seed:dev (will error if data already exists)…"
+    (cd "$ROOT/backend" && npm run seed:dev)
   elif [[ "$user_count" -eq 0 ]]; then
-    echo "→ No users found; running npm run seed (demo: admin@demo.com / Demo@1234)…"
-    (cd "$ROOT/backend" && npm run seed)
+    echo "→ No users found; running npm run seed:dev (demo: admin@demo.com / Demo@1234)…"
+    (cd "$ROOT/backend" && npm run seed:dev)
   else
     echo "→ Found ${user_count} user(s); skipping seed. (Wipe + reseed: cd backend && npm run reset)"
   fi

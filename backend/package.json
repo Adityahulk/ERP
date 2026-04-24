@@ -5,13 +5,16 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon",
-    "build": "tsc && cp -R src/templates dist/templates",
+    "build": "tsc && cp -R src/templates dist/templates && cp -R src/db/migrations dist/db/migrations",
     "start": "node dist/server.js",
     "worker": "node dist/worker.js",
-    "migrate": "ts-node src/db/migrate.ts",
-    "seed": "ts-node src/db/seed.ts",
+    "migrate": "node dist/db/migrate.js",
+    "migrate:dev": "ts-node src/db/migrate.ts",
+    "seed": "node dist/db/seed.js",
+    "seed:dev": "ts-node src/db/seed.ts",
     "migrate:seed": "npm run migrate && npm run seed",
-    "reset": "ts-node src/db/reset.ts && npm run migrate && npm run seed"
+    "migrate:seed:dev": "npm run migrate:dev && npm run seed:dev",
+    "reset": "ts-node src/db/reset.ts && npm run migrate:dev && npm run seed:dev"
   },
   "dependencies": {
     "@types/puppeteer": "^5.4.7",
