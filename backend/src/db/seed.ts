@@ -96,6 +96,10 @@ const IDS = {
   poLineUsb: uuidv4(),
   poLineOil: uuidv4(),
 
+  // Quotations (demo)
+  quoteDemo1: uuidv4(),
+  quoteDemo2: uuidv4(),
+
   // Accounts (chart of accounts)
   accCash: uuidv4(),
   accBank: uuidv4(),
@@ -541,6 +545,34 @@ async function seed(): Promise<void> {
         ]);
       }
     }
+
+    // ─── 8b. Quotations (demo) ───────────────────────────────
+    console.log('  📋 Creating sample quotations...');
+    await pool.query(
+      `
+      INSERT INTO quotations (
+        id, company_id, godown_id, quotation_number, quotation_date, valid_until, party_id,
+        subtotal, total_amount, status, created_by
+      ) VALUES
+        ($1, $2, $3, 'QT-DEMO-001', $4, $5, $6, $7, $7, 'sent', $8),
+        ($9, $2, $3, 'QT-DEMO-002', $10, $11, $12, $13, $13, 'draft', $8)
+      `,
+      [
+        IDS.quoteDemo1,
+        IDS.company,
+        IDS.godownMain,
+        daysAgo(18),
+        daysAgo(3),
+        IDS.partyRajesh,
+        p(125000),
+        IDS.admin,
+        IDS.quoteDemo2,
+        daysAgo(6),
+        daysAgo(30),
+        IDS.partySharma,
+        p(45000),
+      ]
+    );
 
     // ─── 9. Purchase Invoices (8 over last 90 days) ─────────
     console.log('  📥 Creating purchase invoices...');

@@ -16,6 +16,8 @@ import InvoiceDetail from '@/pages/sales/InvoiceDetail';
 import PurchaseOrderList from '@/pages/purchases/PurchaseOrderList';
 import PurchaseOrderForm from '@/pages/purchases/PurchaseOrderForm';
 import GRNScreen from '@/pages/purchases/GRNScreen';
+import QuotationList from '@/pages/quotations/QuotationList';
+import QuotationForm from '@/pages/quotations/QuotationForm';
 import ExpenseList from '@/pages/expenses/ExpenseList';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
@@ -123,6 +125,9 @@ export default function App() {
         <Route path="/sales" element={<InvoiceList />} />
         <Route path="/sales/new" element={<InvoiceCreate />} />
         <Route path="/sales/:id" element={<InvoiceDetail />} />
+
+        <Route path="/quotations" element={<QuotationList />} />
+        <Route path="/quotations/new" element={<QuotationForm />} />
 
         {/* Purchases */}
         <Route path="/purchases" element={<PurchaseOrderList />} />

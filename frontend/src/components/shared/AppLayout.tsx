@@ -5,7 +5,7 @@ import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt, 
   Warehouse, Database, BarChart3, Cloud, UserCheck, 
-  Settings, LogOut, Menu, X, Search, Bell
+  Settings, LogOut, Menu, X, Search, Bell, ClipboardList
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -21,6 +21,7 @@ const navGroups = [
      items: [
         { to: '/billing', icon: ShoppingBag, label: 'POS Billing' },
         { to: '/sales', icon: FileText, label: 'Sales & Invoices' },
+        { to: '/quotations', icon: ClipboardList, label: 'Quotations' },
         { to: '/purchases', icon: ShoppingBag, label: 'Purchase & GRN' },
         { to: '/inventory', icon: Warehouse, label: 'Inventory Core' },
      ]
@@ -119,6 +120,9 @@ export default function AppLayout() {
                         </Command.Item>
                         <Command.Item onSelect={() => {setCmdOpen(false); navigate('/sales/new')}} className="flex items-center gap-2 p-3 hover:bg-indigo-50 hover:text-indigo-700 rounded-md cursor-pointer text-slate-700">
                            <FileText className="w-4 h-4"/> Create B2B Invoice
+                        </Command.Item>
+                        <Command.Item onSelect={() => {setCmdOpen(false); navigate('/quotations/new')}} className="flex items-center gap-2 p-3 hover:bg-indigo-50 hover:text-indigo-700 rounded-md cursor-pointer text-slate-700">
+                           <ClipboardList className="w-4 h-4"/> New quotation
                         </Command.Item>
                         <Command.Item onSelect={() => {setCmdOpen(false); navigate('/inventory?new=1')}} className="flex items-center gap-2 p-3 hover:bg-indigo-50 hover:text-indigo-700 rounded-md cursor-pointer text-slate-700">
                            <Warehouse className="w-4 h-4"/> Add New Item Tracker

@@ -60,7 +60,7 @@ router.get('/', (_req, res) => {
       active: [
         'auth', 'company', 'godowns', 'users',
         'item-categories', 'item-units', 'items', 'stock',
-        'parties', 'invoices', 'payments', 'expenses', 'reports',
+        'parties', 'invoices', 'quotations', 'payments', 'expenses', 'reports',
       ],
       planned: ['quotations', 'employees'],
     },
