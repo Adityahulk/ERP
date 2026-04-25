@@ -45,7 +45,10 @@ export default function QuotationList() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Quotations</h1>
-          <p className="text-muted-foreground text-sm">Customer quotes before they become invoices.</p>
+          <p className="text-muted-foreground text-sm">
+            Formal price offers to customers. Each row shows the quote reference (quotation number), validity, and
+            amount.
+          </p>
         </div>
         <Button onClick={() => navigate('/quotations/new')} className="gap-2">
           <Plus className="w-4 h-4" />
@@ -63,8 +66,9 @@ export default function QuotationList() {
             <table className="w-full text-sm text-left">
               <thead className="bg-muted/50 border-b font-medium">
                 <tr>
-                  <th className="px-4 py-3">Number</th>
-                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Quote ref.</th>
+                  <th className="px-4 py-3">Quote date</th>
+                  <th className="px-4 py-3">Valid until</th>
                   <th className="px-4 py-3">Customer</th>
                   <th className="px-4 py-3 text-right">Amount</th>
                   <th className="px-4 py-3">Status</th>
@@ -77,6 +81,9 @@ export default function QuotationList() {
                     <td className="px-4 py-3 font-medium">{q.quotation_number}</td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {q.quotation_date ? new Date(q.quotation_date).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {q.valid_until ? new Date(q.valid_until).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-4 py-3">{q.party_name || '—'}</td>
                     <td className="px-4 py-3 text-right tabular-nums">
@@ -108,7 +115,7 @@ export default function QuotationList() {
                 ))}
                 {!rows.length && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
                       No quotations yet. Create one or run seed for demo rows.
                     </td>
                   </tr>

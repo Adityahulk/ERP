@@ -2,6 +2,53 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
+import { redis } from '../config/redis';
+
+function trimOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
+}
+
+/** Same FY + branch pattern as sales invoices, using `companies.quotation_prefix`. */
+async function generateQuotationNumber(companyId: string, godownId: string | null): Promise<string> {
+  const prefixRes = await query('SELECT quotation_prefix FROM companies WHERE id = $1', [companyId]);
+  const raw = prefixRes.rows[0]?.quotation_prefix;
+  const prefix = String(raw != null && String(raw).trim() !== '' ? raw : 'QT').replace(/\/+$/, '');
+
+  const now = new Date();
+  const month = now.getMonth();
+  const yearStr = now.getFullYear().toString().slice(-2);
+  const nextYearStr = (now.getFullYear() + 1).toString().slice(-2);
+  const prevYearStr = (now.getFullYear() - 1).toString().slice(-2);
+  const fyShort = month >= 3 ? `${yearStr}-${nextYearStr}` : `${prevYearStr}-${yearStr}`;
+
+  const branchCode = godownId ? 'GW' : 'HQ';
+
+  const redisKey = `seq:quotation:${companyId}:${fyShort}`;
+  let seq = 1;
+
+  if (redis) {
+    try {
+      seq = await redis.incr(redisKey);
+    } catch {
+      const dbRes = await query(
+        `SELECT COUNT(*)::int as count FROM quotations WHERE company_id = $1 AND is_deleted = false AND created_at >= $2`,
+        [companyId, new Date(now.getFullYear(), 0, 1).toISOString()]
+      );
+      seq = (dbRes.rows[0]?.count || 0) + 1;
+    }
+  } else {
+    const dbRes = await query(
+      `SELECT COUNT(*)::int as count FROM quotations WHERE company_id = $1 AND is_deleted = false AND created_at >= $2`,
+      [companyId, new Date(now.getFullYear(), 0, 1).toISOString()]
+    );
+    seq = (dbRes.rows[0]?.count || 0) + 1;
+  }
+
+  const paddedSeq = String(seq).padStart(4, '0');
+  return `${prefix}/${branchCode}/${fyShort}/${paddedSeq}`;
+}
 
 export async function createQuotation(req: Request, res: Response) {
   try {
@@ -9,27 +56,38 @@ export async function createQuotation(req: Request, res: Response) {
     if (!d.party_id) return res.status(400).json(error('party_id is required'));
     if (!d.quotation_date) return res.status(400).json(error('quotation_date is required'));
 
-    const subtotal = Number(d.subtotal) || 0;
-    const total = Number(d.total_amount) ?? subtotal;
+    const godownId = d.godown_id || null;
+    const discount = Math.max(0, Math.round(Number(d.discount_amount) || 0));
+    const total = Math.max(0, Math.round(Number(d.total_amount) || 0));
+    const subtotal = Math.max(0, Math.round(Number(d.subtotal) ?? total + discount));
 
-    const qn =
-      (typeof d.quotation_number === 'string' && d.quotation_number.trim()) ||
-      `QT-${Date.now()}`;
+    const customNo = trimOrNull(d.quotation_number);
+    const qn = customNo || (await generateQuotationNumber(req.user!.company_id, godownId));
 
     const invRes = await query(
       `INSERT INTO quotations (
          company_id, godown_id, quotation_number, quotation_date, valid_until, party_id,
-         subtotal, total_amount, status, created_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'draft', $9) RETURNING *`,
+         party_name_override, party_phone_override, party_email_override,
+         subtotal, discount_amount, total_amount,
+         customer_notes, internal_notes, terms_and_conditions,
+         status, created_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'draft', $16) RETURNING *`,
       [
         req.user!.company_id,
-        d.godown_id || null,
+        godownId,
         qn,
         d.quotation_date,
         d.valid_until || null,
         d.party_id,
+        trimOrNull(d.party_name_override),
+        trimOrNull(d.party_phone_override),
+        trimOrNull(d.party_email_override),
         subtotal,
+        discount,
         total,
+        trimOrNull(d.customer_notes),
+        trimOrNull(d.internal_notes),
+        trimOrNull(d.terms_and_conditions),
         req.user!.id,
       ]
     );
