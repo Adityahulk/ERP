@@ -93,24 +93,33 @@ export function calculateInvoiceTotals(
     totalCess += taxInfo.cessAmount;
   }
 
-  // Invoice level discount (applied proportionately or just as a flat deduction on the final bottom line)
-  // Standard Indian GST practice applies discount BEFORE tax. However, if line items already calculated tax,
-  // applying an invoice-level discount requires recalculating all taxes proportionately.
-  // For simplicity assuming invoiceDiscount here is a post-tax absolute deduction or we're ignoring it if it's complex.
-  // We'll treat invoiceDiscountValue directly off the subtotal and recalculate total tax.
-  // To be safe, most ERPs distribute invoice discount to line items.
-  // If we just want a flat bottom-line discount (often forbidden by strict GST):
+  // Invoice-level discount must reduce taxable base first, then tax.
   let globalDiscountAmount = 0;
   if (invoiceDiscountType === 'flat') {
-    globalDiscountAmount = invoiceDiscountValue;
+    globalDiscountAmount = Math.max(0, Math.min(invoiceDiscountValue, totalTaxable));
   } else if (invoiceDiscountType === 'percent') {
-    const sumTotalBeforeRound = totalTaxable + totalCgst + totalSgst + totalIgst + totalCess;
-    globalDiscountAmount = Math.round((sumTotalBeforeRound * invoiceDiscountValue) / 100);
+    globalDiscountAmount = Math.round((totalTaxable * invoiceDiscountValue) / 100);
+  }
+  globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, totalTaxable));
+
+  let taxableAfterDiscount = totalTaxable - globalDiscountAmount;
+  const scale = totalTaxable > 0 ? taxableAfterDiscount / totalTaxable : 1;
+  let adjCgst = Math.round(totalCgst * scale);
+  let adjSgst = Math.round(totalSgst * scale);
+  let adjIgst = Math.round(totalIgst * scale);
+  let adjCess = Math.round(totalCess * scale);
+
+  // preserve total tax after rounding
+  const originalTaxAfter = Math.round((totalCgst + totalSgst + totalIgst + totalCess) * scale);
+  const drift = originalTaxAfter - (adjCgst + adjSgst + adjIgst + adjCess);
+  if (drift !== 0) {
+    if (gstType === 'inter') adjIgst += drift;
+    else adjSgst += drift;
   }
 
   const finalTotalBeforeTcs = Math.max(
     0,
-    totalTaxable + totalCgst + totalSgst + totalIgst + totalCess - globalDiscountAmount
+    taxableAfterDiscount + adjCgst + adjSgst + adjIgst + adjCess
   );
 
   const tcsAmount = Math.round((finalTotalBeforeTcs * tcsRate) / 100);
@@ -127,12 +136,12 @@ export function calculateInvoiceTotals(
     totalDiscountLineLevel,
     globalDiscountAmount,
     totalDiscount: totalDiscountLineLevel + globalDiscountAmount,
-    totalTaxable,
-    totalCgst,
-    totalSgst,
-    totalIgst,
-    totalCess,
-    totalTax: totalCgst + totalSgst + totalIgst + totalCess,
+    totalTaxable: taxableAfterDiscount,
+    totalCgst: adjCgst,
+    totalSgst: adjSgst,
+    totalIgst: adjIgst,
+    totalCess: adjCess,
+    totalTax: adjCgst + adjSgst + adjIgst + adjCess,
     tcsAmount,
     roundOff,
     totalAmount: roundedAmountPaise,

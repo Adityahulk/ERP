@@ -9,6 +9,7 @@ router.use(verifyToken);
 router.post('/clock-in', ctrl.clockIn);
 router.post('/clock-out', ctrl.clockOut);
 router.get('/today', ctrl.getToday);
+router.get('/company/today', requireMinRole('manager'), ctrl.getCompanyToday);
 router.get('/godown/:godownId/today', requireMinRole('manager'), ctrl.getGodownToday);
 router.post('/regularize', requireMinRole('manager'), ctrl.regularize);
 

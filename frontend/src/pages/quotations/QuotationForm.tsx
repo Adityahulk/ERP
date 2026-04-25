@@ -8,13 +8,24 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, Trash2 } from 'lucide-react';
 
 const rupeesToPaise = (r: number) => Math.round(r * 100);
+const paiseToRupees = (p: number) => (p / 100).toFixed(2);
 
 function FieldHint({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{children}</p>;
 }
+
+type QuoteLine = {
+  item_name: string;
+  item_description: string;
+  quantity: string;
+  unit_price: string;
+  discount_amount: string;
+  gst_rate: string;
+  unit: string;
+};
 
 export default function QuotationForm() {
   const navigate = useNavigate();
@@ -38,14 +49,15 @@ export default function QuotationForm() {
     d.setDate(d.getDate() + 14);
     return d.toISOString().split('T')[0];
   });
-  const [discountRupees, setDiscountRupees] = useState('');
-  const [totalRupees, setTotalRupees] = useState('');
   const [partyNameOverride, setPartyNameOverride] = useState('');
   const [partyPhoneOverride, setPartyPhoneOverride] = useState('');
   const [partyEmailOverride, setPartyEmailOverride] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [lines, setLines] = useState<QuoteLine[]>([
+    { item_name: '', item_description: '', quantity: '1', unit_price: '', discount_amount: '0', gst_rate: '18', unit: 'PCS' },
+  ]);
 
   const defaultGodown = useMemo(() => {
     const def = godowns.find((g: any) => g.is_default);
@@ -56,20 +68,50 @@ export default function QuotationForm() {
     if (!godownId && defaultGodown) setGodownId(defaultGodown);
   }, [godownId, defaultGodown]);
 
+  const lineTotals = useMemo(() => {
+    let subtotal = 0;
+    let discount = 0;
+    let tax = 0;
+    let total = 0;
+
+    const normalized = lines.map((ln) => {
+      const qty = Number(ln.quantity) || 0;
+      const price = rupeesToPaise(Number(ln.unit_price) || 0);
+      const gross = Math.max(0, Math.round(qty * price));
+      const disc = rupeesToPaise(Number(ln.discount_amount) || 0);
+      const taxable = Math.max(0, gross - disc);
+      const gst = Math.max(0, Number(ln.gst_rate) || 0);
+      const taxAmt = Math.round((taxable * gst) / 100);
+      const final = taxable + taxAmt;
+
+      subtotal += gross;
+      discount += disc;
+      tax += taxAmt;
+      total += final;
+
+      return {
+        item_name: ln.item_name.trim() || 'Item',
+        item_description: ln.item_description.trim() || undefined,
+        unit: ln.unit.trim() || 'PCS',
+        quantity: qty,
+        unit_price: price,
+        discount_amount: disc,
+        gst_rate: gst,
+      };
+    });
+
+    return { subtotal, discount, tax, total, normalized };
+  }, [lines]);
+
   const create = useMutation({
     mutationFn: async () => {
-      const discount = rupeesToPaise(parseFloat(discountRupees) || 0);
-      const total = rupeesToPaise(parseFloat(totalRupees) || 0);
-      const subtotal = total + discount;
       return api.post('/quotations', {
         party_id: partyId,
         godown_id: godownId || undefined,
         quotation_number: quotationNumber.trim() || undefined,
         quotation_date: quotationDate,
         valid_until: validUntil || undefined,
-        subtotal,
-        discount_amount: discount,
-        total_amount: total,
+        items: lineTotals.normalized,
         party_name_override: partyNameOverride.trim() || undefined,
         party_phone_override: partyPhoneOverride.trim() || undefined,
         party_email_override: partyEmailOverride.trim() || undefined,
@@ -87,10 +129,26 @@ export default function QuotationForm() {
   });
 
   const loading = partiesLoading;
-  const totalOk =
-    totalRupees.trim() !== '' &&
-    !Number.isNaN(parseFloat(totalRupees)) &&
-    parseFloat(totalRupees) >= 0;
+  const hasLine = lineTotals.normalized.some((x) => x.quantity > 0 && x.unit_price >= 0);
+
+  const updateLine = (idx: number, key: keyof QuoteLine, value: string) => {
+    setLines((prev) => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [key]: value };
+      return copy;
+    });
+  };
+
+  const addLine = () => {
+    setLines((prev) => [
+      ...prev,
+      { item_name: '', item_description: '', quantity: '1', unit_price: '', discount_amount: '0', gst_rate: '18', unit: 'PCS' },
+    ]);
+  };
+
+  const removeLine = (idx: number) => {
+    setLines((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== idx)));
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-10">
@@ -101,7 +159,7 @@ export default function QuotationForm() {
         <div>
           <h1 className="text-2xl font-bold">New quotation</h1>
           <p className="text-sm text-muted-foreground">
-            A quotation (quote) is a formal price offer. Line-item GST breakdown can be added in a later release.
+            A quotation (quote) is a formal price offer with line items, GST, validity, and terms.
           </p>
         </div>
       </div>
@@ -226,35 +284,59 @@ export default function QuotationForm() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Amounts (summary)</CardTitle>
+          <CardTitle className="text-lg">Line items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 pt-0">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <Label>Discount (₹)</Label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                className="mt-1.5 tabular-nums"
-                placeholder="0.00"
-                value={discountRupees}
-                onChange={(e) => setDiscountRupees(e.target.value)}
-              />
-              <FieldHint>Total discount on this quote (before tax). Optional.</FieldHint>
+          {lines.map((ln, idx) => (
+            <div key={idx} className="rounded-md border p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold">Item #{idx + 1}</h4>
+                <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(idx)} disabled={lines.length === 1}>
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <Label>Item / service name</Label>
+                  <Input className="mt-1.5" value={ln.item_name} onChange={(e) => updateLine(idx, 'item_name', e.target.value)} />
+                </div>
+                <div>
+                  <Label>Unit</Label>
+                  <Input className="mt-1.5" value={ln.unit} onChange={(e) => updateLine(idx, 'unit', e.target.value)} />
+                </div>
+                <div>
+                  <Label>Quantity</Label>
+                  <Input type="number" min={0} step="0.001" className="mt-1.5" value={ln.quantity} onChange={(e) => updateLine(idx, 'quantity', e.target.value)} />
+                </div>
+                <div>
+                  <Label>Unit price (₹)</Label>
+                  <Input type="number" min={0} step="0.01" className="mt-1.5" value={ln.unit_price} onChange={(e) => updateLine(idx, 'unit_price', e.target.value)} />
+                </div>
+                <div>
+                  <Label>Line discount (₹)</Label>
+                  <Input type="number" min={0} step="0.01" className="mt-1.5" value={ln.discount_amount} onChange={(e) => updateLine(idx, 'discount_amount', e.target.value)} />
+                </div>
+                <div>
+                  <Label>GST rate (%)</Label>
+                  <Input type="number" min={0} step="1" className="mt-1.5" value={ln.gst_rate} onChange={(e) => updateLine(idx, 'gst_rate', e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <Label>Description (optional)</Label>
+                <Input className="mt-1.5" value={ln.item_description} onChange={(e) => updateLine(idx, 'item_description', e.target.value)} />
+              </div>
             </div>
-            <div>
-              <Label>Quote total (₹) incl. taxes</Label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                className="mt-1.5 tabular-nums"
-                placeholder="0.00"
-                value={totalRupees}
-                onChange={(e) => setTotalRupees(e.target.value)}
-              />
-              <FieldHint>Final round-figure you are offering on this quotation.</FieldHint>
+          ))}
+          <div className="flex justify-between items-center pt-1">
+            <Button type="button" variant="outline" onClick={addLine}>
+              <Plus className="w-4 h-4 mr-1" />
+              Add line
+            </Button>
+            <div className="text-sm text-right space-y-0.5 tabular-nums">
+              <div>Subtotal: ₹{paiseToRupees(lineTotals.subtotal)}</div>
+              <div>Discount: ₹{paiseToRupees(lineTotals.discount)}</div>
+              <div>Tax: ₹{paiseToRupees(lineTotals.tax)}</div>
+              <div className="font-semibold">Total: ₹{paiseToRupees(lineTotals.total)}</div>
             </div>
           </div>
         </CardContent>
@@ -298,7 +380,7 @@ export default function QuotationForm() {
       <div className="flex gap-2">
         <Button
           onClick={() => create.mutate()}
-          disabled={!partyId || !quotationDate || !totalOk || create.isPending}
+          disabled={!partyId || !quotationDate || !hasLine || create.isPending}
         >
           {create.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save quotation'}
         </Button>

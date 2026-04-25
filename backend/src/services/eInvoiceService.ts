@@ -217,6 +217,12 @@ export async function generateIRN(
     throw new Error('EINVOICE_GSP_URL or EINVOICE_SANDBOX_URL must be set for sandbox/production modes');
   }
 
+  const tryTaxPro = Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
+  if (tryTaxPro) {
+    const taxpro = await generateIRNViaTaxPro(payload);
+    if (taxpro) return taxpro;
+  }
+
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/GenerateEInvoice`, {
       method: 'POST',
@@ -256,6 +262,84 @@ export async function generateIRN(
   }
 }
 
+function normalizeIrnResponse(json: any): GenerateIrnResult | null {
+  const irn =
+    json?.Irn ||
+    json?.irn ||
+    json?.Data?.Irn ||
+    json?.data?.Irn ||
+    json?.result?.irn ||
+    json?.result?.Irn;
+  if (!irn) return null;
+  const ack_number =
+    String(
+      json?.AckNo ||
+      json?.ackNo ||
+      json?.Data?.AckNo ||
+      json?.data?.AckNo ||
+      json?.result?.ackNo ||
+      ''
+    );
+  const ack_date =
+    json?.AckDt ||
+    json?.ackDate ||
+    json?.Data?.AckDt ||
+    json?.data?.AckDt ||
+    json?.result?.ackDate ||
+    new Date().toISOString();
+  const signed_qr_code = json?.SignedQRCode || json?.Data?.SignedQRCode || json?.data?.SignedQRCode;
+  return { irn: String(irn), ack_number, ack_date: String(ack_date), signed_qr_code };
+}
+
+async function generateIRNViaTaxPro(payload: Record<string, unknown>): Promise<GenerateIrnResult | null> {
+  const base = (env.TAXPRO_API_BASE_URL || '').trim().replace(/\/$/, '');
+  if (!base) return null;
+
+  const apiKey = env.TAXPRO_API_KEY || env.TAXPRO_USERNAME || env.EINVOICE_USERNAME;
+  const apiSecret = env.TAXPRO_API_SECRET || env.TAXPRO_PASSWORD || env.EINVOICE_PASSWORD;
+  const authHeader = apiKey && apiSecret ? `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}` : '';
+
+  const endpointCandidates = [
+    env.TAXPRO_IRN_ENDPOINT,
+    '/api/einvoice/irn/generate',
+    '/api/v1/einvoice/irn/generate',
+    '/einvoice/generate-irn',
+  ].filter(Boolean) as string[];
+
+  const bodyCandidates = [
+    payload,
+    { data: payload },
+    { payload },
+  ];
+
+  for (const ep of endpointCandidates) {
+    const url = `${base}${ep.startsWith('/') ? '' : '/'}${ep}`;
+    for (const body of bodyCandidates) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+            ...(apiKey ? { 'x-api-key': apiKey } : {}),
+            ...(apiSecret ? { 'x-api-secret': apiSecret } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        let json: any = {};
+        try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
+        if (!res.ok) continue;
+        const out = normalizeIrnResponse(json);
+        if (out) return out;
+      } catch (e) {
+        logger.warn('TaxPro IRN attempt failed', { endpoint: ep, err: (e as any)?.message });
+      }
+    }
+  }
+  return null;
+}
+
 export async function cancelIRN(
   irn: string,
   reasonCode: number,
@@ -279,6 +363,12 @@ export async function cancelIRN(
   if (!baseUrl) throw new Error('E-invoice base URL not configured');
 
   const body = { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) };
+  const tryTaxPro = Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
+  if (tryTaxPro) {
+    const ok = await cancelIRNViaTaxPro(irn, reasonCode, reasonDescription);
+    if (ok) return { cancelled: true };
+  }
+
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/CancelEInvoice`, {
     method: 'POST',
     headers: {
@@ -294,6 +384,47 @@ export async function cancelIRN(
     throw new Error(`Cancel IRN failed (${res.status}): ${t.slice(0, 200)}`);
   }
   return { cancelled: true };
+}
+
+async function cancelIRNViaTaxPro(irn: string, reasonCode: number, reasonDescription: string): Promise<boolean> {
+  const base = (env.TAXPRO_API_BASE_URL || '').trim().replace(/\/$/, '');
+  if (!base) return false;
+  const apiKey = env.TAXPRO_API_KEY || env.TAXPRO_USERNAME || env.EINVOICE_USERNAME;
+  const apiSecret = env.TAXPRO_API_SECRET || env.TAXPRO_PASSWORD || env.EINVOICE_PASSWORD;
+  const authHeader = apiKey && apiSecret ? `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}` : '';
+  const endpointCandidates = [
+    env.TAXPRO_CANCEL_ENDPOINT,
+    '/api/einvoice/irn/cancel',
+    '/api/v1/einvoice/irn/cancel',
+    '/einvoice/cancel-irn',
+  ].filter(Boolean) as string[];
+
+  const bodyCandidates = [
+    { irn, reasonCode, reasonDescription },
+    { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) },
+  ];
+
+  for (const ep of endpointCandidates) {
+    const url = `${base}${ep.startsWith('/') ? '' : '/'}${ep}`;
+    for (const body of bodyCandidates) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+            ...(apiKey ? { 'x-api-key': apiKey } : {}),
+            ...(apiSecret ? { 'x-api-secret': apiSecret } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) return true;
+      } catch (e) {
+        logger.warn('TaxPro cancel IRN attempt failed', { endpoint: ep, err: (e as any)?.message });
+      }
+    }
+  }
+  return false;
 }
 
 export async function generateEinvoiceQR(

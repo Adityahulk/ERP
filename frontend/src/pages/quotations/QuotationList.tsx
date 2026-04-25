@@ -4,7 +4,7 @@ import api from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, Send, FileCheck } from 'lucide-react';
+import { Plus, Loader2, Send, FileCheck, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function QuotationList() {
@@ -95,6 +95,10 @@ export default function QuotationList() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right space-x-1">
+                      <Button variant="ghost" size="sm" className="h-8" onClick={() => navigate(`/quotations/${q.id}`)}>
+                        <Eye className="w-3.5 h-3.5 mr-1" />
+                        View
+                      </Button>
                       {q.status === 'draft' && (
                         <Button
                           variant="ghost"

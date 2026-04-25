@@ -22,6 +22,8 @@ export default function InvoiceDetail() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('2');
   const [cancelNote, setCancelNote] = useState('');
+  const [waPickerOpen, setWaPickerOpen] = useState(false);
+  const [waSending, setWaSending] = useState(false);
 
   const { data: raw, isLoading, refetch } = useQuery({
     queryKey: ['invoice', id],
@@ -113,6 +115,85 @@ export default function InvoiceDetail() {
     }
   };
 
+  const normalizePhone = (raw?: string) => {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length === 10) return `91${digits}`;
+    if (digits.startsWith('0') && digits.length === 11) return `91${digits.slice(1)}`;
+    return digits;
+  };
+
+  const buildWaMessage = () => {
+    const partyName = inv.party_name || inv.party_display_name || 'Customer';
+    return `Hi ${partyName},
+
+Please find invoice ${inv.invoice_number} dated ${formatDate(inv.invoice_date)} for ${formatMoney(inv.total_amount)}.
+Thank you.
+- ${company?.name || 'BizFlow'}`;
+  };
+
+  const fetchInvoicePdfFile = async (): Promise<File> => {
+    const res = await api.get(`/invoices/${id}/pdf`, { responseType: 'blob' });
+    const blob = new Blob([res.data], { type: 'application/pdf' });
+    return new File([blob], `${inv.invoice_number}.pdf`, { type: 'application/pdf' });
+  };
+
+  const openWhatsApp = async (target: 'web' | 'app') => {
+    const phone = normalizePhone(inv.party_phone);
+    if (!phone) {
+      toast.error('Customer phone number missing on this invoice');
+      return;
+    }
+
+    const text = buildWaMessage();
+    setWaSending(true);
+    try {
+      if (target === 'app') {
+        // On supported devices this opens native share sheet with WhatsApp option and PDF attached.
+        if (navigator.share) {
+          const file = await fetchInvoicePdfFile();
+          const navAny = navigator as any;
+          const canShareFiles = typeof navAny.canShare === 'function' ? navAny.canShare({ files: [file] }) : false;
+          if (canShareFiles) {
+            await navigator.share({
+              title: `Invoice ${inv.invoice_number}`,
+              text,
+              files: [file],
+            });
+            toast.success('Shared via app chooser');
+            setWaPickerOpen(false);
+            return;
+          }
+        }
+        const appUrl = `whatsapp://send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`;
+        window.open(appUrl, '_blank');
+        toast.success('Opening WhatsApp app…');
+        setWaPickerOpen(false);
+        return;
+      }
+
+      // Web flow: open WhatsApp Web with prefilled message and auto-download invoice PDF for manual attach.
+      const file = await fetchInvoicePdfFile();
+      const localUrl = window.URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = localUrl;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(localUrl);
+
+      const webUrl = `https://web.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`;
+      window.open(webUrl, '_blank', 'noopener,noreferrer');
+      toast.success('Opening WhatsApp Web. Attach the downloaded PDF and send.');
+      setWaPickerOpen(false);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to open WhatsApp');
+    } finally {
+      setWaSending(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -148,10 +229,7 @@ export default function InvoiceDetail() {
           <Button
             variant="outline"
             size="sm"
-            onClick={async () => {
-              await api.post(`/invoices/${inv.id}/whatsapp`);
-              toast.success('WhatsApp dispatched');
-            }}
+            onClick={() => setWaPickerOpen((v) => !v)}
           >
             <Send className="h-4 w-4 mr-2" /> WhatsApp
           </Button>
@@ -175,6 +253,23 @@ export default function InvoiceDetail() {
           )}
         </div>
       </div>
+
+      {waPickerOpen && (
+        <Card className="border-emerald-200">
+          <CardContent className="p-4 flex flex-wrap items-center gap-3">
+            <p className="text-sm text-muted-foreground mr-2">Send via:</p>
+            <Button size="sm" onClick={() => openWhatsApp('web')} disabled={waSending}>
+              WhatsApp Web
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => openWhatsApp('app')} disabled={waSending}>
+              WhatsApp App
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setWaPickerOpen(false)} disabled={waSending}>
+              Cancel
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="md:col-span-2">

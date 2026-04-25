@@ -43,6 +43,14 @@ const envSchema = z.object({
   EINVOICE_GSP_URL: z.string().optional(),
   EINVOICE_SANDBOX_URL: z.string().optional(),
   EINVOICE_PRODUCTION_URL: z.string().optional(),
+  // TaxPro (optional primary provider)
+  TAXPRO_API_BASE_URL: z.string().optional(),
+  TAXPRO_API_KEY: z.string().optional(),
+  TAXPRO_API_SECRET: z.string().optional(),
+  TAXPRO_USERNAME: z.string().optional(),
+  TAXPRO_PASSWORD: z.string().optional(),
+  TAXPRO_IRN_ENDPOINT: z.string().optional(),
+  TAXPRO_CANCEL_ENDPOINT: z.string().optional(),
   /** 64 hex chars (32 bytes) for AES-256-GCM storage of GSP passwords at rest */
   CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
 });

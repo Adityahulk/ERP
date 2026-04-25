@@ -17,6 +17,7 @@ import PurchaseOrderForm from '@/pages/purchases/PurchaseOrderForm';
 import GRNScreen from '@/pages/purchases/GRNScreen';
 import QuotationList from '@/pages/quotations/QuotationList';
 import QuotationForm from '@/pages/quotations/QuotationForm';
+import QuotationDetail from '@/pages/quotations/QuotationDetail';
 import ExpenseList from '@/pages/expenses/ExpenseList';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
@@ -122,6 +123,7 @@ export default function App() {
 
         <Route path="/quotations" element={<QuotationList />} />
         <Route path="/quotations/new" element={<QuotationForm />} />
+        <Route path="/quotations/:id" element={<QuotationDetail />} />
 
         {/* Purchases */}
         <Route path="/purchases" element={<PurchaseOrderList />} />

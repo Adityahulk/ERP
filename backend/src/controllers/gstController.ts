@@ -2,24 +2,33 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 
+function parsePeriod(month?: string | string[], year?: string | string[]) {
+  if (!month || !year) return { from: '1970-01-01', to: '2100-01-01', fp: '' };
+  const m = Number(Array.isArray(month) ? month[0] : month);
+  const y = Number(Array.isArray(year) ? year[0] : year);
+  if (!Number.isInteger(m) || m < 1 || m > 12 || !Number.isInteger(y) || y < 2000 || y > 2100) {
+    throw new Error('Invalid month/year');
+  }
+  const start = new Date(Date.UTC(y, m - 1, 1));
+  const end = new Date(Date.UTC(y, m, 1));
+  const from = start.toISOString().slice(0, 10);
+  const to = end.toISOString().slice(0, 10);
+  return { from, to, fp: `${String(m).padStart(2, '0')}${y}` };
+}
+
 export async function getGSTSummary(req: Request, res: Response) {
   try {
-     const { month, year } = req.query;
+     const { month, year } = req.query as any;
      const companyId = req.user!.company_id;
-
-     // Calculate Start and End of specific month
-     // Or general aggregation if not provided
-     let df = `1970-01-01`;
-     let dt = `2099-12-31`;
-     if (month && year) {
-         df = `${year}-${String(month).padStart(2,'0')}-01`;
-         // rough end of month
-         dt = `${year}-${String(Number(month)+1).padStart(2,'0')}-01`;
-     }
+     const { from: df, to: dt } = parsePeriod(month, year);
 
      const outputRes = await query(
        `SELECT SUM(cgst_amount) as cgst, SUM(sgst_amount) as sgst, SUM(igst_amount) as igst
-        FROM invoices WHERE company_id = $1 AND invoice_date >= $2 AND invoice_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+        FROM invoices
+        WHERE company_id = $1
+          AND invoice_type IN ('sale','tax_invoice')
+          AND invoice_date >= $2 AND invoice_date < $3
+          AND is_deleted = false AND status != 'cancelled'`,
         [companyId, df, dt]
      );
 
@@ -45,30 +54,33 @@ export async function getGSTSummary(req: Request, res: Response) {
 
 export async function getGSTR1(req: Request, res: Response) {
   try {
-     const { month, year } = req.query;
+     const { month, year } = req.query as any;
      const companyId = req.user!.company_id;
-
-     let df = `1970-01-01`, dt = `2099-12-31`;
-     if (month && year) {
-         df = `${year}-${String(month).padStart(2,'0')}-01`;
-         dt = `${year}-${String(Number(month)+1).padStart(2,'0')}-01`; // exclusive
-     }
+     const { from: df, to: dt } = parsePeriod(month, year);
 
      // B2B: registered party, meaning gstin length >= 15
      const b2b = await query(
-       `SELECT p.gstin, i.invoice_number, i.invoice_date, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount
+       `SELECT p.gstin, i.invoice_number, i.invoice_date, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.total_amount
         FROM invoices i
         JOIN parties p ON i.party_id = p.id
-        WHERE i.company_id = $1 AND i.invoice_date >= $2 AND i.invoice_date < $3 AND i.is_deleted = false AND length(p.gstin) >= 15`,
+        WHERE i.company_id = $1
+          AND i.invoice_type IN ('sale','tax_invoice')
+          AND i.invoice_date >= $2 AND i.invoice_date < $3
+          AND i.is_deleted = false AND i.status != 'cancelled'
+          AND length(COALESCE(p.gstin,'')) >= 15`,
        [companyId, df, dt]
      );
 
      // B2CS: Unregistered party (gstin null/short)
      const b2cs = await query(
-       `SELECT i.invoice_number, i.invoice_date, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount
+       `SELECT i.invoice_number, i.invoice_date, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.total_amount
         FROM invoices i
         LEFT JOIN parties p ON i.party_id = p.id
-        WHERE i.company_id = $1 AND i.invoice_date >= $2 AND i.invoice_date < $3 AND i.is_deleted = false AND (p.gstin IS NULL OR length(p.gstin) < 15)`,
+        WHERE i.company_id = $1
+          AND i.invoice_type IN ('sale','tax_invoice')
+          AND i.invoice_date >= $2 AND i.invoice_date < $3
+          AND i.is_deleted = false AND i.status != 'cancelled'
+          AND (p.gstin IS NULL OR length(p.gstin) < 15)`,
        [companyId, df, dt]
      );
 
@@ -77,40 +89,160 @@ export async function getGSTR1(req: Request, res: Response) {
 }
 
 export async function exportGSTR1(req: Request, res: Response) {
-   // Generates JSON format as required by GST offline tool. Mock implementation.
    try {
-     res.json(success({ 
-       gstin: "27XXXXX0000X1Z5", 
-       fp: "042023",
-       b2b: [],
-       b2cs: []
+     const { month, year } = req.query as any;
+     const companyId = req.user!.company_id;
+     const { from: df, to: dt, fp } = parsePeriod(month, year);
+     const cRes = await query(`SELECT gstin FROM companies WHERE id = $1`, [companyId]);
+     const gstr1 = await query(
+      `SELECT i.invoice_number, i.invoice_date, i.taxable_amount, i.cgst_amount, i.sgst_amount, i.igst_amount, i.total_amount,
+              COALESCE(p.gstin,'') as gstin
+       FROM invoices i
+       LEFT JOIN parties p ON p.id = i.party_id
+       WHERE i.company_id = $1
+         AND i.invoice_type IN ('sale','tax_invoice')
+         AND i.invoice_date >= $2 AND i.invoice_date < $3
+         AND i.is_deleted = false AND i.status != 'cancelled'
+       ORDER BY i.invoice_date, i.invoice_number`,
+      [companyId, df, dt]
+     );
+     const b2b = gstr1.rows.filter((r: any) => String(r.gstin).length >= 15);
+     const b2cs = gstr1.rows.filter((r: any) => String(r.gstin).length < 15);
+     res.json(success({
+       gstin: cRes.rows[0]?.gstin || null,
+       fp,
+       b2b,
+       b2cs,
      }));
    } catch(err:any){ res.status(500).json(error(err.message)); }
 }
 
 export async function getGSTR2AReconciliation(req: Request, res: Response) {
-   // Placeholder. Mock implementation comparing our DB against NIC records.
-   res.json(success({ message: "GSTR-2A endpoint responding. Vendor API needed for strict comparison." }));
+  try {
+    const { month, year } = req.query as any;
+    const companyId = req.user!.company_id;
+    const { from: df, to: dt } = parsePeriod(month, year);
+    const rows = await query(
+      `SELECT pi.id, pi.bill_number, pi.bill_date, pi.taxable_amount, pi.cgst_amount, pi.sgst_amount, pi.igst_amount, pi.total_amount,
+              p.name AS supplier_name, p.gstin AS supplier_gstin
+       FROM purchase_invoices pi
+       LEFT JOIN parties p ON p.id = pi.party_id
+       WHERE pi.company_id = $1
+         AND pi.bill_date >= $2 AND pi.bill_date < $3
+         AND pi.is_deleted = false AND pi.status != 'cancelled'
+       ORDER BY pi.bill_date DESC`,
+      [companyId, df, dt]
+    );
+    const withGstin = rows.rows.filter((r: any) => (r.supplier_gstin || '').length >= 15);
+    const missingGstin = rows.rows.filter((r: any) => (r.supplier_gstin || '').length < 15);
+    res.json(success({
+      total_bills: rows.rows.length,
+      matched_candidates: withGstin.length,
+      missing_supplier_gstin: missingGstin.length,
+      missing_rows: missingGstin,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getGSTR3B(req: Request, res: Response) {
   try {
-     res.json(success({ message: "GSTR-3B structures require heavy aggregating across out/in flows similar to GSTR-1 logic. Responding." }));
+     const { month, year } = req.query as any;
+     const companyId = req.user!.company_id;
+     const { from: df, to: dt, fp } = parsePeriod(month, year);
+     const outward = await query(
+      `SELECT
+          COALESCE(SUM(taxable_amount),0) AS taxable,
+          COALESCE(SUM(cgst_amount),0) AS cgst,
+          COALESCE(SUM(sgst_amount),0) AS sgst,
+          COALESCE(SUM(igst_amount),0) AS igst
+       FROM invoices
+       WHERE company_id = $1
+         AND invoice_type IN ('sale','tax_invoice')
+         AND invoice_date >= $2 AND invoice_date < $3
+         AND is_deleted = false AND status != 'cancelled'`,
+      [companyId, df, dt]
+     );
+     const inward = await query(
+      `SELECT
+          COALESCE(SUM(taxable_amount),0) AS taxable,
+          COALESCE(SUM(cgst_amount),0) AS cgst,
+          COALESCE(SUM(sgst_amount),0) AS sgst,
+          COALESCE(SUM(igst_amount),0) AS igst
+       FROM purchase_invoices
+       WHERE company_id = $1
+         AND bill_date >= $2 AND bill_date < $3
+         AND is_deleted = false AND status != 'cancelled'`,
+      [companyId, df, dt]
+     );
+     const o = outward.rows[0];
+     const i = inward.rows[0];
+     res.json(success({
+      fp,
+      outward_taxable: Number(o.taxable || 0),
+      outward_tax: {
+        cgst: Number(o.cgst || 0),
+        sgst: Number(o.sgst || 0),
+        igst: Number(o.igst || 0),
+      },
+      itc_available: {
+        cgst: Number(i.cgst || 0),
+        sgst: Number(i.sgst || 0),
+        igst: Number(i.igst || 0),
+      },
+      net_liability: {
+        cgst: Number(o.cgst || 0) - Number(i.cgst || 0),
+        sgst: Number(o.sgst || 0) - Number(i.sgst || 0),
+        igst: Number(o.igst || 0) - Number(i.igst || 0),
+      },
+     }));
   } catch(err:any){ res.status(500).json(error(err.message)); }
 }
 
 export async function exportGSTR3B(req: Request, res: Response) {
-   res.json(success({ message: "GSTR-3B JSON Output Builder." }));
+  try {
+    const { month, year } = req.query as any;
+    const companyId = req.user!.company_id;
+    const { from: df, to: dt, fp } = parsePeriod(month, year);
+    const cRes = await query(`SELECT gstin FROM companies WHERE id = $1`, [companyId]);
+    const out = await query(
+      `SELECT COALESCE(SUM(taxable_amount),0) AS taxable, COALESCE(SUM(cgst_amount),0) AS cgst, COALESCE(SUM(sgst_amount),0) AS sgst, COALESCE(SUM(igst_amount),0) AS igst
+       FROM invoices
+       WHERE company_id = $1 AND invoice_type IN ('sale','tax_invoice') AND invoice_date >= $2 AND invoice_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+      [companyId, df, dt]
+    );
+    const itc = await query(
+      `SELECT COALESCE(SUM(cgst_amount),0) AS cgst, COALESCE(SUM(sgst_amount),0) AS sgst, COALESCE(SUM(igst_amount),0) AS igst
+       FROM purchase_invoices
+       WHERE company_id = $1 AND bill_date >= $2 AND bill_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+      [companyId, df, dt]
+    );
+    res.json(success({
+      gstin: cRes.rows[0]?.gstin || null,
+      fp,
+      outward: out.rows[0],
+      itc: itc.rows[0],
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getHSNSummary(req: Request, res: Response) {
   try {
+     const { month, year } = req.query as any;
+     const { from: df, to: dt } = parsePeriod(month, year);
      const result = await query(
        `SELECT item_id, hsn_code, SUM(quantity) as qty, SUM(taxable_amount) as taxable, SUM(cgst_amount+sgst_amount+igst_amount) as tax
         FROM invoice_items i
         JOIN invoices p ON i.invoice_id = p.id
         WHERE p.company_id = $1 AND p.is_deleted = false
-        GROUP BY item_id, hsn_code`, [req.user!.company_id]
+          AND p.invoice_type IN ('sale','tax_invoice')
+          AND p.status != 'cancelled'
+          AND p.invoice_date >= $2 AND p.invoice_date < $3
+        GROUP BY item_id, hsn_code`,
+        [req.user!.company_id, df, dt]
      );
      res.json(success(result.rows));
   } catch(err:any){ res.status(500).json(error(err.message)); }

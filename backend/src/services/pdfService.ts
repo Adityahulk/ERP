@@ -322,3 +322,82 @@ export async function generateEinvoicePdf(
   await browser.close();
   return Buffer.from(pdf);
 }
+
+export async function generateQuotationPDF(
+  quotation: any,
+  company: any,
+  party: any | null,
+  items: any[],
+): Promise<Buffer> {
+  const buyerAddr = party
+    ? [party.billing_address, party.billing_city, party.billing_state, party.billing_pincode].filter(Boolean).join(', ')
+    : '';
+  const rows = items
+    .map(
+      (it: any, i: number) => `<tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(it.item_name || '')}</td>
+      <td class="mono">${escapeHtml(it.hsn_code || '—')}</td>
+      <td class="right">${Number(it.quantity) || 0}</td>
+      <td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td>
+      <td class="right">${fmtPaise(Number(it.discount_amount) || 0)}</td>
+      <td class="right">${Number(it.gst_rate) || 0}%</td>
+      <td class="right"><b>${fmtPaise(Number(it.total_amount) || 0)}</b></td>
+    </tr>`
+    )
+    .join('');
+
+  const html = `<!doctype html><html><head><meta charset="utf-8" />
+  <style>
+    body{font-family:Arial,sans-serif;color:#111;padding:16px}
+    .row{display:flex;justify-content:space-between;align-items:flex-start}
+    .muted{color:#666;font-size:12px}
+    h1{font-size:20px;margin:0}
+    table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px}
+    th,td{border:1px solid #ddd;padding:6px}
+    th{background:#f7f7f7}.right{text-align:right}.mono{font-family:monospace}
+    .totals{margin-top:12px;display:flex;justify-content:flex-end}
+    .totals table{width:320px}
+  </style></head><body>
+    <div class="row">
+      <div>
+        <h1>Quotation</h1>
+        <p class="muted">${escapeHtml(company.name || '')}</p>
+        <p class="muted">${escapeHtml(company.registered_address || '')}</p>
+      </div>
+      <div style="text-align:right">
+        <p><b>Quote No:</b> ${escapeHtml(quotation.quotation_number || '')}</p>
+        <p><b>Date:</b> ${escapeHtml(String(quotation.quotation_date || ''))}</p>
+        <p><b>Valid Until:</b> ${escapeHtml(String(quotation.valid_until || '—'))}</p>
+      </div>
+    </div>
+    <hr />
+    <p><b>Customer:</b> ${escapeHtml(quotation.party_name_override || party?.name || 'Customer')}</p>
+    <p class="muted">${escapeHtml(quotation.party_email_override || party?.email || '')} ${escapeHtml(quotation.party_phone_override || party?.phone || '')}</p>
+    <p class="muted">${escapeHtml(buyerAddr)}</p>
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Disc</th><th>GST</th><th>Total</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="totals">
+      <table>
+        <tr><td>Subtotal</td><td class="right">${fmtPaise(Number(quotation.subtotal) || 0)}</td></tr>
+        <tr><td>Discount</td><td class="right">${fmtPaise(Number(quotation.discount_amount) || 0)}</td></tr>
+        <tr><td>Taxable</td><td class="right">${fmtPaise(Number(quotation.taxable_amount) || 0)}</td></tr>
+        <tr><td>CGST</td><td class="right">${fmtPaise(Number(quotation.cgst_amount) || 0)}</td></tr>
+        <tr><td>SGST</td><td class="right">${fmtPaise(Number(quotation.sgst_amount) || 0)}</td></tr>
+        <tr><td>IGST</td><td class="right">${fmtPaise(Number(quotation.igst_amount) || 0)}</td></tr>
+        <tr><td><b>Grand Total</b></td><td class="right"><b>${fmtPaise(Number(quotation.total_amount) || 0)}</b></td></tr>
+      </table>
+    </div>
+    <p><b>Customer notes:</b> ${escapeHtml(quotation.customer_notes || '—')}</p>
+    <p><b>Terms:</b> ${escapeHtml(quotation.terms_and_conditions || company.terms_and_conditions || '—')}</p>
+  </body></html>`;
+
+  const browser = await launchBrowser();
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: 'networkidle0' });
+  const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+  await browser.close();
+  return Buffer.from(pdf);
+}

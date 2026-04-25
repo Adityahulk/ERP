@@ -6,5 +6,6 @@ const router = Router();
 router.use(verifyToken);
 
 router.get('/receipt/:invoiceId', ctrl.getReceiptPdf);
+router.get('/quotation/:quotationId', ctrl.getQuotationPdf);
 
 export default router;
