@@ -29,7 +29,7 @@ export class RouteErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             className="text-primary underline"
-            onClick={() => this.setState({ hasError: false, message: undefined })}
+            onClick={() => window.location.reload()}
           >
             Try again
           </button>

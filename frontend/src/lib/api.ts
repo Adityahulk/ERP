@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useAuthStore } from '@/store/authStore';
 
 /**
  * In `vite dev`, call the API on loopback instead of same-origin `/api`.
@@ -21,6 +22,29 @@ export function getApiBaseURL(): string {
 
 const apiBaseURL = getApiBaseURL();
 
+/** One in-flight refresh so parallel 401s do not stampede /auth/refresh. */
+let refreshInFlight: Promise<{ accessToken: string; refreshToken: string }> | null = null;
+
+async function refreshTokens(): Promise<{ accessToken: string; refreshToken: string }> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refreshToken = localStorage.getItem('bizflow_refresh_token');
+    if (!refreshToken) {
+      throw new Error('No refresh token');
+    }
+    const { data } = await axios.post(`${apiBaseURL}/auth/refresh`, { refreshToken });
+    const tokens = data?.data ?? data;
+    localStorage.setItem('bizflow_access_token', tokens.accessToken);
+    localStorage.setItem('bizflow_refresh_token', tokens.refreshToken);
+    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+}
+
 const api = axios.create({
   baseURL: apiBaseURL,
   headers: {
@@ -42,32 +66,26 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const reqUrl = String(originalRequest?.url ?? '');
+    const isPublicAuth =
+      reqUrl.includes('/auth/login') ||
+      reqUrl.includes('/auth/register') ||
+      reqUrl.includes('/auth/refresh');
 
     // If 401 and not already retried, try refresh
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isPublicAuth) {
       originalRequest._retry = true;
 
       try {
-        const refreshToken = localStorage.getItem('bizflow_refresh_token');
-        if (!refreshToken) {
-          throw new Error('No refresh token');
-        }
-
-        const { data } = await axios.post(`${apiBaseURL}/auth/refresh`, {
-          refreshToken,
-        });
-
-        const tokens = data?.data ?? data;
-        localStorage.setItem('bizflow_access_token', tokens.accessToken);
-        localStorage.setItem('bizflow_refresh_token', tokens.refreshToken);
+        const tokens = await refreshTokens();
+        useAuthStore.getState().setTokens(tokens.accessToken, tokens.refreshToken);
 
         originalRequest.headers.Authorization = `Bearer ${tokens.accessToken}`;
         return api(originalRequest);
       } catch (refreshError) {
-        // Refresh failed — logout
-        localStorage.removeItem('bizflow_access_token');
-        localStorage.removeItem('bizflow_refresh_token');
-        window.location.href = '/login';
+        // Clear persisted auth too — otherwise /login redirects to /dashboard in a tight loop.
+        useAuthStore.getState().logout();
+        window.location.replace('/login');
         return Promise.reject(refreshError);
       }
     }

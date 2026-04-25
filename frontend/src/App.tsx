@@ -1,4 +1,3 @@
-import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import AppLayout from '@/components/shared/AppLayout';
@@ -24,14 +23,9 @@ import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import AttendancePage from '@/pages/hr/AttendancePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
-
-const BillingScreen = lazy(() => import('@/pages/billing/BillingScreen'));
-const ReportsHome = lazy(() => import('@/pages/reports/ReportsHome'));
-const Settings = lazy(() => import('@/pages/settings/Settings'));
-
-const pageFallback = (
-  <div className="flex h-48 items-center justify-center text-muted-foreground text-sm">Loading…</div>
-);
+import BillingScreen from '@/pages/billing/BillingScreen';
+import ReportsHome from '@/pages/reports/ReportsHome';
+import Settings from '@/pages/settings/Settings';
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState } from 'react';
@@ -121,7 +115,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
 
         {/* Sales & Billing */}
-        <Route path="/billing" element={<Suspense fallback={pageFallback}><BillingScreen /></Suspense>} />
+        <Route path="/billing" element={<BillingScreen />} />
         <Route path="/sales" element={<InvoiceList />} />
         <Route path="/sales/new" element={<InvoiceCreate />} />
         <Route path="/sales/:id" element={<InvoiceDetail />} />
@@ -137,7 +131,7 @@ export default function App() {
         {/* Expenses */}
         <Route path="/expenses" element={<ExpenseList />} />
         {/* Reports & Accounting */}
-        <Route path="/reports" element={<Suspense fallback={pageFallback}><ReportsHome /></Suspense>} />
+        <Route path="/reports" element={<ReportsHome />} />
         <Route path="/gst-filing" element={<GSTDashboard />} />
         <Route path="/accounting" element={<AccountingDashboard />} />
 
@@ -145,7 +139,7 @@ export default function App() {
         <Route path="/attendance" element={<AttendancePage />} />
 
         {/* Global Config */}
-        <Route path="/settings" element={<Suspense fallback={pageFallback}><Settings /></Suspense>} />
+        <Route path="/settings" element={<Settings />} />
 
       </Route>
 

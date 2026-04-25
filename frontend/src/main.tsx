@@ -4,7 +4,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import App from './App';
+import { useAuthStore } from './store/authStore';
 import './index.css';
+
+// After persist rehydrates: if shell says logged-in but tokens are gone, clear store (avoids redirect loops).
+useAuthStore.persist.onFinishHydration(() => {
+  const { isAuthenticated, logout } = useAuthStore.getState();
+  if (isAuthenticated && !localStorage.getItem('bizflow_access_token')) {
+    logout();
+  }
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
