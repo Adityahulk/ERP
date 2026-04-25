@@ -76,21 +76,22 @@ export async function sendWhatsApp(phone: string, template_type: string, variabl
    return { status, twilioRef };
 }
 
+export type InvoiceShareVars = {
+  party_name: string;
+  company_name: string;
+  invoice_number: string;
+  date: string;
+  amount: string;
+  link: string;
+  phone: string;
+};
+
 export async function sendWhatsAppInvoiceLink(
   phone: string,
-  invoiceNumber: string,
-  link: string,
+  vars: InvoiceShareVars,
   companyId: string,
 ) {
-  return sendWhatsApp(phone, 'INVOICE_SHARE', {
-    party_name: 'Customer',
-    company_name: 'BizFlow',
-    invoice_number: invoiceNumber,
-    date: new Date().toISOString().split('T')[0],
-    amount: '0',
-    link,
-    phone: '',
-  }, companyId);
+  return sendWhatsApp(phone, 'INVOICE_SHARE', vars, companyId);
 }
 
 export async function sendBulkWhatsApp(messages: { phone: string, template_type: string, variables: Record<string, any>, companyId: string }[]) {

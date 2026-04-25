@@ -35,8 +35,9 @@ import toast from 'react-hot-toast';
 
 function LoginPage() {
   const { login } = useAuthStore();
-  const [email, setEmail] = useState('admin@demo.com');
-  const [password, setPassword] = useState('Demo@1234');
+  const prefillDemo = import.meta.env.VITE_PREFILL_DEMO_LOGIN === 'true';
+  const [email, setEmail] = useState(prefillDemo ? 'admin@demo.com' : '');
+  const [password, setPassword] = useState(prefillDemo ? 'Demo@1234' : '');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {

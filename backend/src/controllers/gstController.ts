@@ -2,6 +2,13 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 
+function gstErrorResponse(res: Response, err: any) {
+  if (err?.message === 'Invalid month/year') {
+    return res.status(400).json(error('Invalid or missing month/year (use month 1–12 and a four-digit year).'));
+  }
+  return res.status(500).json(error(err.message));
+}
+
 function parsePeriod(month?: string | string[], year?: string | string[]) {
   if (!month || !year) return { from: '1970-01-01', to: '2100-01-01', fp: '' };
   const m = Number(Array.isArray(month) ? month[0] : month);
@@ -49,7 +56,9 @@ export async function getGSTSummary(req: Request, res: Response) {
            igst: (output.igst || 0) - (input.igst || 0)
         }
      }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    gstErrorResponse(res, err);
+  }
 }
 
 export async function getGSTR1(req: Request, res: Response) {
@@ -85,7 +94,9 @@ export async function getGSTR1(req: Request, res: Response) {
      );
 
      res.json(success({ b2b: b2b.rows, b2cs: b2cs.rows }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    gstErrorResponse(res, err);
+  }
 }
 
 export async function exportGSTR1(req: Request, res: Response) {
@@ -108,13 +119,25 @@ export async function exportGSTR1(req: Request, res: Response) {
      );
      const b2b = gstr1.rows.filter((r: any) => String(r.gstin).length >= 15);
      const b2cs = gstr1.rows.filter((r: any) => String(r.gstin).length < 15);
+     const retPeriod = fp;
      res.json(success({
+       meta: {
+         schema: 'bizflow.gstr1.export',
+         version: '1.0',
+         generated_at: new Date().toISOString(),
+         ret_period: retPeriod,
+         disclaimer:
+           'Ledger-derived B2B/B2CS-style rows for reconciliation. This is not NIC offline-tool JSON; your CA should map it to the GST portal format.',
+       },
        gstin: cRes.rows[0]?.gstin || null,
        fp,
+       ret_period: retPeriod,
        b2b,
        b2cs,
      }));
-   } catch(err:any){ res.status(500).json(error(err.message)); }
+   } catch (err: any) {
+     gstErrorResponse(res, err);
+   }
 }
 
 export async function getGSTR2AReconciliation(req: Request, res: Response) {
@@ -142,7 +165,7 @@ export async function getGSTR2AReconciliation(req: Request, res: Response) {
       missing_rows: missingGstin,
     }));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    gstErrorResponse(res, err);
   }
 }
 
@@ -197,7 +220,9 @@ export async function getGSTR3B(req: Request, res: Response) {
         igst: Number(o.igst || 0) - Number(i.igst || 0),
       },
      }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    gstErrorResponse(res, err);
+  }
 }
 
 export async function exportGSTR3B(req: Request, res: Response) {
@@ -218,14 +243,24 @@ export async function exportGSTR3B(req: Request, res: Response) {
        WHERE company_id = $1 AND bill_date >= $2 AND bill_date < $3 AND is_deleted = false AND status != 'cancelled'`,
       [companyId, df, dt]
     );
+    const retPeriod = fp;
     res.json(success({
+      meta: {
+        schema: 'bizflow.gstr3b.export',
+        version: '1.0',
+        generated_at: new Date().toISOString(),
+        ret_period: retPeriod,
+        disclaimer:
+          'Aggregated outward supplies and ITC from BizFlow purchase bills. Use with your CA for GSTR-3B preparation; not a NIC portal upload file.',
+      },
       gstin: cRes.rows[0]?.gstin || null,
       fp,
+      ret_period: retPeriod,
       outward: out.rows[0],
       itc: itc.rows[0],
     }));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    gstErrorResponse(res, err);
   }
 }
 
@@ -245,7 +280,9 @@ export async function getHSNSummary(req: Request, res: Response) {
         [req.user!.company_id, df, dt]
      );
      res.json(success(result.rows));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    gstErrorResponse(res, err);
+  }
 }
 
 export async function getInputCredit(req: Request, res: Response) {
@@ -256,5 +293,7 @@ export async function getInputCredit(req: Request, res: Response) {
         [req.user!.company_id]
      );
      res.json(success(result.rows[0]));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    gstErrorResponse(res, err);
+  }
 }

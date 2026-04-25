@@ -9,10 +9,10 @@ import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upl
 import toast from 'react-hot-toast';
 import { Navigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
-import api from '@/lib/api';
+import api, { getApiBaseURL } from '@/lib/api';
 
 export default function Settings() {
-  const { user } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const qc = useQueryClient();
   const isAdmin = user?.role === 'super_admin' || user?.role === 'company_admin';
   const { data: company, isLoading: companyLoading } = useCompany();
@@ -42,11 +42,31 @@ export default function Settings() {
   const [editUserForm, setEditUserForm] = useState({ name: '', email: '', phone: '', role: 'staff', is_active: true });
   const [editGodownForm, setEditGodownForm] = useState({ name: '', code: '', city: '', state: '', is_default: false, is_active: true });
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const pendingImportFile = useRef<File | null>(null);
+  const logoFileRef = useRef<HTMLInputElement | null>(null);
+  const signatureFileRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState<{
+    preview?: { row: number; data: Record<string, unknown>; valid: boolean }[];
+    errors?: { row: number; errors: string[]; data: unknown }[];
+    total?: number;
+    valid?: number;
+    invalid?: number;
+  } | null>(null);
 
   if (!isAdmin) {
      return <Navigate to="/dashboard" replace />;
   }
+
+  const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
+  const logoSrc =
+    company?.logo_url &&
+    (String(company.logo_url).startsWith('http') ? company.logo_url : `${uploadsBase()}${company.logo_url}`);
+  const signatureSrc =
+    company?.signature_url &&
+    (String(company.signature_url).startsWith('http')
+      ? company.signature_url
+      : `${uploadsBase()}${company.signature_url}`);
 
   const [tab, setTab] = useState('company');
 
@@ -142,8 +162,36 @@ export default function Settings() {
     }
   };
 
-  const uploadImportFile = async (file?: File) => {
+  const previewImportFile = async (file?: File) => {
     if (!file) return;
+    try {
+      setImporting(true);
+      pendingImportFile.current = file;
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await api.post('/items/bulk-import', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const d = res.data?.data ?? res.data;
+      setImportPreview(d);
+      if (!d.preview?.length && (d.errors?.length || 0) > 0) {
+        toast.error('No valid rows — fix errors and try again.');
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Preview failed');
+      pendingImportFile.current = null;
+      setImportPreview(null);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const confirmImportFile = async () => {
+    const file = pendingImportFile.current;
+    if (!file) {
+      toast.error('Choose a file first');
+      return;
+    }
     try {
       setImporting(true);
       const fd = new FormData();
@@ -153,6 +201,9 @@ export default function Settings() {
       });
       const d = res.data?.data ?? res.data;
       toast.success(`Import complete. Inserted ${d.inserted || 0} items`);
+      setImportPreview(null);
+      pendingImportFile.current = null;
+      qc.invalidateQueries({ queryKey: ['items'] });
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Import failed');
     } finally {
@@ -160,6 +211,34 @@ export default function Settings() {
       if (importFileRef.current) importFileRef.current.value = '';
     }
   };
+
+  const uploadAsset = async (file: File | undefined, kind: 'logo' | 'signature') => {
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append(kind, file);
+      await api.post(kind === 'logo' ? '/company/logo' : '/company/signature', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success(kind === 'logo' ? 'Logo updated' : 'Signature / stamp updated');
+      qc.invalidateQueries({ queryKey: ['company'] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Upload failed');
+    } finally {
+      if (kind === 'logo' && logoFileRef.current) logoFileRef.current.value = '';
+      if (kind === 'signature' && signatureFileRef.current) signatureFileRef.current.value = '';
+    }
+  };
+
+  const deleteWorkspace = useMutation({
+    mutationFn: () => api.post('/company/delete-workspace', { confirm: 'DELETE-MY-COMPANY' as const }),
+    onSuccess: () => {
+      toast.success('Workspace closed');
+      logout();
+      window.location.href = '/login';
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Request failed'),
+  });
 
   const dumpData = async () => {
     try {
@@ -339,15 +418,38 @@ export default function Settings() {
                      {companyLoading && <p className="text-sm text-muted-foreground">Loading company…</p>}
                      <div className="grid md:grid-cols-2 gap-6 border-b pb-6">
                         <div>
-                           <label className="text-sm font-medium text-slate-700 block mb-2">Company Status</label>
+                           <label className="text-sm font-medium text-slate-700 block mb-2">Branding (PDFs & prints)</label>
+                           <input ref={logoFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], 'logo')} />
+                           <input ref={signatureFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], 'signature')} />
                            <div className="flex items-center gap-4">
-                              <div className="w-24 h-24 bg-slate-100 rounded-lg border-2 border-dashed flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:bg-slate-50">
-                                 <Upload className="w-6 h-6 mb-1"/> <span className="text-[10px] uppercase">Logo</span>
-                              </div>
-                              <div className="w-32 h-24 bg-slate-100 rounded-lg border-2 border-dashed flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:bg-slate-50">
-                                 <Upload className="w-6 h-6 mb-1"/> <span className="text-[10px] uppercase">Stamp/Sign</span>
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => logoFileRef.current?.click()}
+                                className="w-24 h-24 bg-slate-100 rounded-lg border-2 border-dashed flex flex-col items-center justify-center text-slate-500 cursor-pointer hover:bg-slate-50 overflow-hidden relative"
+                              >
+                                 {logoSrc ? (
+                                   <img src={logoSrc} alt="Logo" className="absolute inset-0 w-full h-full object-contain p-1" />
+                                 ) : (
+                                   <>
+                                     <Upload className="w-6 h-6 mb-1" /> <span className="text-[10px] uppercase">Logo</span>
+                                   </>
+                                 )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => signatureFileRef.current?.click()}
+                                className="w-32 h-24 bg-slate-100 rounded-lg border-2 border-dashed flex flex-col items-center justify-center text-slate-500 cursor-pointer hover:bg-slate-50 overflow-hidden relative"
+                              >
+                                 {signatureSrc ? (
+                                   <img src={signatureSrc} alt="Signature" className="absolute inset-0 w-full h-full object-contain p-1" />
+                                 ) : (
+                                   <>
+                                     <Upload className="w-6 h-6 mb-1" /> <span className="text-[10px] uppercase text-center px-1">Stamp / sign</span>
+                                   </>
+                                 )}
+                              </button>
                            </div>
+                           <p className="text-xs text-slate-500 mt-2">Uploads are stored on the server and used on invoices and quotations.</p>
                         </div>
                         <div className="space-y-4">
                            <div>
@@ -612,7 +714,7 @@ export default function Settings() {
                        type="file"
                        accept=".csv,.xlsx,.xls,.json"
                        className="hidden"
-                       onChange={(e) => uploadImportFile(e.target.files?.[0])}
+                       onChange={(e) => previewImportFile(e.target.files?.[0])}
                      />
                      <div className="grid md:grid-cols-2 gap-6">
                         <Card className="border-indigo-100 shadow-sm">
@@ -623,9 +725,35 @@ export default function Settings() {
                               <div className="w-full space-y-2">
                                 <Button variant="outline" className="w-full" onClick={downloadItemsTemplate}>Download item template</Button>
                                 <Button variant="outline" className="w-full" onClick={() => importFileRef.current?.click()} disabled={importing}>
-                                  {importing ? 'Importing…' : 'Upload CSV / XLSX / JSON'}
+                                  {importing && !importPreview ? 'Reading file…' : 'Choose file to preview'}
                                 </Button>
                               </div>
+                              {importPreview?.preview && importPreview.preview.length > 0 && (
+                                <div className="mt-4 text-left w-full rounded-lg border bg-white p-3 max-h-56 overflow-y-auto">
+                                  <p className="text-xs font-semibold text-slate-700 mb-2">
+                                    Preview: {importPreview.valid ?? importPreview.preview.length} valid row(s)
+                                    {importPreview.invalid ? `, ${importPreview.invalid} invalid` : ''}
+                                  </p>
+                                  <ul className="text-xs text-slate-600 space-y-1">
+                                    {importPreview.preview.slice(0, 12).map((p) => (
+                                      <li key={p.row}>
+                                        Row {p.row}: {(p.data as { name?: string })?.name || '—'}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {importPreview.preview.length > 12 && (
+                                    <p className="text-xs text-slate-400 mt-1">Showing first 12 rows…</p>
+                                  )}
+                                  <div className="flex gap-2 mt-3">
+                                    <Button size="sm" onClick={confirmImportFile} disabled={importing}>
+                                      Import valid rows
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => { setImportPreview(null); pendingImportFile.current = null; }}>
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                            </CardContent>
                         </Card>
                         <Card className="border-emerald-100 shadow-sm">
@@ -647,20 +775,20 @@ export default function Settings() {
                         <h2 className="text-xl font-bold">Danger Zone</h2>
                      </div>
                      <p className="text-slate-600 text-sm max-w-xl">
-                        Deleting this company will permanently destroy all underlying Invoices, Purchases, Leave Matrices, Godown logic, and User profiles. **This physical cascade cannot be stopped**.
+                        This marks the company as closed. Users will not be able to sign in to this workspace again. Operational data remains in the database for compliance backups — confirm with your IT policy before proceeding.
                      </p>
                      
                      <div className="bg-red-50 p-6 rounded-lg border border-red-200 mt-6 max-w-xl">
                         <h3 className="font-semibold text-red-900 mb-2">Are you fully sure?</h3>
-                        <p className="text-sm text-red-700 mb-4">Please type <strong>DELETE-MY-COMPANY</strong> to confirm.</p>
+                        <p className="text-sm text-red-700 mb-4">Type <strong>DELETE-MY-COMPANY</strong> exactly to confirm.</p>
                         <Input value={deleteConf} onChange={e => setDeleteConf(e.target.value)} className="border-red-300 focus-visible:ring-red-500 mb-4 bg-white" />
                         <Button 
                            variant="destructive" 
-                           disabled={deleteConf !== 'DELETE-MY-COMPANY'}
+                           disabled={deleteConf !== 'DELETE-MY-COMPANY' || deleteWorkspace.isPending}
                            className="w-full gap-2"
-                           onClick={() => toast.error("System physically locked to prevent deletion during demo.")}
+                           onClick={() => deleteWorkspace.mutate()}
                         >
-                           <Power className="w-4 h-4"/> Nuke Workspace
+                           <Power className="w-4 h-4"/> Close workspace
                         </Button>
                      </div>
                   </CardContent>

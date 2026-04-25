@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'crypto';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -10,6 +11,13 @@ import { logger } from './config/logger';
 import routes from './routes';
 
 const app = express();
+
+app.use((req, res, next) => {
+  const id = (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id']) || randomUUID();
+  (req as express.Request & { reqId?: string }).reqId = id;
+  res.setHeader('X-Request-Id', id);
+  next();
+});
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -68,8 +76,9 @@ app.use((_req, res) => {
 });
 
 // ── Global error handler ──────────────────────────────
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  logger.error('Unhandled error:', err);
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const reqId = (req as express.Request & { reqId?: string }).reqId;
+  logger.error('Unhandled error:', { err, reqId });
 
   const statusCode = err.statusCode || 500;
   const message = env.NODE_ENV === 'production'

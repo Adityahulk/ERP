@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
+import { logAction } from '../lib/auditLog';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
 import { generateInvoicePDF, generateThermalReceipt, generateEinvoicePdf } from '../services/pdfService';
@@ -448,7 +449,44 @@ export async function cancelInvoice(req: Request, res: Response) {
 }
 
 export async function deleteInvoice(req: Request, res: Response) {
-  res.json(success({ message: 'Soft-delete not enabled in this build.' }));
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const invRes = await query(
+      `SELECT id, status, paid_amount, irn, invoice_number FROM invoices
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const inv = invRes.rows[0];
+    if (inv.irn) {
+      return res.status(400).json(error('This invoice has an active IRN. Cancel e-invoice before deleting.'));
+    }
+    if (Number(inv.paid_amount || 0) > 0) {
+      return res.status(400).json(error('Cannot delete an invoice that has payments recorded.'));
+    }
+    if (inv.status === 'cancelled') {
+      return res.status(400).json(error('Invoice is already cancelled.'));
+    }
+    await query(
+      `UPDATE invoices SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`,
+      [id, companyId],
+    );
+    await logAction(
+      req.user!.id,
+      companyId,
+      'delete',
+      'invoice',
+      id,
+      { invoice_number: inv.invoice_number },
+      null,
+      req.ip,
+      req.get('User-Agent'),
+    );
+    res.json(success({ message: 'Invoice removed from active records' }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getInvoicePDF(req: Request, res: Response) {
@@ -477,9 +515,79 @@ export async function getInvoicePDF(req: Request, res: Response) {
 export async function sendWhatsApp(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    await sendWhatsAppInvoiceLink('+919999999999', 'INV-001', 'http://link/to/pdf', req.user!.company_id);
-    res.json(success({ message: 'WhatsApp sent successfully', id }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+
+    const compRes = await query(
+      `SELECT name, phone FROM companies WHERE id = $1 AND is_deleted = false`,
+      [companyId],
+    );
+    if (!compRes.rows.length) return res.status(400).json(error('Company not found'));
+    const company = compRes.rows[0];
+
+    const invRes = await query(
+      `SELECT i.*, p.name AS party_name, p.phone AS party_phone
+       FROM invoices i
+       LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id
+       WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const row = invRes.rows[0];
+
+    const phone = String(row.party_phone || '').replace(/\s+/g, '');
+    if (!phone) {
+      return res.status(400).json(
+        error('Customer has no phone on file. Add a mobile number to the party or share from the invoice screen.'),
+      );
+    }
+
+    const partyName = row.party_name_snapshot || row.party_name || 'Customer';
+    const invDate =
+      row.invoice_date instanceof Date
+        ? row.invoice_date.toISOString().slice(0, 10)
+        : String(row.invoice_date).slice(0, 10);
+    const amountStr = (Number(row.total_amount || 0) / 100).toFixed(2);
+    const link = `${env.FRONTEND_URL.replace(/\/$/, '')}/sales/${id}`;
+
+    const result = await sendWhatsAppInvoiceLink(
+      phone,
+      {
+        party_name: partyName,
+        company_name: String(company.name || 'Our business'),
+        invoice_number: String(row.invoice_number),
+        date: invDate,
+        amount: amountStr,
+        link,
+        phone: String(company.phone || ''),
+      },
+      companyId,
+    );
+
+    await logAction(
+      req.user!.id,
+      companyId,
+      'whatsapp_send',
+      'invoice',
+      id,
+      { invoice_number: row.invoice_number },
+      result,
+      req.ip,
+      req.get('User-Agent'),
+    );
+
+    res.json(
+      success({
+        ...result,
+        link,
+        note:
+          result.status === 'bypassed_no_credentials'
+            ? 'Twilio is not configured; message was logged only. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to deliver WhatsApp.'
+            : undefined,
+      }),
+    );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function generateEinvoice(req: Request, res: Response) {

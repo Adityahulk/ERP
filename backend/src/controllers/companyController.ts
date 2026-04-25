@@ -4,6 +4,12 @@ import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import { getUploadUrl } from '../services/fileUpload';
 import { encryptSecret } from '../lib/credentialsCrypto';
+import { removeRefreshToken } from '../middleware/auth';
+import {
+  ensurePrimaryGodown,
+  applyOnboardingSeeds,
+  resolveStateName,
+} from '../services/onboardingService';
 
 function sanitizeCompany(row: Record<string, unknown>) {
   const { einvoice_gsp_password_enc: _enc, ...rest } = row;
@@ -94,4 +100,114 @@ export async function uploadSignatureHandler(req: Request, res: Response) {
     await query('UPDATE companies SET signature_url = $1 WHERE id = $2', [url, req.user!.company_id]);
     res.json(success({ signature_url: url }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── PATCH /api/company/onboarding ─────────────────────────────
+export async function completeOnboarding(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { company, location, seed } = req.body as {
+      company: { name: string; business_type?: string | null; gstin?: string | null; state_code: string };
+      location: { name: string; city?: string | null; pincode?: string | null };
+      seed?: { items?: boolean; coa?: boolean; leaves?: boolean };
+    };
+
+    const gstin = company.gstin ? String(company.gstin).replace(/\s+/g, '').toUpperCase() : null;
+    const stateName = resolveStateName(company.state_code);
+
+    await query(
+      `UPDATE companies SET
+         name = $1,
+         legal_name = COALESCE(NULLIF(TRIM(legal_name), ''), $1),
+         gstin = $2,
+         state_code = $3,
+         state = COALESCE($4, state),
+         city = COALESCE($5, city),
+         pincode = COALESCE($6, pincode),
+         business_type = COALESCE($7, business_type),
+         onboarding_completed = true,
+         updated_at = NOW()
+       WHERE id = $8`,
+      [
+        company.name.trim(),
+        gstin,
+        company.state_code,
+        stateName,
+        location.city?.trim() || null,
+        location.pincode?.trim() || null,
+        company.business_type?.trim() || null,
+        companyId,
+      ],
+    );
+
+    const godownId = await ensurePrimaryGodown(companyId, {
+      name: location.name.trim(),
+      city: location.city?.trim() || undefined,
+      pincode: location.pincode?.trim() || undefined,
+      state_code: company.state_code,
+    });
+
+    const seedFlags = {
+      items: !!seed?.items,
+      coa: !!seed?.coa,
+      leaves: !!seed?.leaves,
+    };
+    const seeded = await applyOnboardingSeeds(companyId, godownId, seedFlags);
+
+    await logAction(
+      req.user!.id,
+      companyId,
+      'complete',
+      'company_onboarding',
+      companyId,
+      null,
+      { seeded, godown_id: godownId },
+      req.ip,
+      req.get('User-Agent'),
+    );
+
+    const result = await query('SELECT * FROM companies WHERE id = $1', [companyId]);
+    res.json(success({ company: sanitizeCompany(result.rows[0] as any), seeded }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/company/delete-workspace ────────────────────────
+export async function softDeleteCompany(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const old = await query(`SELECT id, name FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
+    if (!old.rows.length) return res.status(404).json(error('Company not found'));
+
+    await query(
+      `UPDATE companies SET is_deleted = true, is_active = false, updated_at = NOW() WHERE id = $1`,
+      [companyId],
+    );
+
+    const users = await query(`SELECT id FROM users WHERE company_id = $1 AND is_deleted = false`, [companyId]);
+    for (const row of users.rows) {
+      try {
+        await removeRefreshToken(row.id as string);
+      } catch {
+        /* Redis optional */
+      }
+    }
+
+    await logAction(
+      req.user!.id,
+      companyId,
+      'delete',
+      'company',
+      companyId,
+      { name: old.rows[0].name },
+      { workspace_closed: true },
+      req.ip,
+      req.get('User-Agent'),
+    );
+
+    res.json(success({ message: 'Workspace closed. This company can no longer sign in.' }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }

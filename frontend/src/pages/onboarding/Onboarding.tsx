@@ -19,13 +19,28 @@ export default function Onboarding() {
   const completeOnboarding = async () => {
     try {
       setLoading(true);
-      // In a real app we'd trigger consecutive API calls here
-      // For now, patch the state so it breaks out of the loop
-      await api.patch('/company/onboarding', { completed: true });
-      toast.success("All set! Welcome to BizFlow.");
-      window.location.href = '/dashboard'; 
-    } catch (e:any) {
-      toast.error('Failed to finalize wizard.');
+      await api.patch('/company/onboarding', {
+        company: {
+          name: company.name.trim(),
+          business_type: company.type?.trim() || null,
+          gstin: company.gst?.trim() || null,
+          state_code: company.state,
+        },
+        location: {
+          name: location.name.trim(),
+          city: location.city?.trim() || null,
+          pincode: location.pin?.trim() || null,
+        },
+        seed: {
+          items: quickSetup.items,
+          coa: quickSetup.coa,
+          leaves: quickSetup.leaves,
+        },
+      });
+      toast.success('All set! Welcome to BizFlow.');
+      window.location.href = '/dashboard';
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to finalize wizard.');
       setLoading(false);
     }
   };
@@ -69,10 +84,10 @@ export default function Onboarding() {
                     <div>
                        <label className="text-sm font-medium text-slate-700">Operating State *</label>
                        <select value={company.state} onChange={e => setCompany({...company, state: e.target.value})} className="w-full mt-1 h-11 rounded-md border border-slate-200 px-3">
-                          <option value="">Select State</option>
-                          <option value="MH">Maharashtra</option>
-                          <option value="DL">Delhi</option>
-                          <option value="KA">Karnataka</option>
+                          <option value="">Select State (GST code)</option>
+                          <option value="27">Maharashtra (27)</option>
+                          <option value="07">Delhi (07)</option>
+                          <option value="29">Karnataka (29)</option>
                        </select>
                     </div>
                  </div>

@@ -22,6 +22,7 @@ import leaveRoutes from './leaves';
 import notificationRoutes from './notifications';
 import labelRoutes from './labels';
 import printRoutes from './print';
+import searchRoutes from './search';
 
 const router = Router();
 
@@ -49,6 +50,7 @@ router.use('/leaves', leaveRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/labels', labelRoutes);
 router.use('/print', printRoutes);
+router.use('/search', searchRoutes);
 
 // API info
 router.get('/', (_req, res) => {
@@ -60,7 +62,7 @@ router.get('/', (_req, res) => {
       active: [
         'auth', 'company', 'godowns', 'users',
         'item-categories', 'item-units', 'items', 'stock',
-        'parties', 'invoices', 'quotations', 'payments', 'expenses', 'reports',
+        'parties', 'invoices', 'quotations', 'payments', 'expenses', 'reports', 'search',
       ],
       planned: ['quotations', 'employees'],
     },

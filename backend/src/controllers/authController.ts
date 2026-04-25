@@ -121,6 +121,7 @@ export async function refresh(req: Request, res: Response) {
       `SELECT u.role, u.is_active, u.email, u.company_id,
               COALESCE(ep.godown_id, dg.id) as resolved_godown_id
        FROM users u
+       INNER JOIN companies c ON c.id = u.company_id AND c.is_deleted = false AND c.is_active = true
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
        WHERE u.id = $1 AND u.is_deleted = false`,
@@ -179,7 +180,7 @@ export async function getMe(req: Request, res: Response) {
               c.plan_type, c.onboarding_completed,
               g.id as godown_id, g.name as godown_name
        FROM users u
-       JOIN companies c ON u.company_id = c.id
+       JOIN companies c ON u.company_id = c.id AND c.is_deleted = false AND c.is_active = true
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns g ON g.id = COALESCE(ep.godown_id, (SELECT id FROM godowns WHERE company_id = u.company_id AND is_default = true AND is_deleted = false LIMIT 1))
        WHERE u.id = $1 AND u.is_deleted = false`,
