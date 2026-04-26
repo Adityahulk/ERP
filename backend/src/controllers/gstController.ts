@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
+import { getExpenseGstSql } from '../services/expenseReportingService';
 
 function gstErrorResponse(res: Response, err: any) {
   if (err?.message === 'Invalid month/year') {
@@ -28,6 +29,7 @@ export async function getGSTSummary(req: Request, res: Response) {
      const { month, year } = req.query as any;
      const companyId = req.user!.company_id;
      const { from: df, to: dt } = parsePeriod(month, year);
+     const expenseSql = await getExpenseGstSql('e', 'c');
 
      const outputRes = await query(
        `SELECT COALESCE(SUM(ii.cgst_amount), 0) AS cgst,
@@ -56,13 +58,14 @@ export async function getGSTSummary(req: Request, res: Response) {
      );
 
      const inputExpRes = await query(
-       `SELECT COALESCE(SUM(cgst_amount), 0) AS cgst,
-               COALESCE(SUM(sgst_amount), 0) AS sgst,
-               COALESCE(SUM(igst_amount), 0) AS igst
-        FROM expenses
-        WHERE company_id = $1
-          AND expense_date >= $2 AND expense_date < $3
-          AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
+       `SELECT COALESCE(SUM(${expenseSql.cgstExpr}), 0) AS cgst,
+               COALESCE(SUM(${expenseSql.sgstExpr}), 0) AS sgst,
+               COALESCE(SUM(${expenseSql.igstExpr}), 0) AS igst
+        FROM expenses e
+        JOIN companies c ON c.id = e.company_id
+        WHERE e.company_id = $1
+          AND e.expense_date >= $2 AND e.expense_date < $3
+          AND e.is_deleted = false AND COALESCE(e.gst_rate, 0) > 0`,
         [companyId, df, dt]
      );
 
@@ -205,6 +208,7 @@ export async function getGSTR3B(req: Request, res: Response) {
      const { month, year } = req.query as any;
      const companyId = req.user!.company_id;
      const { from: df, to: dt, fp } = parsePeriod(month, year);
+     const expenseSql = await getExpenseGstSql('e', 'c');
      const outward = await query(
       `SELECT
           COALESCE(SUM(ii.taxable_amount),0) AS taxable,
@@ -237,14 +241,15 @@ export async function getGSTR3B(req: Request, res: Response) {
      );
      const inwardExp = await query(
       `SELECT
-          COALESCE(SUM(amount),0) AS taxable,
-          COALESCE(SUM(cgst_amount),0) AS cgst,
-          COALESCE(SUM(sgst_amount),0) AS sgst,
-          COALESCE(SUM(igst_amount),0) AS igst
-       FROM expenses
-       WHERE company_id = $1
-         AND expense_date >= $2 AND expense_date < $3
-         AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
+          COALESCE(SUM(${expenseSql.taxableExpr}),0) AS taxable,
+          COALESCE(SUM(${expenseSql.cgstExpr}),0) AS cgst,
+          COALESCE(SUM(${expenseSql.sgstExpr}),0) AS sgst,
+          COALESCE(SUM(${expenseSql.igstExpr}),0) AS igst
+       FROM expenses e
+       JOIN companies c ON c.id = e.company_id
+       WHERE e.company_id = $1
+         AND e.expense_date >= $2 AND e.expense_date < $3
+         AND e.is_deleted = false AND COALESCE(e.gst_rate, 0) > 0`,
       [companyId, df, dt]
      );
      const o = outward.rows[0];
@@ -289,6 +294,7 @@ export async function exportGSTR3B(req: Request, res: Response) {
     const { month, year } = req.query as any;
     const companyId = req.user!.company_id;
     const { from: df, to: dt, fp } = parsePeriod(month, year);
+    const expenseSql = await getExpenseGstSql('e', 'c');
     const cRes = await query(`SELECT gstin FROM companies WHERE id = $1`, [companyId]);
     const out = await query(
       `SELECT COALESCE(SUM(ii.taxable_amount),0) AS taxable,
@@ -314,12 +320,13 @@ export async function exportGSTR3B(req: Request, res: Response) {
       [companyId, df, dt]
     );
     const itcEx = await query(
-      `SELECT COALESCE(SUM(cgst_amount),0) AS cgst,
-              COALESCE(SUM(sgst_amount),0) AS sgst,
-              COALESCE(SUM(igst_amount),0) AS igst
-       FROM expenses
-       WHERE company_id = $1 AND expense_date >= $2 AND expense_date < $3
-         AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
+      `SELECT COALESCE(SUM(${expenseSql.cgstExpr}),0) AS cgst,
+              COALESCE(SUM(${expenseSql.sgstExpr}),0) AS sgst,
+              COALESCE(SUM(${expenseSql.igstExpr}),0) AS igst
+       FROM expenses e
+       JOIN companies c ON c.id = e.company_id
+       WHERE e.company_id = $1 AND e.expense_date >= $2 AND e.expense_date < $3
+         AND e.is_deleted = false AND COALESCE(e.gst_rate, 0) > 0`,
       [companyId, df, dt]
     );
     const itcRow = {
@@ -388,26 +395,29 @@ export async function getInputCredit(req: Request, res: Response) {
       rangeEndExclusive = false;
     }
     const endDateSql = rangeEndExclusive
-      ? 'bill_date >= $2::date AND bill_date < $3::date'
-      : 'bill_date >= $2::date AND bill_date <= $3::date';
+      ? 'pi.bill_date >= $2::date AND pi.bill_date < $3::date'
+      : 'pi.bill_date >= $2::date AND pi.bill_date <= $3::date';
     const expEndSql = rangeEndExclusive
-      ? 'expense_date >= $2::date AND expense_date < $3::date'
-      : 'expense_date >= $2::date AND expense_date <= $3::date';
+      ? 'e.expense_date >= $2::date AND e.expense_date < $3::date'
+      : 'e.expense_date >= $2::date AND e.expense_date <= $3::date';
+    const expenseSql = await getExpenseGstSql('e', 'c');
     const purchases = await query(
-      `SELECT COALESCE(SUM(cgst_amount), 0)::bigint AS cgst,
-              COALESCE(SUM(sgst_amount), 0)::bigint AS sgst,
-              COALESCE(SUM(igst_amount), 0)::bigint AS igst
-       FROM purchase_invoices
-       WHERE company_id = $1 AND is_deleted = false AND COALESCE(status, '') != 'cancelled'
+      `SELECT COALESCE(SUM(pii.cgst_amount), 0)::bigint AS cgst,
+              COALESCE(SUM(pii.sgst_amount), 0)::bigint AS sgst,
+              COALESCE(SUM(pii.igst_amount), 0)::bigint AS igst
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
          AND ${endDateSql}`,
       [companyId, from, to]
     );
     const expenses = await query(
-      `SELECT COALESCE(SUM(cgst_amount), 0)::bigint AS cgst,
-              COALESCE(SUM(sgst_amount), 0)::bigint AS sgst,
-              COALESCE(SUM(igst_amount), 0)::bigint AS igst
-       FROM expenses
-       WHERE company_id = $1 AND is_deleted = false AND COALESCE(gst_rate, 0) > 0
+      `SELECT COALESCE(SUM(${expenseSql.cgstExpr}), 0)::bigint AS cgst,
+              COALESCE(SUM(${expenseSql.sgstExpr}), 0)::bigint AS sgst,
+              COALESCE(SUM(${expenseSql.igstExpr}), 0)::bigint AS igst
+       FROM expenses e
+       JOIN companies c ON c.id = e.company_id
+       WHERE e.company_id = $1 AND e.is_deleted = false AND COALESCE(e.gst_rate, 0) > 0
          AND ${expEndSql}`,
       [companyId, from, to]
     );

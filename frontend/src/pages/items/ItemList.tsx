@@ -1,207 +1,611 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useItems, useItemCategories, useDeleteItem } from '@/hooks/useItems';
+import { useQueryClient } from '@tanstack/react-query';
+import api, { getApiBaseURL } from '@/lib/api';
+import {
+  useCreateItemCategory,
+  useCreateItemUnit,
+  useDeleteItem,
+  useItem,
+  useItemCategories,
+  useItems,
+  useItemUnits,
+} from '@/hooks/useItems';
 import { useGodowns } from '@/hooks/useStock';
 import { useAuthStore } from '@/store/authStore';
-import { formatMoney } from '@/lib/formatters';
+import { formatDate, formatMoney } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Search, Upload, Download, Barcode, Trash2, Edit2, Package } from 'lucide-react';
-import type { Item, ItemFilters } from '@/types';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  ArrowRight,
+  Download,
+  Edit2,
+  Package,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  Warehouse,
+} from 'lucide-react';
+import type { Item } from '@/types';
 import ItemForm from './ItemForm';
 import toast from 'react-hot-toast';
 
+type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
+
+function qtyText(value: unknown) {
+  const num = Number(value || 0);
+  return Number.isInteger(num) ? String(num) : num.toFixed(2);
+}
+
+function activityBadge(activityType: string) {
+  if (activityType === 'sale' || activityType === 'transfer_out') return 'destructive' as const;
+  if (activityType === 'purchase' || activityType === 'opening_stock' || activityType === 'transfer_in') return 'success' as const;
+  return 'warning' as const;
+}
+
 export default function ItemList() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { company } = useAuthStore();
-  const term = company?.itemTerminologyPlural || 'Products';
+  const termSingle = company?.itemTerminology || 'Item';
 
-  const [filters, setFilters] = useState<ItemFilters>({ page: 1, limit: 25 });
+  const [activeTab, setActiveTab] = useState<ItemWorkspaceTab>('products');
   const [search, setSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [stockFilter, setStockFilter] = useState('all');
+  const [selectedItemId, setSelectedItemId] = useState<string>('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [selectedUnitId, setSelectedUnitId] = useState<string>('');
+  const [categoryName, setCategoryName] = useState('');
+  const [unitName, setUnitName] = useState('');
+  const [unitAbbreviation, setUnitAbbreviation] = useState('');
+  const [importing, setImporting] = useState(false);
 
-  const activeFilters = useMemo(() => {
-    const f: ItemFilters = { ...filters, search: search || undefined };
-    if (stockFilter === 'low') f.low_stock = 'true';
-    if (stockFilter === 'out') f.out_of_stock = 'true';
-    return f;
-  }, [filters, search, stockFilter]);
+  const isServiceTab = activeTab === 'services';
+  const itemFilters = useMemo(() => {
+    const filters: Record<string, unknown> = {
+      page: 1,
+      limit: 200,
+      search: search || undefined,
+    };
+    if (activeTab === 'products' || activeTab === 'services') {
+      filters.item_type = isServiceTab ? 'service' : undefined;
+      if (!isServiceTab && stockFilter === 'low') filters.low_stock = 'true';
+      if (!isServiceTab && stockFilter === 'out') filters.out_of_stock = 'true';
+    }
+    return filters;
+  }, [activeTab, isServiceTab, search, stockFilter]);
 
-  const { data, isLoading } = useItems(activeFilters);
-  const { data: catData } = useItemCategories();
-  useGodowns();
+  const { data: itemsRes, isLoading } = useItems(itemFilters);
+  const { data: categoriesRes } = useItemCategories();
+  const { data: unitsRes } = useItemUnits();
+  const { data: godownsRes } = useGodowns();
   const deleteMutation = useDeleteItem();
+  const createCategory = useCreateItemCategory();
+  const createUnit = useCreateItemUnit();
 
-  const items: Item[] = data?.data?.data || [];
-  const pagination = data?.data?.pagination;
-  const categories = catData?.data?.flat || [];
+  const items: Item[] = itemsRes?.data?.data || [];
+  const itemDetailQuery = useItem(selectedItemId);
+  const selectedItem: any = itemDetailQuery.data?.data;
+  const categories = categoriesRes?.data?.flat || [];
+  const units = unitsRes?.data || [];
+  const godowns = godownsRes?.data || [];
+
+  const visibleItems = useMemo(() => {
+    if (activeTab === 'services') return items.filter((item) => item.item_type === 'service');
+    if (activeTab === 'products') return items.filter((item) => item.item_type !== 'service');
+    return items;
+  }, [activeTab, items]);
+
+  const categoryItems = useMemo(
+    () => items.filter((item) => (selectedCategoryId ? item.category_id === selectedCategoryId : !item.category_id)),
+    [items, selectedCategoryId]
+  );
+
+  const unitItems = useMemo(
+    () => items.filter((item) => (selectedUnitId ? item.unit_id === selectedUnitId : true)),
+    [items, selectedUnitId]
+  );
+
+  useEffect(() => {
+    if ((activeTab === 'products' || activeTab === 'services') && visibleItems.length > 0) {
+      const exists = visibleItems.some((item) => item.id === selectedItemId);
+      if (!exists) setSelectedItemId(visibleItems[0].id);
+    }
+    if ((activeTab === 'products' || activeTab === 'services') && visibleItems.length === 0) {
+      setSelectedItemId('');
+    }
+  }, [activeTab, selectedItemId, visibleItems]);
+
+  useEffect(() => {
+    if (!selectedCategoryId && categories.length > 0) {
+      const uncategorized = categories.find((c: any) => !c.parent_id);
+      setSelectedCategoryId(uncategorized?.id || categories[0].id);
+    }
+  }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    if (!selectedUnitId && units.length > 0) setSelectedUnitId(units[0].id);
+  }, [selectedUnitId, units]);
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete "${name}"?`)) return;
-    try { await deleteMutation.mutateAsync(id); toast.success('Item deleted'); }
-    catch (e: any) { toast.error(e.response?.data?.error || 'Failed to delete'); }
+    try {
+      await deleteMutation.mutateAsync(id);
+      if (selectedItemId === id) setSelectedItemId('');
+      toast.success('Item deleted');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to delete');
+    }
   };
 
-  const toggleSelect = (id: string) => {
-    const s = new Set(selected);
-    s.has(id) ? s.delete(id) : s.add(id);
-    setSelected(s);
+  const handleImportClick = () => fileInputRef.current?.click();
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    setImporting(true);
+    try {
+      const response = await api.post('/items/bulk-import?action=confirm', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const inserted = Number(response.data?.data?.inserted || 0);
+      const errors = Number(response.data?.data?.errors || 0);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['items'] }),
+        qc.invalidateQueries({ queryKey: ['stock'] }),
+      ]);
+      toast.success(`Imported ${inserted} ${inserted === 1 ? 'item' : 'items'}${errors ? `, ${errors} rejected` : ''}`);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Import failed');
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
   };
 
-  const toggleAll = () => {
-    if (selected.size === items.length) setSelected(new Set());
-    else setSelected(new Set(items.map(i => i.id)));
+  const saveCategory = async () => {
+    if (!categoryName.trim()) return toast.error('Category name is required');
+    try {
+      await createCategory.mutateAsync({ name: categoryName.trim() });
+      setCategoryName('');
+      toast.success('Category added');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to add category');
+    }
   };
 
-  const getStockBadge = (item: Item) => {
-    if (!item.track_inventory) return <Badge variant="secondary">Service</Badge>;
-    const stock = item.total_stock || 0;
-    if (stock === 0) return <Badge variant="destructive">Out of Stock</Badge>;
-    if (stock <= (item.reorder_point || 0)) return <Badge variant="warning">Low Stock</Badge>;
-    return <Badge variant="success">In Stock</Badge>;
+  const saveUnit = async () => {
+    if (!unitName.trim()) return toast.error('Unit name is required');
+    try {
+      await createUnit.mutateAsync({ name: unitName.trim(), abbreviation: unitAbbreviation.trim() || undefined });
+      setUnitName('');
+      setUnitAbbreviation('');
+      toast.success('Unit added');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to add unit');
+    }
   };
 
-  const getRowBorder = (item: Item) => {
-    if (!item.track_inventory) return '';
-    const stock = item.total_stock || 0;
-    if (stock === 0) return 'border-l-4 border-l-red-400';
-    if (stock <= (item.reorder_point || 0)) return 'border-l-4 border-l-amber-400';
-    return '';
-  };
+  const totalStock = Number(selectedItem?.total_stock || 0);
+  const activity = (selectedItem?.activity_timeline || []) as any[];
+  const activitySummary = (selectedItem?.activity_summary || {}) as Record<string, unknown>;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <input ref={fileInputRef} type="file" className="hidden" accept=".xlsx,.xls,.csv,.json" onChange={handleImportFile} />
+
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{term}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{pagination?.total || 0} items total</p>
+          <h1 className="text-2xl font-bold tracking-tight">Item Center</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Add {termSingle.toLowerCase()}s, track stock, audit every purchase and sale, and manage units and categories from one place.
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm"><Upload className="w-4 h-4 mr-1" />Import</Button>
-          <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-1" />Export</Button>
-          <Button size="sm" onClick={() => { setEditItem(null); setShowForm(true); }}><Plus className="w-4 h-4 mr-1" />Add {company?.itemTerminology || 'Product'}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => window.open(`${getApiBaseURL()}/items/import-template`, '_blank')}>
+            <Download className="w-4 h-4 mr-1" />
+            Template
+          </Button>
+          <Button variant="outline" size="sm" loading={importing} onClick={handleImportClick}>
+            <Upload className="w-4 h-4 mr-1" />
+            Import
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/inventory/adjust')}>
+            <Warehouse className="w-4 h-4 mr-1" />
+            Adjust Stock
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/purchases/new')}>
+            <Plus className="w-4 h-4 mr-1" />
+            Add Purchase
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigate('/sales/new')}>
+            <Plus className="w-4 h-4 mr-1" />
+            Add Sale
+          </Button>
+          <Button size="sm" onClick={() => { setEditItem(null); setShowForm(true); }}>
+            <Plus className="w-4 h-4 mr-1" />
+            Add {termSingle}
+          </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search by name, SKU, barcode..." className="pl-9"
-                value={search} onChange={e => { setSearch(e.target.value); setFilters(f => ({ ...f, page: 1 })); }} />
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <select className="h-9 rounded-md border bg-transparent px-3 text-sm" value={filters.category_id || ''} onChange={e => setFilters(f => ({ ...f, category_id: e.target.value || undefined, page: 1 }))}>
-                <option value="">All Categories</option>
-                {categories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <select className="h-9 rounded-md border bg-transparent px-3 text-sm" value={filters.item_type || ''} onChange={e => setFilters(f => ({ ...f, item_type: e.target.value || undefined, page: 1 }))}>
-                <option value="">All Types</option>
-                <option value="product">Product</option><option value="service">Service</option>
-                <option value="raw_material">Raw Material</option><option value="consumable">Consumable</option>
-              </select>
-              {['all','low','out'].map(s => (
-                <button key={s} onClick={() => setStockFilter(s)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${stockFilter === s ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
-                  {s === 'all' ? 'All Stock' : s === 'low' ? '⚠️ Low' : '❌ Out'}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ItemWorkspaceTab)} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[520px]">
+          <TabsTrigger value="products">Products</TabsTrigger>
+          <TabsTrigger value="services">Services</TabsTrigger>
+          <TabsTrigger value="categories">Categories</TabsTrigger>
+          <TabsTrigger value="units">Units</TabsTrigger>
+        </TabsList>
 
-      {/* Bulk actions */}
-      {selected.size > 0 && (
-        <div className="flex items-center gap-3 bg-primary/5 border border-primary/20 rounded-lg p-3">
-          <span className="text-sm font-medium">{selected.size} selected</span>
-          <Button size="sm" variant="outline"><Barcode className="w-3 h-3 mr-1" />Print Barcodes</Button>
-          <Button size="sm" variant="outline"><Download className="w-3 h-3 mr-1" />Export</Button>
-          <Button size="sm" variant="destructive"><Trash2 className="w-3 h-3 mr-1" />Delete</Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Button>
-        </div>
-      )}
+        <TabsContent value="products" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-semibold">Products</h2>
+                    <p className="text-xs text-muted-foreground">{visibleItems.length} visible</p>
+                  </div>
+                  <Button size="sm" onClick={() => { setEditItem(null); setShowForm(true); }}>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add
+                  </Button>
+                </div>
 
-      {/* Table */}
-      <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/40">
-                <th className="w-10 p-3"><input type="checkbox" checked={selected.size === items.length && items.length > 0} onChange={toggleAll} className="rounded border-input" /></th>
-                <th className="text-left p-3 font-medium">Name</th>
-                <th className="text-left p-3 font-medium hidden md:table-cell">Category</th>
-                <th className="text-right p-3 font-medium hidden lg:table-cell">Stock</th>
-                <th className="text-right p-3 font-medium tabular-nums">Purchase ₹</th>
-                <th className="text-right p-3 font-medium tabular-nums">Selling ₹</th>
-                <th className="text-center p-3 font-medium hidden lg:table-cell">GST</th>
-                <th className="text-center p-3 font-medium">Status</th>
-                <th className="w-16 p-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && <tr><td colSpan={9} className="p-12 text-center text-muted-foreground">Loading...</td></tr>}
-              {!isLoading && items.length === 0 && (
-                <tr><td colSpan={9} className="p-12 text-center">
-                  <Package className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
-                  <p className="text-muted-foreground">No items found</p>
-                  <Button size="sm" className="mt-3" onClick={() => setShowForm(true)}>Add First Item</Button>
-                </td></tr>
-              )}
-              {items.map(item => (
-                <tr key={item.id} className={`border-b hover:bg-muted/30 transition-colors cursor-pointer ${getRowBorder(item)}`} onClick={() => navigate(`/items/${item.id}`)}>
-                  <td className="p-3" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelect(item.id)} className="rounded border-input" />
-                  </td>
-                  <td className="p-3"><div className="font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{item.sku || '—'}</div></td>
-                  <td className="p-3 hidden md:table-cell text-muted-foreground">{item.category_name || '—'}</td>
-                  <td className="p-3 text-right hidden lg:table-cell tabular-nums font-medium">{item.track_inventory ? (item.total_stock || 0) : '—'}</td>
-                  <td className="p-3 text-right tabular-nums">{formatMoney(item.purchase_price)}</td>
-                  <td className="p-3 text-right tabular-nums font-medium">{formatMoney(item.selling_price)}</td>
-                  <td className="p-3 text-center hidden lg:table-cell"><span className="tabular-nums">{item.gst_rate}%</span></td>
-                  <td className="p-3 text-center">{getStockBadge(item)}</td>
-                  <td className="p-3" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditItem(item); setShowForm(true); }}><Edit2 className="w-3.5 h-3.5" /></Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                        title="Delete item"
-                        loading={deleteMutation.isPending && deleteMutation.variables === item.id}
-                        onClick={() => handleDelete(item.id, item.name)}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input className="pl-9" placeholder="Search by name, SKU, barcode..." value={search} onChange={(e) => setSearch(e.target.value)} />
+                </div>
+
+                <div className="flex gap-2">
+                  {(['all', 'low', 'out'] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setStockFilter(filter)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium ${stockFilter === filter ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
+                    >
+                      {filter === 'all' ? 'All' : filter === 'low' ? 'Low stock' : 'Out of stock'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="max-h-[70vh] overflow-y-auto rounded-lg border">
+                  {isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading items...</div>}
+                  {!isLoading && visibleItems.length === 0 && (
+                    <div className="p-8 text-center text-sm text-muted-foreground">No products found for these filters.</div>
+                  )}
+                  {visibleItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedItemId(item.id)}
+                      className={`w-full border-b p-4 text-left transition hover:bg-muted/40 ${selectedItemId === item.id ? 'bg-primary/5' : ''}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium">{item.name}</div>
+                          <div className="text-xs text-muted-foreground mt-1">{item.sku || 'No SKU'}{item.category_name ? ` • ${item.category_name}` : ''}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold tabular-nums">{qtyText(item.total_stock || 0)}</div>
+                          <div className="text-xs text-muted-foreground">{formatMoney(item.selling_price || 0)}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4 md:p-6">
+                {!selectedItemId || !selectedItem ? (
+                  <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+                    <Package className="w-12 h-12 text-muted-foreground/40 mb-3" />
+                    <p className="text-muted-foreground">Select a product to view stock, pricing, and full audit.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-2xl font-bold">{selectedItem.name}</h2>
+                          {selectedItem.sku ? <Badge variant="outline">{selectedItem.sku}</Badge> : null}
+                          <Badge variant={selectedItem.is_active ? 'success' : 'destructive'}>
+                            {selectedItem.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          {selectedItem.category_name || 'Uncategorised'} • {selectedItem.unit_name || 'No unit'} • GST {selectedItem.gst_rate || 0}%
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" onClick={() => navigate(`/items/${selectedItem.id}`)}>
+                          Open Detail
+                          <ArrowRight className="w-4 h-4 ml-1" />
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => { setEditItem(selectedItem); setShowForm(true); }}>
+                          <Edit2 className="w-4 h-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button variant="destructive" size="sm" loading={deleteMutation.isPending && deleteMutation.variables === selectedItem.id} onClick={() => handleDelete(selectedItem.id, selectedItem.name)}>
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          Delete
+                        </Button>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
 
-        {/* Pagination */}
-        {pagination && pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between p-4 border-t">
-            <span className="text-sm text-muted-foreground">Page {pagination.page} of {pagination.totalPages}</span>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" disabled={!pagination.hasPrev} onClick={() => setFilters(f => ({ ...f, page: (f.page || 1) - 1 }))}>Previous</Button>
-              <Button size="sm" variant="outline" disabled={!pagination.hasNext} onClick={() => setFilters(f => ({ ...f, page: (f.page || 1) + 1 }))}>Next</Button>
-            </div>
+                    <div className="grid gap-4 md:grid-cols-4">
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock on hand</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(totalStock)}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock value</p><p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(Number(selectedItem.total_stock_value || 0))}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.purchased_quantity)}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sold qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.sold_quantity)}</p></CardContent></Card>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.6fr)]">
+                      <div className="space-y-4">
+                        <div className="rounded-xl border p-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-semibold">Stock by godown</h3>
+                            <Badge variant="secondary">{godowns.length} godowns</Badge>
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            {(selectedItem.stock || []).length === 0 && <p className="text-sm text-muted-foreground">No stock records yet.</p>}
+                            {(selectedItem.stock || []).map((row: any) => (
+                              <div key={row.godown_id} className="rounded-lg border p-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="font-medium">{row.godown_name}</div>
+                                  <div className="text-sm font-semibold tabular-nums">{qtyText(row.quantity)}</div>
+                                </div>
+                                <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                                  <span>Available {qtyText(row.available_quantity)}</span>
+                                  <span>Avg cost {formatMoney(Number(row.avg_cost_price || 0))}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border p-4">
+                          <h3 className="font-semibold">Commercial snapshot</h3>
+                          <div className="mt-3 space-y-2 text-sm">
+                            <div className="flex justify-between"><span className="text-muted-foreground">Purchase price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.purchase_price || 0))}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Selling price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.selling_price || 0))}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Reorder point</span><span className="tabular-nums">{qtyText(selectedItem.reorder_point || 0)}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Last purchase</span><span>{activitySummary.last_purchase_date ? formatDate(String(activitySummary.last_purchase_date)) : '—'}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Last sale</span><span>{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="font-semibold">Full audit trail</h3>
+                            <p className="text-xs text-muted-foreground mt-1">Purchases, sales, opening stock, transfers, and adjustments for this item.</p>
+                          </div>
+                          <Badge variant="info">{activity.length} events</Badge>
+                        </div>
+                        <div className="mt-4 max-h-[620px] overflow-y-auto space-y-3 pr-1">
+                          {activity.length === 0 && <p className="text-sm text-muted-foreground">No activity yet for this item.</p>}
+                          {activity.map((row: any, index: number) => (
+                            <div key={`${row.activity_type}-${row.reference_id}-${index}`} className="rounded-lg border p-3">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Badge variant={activityBadge(String(row.activity_type))}>{String(row.activity_type).replace(/_/g, ' ')}</Badge>
+                                    <span className="font-medium">{row.reference_number || 'Reference'}</span>
+                                  </div>
+                                  <div className="mt-1 text-sm text-muted-foreground">
+                                    {row.counterparty_name || '—'}{row.godown_name ? ` • ${row.godown_name}` : ''}
+                                  </div>
+                                </div>
+                                <div className="text-left sm:text-right">
+                                  <div className={`font-semibold tabular-nums ${Number(row.quantity) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {Number(row.quantity) > 0 ? '+' : ''}{qtyText(row.quantity)}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">{row.activity_at ? formatDate(String(row.activity_at)) : '—'}</div>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
+                                <div><span className="text-muted-foreground">Unit price</span><div className="tabular-nums">{formatMoney(Number(row.unit_price || 0))}</div></div>
+                                <div><span className="text-muted-foreground">Taxable</span><div className="tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</div></div>
+                                <div><span className="text-muted-foreground">Tax</span><div className="tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</div></div>
+                                <div><span className="text-muted-foreground">Total</span><div className="tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</div></div>
+                              </div>
+                              {row.notes ? <p className="mt-2 text-xs text-muted-foreground">{row.notes}</p> : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
-        )}
-      </div>
+        </TabsContent>
 
-      {/* Item Form Sheet */}
+        <TabsContent value="services" className="space-y-4">
+          <Card>
+            <CardContent className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-semibold">Services</h2>
+                    <p className="text-xs text-muted-foreground">Keep service masters alongside stock items so sales entry stays consistent.</p>
+                  </div>
+                <Button size="sm" onClick={() => { setEditItem(null); setShowForm(true); }}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Service
+                </Button>
+              </div>
+              <div className="relative max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input className="pl-9" placeholder="Search services..." value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {visibleItems.length === 0 && <p className="text-sm text-muted-foreground">No services found.</p>}
+                {visibleItems.map((item) => (
+                  <div key={item.id} className="rounded-xl border p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium">{item.name}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{item.sku || 'No SKU'}</div>
+                      </div>
+                      <Badge variant="secondary">Service</Badge>
+                    </div>
+                    <div className="mt-4 space-y-1 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Sale price</span><span className="tabular-nums">{formatMoney(item.selling_price || 0)}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">GST</span><span>{item.gst_rate || 0}%</span></div>
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => { setEditItem(item); setShowForm(true); }}>Edit</Button>
+                      <Button variant="ghost" size="sm" onClick={() => navigate(`/items/${item.id}`)}>Audit</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="categories" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                <h2 className="font-semibold">Category master</h2>
+                <div className="space-y-2">
+                  <Label>Add category</Label>
+                  <div className="flex gap-2">
+                    <Input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="e.g. Grocery" />
+                    <Button loading={createCategory.isPending} onClick={saveCategory}>Save</Button>
+                  </div>
+                </div>
+                <div className="rounded-lg border max-h-[65vh] overflow-y-auto">
+                  {categories.map((category: any) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setSelectedCategoryId(category.id)}
+                      className={`flex w-full items-center justify-between border-b px-4 py-3 text-left ${selectedCategoryId === category.id ? 'bg-primary/5' : ''}`}
+                    >
+                      <div>
+                        <div className="font-medium">{category.name}</div>
+                        <div className="text-xs text-muted-foreground">{category.item_count || 0} items</div>
+                      </div>
+                      <Badge variant="outline">{category.item_count || 0}</Badge>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-semibold">
+                      {categories.find((category: any) => category.id === selectedCategoryId)?.name || 'Category items'}
+                    </h2>
+                    <p className="text-xs text-muted-foreground mt-1">Items currently mapped to this category.</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => { setEditItem(null); setShowForm(true); }}>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Item
+                  </Button>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {categoryItems.length === 0 && <p className="text-sm text-muted-foreground">No items in this category yet.</p>}
+                  {categoryItems.map((item) => (
+                    <div key={item.id} className="rounded-xl border p-4">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{item.sku || 'No SKU'} • {item.item_type}</div>
+                      <div className="mt-3 flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Stock</span>
+                        <span className="tabular-nums">{qtyText(item.total_stock || 0)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="units" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                <h2 className="font-semibold">Unit master</h2>
+                <div className="space-y-2">
+                  <Label>Add unit</Label>
+                  <Input value={unitName} onChange={(e) => setUnitName(e.target.value)} placeholder="e.g. Litres" />
+                  <Input value={unitAbbreviation} onChange={(e) => setUnitAbbreviation(e.target.value)} placeholder="Abbreviation (e.g. Ltr)" />
+                  <Button className="w-full" loading={createUnit.isPending} onClick={saveUnit}>Save Unit</Button>
+                </div>
+                <div className="rounded-lg border max-h-[65vh] overflow-y-auto">
+                  {units.map((unit: any) => (
+                    <button
+                      key={unit.id}
+                      type="button"
+                      onClick={() => setSelectedUnitId(unit.id)}
+                      className={`flex w-full items-center justify-between border-b px-4 py-3 text-left ${selectedUnitId === unit.id ? 'bg-primary/5' : ''}`}
+                    >
+                      <div>
+                        <div className="font-medium">{unit.name}</div>
+                        <div className="text-xs text-muted-foreground">{unit.abbreviation || '—'}</div>
+                      </div>
+                      {unit.is_default ? <Badge variant="info">Default</Badge> : <Badge variant="outline">Unit</Badge>}
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-semibold">{units.find((unit: any) => unit.id === selectedUnitId)?.name || 'Unit usage'}</h2>
+                    <p className="text-xs text-muted-foreground mt-1">Items using this unit today.</p>
+                  </div>
+                  <Badge variant="secondary">
+                    {unitItems.filter((item) => item.unit_id === selectedUnitId).length} linked
+                  </Badge>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {unitItems.filter((item) => item.unit_id === selectedUnitId).length === 0 && (
+                    <p className="text-sm text-muted-foreground">No items are using this unit yet.</p>
+                  )}
+                  {unitItems.filter((item) => item.unit_id === selectedUnitId).map((item) => (
+                    <div key={item.id} className="rounded-xl border p-4">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{item.category_name || 'No category'}</div>
+                      <div className="mt-3 flex justify-between text-sm">
+                        <span className="text-muted-foreground">Stock</span>
+                        <span className="tabular-nums">{qtyText(item.total_stock || 0)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+
       <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} />
     </div>
   );

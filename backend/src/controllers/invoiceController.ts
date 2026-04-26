@@ -16,6 +16,12 @@ import {
 import { redis } from '../config/redis';
 import { env } from '../config/env';
 
+function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | 'partial' | 'paid' {
+  if (paidAmount >= totalAmount) return 'paid';
+  if (paidAmount > 0) return 'partial';
+  return 'unpaid';
+}
+
 async function generateInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
   const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
   const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
@@ -144,6 +150,9 @@ export async function createInvoice(req: Request, res: Response) {
     if (!Array.isArray(d.items) || d.items.length === 0) {
       return res.status(400).json(error('At least one line item is required'));
     }
+    if (d.invoice_type && d.invoice_type !== 'sale' && d.invoice_type !== 'tax_invoice') {
+      return res.status(400).json(error('Use the purchase module for supplier bills. This form only creates sales invoices.'));
+    }
 
     const mappedItems = d.items.map((it: any) => mapLineForGst({
       ...it,
@@ -178,6 +187,8 @@ export async function createInvoice(req: Request, res: Response) {
       );
 
       const amountPaid = Math.round(Number(d.amount_paid) || 0);
+      if (amountPaid < 0) throw new Error('Amount paid cannot be negative');
+      if (amountPaid > totalsInfo.totalAmount) throw new Error('Amount paid cannot exceed invoice total');
       let paymentStatus = 'unpaid';
       if (amountPaid >= totalsInfo.totalAmount) paymentStatus = 'paid';
       else if (amountPaid > 0) paymentStatus = 'partial';
@@ -298,22 +309,52 @@ export async function createInvoice(req: Request, res: Response) {
         );
 
         if (item.item_id && godownId && !isPurchase) {
-          await client.query(
-            `UPDATE item_stock SET quantity = quantity - $1::numeric
-             WHERE item_id = $2 AND godown_id = $3 AND company_id = $4`,
-            [item.quantity, item.item_id, godownId, companyId]
+          const itemRes = await client.query(
+            `SELECT name, track_inventory
+             FROM items
+             WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+            [item.item_id, companyId]
           );
+          if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
 
-          const balRes = await client.query(
-            'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
-            [item.item_id, godownId, companyId]
-          );
+          if (itemRes.rows[0].track_inventory) {
+            const stockRes = await client.query(
+              `SELECT quantity, reserved_quantity
+               FROM item_stock
+               WHERE item_id = $1 AND godown_id = $2 AND company_id = $3
+               FOR UPDATE`,
+              [item.item_id, godownId, companyId]
+            );
 
-          await client.query(
-            `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, created_by)
-             VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7)`,
-            [companyId, item.item_id, godownId, invoice.id, -Number(item.quantity), balRes.rows[0]?.quantity || 0, req.user!.id]
-          );
+            if (!stockRes.rows.length) {
+              throw new Error(`No stock row found for "${itemRes.rows[0].name}" in the selected godown`);
+            }
+
+            const qty = Number(item.quantity) || 0;
+            const available = Number(stockRes.rows[0].quantity || 0) - Number(stockRes.rows[0].reserved_quantity || 0);
+            if (qty <= 0) throw new Error(`Invalid quantity for "${itemRes.rows[0].name}"`);
+            if (available < qty) {
+              throw new Error(`Insufficient stock for "${itemRes.rows[0].name}". Available: ${available}, requested: ${qty}`);
+            }
+
+            await client.query(
+              `UPDATE item_stock
+               SET quantity = quantity - $1::numeric
+               WHERE item_id = $2 AND godown_id = $3 AND company_id = $4`,
+              [qty, item.item_id, godownId, companyId]
+            );
+
+            const balRes = await client.query(
+              'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
+              [item.item_id, godownId, companyId]
+            );
+
+            await client.query(
+              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, created_by)
+               VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7)`,
+              [companyId, item.item_id, godownId, invoice.id, -qty, balRes.rows[0]?.quantity || 0, req.user!.id]
+            );
+          }
         }
       }
 
@@ -341,7 +382,7 @@ export async function createInvoice(req: Request, res: Response) {
       }
 
       if (amountPaid > 0) {
-        await client.query(
+        const payRes = await client.query(
           `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, notes, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
           [
@@ -356,29 +397,54 @@ export async function createInvoice(req: Request, res: Response) {
             req.user!.id,
           ]
         );
+        await client.query(
+          `INSERT INTO payment_allocations (payment_id, invoice_id, amount)
+           VALUES ($1, $2, $3)`,
+          [payRes.rows[0].id, invoice.id, amountPaid]
+        );
       }
 
       return invoice;
     });
 
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to create invoice';
+    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
 }
 
 export async function listInvoices(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const { page, limit, offset } = parsePagination(req.query);
-    const { search, status, party_id, invoice_type } = req.query;
+    const { search, status, party_id, invoice_type, overdue } = req.query;
 
-    let where = 'i.company_id = $1 AND i.is_deleted = false';
+    let where = `i.company_id = $1 AND i.is_deleted = false
+      AND i.invoice_type IN ('sale', 'tax_invoice')`;
     const params: any[] = [companyId];
     let idx = 2;
 
     if (search) { where += ` AND (i.invoice_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
-    if (status) { where += ` AND i.status = $${idx}`; params.push(status); idx++; }
+    if (status) {
+      if (['paid', 'partial', 'unpaid'].includes(String(status))) {
+        where += ` AND i.payment_status = $${idx}`;
+      } else {
+        where += ` AND i.status = $${idx}`;
+      }
+      params.push(status);
+      idx++;
+    }
     if (party_id) { where += ` AND i.party_id = $${idx}`; params.push(party_id); idx++; }
-    if (invoice_type) { where += ` AND i.invoice_type = $${idx}`; params.push(invoice_type); idx++; }
+    if (invoice_type) {
+      where += ` AND i.invoice_type = $${idx}`;
+      params.push(invoice_type);
+      idx++;
+    }
+    if (overdue === 'true') {
+      where += ` AND i.status != 'cancelled' AND i.balance_due > 0 AND i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE`;
+    }
 
     const countRes = await query(`SELECT COUNT(*) FROM invoices i LEFT JOIN parties p ON i.party_id = p.id WHERE ${where}`, params);
     const total = parseInt(countRes.rows[0].count);
@@ -389,9 +455,30 @@ export async function listInvoices(req: Request, res: Response) {
        WHERE ${where} ORDER BY i.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, limit, offset]
     );
+    const statsRes = await query(
+      `SELECT
+          COALESCE(SUM(CASE WHEN i.invoice_date = CURRENT_DATE THEN i.total_amount ELSE 0 END), 0)::bigint AS total_sales,
+          COALESCE(SUM(CASE WHEN i.status != 'cancelled' THEN i.balance_due ELSE 0 END), 0)::bigint AS total_receivable,
+          COUNT(*) FILTER (WHERE i.status != 'cancelled' AND i.payment_status = 'unpaid')::int AS unpaid_count,
+          COUNT(*) FILTER (
+            WHERE i.status != 'cancelled'
+              AND i.balance_due > 0
+              AND i.due_date IS NOT NULL
+              AND i.due_date < CURRENT_DATE
+          )::int AS overdue_count
+       FROM invoices i
+       WHERE i.company_id = $1
+         AND i.is_deleted = false
+         AND i.invoice_type IN ('sale', 'tax_invoice')`,
+      [companyId]
+    );
 
-    res.json(success(buildPaginatedResponse(result.rows, total, page, limit)));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    res.json(success(buildPaginatedResponse(result.rows, total, page, limit), statsRes.rows[0]));
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to track payment';
+    const status = /not found/i.test(msg) ? 404 : /Cannot|Invalid|exceeds/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
 }
 
 export async function getInvoice(req: Request, res: Response) {
@@ -448,7 +535,105 @@ export async function getInvoice(req: Request, res: Response) {
 }
 
 export async function cancelInvoice(req: Request, res: Response) {
-  res.json(success({ message: 'Cancel invoice flow not enabled in this build.' }));
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+
+    const result = await withTransaction(async (client) => {
+      const invRes = await client.query(
+        `SELECT *
+         FROM invoices
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [id, companyId]
+      );
+      if (!invRes.rows.length) throw new Error('Invoice not found');
+      const inv = invRes.rows[0];
+
+      if (inv.status === 'cancelled') throw new Error('Invoice is already cancelled');
+      if (Number(inv.paid_amount || 0) > 0) throw new Error('Cannot cancel an invoice that has payments recorded');
+      if (inv.irn) throw new Error('Cancel e-invoice IRN before cancelling this invoice');
+
+      const itemsRes = await client.query(
+        `SELECT ii.*, it.name AS item_master_name, it.track_inventory
+         FROM invoice_items ii
+         LEFT JOIN items it ON it.id = ii.item_id
+         WHERE ii.invoice_id = $1 AND ii.company_id = $2
+         ORDER BY ii.sort_order, ii.id`,
+        [id, companyId]
+      );
+
+      if (inv.invoice_type !== 'purchase' && inv.godown_id) {
+        for (const row of itemsRes.rows) {
+          if (!row.item_id || !row.track_inventory) continue;
+          const qty = Number(row.quantity) || 0;
+          await client.query(
+            `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+             VALUES ($1, $2, $3, $4, 0)
+             ON CONFLICT (item_id, godown_id) DO UPDATE SET
+               quantity = item_stock.quantity + EXCLUDED.quantity`,
+            [companyId, row.item_id, inv.godown_id, qty]
+          );
+          const balRes = await client.query(
+            `SELECT quantity
+             FROM item_stock
+             WHERE company_id = $1 AND item_id = $2 AND godown_id = $3`,
+            [companyId, row.item_id, inv.godown_id]
+          );
+          await client.query(
+            `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
+             VALUES ($1, $2, $3, 'sale_cancel', 'invoice', $4, $5, $6, $7, $8)`,
+            [companyId, row.item_id, inv.godown_id, inv.id, qty, balRes.rows[0]?.quantity || qty, `Cancellation of ${inv.invoice_number}`, req.user!.id]
+          );
+        }
+      }
+
+      if (inv.party_id) {
+        const partyDelta = inv.invoice_type === 'purchase' ? Number(inv.total_amount || 0) : -Number(inv.total_amount || 0);
+        await client.query(
+          `UPDATE parties
+           SET balance = balance + $1
+           WHERE id = $2 AND company_id = $3`,
+          [partyDelta, inv.party_id, companyId]
+        );
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES (
+             $1, $2, $3, $4,
+             (SELECT balance FROM parties WHERE id = $2),
+             'invoice_cancel', $5, $6, $7
+           )`,
+          [
+            companyId,
+            inv.party_id,
+            inv.invoice_type === 'purchase' ? 'debit' : 'credit',
+            Number(inv.total_amount || 0),
+            inv.id,
+            `Cancelled ${inv.invoice_number}`,
+            req.user!.id,
+          ]
+        );
+      }
+
+      await client.query(
+        `UPDATE invoices
+         SET status = 'cancelled',
+             payment_status = CASE WHEN paid_amount > 0 THEN payment_status ELSE 'unpaid' END,
+             updated_at = NOW()
+         WHERE id = $1 AND company_id = $2`,
+        [id, companyId]
+      );
+
+      return inv;
+    });
+
+    await logAction(req.user!.id, companyId, 'cancel', 'invoice', id, { invoice_number: result.invoice_number }, { status: 'cancelled' }, req.ip, req.get('User-Agent'));
+    res.json(success({ message: 'Invoice cancelled successfully' }));
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to cancel invoice';
+    const status = /not found/i.test(msg) ? 404 : /already|Cannot|Cancel e-invoice/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
 }
 
 export async function deleteInvoice(req: Request, res: Response) {
@@ -468,8 +653,8 @@ export async function deleteInvoice(req: Request, res: Response) {
     if (Number(inv.paid_amount || 0) > 0) {
       return res.status(400).json(error('Cannot delete an invoice that has payments recorded.'));
     }
-    if (inv.status === 'cancelled') {
-      return res.status(400).json(error('Invoice is already cancelled.'));
+    if (inv.status !== 'draft' && inv.status !== 'cancelled') {
+      return res.status(400).json(error('Only draft or already-cancelled invoices can be deleted. Cancel the invoice first.'));
     }
     await query(
       `UPDATE invoices SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`,
@@ -805,17 +990,66 @@ export async function recordPayment(req: Request, res: Response) {
     const { amount, payment_mode, reference_number } = req.body;
     const amt = Math.round(Number(amount) || 0);
     if (amt <= 0) return res.status(400).json(error('Invalid amount'));
+    const companyId = req.user!.company_id;
 
-    await query(
-      `UPDATE invoices SET paid_amount = paid_amount + $1, payment_mode = COALESCE($3, payment_mode), updated_at = now()
-       WHERE id = $2 AND company_id = $4`,
-      [amt, id, payment_mode || null, req.user!.company_id]
-    );
-    await query(
-      `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, reference_number, notes, created_by)
-       SELECT $1, 'incoming', $2, CURRENT_DATE, party_id, $3, $4, $5, $6, $7 FROM invoices WHERE id = $8 AND company_id = $9`,
-      [req.user!.company_id, `PAY-${Date.now()}`, amt, payment_mode || 'cash', reference_number || null, `Allocation for invoice`, req.user!.id, id, req.user!.company_id]
-    );
-    res.json(success({ message: 'Payment tracked' }));
+    const result = await withTransaction(async (client) => {
+      const invRes = await client.query(
+        `SELECT id, party_id, invoice_number, total_amount, paid_amount, status
+         FROM invoices
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [id, companyId]
+      );
+      if (!invRes.rows.length) throw new Error('Invoice not found');
+      const inv = invRes.rows[0];
+      if (inv.status === 'cancelled') throw new Error('Cannot record payment for a cancelled invoice');
+
+      const currentPaid = Number(inv.paid_amount || 0);
+      const total = Number(inv.total_amount || 0);
+      const remaining = total - currentPaid;
+      if (amt > remaining) throw new Error(`Payment exceeds balance due of ${remaining}`);
+
+      const payRes = await client.query(
+        `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, reference_number, notes, created_by)
+         VALUES ($1, 'incoming', $2, CURRENT_DATE, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [companyId, `PAY-${Date.now()}`, inv.party_id, amt, payment_mode || 'cash', reference_number || null, `Allocation for ${inv.invoice_number}`, req.user!.id]
+      );
+
+      await client.query(
+        `INSERT INTO payment_allocations (payment_id, invoice_id, amount)
+         VALUES ($1, $2, $3)`,
+        [payRes.rows[0].id, id, amt]
+      );
+
+      const newPaid = currentPaid + amt;
+      await client.query(
+        `UPDATE invoices
+         SET paid_amount = $1,
+             payment_status = $2,
+             payment_mode = COALESCE($3, payment_mode),
+             updated_at = NOW()
+         WHERE id = $4 AND company_id = $5`,
+        [newPaid, paymentStatusFor(total, newPaid), payment_mode || null, id, companyId]
+      );
+
+      if (inv.party_id) {
+        await client.query(
+          `UPDATE parties
+           SET balance = balance - $1
+           WHERE id = $2 AND company_id = $3`,
+          [amt, inv.party_id, companyId]
+        );
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES ($1, $2, 'credit', $3, (SELECT balance FROM parties WHERE id = $2), 'payment', $4, $5, $6)`,
+          [companyId, inv.party_id, amt, id, `Payment for ${inv.invoice_number}`, req.user!.id]
+        );
+      }
+
+      return { payment_id: payRes.rows[0].id, paid_amount: newPaid, balance_due: total - newPaid };
+    });
+
+    res.json(success({ message: 'Payment tracked', ...result }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }

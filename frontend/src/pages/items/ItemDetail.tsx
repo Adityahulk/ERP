@@ -31,6 +31,8 @@ export default function ItemDetail() {
 
   const stock: any[] = item.stock || [];
   const movements: any[] = item.recent_movements || [];
+  const activity: any[] = item.activity_timeline || [];
+  const activitySummary: Record<string, unknown> = item.activity_summary || {};
   const totalStock = item.total_stock || 0;
 
   return (
@@ -66,11 +68,19 @@ export default function ItemDetail() {
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock Value</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.total_stock_value || 0)}</p></CardContent></Card>
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased Qty</p><p className="text-xl font-bold tabular-nums mt-1">{Number(activitySummary.purchased_quantity || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sold Qty</p><p className="text-xl font-bold tabular-nums mt-1">{Number(activitySummary.sold_quantity || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Last Purchase</p><p className="text-sm font-semibold mt-2">{activitySummary.last_purchase_date ? formatDate(String(activitySummary.last_purchase_date)) : '—'}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Last Sale</p><p className="text-sm font-semibold mt-2">{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</p></CardContent></Card>
+      </div>
+
       <Tabs defaultValue="details" className="space-y-4">
         <TabsList>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="stock">Stock by Godown</TabsTrigger>
           <TabsTrigger value="movements">Recent Movements</TabsTrigger>
+          <TabsTrigger value="audit">Audit Trail</TabsTrigger>
         </TabsList>
 
         <TabsContent value="details">
@@ -135,6 +145,42 @@ export default function ItemDetail() {
                 ))}
               </tbody>
             </table>
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="audit">
+          <Card><CardContent className="p-4 space-y-3">
+            {activity.length === 0 && <div className="p-8 text-center text-muted-foreground">No transaction history for this item yet.</div>}
+            {activity.map((row: any, index: number) => (
+              <div key={`${row.activity_type}-${row.reference_id}-${index}`} className="rounded-lg border p-4">
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant={['purchase', 'opening_stock', 'transfer_in'].includes(row.activity_type) ? 'success' : ['sale', 'transfer_out'].includes(row.activity_type) ? 'destructive' : 'warning'}>
+                        {String(row.activity_type || '').replace(/_/g, ' ')}
+                      </Badge>
+                      <span className="font-medium">{row.reference_number || 'Reference'}</span>
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {row.counterparty_name || '—'}{row.godown_name ? ` • ${row.godown_name}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-left md:text-right">
+                    <div className={`font-semibold tabular-nums ${Number(row.quantity) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {Number(row.quantity) > 0 ? '+' : ''}{Number(row.quantity || 0)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{row.activity_at ? formatDate(String(row.activity_at)) : '—'}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div><span className="text-muted-foreground">Unit price</span><p className="tabular-nums">{formatMoney(Number(row.unit_price || 0))}</p></div>
+                  <div><span className="text-muted-foreground">Taxable</span><p className="tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</p></div>
+                  <div><span className="text-muted-foreground">Tax</span><p className="tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</p></div>
+                  <div><span className="text-muted-foreground">Total</span><p className="tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</p></div>
+                </div>
+                {row.notes ? <p className="mt-2 text-xs text-muted-foreground">{row.notes}</p> : null}
+              </div>
+            ))}
           </CardContent></Card>
         </TabsContent>
       </Tabs>

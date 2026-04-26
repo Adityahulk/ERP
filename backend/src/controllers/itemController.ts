@@ -8,6 +8,245 @@ import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
 
+async function getItemActivity(companyId: string, itemId: string) {
+  const timelineRes = await query(
+    `WITH sales AS (
+       SELECT
+         'sale'::text AS activity_type,
+         'out'::text AS direction,
+         i.invoice_date::timestamp AS activity_at,
+         i.invoice_number AS reference_number,
+         COALESCE(p.name, 'Walk-in customer') AS counterparty_name,
+         COALESCE(g.name, '—') AS godown_name,
+         -COALESCE(ii.quantity, 0)::numeric AS quantity,
+         COALESCE(ii.unit_price, 0)::bigint AS unit_price,
+         COALESCE(ii.total_amount, 0)::bigint AS gross_amount,
+         COALESCE(ii.taxable_amount, 0)::bigint AS taxable_amount,
+         COALESCE(ii.cgst_amount, 0)::bigint + COALESCE(ii.sgst_amount, 0)::bigint + COALESCE(ii.igst_amount, 0)::bigint + COALESCE(ii.cess_amount, 0)::bigint AS tax_amount,
+         COALESCE(i.status, 'draft') AS status,
+         i.id AS reference_id,
+         COALESCE(NULLIF(TRIM(i.notes), ''), NULLIF(TRIM(ii.item_description), '')) AS notes
+       FROM invoice_items ii
+       JOIN invoices i ON i.id = ii.invoice_id
+       LEFT JOIN parties p ON p.id = i.party_id
+       LEFT JOIN godowns g ON g.id = i.godown_id
+       WHERE ii.item_id = $1
+         AND i.company_id = $2
+         AND i.is_deleted = false
+         AND i.status != 'cancelled'
+         AND i.invoice_type IN ('sale', 'tax_invoice')
+     ),
+     purchases AS (
+       SELECT
+         'purchase'::text AS activity_type,
+         'in'::text AS direction,
+         pi.bill_date::timestamp AS activity_at,
+         pi.bill_number AS reference_number,
+         COALESCE(p.name, 'Supplier') AS counterparty_name,
+         COALESCE(g.name, '—') AS godown_name,
+         COALESCE(pii.quantity, 0)::numeric AS quantity,
+         COALESCE(pii.unit_price, 0)::bigint AS unit_price,
+         COALESCE(pii.total_amount, 0)::bigint AS gross_amount,
+         GREATEST(
+           COALESCE(pii.total_amount, 0)::bigint
+           - COALESCE(pii.cgst_amount, 0)::bigint
+           - COALESCE(pii.sgst_amount, 0)::bigint
+           - COALESCE(pii.igst_amount, 0)::bigint,
+           0
+         ) AS taxable_amount,
+         COALESCE(pii.cgst_amount, 0)::bigint + COALESCE(pii.sgst_amount, 0)::bigint + COALESCE(pii.igst_amount, 0)::bigint AS tax_amount,
+         COALESCE(pi.status, 'draft') AS status,
+         pi.id AS reference_id,
+         COALESCE(NULLIF(TRIM(pi.notes), ''), NULLIF(TRIM(pii.item_name), '')) AS notes
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+       LEFT JOIN parties p ON p.id = pi.party_id
+       LEFT JOIN godowns g ON g.id = pi.godown_id
+       WHERE pii.item_id = $1
+         AND pi.company_id = $2
+         AND pi.is_deleted = false
+         AND COALESCE(pi.status, '') != 'cancelled'
+     ),
+     adjustments AS (
+       SELECT
+         'adjustment'::text AS activity_type,
+         CASE WHEN COALESCE(sai.adjusted_quantity, 0) - COALESCE(sai.current_quantity, 0) >= 0 THEN 'in'::text ELSE 'out'::text END AS direction,
+         sa.adjustment_date::timestamp AS activity_at,
+         CONCAT('ADJ-', LEFT(sa.id::text, 8)) AS reference_number,
+         COALESCE(sa.reason, 'Adjustment') AS counterparty_name,
+         COALESCE(g.name, '—') AS godown_name,
+         (COALESCE(sai.adjusted_quantity, 0) - COALESCE(sai.current_quantity, 0))::numeric AS quantity,
+         0::bigint AS unit_price,
+         0::bigint AS gross_amount,
+         0::bigint AS taxable_amount,
+         0::bigint AS tax_amount,
+         COALESCE(sa.status, 'draft') AS status,
+         sa.id AS reference_id,
+         COALESCE(NULLIF(TRIM(sai.reason), ''), sa.notes, sa.reason) AS notes
+       FROM stock_adjustment_items sai
+       JOIN stock_adjustments sa ON sa.id = sai.adjustment_id
+       LEFT JOIN godowns g ON g.id = sa.godown_id
+       WHERE sai.item_id = $1
+         AND sa.company_id = $2
+         AND sa.is_deleted = false
+     ),
+     transfer_out AS (
+       SELECT
+         'transfer_out'::text AS activity_type,
+         'out'::text AS direction,
+         st.transfer_date::timestamp AS activity_at,
+         COALESCE(st.transfer_number, CONCAT('TRF-', LEFT(st.id::text, 8))) AS reference_number,
+         COALESCE(tg.name, 'Internal transfer') AS counterparty_name,
+         COALESCE(fg.name, '—') AS godown_name,
+         -COALESCE(sti.quantity_sent, 0)::numeric AS quantity,
+         0::bigint AS unit_price,
+         0::bigint AS gross_amount,
+         0::bigint AS taxable_amount,
+         0::bigint AS tax_amount,
+         COALESCE(st.status, 'draft') AS status,
+         st.id AS reference_id,
+         st.notes
+       FROM stock_transfer_items sti
+       JOIN stock_transfers st ON st.id = sti.transfer_id
+       LEFT JOIN godowns fg ON fg.id = st.from_godown_id
+       LEFT JOIN godowns tg ON tg.id = st.to_godown_id
+       WHERE sti.item_id = $1
+         AND st.company_id = $2
+         AND st.is_deleted = false
+     ),
+     transfer_in AS (
+       SELECT
+         'transfer_in'::text AS activity_type,
+         'in'::text AS direction,
+         st.transfer_date::timestamp AS activity_at,
+         COALESCE(st.transfer_number, CONCAT('TRF-', LEFT(st.id::text, 8))) AS reference_number,
+         COALESCE(fg.name, 'Internal transfer') AS counterparty_name,
+         COALESCE(tg.name, '—') AS godown_name,
+         COALESCE(NULLIF(sti.quantity_received, 0), sti.quantity_sent, 0)::numeric AS quantity,
+         0::bigint AS unit_price,
+         0::bigint AS gross_amount,
+         0::bigint AS taxable_amount,
+         0::bigint AS tax_amount,
+         COALESCE(st.status, 'draft') AS status,
+         st.id AS reference_id,
+         st.notes
+       FROM stock_transfer_items sti
+       JOIN stock_transfers st ON st.id = sti.transfer_id
+       LEFT JOIN godowns fg ON fg.id = st.from_godown_id
+       LEFT JOIN godowns tg ON tg.id = st.to_godown_id
+       WHERE sti.item_id = $1
+         AND st.company_id = $2
+         AND st.is_deleted = false
+     ),
+     opening_stock AS (
+       SELECT
+         'opening_stock'::text AS activity_type,
+         'in'::text AS direction,
+         sm.created_at AS activity_at,
+         'Opening stock'::text AS reference_number,
+         'Opening stock'::text AS counterparty_name,
+         COALESCE(g.name, '—') AS godown_name,
+         COALESCE(sm.quantity, 0)::numeric AS quantity,
+         COALESCE(sm.unit_cost, 0)::bigint AS unit_price,
+         (COALESCE(sm.quantity, 0)::bigint * COALESCE(sm.unit_cost, 0)::bigint) AS gross_amount,
+         (COALESCE(sm.quantity, 0)::bigint * COALESCE(sm.unit_cost, 0)::bigint) AS taxable_amount,
+         0::bigint AS tax_amount,
+         'posted'::text AS status,
+         sm.id AS reference_id,
+         sm.notes
+       FROM stock_movements sm
+       LEFT JOIN godowns g ON g.id = sm.godown_id
+       WHERE sm.item_id = $1
+         AND sm.company_id = $2
+         AND sm.movement_type = 'opening_stock'
+     )
+     SELECT *
+     FROM (
+       SELECT * FROM sales
+       UNION ALL
+       SELECT * FROM purchases
+       UNION ALL
+       SELECT * FROM adjustments
+       UNION ALL
+       SELECT * FROM transfer_out
+       UNION ALL
+       SELECT * FROM transfer_in
+       UNION ALL
+       SELECT * FROM opening_stock
+     ) activity
+     ORDER BY activity_at DESC, reference_number DESC
+     LIMIT 100`,
+    [itemId, companyId]
+  );
+
+  const summaryRes = await query(
+    `SELECT
+       COALESCE((
+         SELECT COUNT(DISTINCT i.id)::int
+         FROM invoice_items ii
+         JOIN invoices i ON i.id = ii.invoice_id
+         WHERE ii.item_id = $1
+           AND i.company_id = $2
+           AND i.is_deleted = false
+           AND i.status != 'cancelled'
+           AND i.invoice_type IN ('sale', 'tax_invoice')
+       ), 0) AS sales_count,
+       COALESCE((
+         SELECT SUM(ii.quantity)::numeric
+         FROM invoice_items ii
+         JOIN invoices i ON i.id = ii.invoice_id
+         WHERE ii.item_id = $1
+           AND i.company_id = $2
+           AND i.is_deleted = false
+           AND i.status != 'cancelled'
+           AND i.invoice_type IN ('sale', 'tax_invoice')
+       ), 0) AS sold_quantity,
+       COALESCE((
+         SELECT MAX(i.invoice_date)
+         FROM invoice_items ii
+         JOIN invoices i ON i.id = ii.invoice_id
+         WHERE ii.item_id = $1
+           AND i.company_id = $2
+           AND i.is_deleted = false
+           AND i.status != 'cancelled'
+           AND i.invoice_type IN ('sale', 'tax_invoice')
+       ), NULL) AS last_sale_date,
+       COALESCE((
+         SELECT COUNT(DISTINCT pi.id)::int
+         FROM purchase_invoice_items pii
+         JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+         WHERE pii.item_id = $1
+           AND pi.company_id = $2
+           AND pi.is_deleted = false
+           AND COALESCE(pi.status, '') != 'cancelled'
+       ), 0) AS purchase_count,
+       COALESCE((
+         SELECT SUM(pii.quantity)::numeric
+         FROM purchase_invoice_items pii
+         JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+         WHERE pii.item_id = $1
+           AND pi.company_id = $2
+           AND pi.is_deleted = false
+           AND COALESCE(pi.status, '') != 'cancelled'
+       ), 0) AS purchased_quantity,
+       COALESCE((
+         SELECT MAX(pi.bill_date)
+         FROM purchase_invoice_items pii
+         JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+         WHERE pii.item_id = $1
+           AND pi.company_id = $2
+           AND pi.is_deleted = false
+           AND COALESCE(pi.status, '') != 'cancelled'
+       ), NULL) AS last_purchase_date`,
+    [itemId, companyId]
+  );
+
+  return {
+    timeline: timelineRes.rows,
+    summary: summaryRes.rows[0] || {},
+  };
+}
+
 // ── POST /api/items ───────────────────────────────────────────
 export async function createItem(req: Request, res: Response) {
   try {
@@ -192,6 +431,8 @@ export async function getItem(req: Request, res: Response) {
       [id, companyId]
     );
 
+    const activity = await getItemActivity(companyId, id);
+
     // Batches if applicable
     const item = itemRes.rows[0];
     let batches: any[] = [];
@@ -213,6 +454,8 @@ export async function getItem(req: Request, res: Response) {
       total_stock: totalStock,
       total_stock_value: totalValue,
       recent_movements: movementsRes.rows,
+      activity_timeline: activity.timeline,
+      activity_summary: activity.summary,
       batches,
     }));
   } catch (err: any) { res.status(500).json(error(err.message)); }

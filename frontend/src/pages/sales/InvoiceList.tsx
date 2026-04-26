@@ -132,7 +132,9 @@ export default function InvoiceList() {
               ) : invoices.length === 0 ? (
                 <tr><td colSpan={7} className="py-8 text-center text-muted-foreground"><FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />No invoices found</td></tr>
               ) : (
-                invoices.map((inv: any) => (
+                invoices.map((inv: any) => {
+                  const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
+                  return (
                   <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
                     <td className="py-3 px-4 tabular-nums">{formatDate(inv.invoice_date)}</td>
                     <td className="py-3 px-4 font-medium">
@@ -149,7 +151,7 @@ export default function InvoiceList() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <Badge variant="secondary" className={`capitalize ${statusColors[inv.status] || ''}`}>{inv.status}</Badge>
+                      <Badge variant="secondary" className={`capitalize ${statusColors[displayStatus] || ''}`}>{displayStatus.replace('_', ' ')}</Badge>
                     </td>
                     <td className="py-3 px-4 text-right z-10">
                       <div className="flex justify-end gap-2">
@@ -166,7 +168,8 @@ export default function InvoiceList() {
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

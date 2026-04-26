@@ -26,7 +26,6 @@ export default function InvoiceCreate() {
   const { data: godownData } = useGodowns();
   const godowns = godownData?.data || [];
 
-  const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
   const [partyPhone, setPartyPhone] = useState('');
@@ -64,7 +63,7 @@ export default function InvoiceCreate() {
     }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: invoiceType === 'sale' ? 'customer' : 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
       setPartyResults(res.data || []);
     } catch {
       setPartyResults([]);
@@ -79,7 +78,11 @@ export default function InvoiceCreate() {
     setPartyPhone(p.phone || '');
     setPartySearch('');
     setPartyResults([]);
-    if (p.state_code) setIsInterstate(true); // Simplified — in production, compare company state_code
+    const companyStateCode = String((company as any)?.state_code || '').trim();
+    const partyStateCode = String(p.billing_state_code || p.state_code || '').trim();
+    if (companyStateCode && partyStateCode) {
+      setIsInterstate(companyStateCode !== partyStateCode);
+    }
   };
 
   const openQuickAdd = (prefillName?: string) => {
@@ -92,8 +95,8 @@ export default function InvoiceCreate() {
     setItemSearch(q);
     if (q.length < 2) { setItemResults([]); return; }
     try {
-      const { data: res } = await api.get('/items', { params: { search: q, limit: 10 } });
-      setItemResults(res.data?.data || []);
+      const { data: res } = await api.post('/invoices/search-items', { q, godown_id: godownId || undefined });
+      setItemResults(res.data || []);
     } catch { setItemResults([]); }
   };
 
@@ -101,7 +104,7 @@ export default function InvoiceCreate() {
     if (items.find(i => i.item_id === item.id)) return;
     setItems([...items, {
       item_id: item.id, name: item.name, hsn_code: item.hsn_code || '',
-      quantity: 1, unit_price: invoiceType === 'sale' ? item.selling_price : item.purchase_price,
+      quantity: 1, unit_price: item.unit_price ?? item.selling_price,
       gst_rate: item.gst_rate || 18, discount_percent: 0, cess_rate: 0,
     }]);
     setItemSearch(''); setItemResults([]);
@@ -133,7 +136,7 @@ export default function InvoiceCreate() {
 
   const draftPreviewPayload = useMemo(
     () => ({
-      invoice_type: invoiceType,
+      invoice_type: 'sale',
       party_id: partyId || undefined,
       party_name: partyName || undefined,
       godown_id: godownId || undefined,
@@ -153,16 +156,17 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [invoiceType, partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items],
+    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items],
   );
 
   const handleSubmit = async () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
+    if (amountPaid > grandTotal) { toast.error('Amount paid cannot exceed invoice total'); return; }
 
     try {
       const res = await createMutation.mutateAsync({
-        invoice_type: invoiceType, party_id: partyId, godown_id: godownId || undefined,
+        invoice_type: 'sale', party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, notes,
         amount_paid: amountPaid,
@@ -185,25 +189,7 @@ export default function InvoiceCreate() {
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}><ArrowLeft className="w-5 h-5" /></Button>
-        <div><h1 className="text-2xl font-bold">New {invoiceType === 'sale' ? 'Sale' : 'Purchase'} Invoice</h1></div>
-      </div>
-
-      {/* Type toggle */}
-      <div className="flex gap-2">
-        {(['sale', 'purchase'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => {
-              if (t === invoiceType) return;
-              setInvoiceType(t);
-              clearPartySelection();
-            }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${invoiceType === t ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground'}`}
-          >
-            {t === 'sale' ? '📤 Sale Invoice' : '📥 Purchase Invoice'}
-          </button>
-        ))}
+        <div><h1 className="text-2xl font-bold">New Sale Invoice</h1></div>
       </div>
 
       {/* Party & Details */}
@@ -212,7 +198,7 @@ export default function InvoiceCreate() {
           <CardHeader className="pb-3"><CardTitle className="text-sm">Party Details</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="relative">
-              <Label>Select {invoiceType === 'sale' ? 'Customer' : 'Supplier'} *</Label>
+              <Label>Select Customer *</Label>
               {partyId ? (
                 <div className="flex items-center justify-between mt-1 p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -244,14 +230,14 @@ export default function InvoiceCreate() {
                     </div>
                     <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1 sm:mt-0" onClick={() => openQuickAdd()}>
                       <UserPlus className="h-4 w-4" />
-                      {invoiceType === 'sale' ? 'New customer' : 'New supplier'}
+                      New customer
                     </Button>
                   </div>
                   {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
                     <p className="mt-1 text-sm text-muted-foreground">
                       No matches.{' '}
                       <button type="button" className="text-primary font-medium hover:underline" onClick={() => openQuickAdd(partySearch)}>
-                        Add “{partySearch.trim()}” as {invoiceType === 'sale' ? 'customer' : 'supplier'}
+                        Add “{partySearch.trim()}” as customer
                       </button>
                     </p>
                   )}
@@ -298,7 +284,10 @@ export default function InvoiceCreate() {
                 {itemResults.map((it: any) => (
                   <button key={it.id} className="w-full text-left px-4 py-2 hover:bg-muted text-sm flex justify-between" onClick={() => addItem(it)}>
                     <span>{it.name} <span className="text-muted-foreground">{it.sku}</span></span>
-                    <span className="tabular-nums">{formatMoney(invoiceType === 'sale' ? it.selling_price : it.purchase_price)}</span>
+                    <span className="tabular-nums">
+                      {formatMoney(Number(it.unit_price || 0))}
+                      {typeof it.available_stock === 'number' ? ` • Stock ${it.available_stock}` : ''}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -407,7 +396,7 @@ export default function InvoiceCreate() {
       <QuickAddPartySheet
         open={quickAddOpen}
         onOpenChange={setQuickAddOpen}
-        partyType={invoiceType === 'sale' ? 'customer' : 'supplier'}
+        partyType="customer"
         defaultName={quickAddDefaultName}
         onCreated={(row) => selectParty(row)}
       />

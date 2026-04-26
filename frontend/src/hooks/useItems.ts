@@ -55,6 +55,22 @@ export function useItemUnits() {
   });
 }
 
+export function useCreateItemCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: any) => api.post('/item-categories', data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-categories'] }),
+  });
+}
+
+export function useCreateItemUnit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: any) => api.post('/item-units', data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-units'] }),
+  });
+}
+
 export function useScanBarcode() {
   return useMutation({
     mutationFn: (barcode: string) => api.post('/items/scan', { barcode }).then(r => r.data),

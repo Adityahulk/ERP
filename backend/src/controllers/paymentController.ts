@@ -61,9 +61,29 @@ export async function createPayment(req: Request, res: Response) {
            await client.query('INSERT INTO payment_allocations (payment_id, invoice_id, amount) VALUES ($1,$2,$3)', [payment.id, alloc.invoice_id, alloc.amount]);
            
            if (d.payment_type === 'incoming') {
-             await client.query('UPDATE invoices SET paid_amount = paid_amount + $1 WHERE id = $2', [alloc.amount, alloc.invoice_id]);
+             await client.query(
+               `UPDATE invoices
+                SET paid_amount = paid_amount + $1,
+                    payment_status = CASE
+                      WHEN paid_amount + $1 >= total_amount THEN 'paid'
+                      WHEN paid_amount + $1 > 0 THEN 'partial'
+                      ELSE 'unpaid'
+                    END
+                WHERE id = $2`,
+               [alloc.amount, alloc.invoice_id]
+             );
            } else {
-             await client.query('UPDATE purchase_invoices SET paid_amount = paid_amount + $1 WHERE id = $2', [alloc.amount, alloc.invoice_id]);
+             await client.query(
+               `UPDATE purchase_invoices
+                SET paid_amount = paid_amount + $1,
+                    payment_status = CASE
+                      WHEN paid_amount + $1 >= total_amount THEN 'paid'
+                      WHEN paid_amount + $1 > 0 THEN 'partial'
+                      ELSE 'unpaid'
+                    END
+                WHERE id = $2`,
+               [alloc.amount, alloc.invoice_id]
+             );
            }
         }
       }

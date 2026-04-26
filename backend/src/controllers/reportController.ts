@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
+import { getExpenseGstSql } from '../services/expenseReportingService';
 
 /** Default report window: first day of current month → today (inclusive). */
 function parseRange(req: Request): { from: string; to: string } {
@@ -197,6 +198,7 @@ export async function gstReport(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
+    const expenseSql = await getExpenseGstSql('e', 'c');
 
     // Outward tax (sales / tax invoices) — line level
     const outward = await query(
@@ -240,12 +242,13 @@ export async function gstReport(req: Request, res: Response) {
            AND pi.bill_date >= $2 AND pi.bill_date <= $3
          UNION ALL
          SELECT COALESCE(e.gst_rate, 0),
-                COALESCE(e.amount, 0),
-                COALESCE(e.cgst_amount, 0),
-                COALESCE(e.sgst_amount, 0),
-                COALESCE(e.igst_amount, 0),
+                ${expenseSql.taxableExpr},
+                ${expenseSql.cgstExpr},
+                ${expenseSql.sgstExpr},
+                ${expenseSql.igstExpr},
                 0
          FROM expenses e
+         JOIN companies c ON c.id = e.company_id
          WHERE e.company_id = $1 AND e.is_deleted = false AND COALESCE(e.gst_rate, 0) > 0
            AND e.expense_date >= $2 AND e.expense_date <= $3
        )
