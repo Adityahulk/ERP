@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 
-import { Loader2, Plus, X, Sparkles } from 'lucide-react';
+import { Plus, X, Sparkles } from 'lucide-react';
 import type { Item } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -236,8 +236,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
         {/* Actions */}
         <div className="flex gap-3 mt-8 pt-4 border-t">
           <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button className="flex-1" disabled={isBusy} onClick={handleSubmit}>
-            {isBusy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          <Button className="flex-1" loading={isBusy} onClick={handleSubmit}>
             {isEdit ? 'Update' : 'Save'} Item
           </Button>
         </div>

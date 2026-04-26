@@ -24,6 +24,9 @@ export default function InvoiceDetail() {
   const [cancelNote, setCancelNote] = useState('');
   const [waPickerOpen, setWaPickerOpen] = useState(false);
   const [waSending, setWaSending] = useState(false);
+  const [printLoading, setPrintLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [einvPdfLoading, setEinvPdfLoading] = useState(false);
 
   const { data: raw, isLoading, refetch } = useQuery({
     queryKey: ['invoice', id],
@@ -89,29 +92,77 @@ export default function InvoiceDetail() {
   };
 
   const handleCancelEinvoice = async () => {
+    const t = toast.loading('Cancelling IRN…');
     try {
       await cancelEinv.mutateAsync({
         id: id!,
         reason_code: parseInt(cancelReason, 10),
         reason_description: cancelNote || 'Other',
       });
-      toast.success('IRN cancelled');
+      toast.success('IRN cancelled', { id: t });
       setCancelOpen(false);
       refetch();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || e.message || 'Failed');
+      toast.error(e.response?.data?.error || e.message || 'Failed', { id: t });
     }
   };
 
   const printReceipt = async () => {
     const w = localStorage.getItem('bizflow_printer_type');
     const width = w === 'thermal58' ? '58' : '80';
+    setPrintLoading(true);
+    const t = toast.loading('Opening receipt…');
     try {
       const res = await api.get(`/print/receipt/${id}`, { params: { width }, responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       window.open(url, '_blank');
+      toast.success('Receipt opened in a new tab', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Print failed');
+      toast.error(e.response?.data?.error || 'Print failed', { id: t });
+    } finally {
+      setPrintLoading(false);
+    }
+  };
+
+  const downloadInvoicePdf = async () => {
+    setPdfLoading(true);
+    const t = toast.loading('Preparing PDF…');
+    try {
+      const res = await api.get(`/invoices/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${inv.invoice_number}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Download failed', { id: t });
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const downloadEinvoicePdf = async () => {
+    setEinvPdfLoading(true);
+    const t = toast.loading('Preparing e-invoice PDF…');
+    try {
+      const res = await api.get(`/invoices/${id}/einvoice/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `einvoice-${inv.invoice_number}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Download failed', { id: t });
+    } finally {
+      setEinvPdfLoading(false);
     }
   };
 
@@ -207,23 +258,10 @@ Thank you.
           </Badge>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={printReceipt}>
+          <Button variant="outline" size="sm" onClick={printReceipt} loading={printLoading}>
             Print Receipt
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              const res = await api.get(`/invoices/${id}/pdf`, { responseType: 'blob' });
-              const url = window.URL.createObjectURL(new Blob([res.data]));
-              const link = document.createElement('a');
-              link.href = url;
-              link.setAttribute('download', `${inv.invoice_number}.pdf`);
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={downloadInvoicePdf} loading={pdfLoading}>
             <Download className="h-4 w-4 mr-2" /> Download PDF
           </Button>
           <Button
@@ -234,20 +272,7 @@ Thank you.
             <Send className="h-4 w-4 mr-2" /> WhatsApp
           </Button>
           {inv.irn && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                const res = await api.get(`/invoices/${id}/einvoice/pdf`, { responseType: 'blob' });
-                const url = window.URL.createObjectURL(new Blob([res.data]));
-                const link = document.createElement('a');
-                link.href = url;
-                link.setAttribute('download', `einvoice-${inv.invoice_number}.pdf`);
-                document.body.appendChild(link);
-              link.click();
-              link.remove();
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={downloadEinvoicePdf} loading={einvPdfLoading}>
               <FileDown className="h-4 w-4 mr-2" /> e-Invoice PDF
             </Button>
           )}
@@ -258,10 +283,10 @@ Thank you.
         <Card className="border-emerald-200">
           <CardContent className="p-4 flex flex-wrap items-center gap-3">
             <p className="text-sm text-muted-foreground mr-2">Send via:</p>
-            <Button size="sm" onClick={() => openWhatsApp('web')} disabled={waSending}>
+            <Button size="sm" onClick={() => openWhatsApp('web')} loading={waSending}>
               WhatsApp Web
             </Button>
-            <Button size="sm" variant="outline" onClick={() => openWhatsApp('app')} disabled={waSending}>
+            <Button size="sm" variant="outline" onClick={() => openWhatsApp('app')} loading={waSending}>
               WhatsApp App
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setWaPickerOpen(false)} disabled={waSending}>
@@ -401,11 +426,7 @@ Thank you.
                     <>
                       <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
                       <p className="text-sm text-muted-foreground">IRN not generated for this invoice.</p>
-                      <Button
-                        className="w-full"
-                        disabled={genEinv.isPending}
-                        onClick={handleGenerateEInvoice}
-                      >
+                      <Button className="w-full" loading={genEinv.isPending} onClick={handleGenerateEInvoice}>
                         Generate IRN
                       </Button>
                     </>
@@ -442,7 +463,7 @@ Thank you.
                   <Button variant="outline" className="flex-1" onClick={() => setCancelOpen(false)}>
                     Close
                   </Button>
-                  <Button variant="destructive" className="flex-1" disabled={cancelEinv.isPending} onClick={handleCancelEinvoice}>
+                  <Button variant="destructive" className="flex-1" loading={cancelEinv.isPending} onClick={handleCancelEinvoice}>
                     Confirm cancel
                   </Button>
                 </div>

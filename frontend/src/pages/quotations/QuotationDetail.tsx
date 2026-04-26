@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2 } from 'lucide-react';
@@ -5,6 +6,7 @@ import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import toast from 'react-hot-toast';
 
 function money(paise: number) {
   return `₹${((paise || 0) / 100).toFixed(2)}`;
@@ -13,6 +15,7 @@ function money(paise: number) {
 export default function QuotationDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['quotation', id],
@@ -28,9 +31,18 @@ export default function QuotationDetail() {
 
   const printPdf = async () => {
     if (!id) return;
-    const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
-    const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-    window.open(url, '_blank');
+    setPdfLoading(true);
+    const t = toast.loading('Opening PDF…');
+    try {
+      const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+      toast.success('PDF opened in a new tab', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not open PDF', { id: t });
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -60,7 +72,7 @@ export default function QuotationDetail() {
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="capitalize">{quote.status || 'draft'}</Badge>
-          <Button variant="outline" onClick={printPdf}>
+          <Button variant="outline" onClick={printPdf} loading={pdfLoading}>
             <Download className="w-4 h-4 mr-1.5" />
             Print / PDF
           </Button>

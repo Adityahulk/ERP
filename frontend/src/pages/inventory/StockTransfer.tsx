@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface TransferItem { item_id: string; name: string; sku?: string; available: number; quantity: number; }
@@ -135,8 +135,7 @@ export default function StockTransfer() {
       {/* Submit */}
       <div className="flex gap-3 justify-end">
         <Button variant="outline" onClick={() => navigate('/inventory')}>Cancel</Button>
-        <Button disabled={createTransfer.isPending || !items.length} onClick={handleSubmit}>
-          {createTransfer.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        <Button disabled={!items.length} loading={createTransfer.isPending} onClick={handleSubmit}>
           Create Transfer ({items.length} items)
         </Button>
       </div>

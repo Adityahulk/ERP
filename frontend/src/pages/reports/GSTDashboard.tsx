@@ -17,6 +17,7 @@ export default function GSTDashboard() {
   });
 
   const downloadJson = async (path: string, filename: string) => {
+    const t = toast.loading('Preparing export…');
     try {
       const res = await api.get(path);
       const payload = res.data?.data ?? res.data;
@@ -27,9 +28,9 @@ export default function GSTDashboard() {
       a.download = filename;
       a.click();
       window.URL.revokeObjectURL(url);
-      toast.success('Download started');
+      toast.success('Download started', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Download failed');
+      toast.error(e.response?.data?.error || 'Download failed', { id: t });
     }
   };
 

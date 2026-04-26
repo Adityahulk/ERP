@@ -30,6 +30,7 @@ import Settings from '@/pages/settings/Settings';
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -76,8 +77,9 @@ function LoginPage() {
             <label className="text-sm font-medium text-blue-200">Password</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-blue-400 focus:border-transparent outline-none transition" />
           </div>
-          <button type="submit" disabled={loading} className="w-full h-11 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50">
-            {loading ? 'Signing in...' : 'Sign In'}
+          <button type="submit" disabled={loading} className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            {loading ? 'Signing in…' : 'Sign In'}
           </button>
           <div className="text-center mt-4 text-xs text-blue-300/60">Demo: admin@demo.com / Demo@1234</div>
         </form>

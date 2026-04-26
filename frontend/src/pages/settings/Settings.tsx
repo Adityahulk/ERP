@@ -70,8 +70,10 @@ export default function Settings() {
 
   const [tab, setTab] = useState('company');
 
-  // Stub states
   const [deleteConf, setDeleteConf] = useState('');
+  const [dataDumping, setDataDumping] = useState(false);
+  const [templateDownloading, setTemplateDownloading] = useState(false);
+  const [testPrintRunning, setTestPrintRunning] = useState(false);
 
   const { data: usersPage, isLoading: usersLoading } = useQuery({
     queryKey: ['settings-users'],
@@ -149,6 +151,8 @@ export default function Settings() {
   };
 
   const downloadItemsTemplate = async () => {
+    setTemplateDownloading(true);
+    const t = toast.loading('Preparing template…');
     try {
       const res = await api.get('/items/import-template', { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -157,8 +161,11 @@ export default function Settings() {
       a.download = 'bizflow_item_import_template.xlsx';
       a.click();
       window.URL.revokeObjectURL(url);
+      toast.success('Template downloaded', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Template download failed');
+      toast.error(e.response?.data?.error || 'Template download failed', { id: t });
+    } finally {
+      setTemplateDownloading(false);
     }
   };
 
@@ -241,6 +248,8 @@ export default function Settings() {
   });
 
   const dumpData = async () => {
+    setDataDumping(true);
+    const t = toast.loading('Gathering export…');
     try {
       const [companyRes, itemsRes, partiesRes, invoicesRes, godownsRes, usersRes] = await Promise.all([
         api.get('/company'),
@@ -266,9 +275,11 @@ export default function Settings() {
       a.download = `bizflow-data-dump-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       window.URL.revokeObjectURL(url);
-      toast.success('Data dump downloaded');
+      toast.success('Data dump downloaded', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Export failed');
+      toast.error(e.response?.data?.error || 'Export failed', { id: t });
+    } finally {
+      setDataDumping(false);
     }
   };
 
@@ -356,20 +367,25 @@ export default function Settings() {
   };
 
   const testPrint = async () => {
+    setTestPrintRunning(true);
+    const t = toast.loading('Preparing sample print…');
     try {
       const res = await api.get('/invoices', { params: { page: 1, limit: 1 } });
       const page = res.data?.data;
       const first = page?.data?.[0];
       if (!first?.id) {
-        toast.error('No invoice found for sample print');
+        toast.error('No invoice found for sample print', { id: t });
         return;
       }
       const w = printerType === 'thermal58' ? '58' : '80';
       const pdfRes = await api.get(`/print/receipt/${first.id}`, { params: { width: w }, responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
       window.open(url, '_blank');
+      toast.success('Opening sample receipt…', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Test print failed');
+      toast.error(e.response?.data?.error || 'Test print failed', { id: t });
+    } finally {
+      setTestPrintRunning(false);
     }
   };
 
@@ -476,7 +492,7 @@ export default function Settings() {
                            <p className="text-xs text-slate-500">QR Code will be dynamically generated on the invoice PDF based on total payload requirements automatically.</p>
                         </div>
                      </div>
-                    <div className="pt-4"><Button onClick={saveProfile} disabled={updateCompany.isPending}>Save Profile</Button></div>
+                    <div className="pt-4"><Button onClick={saveProfile} loading={updateCompany.isPending}>Save Profile</Button></div>
 
                      <div className="border-t pt-8 space-y-4">
                         <h3 className="font-semibold text-slate-900">e-Invoice (GST / NIC)</h3>
@@ -503,7 +519,7 @@ export default function Settings() {
                               <Input type="password" className="mt-1" value={einvPass} onChange={(e) => setEinvPass(e.target.value)} placeholder={company?.has_einvoice_gsp_password ? '••••••••' : ''} />
                            </div>
                         </div>
-                        <Button onClick={saveEinvoice} disabled={updateCompany.isPending}>Save e-Invoice settings</Button>
+                        <Button onClick={saveEinvoice} loading={updateCompany.isPending}>Save e-Invoice settings</Button>
                      </div>
                   </CardContent>
                )}
@@ -524,7 +540,7 @@ export default function Settings() {
                            </select>
                            <Input type="password" placeholder="Password" value={newUser.password} onChange={(e) => setNewUser((s) => ({ ...s, password: e.target.value }))} />
                            <div className="md:col-span-5 flex gap-2">
-                              <Button onClick={() => createUser.mutate()} disabled={!newUser.name || !newUser.password || createUser.isPending}>Create User</Button>
+                              <Button onClick={() => createUser.mutate()} disabled={!newUser.name || !newUser.password} loading={createUser.isPending}>Create User</Button>
                               <Button variant="outline" onClick={() => setEditingUserId(null)}>Cancel</Button>
                            </div>
                         </div>
@@ -552,7 +568,14 @@ export default function Settings() {
                                   <td className="px-4 py-3"><span className={`font-medium text-xs ${u.is_active ? 'text-emerald-600' : 'text-slate-500'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
                                   <td className="px-4 py-3 text-right space-x-2">
                                     <Button variant="ghost" size="sm" onClick={() => openEditUser(u)}>Manage</Button>
-                                    <Button variant="ghost" size="sm" onClick={() => updateUser.mutate({ id: u.id, data: { is_active: !u.is_active } })}>{u.is_active ? 'Disable' : 'Enable'}</Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      loading={updateUser.isPending && updateUser.variables?.id === u.id}
+                                      onClick={() => updateUser.mutate({ id: u.id, data: { is_active: !u.is_active } })}
+                                    >
+                                      {u.is_active ? 'Disable' : 'Enable'}
+                                    </Button>
                                   </td>
                                 </tr>
                               ))}
@@ -569,7 +592,7 @@ export default function Settings() {
                          </select>
                          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={editUserForm.is_active} onChange={(e) => setEditUserForm((s) => ({ ...s, is_active: e.target.checked }))} />Active</label>
                          <div className="md:col-span-5 flex gap-2">
-                           <Button onClick={() => updateUser.mutate({ id: editingUserId, data: editUserForm })} disabled={updateUser.isPending || !editUserForm.name}>Save changes</Button>
+                           <Button onClick={() => updateUser.mutate({ id: editingUserId!, data: editUserForm })} disabled={!editUserForm.name} loading={updateUser.isPending}>Save changes</Button>
                            <Button variant="outline" onClick={() => setEditingUserId(null)}>Cancel</Button>
                          </div>
                        </div>
@@ -591,7 +614,7 @@ export default function Settings() {
                            <Input placeholder="State" value={newGodown.state} onChange={(e) => setNewGodown((s) => ({ ...s, state: e.target.value }))} />
                            <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={newGodown.is_default} onChange={(e) => setNewGodown((s) => ({ ...s, is_default: e.target.checked }))} />Set as default</label>
                            <div className="md:col-span-4 flex gap-2">
-                              <Button onClick={() => createGodown.mutate()} disabled={!newGodown.name || createGodown.isPending}>Create Godown</Button>
+                              <Button onClick={() => createGodown.mutate()} disabled={!newGodown.name} loading={createGodown.isPending}>Create Godown</Button>
                               <Button variant="outline" onClick={() => setEditingGodownId(null)}>Cancel</Button>
                            </div>
                         </div>
@@ -609,7 +632,12 @@ export default function Settings() {
                             </div>
                             <div className="space-x-2">
                               <Button variant="ghost" size="sm" onClick={() => openEditGodown(g)}>Edit</Button>
-                              <Button variant="ghost" size="sm" onClick={() => updateGodown.mutate({ id: g.id, data: { is_active: !g.is_active } })}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                loading={updateGodown.isPending && updateGodown.variables?.id === g.id}
+                                onClick={() => updateGodown.mutate({ id: g.id, data: { is_active: !g.is_active } })}
+                              >
                                 {g.is_active ? 'Disable' : 'Enable'}
                               </Button>
                             </div>
@@ -625,7 +653,7 @@ export default function Settings() {
                          <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_default} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_default: e.target.checked }))} />Set as default</label>
                          <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_active} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_active: e.target.checked }))} />Active</label>
                          <div className="md:col-span-4 flex gap-2">
-                           <Button onClick={() => updateGodown.mutate({ id: editingGodownId, data: editGodownForm })} disabled={!editGodownForm.name || updateGodown.isPending}>Save changes</Button>
+                           <Button onClick={() => updateGodown.mutate({ id: editingGodownId!, data: editGodownForm })} disabled={!editGodownForm.name} loading={updateGodown.isPending}>Save changes</Button>
                            <Button variant="outline" onClick={() => setEditingGodownId(null)}>Cancel</Button>
                          </div>
                        </div>
@@ -660,11 +688,11 @@ export default function Settings() {
                            </select>
                            <div className="flex gap-2">
                               <Button type="button" variant="outline" onClick={savePrinter}>Save printer preference</Button>
-                              <Button type="button" variant="secondary" onClick={testPrint}>Test print</Button>
+                              <Button type="button" variant="secondary" onClick={testPrint} loading={testPrintRunning}>Test print</Button>
                            </div>
                            <p className="text-xs text-slate-500">Saved in this browser (localStorage). POS uses it after checkout.</p>
                         </div>
-                       <Button onClick={saveInvoicePreferences} disabled={updateCompany.isPending}>Save Preferences</Button>
+                       <Button onClick={saveInvoicePreferences} loading={updateCompany.isPending}>Save Preferences</Button>
                      </div>
                   </CardContent>
                )}
@@ -701,7 +729,7 @@ export default function Settings() {
                         <label className="text-sm font-medium text-slate-700">Plural label</label>
                         <Input value={itemTerminologyPlural} onChange={(e) => setItemTerminologyPlural(e.target.value)} className="mt-1 max-w-xs" />
                       </div>
-                      <Button className="mt-1" onClick={applyItemSchema} disabled={updateCompany.isPending}>Apply Schema</Button>
+                      <Button className="mt-1" onClick={applyItemSchema} loading={updateCompany.isPending}>Apply Schema</Button>
                     </div>
                   </CardContent>
                )}
@@ -723,7 +751,7 @@ export default function Settings() {
                               <h3 className="font-bold text-slate-900 mb-1">Import Legacy Data</h3>
                               <p className="text-sm text-slate-500 mb-4">Upload Item Masters or Customer ledgers via structured CSV.</p>
                               <div className="w-full space-y-2">
-                                <Button variant="outline" className="w-full" onClick={downloadItemsTemplate}>Download item template</Button>
+                                <Button variant="outline" className="w-full" onClick={downloadItemsTemplate} loading={templateDownloading}>Download item template</Button>
                                 <Button variant="outline" className="w-full" onClick={() => importFileRef.current?.click()} disabled={importing}>
                                   {importing && !importPreview ? 'Reading file…' : 'Choose file to preview'}
                                 </Button>
@@ -745,7 +773,7 @@ export default function Settings() {
                                     <p className="text-xs text-slate-400 mt-1">Showing first 12 rows…</p>
                                   )}
                                   <div className="flex gap-2 mt-3">
-                                    <Button size="sm" onClick={confirmImportFile} disabled={importing}>
+                                    <Button size="sm" onClick={confirmImportFile} loading={importing}>
                                       Import valid rows
                                     </Button>
                                     <Button size="sm" variant="outline" onClick={() => { setImportPreview(null); pendingImportFile.current = null; }}>
@@ -761,7 +789,7 @@ export default function Settings() {
                               <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 mb-3"><Database className="w-6 h-6"/></div>
                               <h3 className="font-bold text-slate-900 mb-1">Export JSON / Tally DB</h3>
                               <p className="text-sm text-slate-500 mb-4">Push localized records to universal schemas.</p>
-                              <Button variant="outline" className="w-full border-emerald-600 text-emerald-700" onClick={dumpData}>Dump Data</Button>
+                              <Button variant="outline" className="w-full border-emerald-600 text-emerald-700" onClick={dumpData} loading={dataDumping}>Dump Data</Button>
                            </CardContent>
                         </Card>
                      </div>
@@ -782,9 +810,10 @@ export default function Settings() {
                         <h3 className="font-semibold text-red-900 mb-2">Are you fully sure?</h3>
                         <p className="text-sm text-red-700 mb-4">Type <strong>DELETE-MY-COMPANY</strong> exactly to confirm.</p>
                         <Input value={deleteConf} onChange={e => setDeleteConf(e.target.value)} className="border-red-300 focus-visible:ring-red-500 mb-4 bg-white" />
-                        <Button 
-                           variant="destructive" 
-                           disabled={deleteConf !== 'DELETE-MY-COMPANY' || deleteWorkspace.isPending}
+                        <Button
+                           variant="destructive"
+                           disabled={deleteConf !== 'DELETE-MY-COMPANY'}
+                           loading={deleteWorkspace.isPending}
                            className="w-full gap-2"
                            onClick={() => deleteWorkspace.mutate()}
                         >

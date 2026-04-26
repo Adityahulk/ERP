@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Search, Receipt, Loader2 } from 'lucide-react';
+import { Plus, Search, Receipt } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
@@ -132,7 +132,9 @@ export default function ExpenseList() {
             <div><Label>Description</Label><textarea rows={2} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" value={form.description || ''} onChange={e => u('description', e.target.value)} /></div>
             <div className="flex gap-3 mt-6 pt-4 border-t">
               <Button variant="outline" className="flex-1" onClick={() => setShowForm(false)}>Cancel</Button>
-              <Button className="flex-1" disabled={createMutation.isPending} onClick={handleCreate}>{createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Save Expense</Button>
+              <Button className="flex-1" loading={createMutation.isPending} onClick={handleCreate}>
+                Save Expense
+              </Button>
             </div>
           </div>
         </SheetContent>

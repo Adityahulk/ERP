@@ -168,10 +168,10 @@ export default function Onboarding() {
                  <p className="text-slate-500 mb-8 max-w-sm mx-auto">Welcome to BizFlow, {company.name}. The workspace is fully booted.</p>
                  
                  <div className="grid gap-3 max-w-sm mx-auto">
-                    <Button onClick={completeOnboarding} disabled={loading} className="h-14 text-lg bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200">
-                       {loading ? 'Booting...' : 'Enter Dashboard'}
+                    <Button onClick={completeOnboarding} loading={loading} className="h-14 text-lg bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200">
+                       Enter Dashboard
                     </Button>
-                    <Button variant="outline" onClick={completeOnboarding} className="h-12 text-slate-600 border-dashed">
+                    <Button variant="outline" onClick={completeOnboarding} loading={loading} className="h-12 text-slate-600 border-dashed">
                        Jump straight to POS Billing
                     </Button>
                  </div>

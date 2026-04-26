@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
@@ -15,6 +15,7 @@ export default function InvoiceList() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
+  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['salesInvoices', tab, search],
@@ -30,7 +31,9 @@ export default function InvoiceList() {
     }
   });
 
-  const generatePDF = async (id: string, number: string) => {
+  const generatePDF = useCallback(async (id: string, number: string) => {
+    setPdfLoadingId(id);
+    const t = toast.loading('Preparing PDF…');
     try {
       const res = await api.get(`/invoices/${id}/pdf`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -40,8 +43,14 @@ export default function InvoiceList() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (e) { toast.error('Failed to download PDF'); }
-  };
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch {
+      toast.error('Failed to download PDF', { id: t });
+    } finally {
+      setPdfLoadingId(null);
+    }
+  }, []);
 
   const statusColors: any = {
     paid: 'bg-emerald-100 text-emerald-700',
@@ -145,7 +154,15 @@ export default function InvoiceList() {
                     <td className="py-3 px-4 text-right z-10">
                       <div className="flex justify-end gap-2">
                          <Button variant="ghost" size="sm" onClick={() => navigate(`/sales/${inv.id}`)}>View</Button>
-                         <Button variant="ghost" size="sm" onClick={() => generatePDF(inv.id, inv.invoice_number)}><Download className="h-4 w-4" /></Button>
+                         <Button
+                           variant="ghost"
+                           size="sm"
+                           loading={pdfLoadingId === inv.id}
+                           onClick={() => generatePDF(inv.id, inv.invoice_number)}
+                           title="Download PDF"
+                         >
+                           <Download className="h-4 w-4" />
+                         </Button>
                       </div>
                     </td>
                   </tr>

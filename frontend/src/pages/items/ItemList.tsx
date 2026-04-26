@@ -169,8 +169,18 @@ export default function ItemList() {
                   <td className="p-3 text-center">{getStockBadge(item)}</td>
                   <td className="p-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
-                      <button className="p-1.5 rounded hover:bg-muted" onClick={() => { setEditItem(item); setShowForm(true); }}><Edit2 className="w-3.5 h-3.5" /></button>
-                      <button className="p-1.5 rounded hover:bg-destructive/10 text-destructive" onClick={() => handleDelete(item.id, item.name)}><Trash2 className="w-3.5 h-3.5" /></button>
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditItem(item); setShowForm(true); }}><Edit2 className="w-3.5 h-3.5" /></Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                        title="Delete item"
+                        loading={deleteMutation.isPending && deleteMutation.variables === item.id}
+                        onClick={() => handleDelete(item.id, item.name)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
                     </div>
                   </td>
                 </tr>

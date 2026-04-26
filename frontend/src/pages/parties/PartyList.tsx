@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
-import { Search, Users, Truck, UserPlus, Trash2, Loader2 } from 'lucide-react';
+import { Search, Users, Truck, UserPlus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function PartyList() {
@@ -104,7 +104,17 @@ export default function PartyList() {
                 <td className={`p-3 text-right tabular-nums font-semibold ${p.balance > 0 ? 'text-emerald-600' : p.balance < 0 ? 'text-red-500' : ''}`}>{p.balance !== 0 ? formatMoney(Math.abs(p.balance)) : '—'}{p.balance > 0 && <span className="text-[9px] block text-muted-foreground">receivable</span>}{p.balance < 0 && <span className="text-[9px] block text-muted-foreground">payable</span>}</td>
                 <td className="p-3 text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatMoney(parseInt(p.total_business) || 0)}</td>
                 <td className="p-3" onClick={e => e.stopPropagation()}>
-                  <button className="p-1.5 rounded hover:bg-destructive/10 text-destructive" onClick={() => handleDelete(p.id, p.name)}><Trash2 className="w-3.5 h-3.5" /></button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:bg-destructive/10 h-8 w-8"
+                    title="Delete party"
+                    loading={deleteMutation.isPending && deleteMutation.variables === p.id}
+                    onClick={() => handleDelete(p.id, p.name)}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -151,8 +161,8 @@ export default function PartyList() {
             <div><Label>Opening Balance (₹) <span className="text-muted-foreground text-[10px]">(+ve = receivable, -ve = payable)</span></Label><Input className="mt-1" type="number" value={form.opening_balance || ''} onChange={e => u('opening_balance', parseInt(e.target.value) || 0)} /></div>
             <div className="flex gap-3 mt-6 pt-4 border-t">
               <Button variant="outline" className="flex-1" onClick={() => setShowForm(false)}>Cancel</Button>
-              <Button className="flex-1" disabled={createMutation.isPending} onClick={handleCreate}>
-                {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Save Party
+              <Button className="flex-1" loading={createMutation.isPending} onClick={handleCreate}>
+                Save Party
               </Button>
             </div>
           </div>

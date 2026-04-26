@@ -98,7 +98,16 @@ export default function InvoiceList() {
                   <td className="p-3 text-center"><Badge variant={statusColors[inv.status] || 'secondary'} className="text-[10px]">{inv.status}</Badge></td>
                   <td className="p-3" onClick={e => e.stopPropagation()}>
                     {inv.status !== 'cancelled' && inv.status !== 'paid' && (
-                      <button className="text-[10px] text-red-500 hover:underline" onClick={() => handleCancel(inv.id, inv.invoice_number)}>Cancel</button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[10px] text-red-600 hover:text-red-700"
+                        loading={cancelMutation.isPending && cancelMutation.variables === inv.id}
+                        onClick={() => handleCancel(inv.id, inv.invoice_number)}
+                      >
+                        Cancel
+                      </Button>
                     )}
                   </td>
                 </tr>

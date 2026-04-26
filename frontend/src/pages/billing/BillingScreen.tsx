@@ -401,12 +401,12 @@ export default function BillingScreen() {
              )}
           </div>
           
-          <Button 
+          <Button
             className="w-full h-16 text-xl font-bold bg-green-600 hover:bg-green-700 text-white shadow-xl shadow-green-600/20"
             onClick={handleCheckout}
-            disabled={createInvoiceMut.isPending}
+            loading={createInvoiceMut.isPending}
           >
-            {createInvoiceMut.isPending ? <Loader2 className="h-6 w-6 animate-spin" /> : 'Confirm & Print [F10]'}
+            Confirm & Print [F10]
           </Button>
         </Card>
 

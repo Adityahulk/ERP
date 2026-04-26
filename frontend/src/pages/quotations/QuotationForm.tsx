@@ -380,9 +380,10 @@ export default function QuotationForm() {
       <div className="flex gap-2">
         <Button
           onClick={() => create.mutate()}
-          disabled={!partyId || !quotationDate || !hasLine || create.isPending}
+          disabled={!partyId || !quotationDate || !hasLine}
+          loading={create.isPending}
         >
-          {create.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save quotation'}
+          Save quotation
         </Button>
         <Button type="button" variant="outline" onClick={() => navigate('/quotations')}>
           Cancel

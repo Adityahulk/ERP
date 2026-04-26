@@ -104,13 +104,24 @@ export default function QuotationList() {
                           variant="ghost"
                           size="sm"
                           className="h-8"
+                          loading={
+                            patchStatus.isPending &&
+                            patchStatus.variables?.id === q.id &&
+                            patchStatus.variables?.status === 'sent'
+                          }
                           onClick={() => patchStatus.mutate({ id: q.id, status: 'sent' })}
                         >
                           <Send className="w-3.5 h-3.5 mr-1" />
                           Mark sent
                         </Button>
                       )}
-                      <Button variant="ghost" size="sm" className="h-8" onClick={() => convert.mutate(q.id)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8"
+                        loading={convert.isPending && convert.variables === q.id}
+                        onClick={() => convert.mutate(q.id)}
+                      >
                         <FileCheck className="w-3.5 h-3.5 mr-1" />
                         Convert
                       </Button>

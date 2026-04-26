@@ -35,7 +35,8 @@ export default function GRNScreen() {
      onSuccess: () => {
         toast.success('Stock Received via GRN');
         navigate('/purchases');
-     }
+     },
+     onError: (e: any) => toast.error(e.response?.data?.error || 'GRN failed'),
   });
 
   if (isLoading) return <div>Loading...</div>;
@@ -66,7 +67,9 @@ export default function GRNScreen() {
                 ))}
              </div>
 
-             <Button onClick={() => receiveAction.mutate()} className="w-full">Confirm Stock Receipt</Button>
+             <Button onClick={() => receiveAction.mutate()} className="w-full" loading={receiveAction.isPending}>
+               Confirm Stock Receipt
+             </Button>
          </CardContent>
       </Card>
     </div>

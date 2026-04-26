@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Loader2, Search } from 'lucide-react';
+import { ArrowLeft, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface AdjItem { item_id: string; name: string; current_quantity: number; adjusted_quantity: number; reason: string; }
@@ -158,8 +158,7 @@ export default function StockAdjustment() {
 
       <div className="flex gap-3 justify-end">
         <Button variant="outline" onClick={() => navigate('/inventory')}>Cancel</Button>
-        <Button disabled={createAdj.isPending || !items.length} onClick={handleSubmit}>
-          {createAdj.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        <Button disabled={!items.length} loading={createAdj.isPending} onClick={handleSubmit}>
           Submit Adjustment
         </Button>
       </div>

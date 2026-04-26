@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search, Loader2 } from 'lucide-react';
+import { ArrowLeft, Trash2, Search } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -279,8 +279,7 @@ export default function InvoiceCreate() {
       {/* Actions */}
       <div className="flex gap-3 justify-end pb-8">
         <Button variant="outline" onClick={() => navigate('/invoices')}>Cancel</Button>
-        <Button disabled={createMutation.isPending || items.length === 0} onClick={handleSubmit}>
-          {createMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        <Button disabled={items.length === 0} loading={createMutation.isPending} onClick={handleSubmit}>
           Create Invoice
         </Button>
       </div>

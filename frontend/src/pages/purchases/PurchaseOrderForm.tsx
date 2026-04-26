@@ -253,10 +253,11 @@ export default function PurchaseOrderForm() {
               <div className="flex gap-2">
                 <Button
                   onClick={() => createPO.mutate()}
-                  disabled={!partyId || !godownId || lines.length === 0 || createPO.isPending}
+                  disabled={!partyId || !godownId || lines.length === 0}
+                  loading={createPO.isPending}
                   className="gap-2"
                 >
-                  {createPO.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  <Plus className="w-4 h-4" />
                   Save purchase order
                 </Button>
                 <Button type="button" variant="outline" onClick={() => navigate('/purchases')}>

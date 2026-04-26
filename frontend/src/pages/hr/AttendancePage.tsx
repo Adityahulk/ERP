@@ -46,12 +46,14 @@ export default function AttendancePage() {
 
   const mutClockIn = useMutation({
      mutationFn: async () => await api.post('/attendance/clock-in'),
-     onSuccess: () => { toast.success('Clocked In!'); queryClient.invalidateQueries({ queryKey: ['attendance', 'myToday']}); queryClient.invalidateQueries({ queryKey: ['attendance', 'teamToday']}); }
+     onSuccess: () => { toast.success('Clocked In!'); queryClient.invalidateQueries({ queryKey: ['attendance', 'myToday']}); queryClient.invalidateQueries({ queryKey: ['attendance', 'teamToday']}); },
+     onError: (e: any) => toast.error(e.response?.data?.error || 'Clock-in failed'),
   });
 
   const mutClockOut = useMutation({
      mutationFn: async () => await api.post('/attendance/clock-out'),
-     onSuccess: () => { toast.success('Clocked Out!'); queryClient.invalidateQueries({ queryKey: ['attendance', 'myToday']}); queryClient.invalidateQueries({ queryKey: ['attendance', 'teamToday']}); }
+     onSuccess: () => { toast.success('Clocked Out!'); queryClient.invalidateQueries({ queryKey: ['attendance', 'myToday']}); queryClient.invalidateQueries({ queryKey: ['attendance', 'teamToday']}); },
+     onError: (e: any) => toast.error(e.response?.data?.error || 'Clock-out failed'),
   });
 
   const [leaveForm, setLeaveForm] = useState({ type: '', from: '', to: '', reason: '', half: false });
@@ -126,11 +128,11 @@ export default function AttendancePage() {
                         {myToday.clock_out ? (
                            <div className="bg-slate-100 text-slate-600 p-3 rounded">Shift Ended at {new Date(myToday.clock_out).toLocaleTimeString()}</div>
                         ) : (
-                           <Button onClick={() => mutClockOut.mutate()} disabled={mutClockOut.isPending} className="w-full bg-red-600 hover:bg-red-700 h-14 text-lg"><LogOut className="mr-2"/> Punch OUT</Button>
+                           <Button onClick={() => mutClockOut.mutate()} loading={mutClockOut.isPending} className="w-full bg-red-600 hover:bg-red-700 h-14 text-lg"><LogOut className="mr-2"/> Punch OUT</Button>
                         )}
                      </div>
                   ) : (
-                     <Button onClick={() => mutClockIn.mutate()} disabled={mutClockIn.isPending} className="w-full bg-indigo-600 hover:bg-indigo-700 h-14 text-lg"><LogIn className="mr-2"/> Punch IN (Start Day)</Button>
+                     <Button onClick={() => mutClockIn.mutate()} loading={mutClockIn.isPending} className="w-full bg-indigo-600 hover:bg-indigo-700 h-14 text-lg"><LogIn className="mr-2"/> Punch IN (Start Day)</Button>
                   )}
                </CardContent>
             </Card>
@@ -184,7 +186,14 @@ export default function AttendancePage() {
                     <input type="checkbox" checked={leaveForm.half} onChange={e => setLeaveForm({ ...leaveForm, half: e.target.checked })} />
                     Half day
                   </label>
-                  <Button onClick={() => mutLeave.mutate()} disabled={mutLeave.isPending || !leaveForm.type || !leaveForm.from || !leaveForm.to || !leaveForm.reason.trim()} className="w-full">Submit Application</Button>
+                  <Button
+                    onClick={() => mutLeave.mutate()}
+                    loading={mutLeave.isPending}
+                    disabled={!leaveForm.type || !leaveForm.from || !leaveForm.to || !leaveForm.reason.trim()}
+                    className="w-full"
+                  >
+                    Submit Application
+                  </Button>
                </CardContent>
             </Card>
          </div>
@@ -216,8 +225,29 @@ export default function AttendancePage() {
                     <td className="px-4 py-3">{lv.total_days}</td>
                     <td className="px-4 py-3 max-w-[260px] truncate" title={lv.reason}>{lv.reason}</td>
                     <td className="px-4 py-3 text-right space-x-2">
-                      <Button size="sm" variant="outline" onClick={() => mutReviewLeave.mutate({ id: lv.id, status: 'rejected' })}>Reject</Button>
-                      <Button size="sm" onClick={() => mutReviewLeave.mutate({ id: lv.id, status: 'approved' })}>Approve</Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={
+                          mutReviewLeave.isPending &&
+                          mutReviewLeave.variables?.id === lv.id &&
+                          mutReviewLeave.variables?.status === 'rejected'
+                        }
+                        onClick={() => mutReviewLeave.mutate({ id: lv.id, status: 'rejected' })}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        size="sm"
+                        loading={
+                          mutReviewLeave.isPending &&
+                          mutReviewLeave.variables?.id === lv.id &&
+                          mutReviewLeave.variables?.status === 'approved'
+                        }
+                        onClick={() => mutReviewLeave.mutate({ id: lv.id, status: 'approved' })}
+                      >
+                        Approve
+                      </Button>
                     </td>
                   </tr>
                 ))}
