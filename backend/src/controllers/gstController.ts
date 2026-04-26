@@ -187,7 +187,7 @@ export async function getGSTR3B(req: Request, res: Response) {
          AND is_deleted = false AND status != 'cancelled'`,
       [companyId, df, dt]
      );
-     const inward = await query(
+     const inwardPi = await query(
       `SELECT
           COALESCE(SUM(taxable_amount),0) AS taxable,
           COALESCE(SUM(cgst_amount),0) AS cgst,
@@ -196,11 +196,28 @@ export async function getGSTR3B(req: Request, res: Response) {
        FROM purchase_invoices
        WHERE company_id = $1
          AND bill_date >= $2 AND bill_date < $3
-         AND is_deleted = false AND status != 'cancelled'`,
+         AND is_deleted = false AND COALESCE(status, '') != 'cancelled'`,
+      [companyId, df, dt]
+     );
+     const inwardExp = await query(
+      `SELECT
+          COALESCE(SUM(amount),0) AS taxable,
+          COALESCE(SUM(cgst_amount),0) AS cgst,
+          COALESCE(SUM(sgst_amount),0) AS sgst,
+          COALESCE(SUM(igst_amount),0) AS igst
+       FROM expenses
+       WHERE company_id = $1
+         AND expense_date >= $2 AND expense_date < $3
+         AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
       [companyId, df, dt]
      );
      const o = outward.rows[0];
-     const i = inward.rows[0];
+     const pi = inwardPi.rows[0];
+     const ex = inwardExp.rows[0];
+     const itcCgst = Number(pi.cgst || 0) + Number(ex.cgst || 0);
+     const itcSgst = Number(pi.sgst || 0) + Number(ex.sgst || 0);
+     const itcIgst = Number(pi.igst || 0) + Number(ex.igst || 0);
+     const itcTaxable = Number(pi.taxable || 0) + Number(ex.taxable || 0);
      res.json(success({
       fp,
       outward_taxable: Number(o.taxable || 0),
@@ -210,14 +227,17 @@ export async function getGSTR3B(req: Request, res: Response) {
         igst: Number(o.igst || 0),
       },
       itc_available: {
-        cgst: Number(i.cgst || 0),
-        sgst: Number(i.sgst || 0),
-        igst: Number(i.igst || 0),
+        taxable: itcTaxable,
+        from_purchase_bills: { cgst: Number(pi.cgst || 0), sgst: Number(pi.sgst || 0), igst: Number(pi.igst || 0) },
+        from_expenses: { cgst: Number(ex.cgst || 0), sgst: Number(ex.sgst || 0), igst: Number(ex.igst || 0) },
+        cgst: itcCgst,
+        sgst: itcSgst,
+        igst: itcIgst,
       },
       net_liability: {
-        cgst: Number(o.cgst || 0) - Number(i.cgst || 0),
-        sgst: Number(o.sgst || 0) - Number(i.sgst || 0),
-        igst: Number(o.igst || 0) - Number(i.igst || 0),
+        cgst: Number(o.cgst || 0) - itcCgst,
+        sgst: Number(o.sgst || 0) - itcSgst,
+        igst: Number(o.igst || 0) - itcIgst,
       },
      }));
   } catch (err: any) {
@@ -287,12 +307,58 @@ export async function getHSNSummary(req: Request, res: Response) {
 
 export async function getInputCredit(req: Request, res: Response) {
   try {
-     const result = await query(
-        `SELECT SUM(cgst_amount) as cgst, SUM(sgst_amount) as sgst, SUM(igst_amount) as igst 
-         FROM purchase_invoices WHERE company_id = $1 AND is_deleted = false AND status != 'cancelled'`,
-        [req.user!.company_id]
-     );
-     res.json(success(result.rows[0]));
+    const companyId = req.user!.company_id;
+    const { from_date, to_date, month, year } = req.query as Record<string, string | undefined>;
+    let from = '1970-01-01';
+    let to = '2100-01-01';
+    let rangeEndExclusive = false;
+    if (month && year) {
+      const p = parsePeriod(month, year);
+      from = p.from;
+      to = p.to;
+      rangeEndExclusive = true;
+    } else if (from_date && to_date) {
+      from = String(from_date);
+      to = String(to_date);
+      rangeEndExclusive = false;
+    }
+    const endDateSql = rangeEndExclusive
+      ? 'bill_date >= $2::date AND bill_date < $3::date'
+      : 'bill_date >= $2::date AND bill_date <= $3::date';
+    const expEndSql = rangeEndExclusive
+      ? 'expense_date >= $2::date AND expense_date < $3::date'
+      : 'expense_date >= $2::date AND expense_date <= $3::date';
+    const purchases = await query(
+      `SELECT COALESCE(SUM(cgst_amount), 0)::bigint AS cgst,
+              COALESCE(SUM(sgst_amount), 0)::bigint AS sgst,
+              COALESCE(SUM(igst_amount), 0)::bigint AS igst
+       FROM purchase_invoices
+       WHERE company_id = $1 AND is_deleted = false AND COALESCE(status, '') != 'cancelled'
+         AND ${endDateSql}`,
+      [companyId, from, to]
+    );
+    const expenses = await query(
+      `SELECT COALESCE(SUM(cgst_amount), 0)::bigint AS cgst,
+              COALESCE(SUM(sgst_amount), 0)::bigint AS sgst,
+              COALESCE(SUM(igst_amount), 0)::bigint AS igst
+       FROM expenses
+       WHERE company_id = $1 AND is_deleted = false AND COALESCE(gst_rate, 0) > 0
+         AND ${expEndSql}`,
+      [companyId, from, to]
+    );
+    const pc = purchases.rows[0] || {};
+    const ex = expenses.rows[0] || {};
+    const cgst = Number(pc.cgst || 0) + Number(ex.cgst || 0);
+    const sgst = Number(pc.sgst || 0) + Number(ex.sgst || 0);
+    const igst = Number(pc.igst || 0) + Number(ex.igst || 0);
+    res.json(
+      success({
+        period: { from, to },
+        from_purchase_bills: { cgst: Number(pc.cgst || 0), sgst: Number(pc.sgst || 0), igst: Number(pc.igst || 0) },
+        from_expenses: { cgst: Number(ex.cgst || 0), sgst: Number(ex.sgst || 0), igst: Number(ex.igst || 0) },
+        total_itc: { cgst, sgst, igst, combined: cgst + sgst + igst },
+      })
+    );
   } catch (err: any) {
     gstErrorResponse(res, err);
   }

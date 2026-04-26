@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useExpenses, useCreateExpense } from '@/hooks/useBusiness';
 import { formatMoney, formatDate } from '@/lib/formatters';
+import { determineGSTType, previewExpenseGst, stateCodeFromGstin } from '@/lib/expenseGst';
+import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,20 +26,40 @@ export default function ExpenseList() {
   const pagination = data?.data?.pagination;
   const meta = data?.meta || {};
 
+  const company = useAuthStore((s) => s.company);
   const [form, setForm] = useState<any>({
     expense_date: new Date().toISOString().split('T')[0],
-    payment_mode: 'cash', gst_rate: 0,
+    payment_mode: 'cash',
+    gst_rate: 0,
+    amount_includes_gst: false,
   });
   const u = (f: string, v: any) => setForm((p: any) => ({ ...p, [f]: v }));
+
+  const gstPreview = useMemo(() => {
+    const paise = Math.round((Number(form.amount) || 0) * 100);
+    const buyer = stateCodeFromGstin(company?.gstin) || '';
+    const supplier = stateCodeFromGstin(form.vendor_gstin) || buyer;
+    const gstType = determineGSTType(supplier, buyer || supplier);
+    return previewExpenseGst(paise, Number(form.gst_rate) || 0, gstType, !!form.amount_includes_gst);
+  }, [form.amount, form.gst_rate, form.vendor_gstin, form.amount_includes_gst, company?.gstin]);
 
   const handleCreate = async () => {
     if (!form.category) { toast.error('Category is required'); return; }
     if (!form.amount || form.amount <= 0) { toast.error('Amount must be positive'); return; }
     try {
-      await createMutation.mutateAsync({ ...form, amount: Math.round(form.amount * 100) });
+      await createMutation.mutateAsync({
+        ...form,
+        amount: Math.round(form.amount * 100),
+        amount_includes_gst: !!form.amount_includes_gst,
+      });
       toast.success('Expense added');
       setShowForm(false);
-      setForm({ expense_date: new Date().toISOString().split('T')[0], payment_mode: 'cash', gst_rate: 0 });
+      setForm({
+        expense_date: new Date().toISOString().split('T')[0],
+        payment_mode: 'cash',
+        gst_rate: 0,
+        amount_includes_gst: false,
+      });
     } catch (e: any) { toast.error(e.response?.data?.error || 'Failed'); }
   };
 
@@ -116,11 +138,24 @@ export default function ExpenseList() {
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div><Label>Amount (₹) *</Label><Input type="number" className="mt-1 tabular-nums text-lg" min={0.01} step={0.01} value={form.amount || ''} onChange={e => u('amount', parseFloat(e.target.value) || 0)} /></div>
+            <div><Label>Amount (₹) *</Label><Input type="number" className="mt-1 tabular-nums text-lg" min={0.01} step={0.01} value={form.amount || ''} onChange={e => u('amount', parseFloat(e.target.value) || 0)} />
+              <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input type="checkbox" checked={!!form.amount_includes_gst} onChange={e => u('amount_includes_gst', e.target.checked)} className="rounded border" />
+                Amount is bill total (GST included). Leave off if you enter taxable value before GST.
+              </label>
+            </div>
             <div><Label>Date</Label><Input type="date" className="mt-1" value={form.expense_date} onChange={e => u('expense_date', e.target.value)} /></div>
             <div><Label>GST Rate</Label><div className="flex gap-2 mt-1">
               {[0, 5, 12, 18, 28].map(r => (<button key={r} onClick={() => u('gst_rate', r)} className={`flex-1 py-1.5 rounded text-xs font-medium ${form.gst_rate === r ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{r}%</button>))}
             </div></div>
+            {(Number(form.amount) > 0 && (form.gst_rate ?? 0) > 0) && (
+              <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1 tabular-nums">
+                <p className="font-medium text-foreground">Recorded split (preview)</p>
+                <p className="text-muted-foreground">Taxable {formatMoney(gstPreview.taxable)} · CGST {formatMoney(gstPreview.cgst)} · SGST {formatMoney(gstPreview.sgst)} · IGST {formatMoney(gstPreview.igst)}</p>
+                <p className="text-foreground font-medium">Total {formatMoney(gstPreview.total)}</p>
+                <p className="text-[10px] text-muted-foreground">Intra-state vs inter-state follows vendor GSTIN vs your company GSTIN (first two digits = state).</p>
+              </div>
+            )}
             <div><Label>Payment Mode</Label>
               <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.payment_mode} onChange={e => u('payment_mode', e.target.value)}>
                 <option value="cash">Cash</option><option value="upi">UPI</option>

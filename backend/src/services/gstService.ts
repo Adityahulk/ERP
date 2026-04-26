@@ -3,6 +3,96 @@ export function determineGSTType(supplierStateCode: string, buyerStateCode: stri
   return supplierStateCode === buyerStateCode ? 'intra' : 'inter';
 }
 
+/** First two characters of GSTIN are the state code (e.g. 27 = Maharashtra). */
+export function stateCodeFromGstin(gstin: string | null | undefined): string | null {
+  const g = (gstin || '').trim().toUpperCase();
+  if (g.length < 2) return null;
+  const a = g.charCodeAt(0);
+  const b = g.charCodeAt(1);
+  if (a >= 48 && a <= 57 && b >= 48 && b <= 57) return g.slice(0, 2);
+  return null;
+}
+
+export type ExpenseGstBreakdown = {
+  taxable_amount: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  gst_amount: number;
+  total_amount: number;
+};
+
+/**
+ * Expense / purchase voucher: amounts in paise.
+ * If `amountIncludesGst`, `inputAmountPaise` is the total paid (tax-inclusive); stored taxable is derived.
+ * Otherwise `inputAmountPaise` is taxable value (GST extra), matching sales line-item logic.
+ */
+export function calculateExpenseGstBreakdown(
+  inputAmountPaise: number,
+  gstRate: number,
+  gstType: 'intra' | 'inter',
+  amountIncludesGst: boolean
+): ExpenseGstBreakdown {
+  const rate = Math.max(0, Math.min(100, Math.round(Number(gstRate) || 0)));
+  const input = Math.max(0, Math.round(Number(inputAmountPaise) || 0));
+
+  if (input === 0) {
+    return {
+      taxable_amount: 0,
+      cgst_amount: 0,
+      sgst_amount: 0,
+      igst_amount: 0,
+      gst_amount: 0,
+      total_amount: 0,
+    };
+  }
+
+  if (rate === 0) {
+    return {
+      taxable_amount: input,
+      cgst_amount: 0,
+      sgst_amount: 0,
+      igst_amount: 0,
+      gst_amount: 0,
+      total_amount: input,
+    };
+  }
+
+  if (amountIncludesGst) {
+    const total = input;
+    const taxable = Math.round((total * 100) / (100 + rate));
+    const gstAmount = total - taxable;
+    let cgst = 0;
+    let sgst = 0;
+    let igst = 0;
+    if (gstType === 'intra') {
+      cgst = Math.round(gstAmount / 2);
+      sgst = gstAmount - cgst;
+    } else {
+      igst = gstAmount;
+    }
+    return {
+      taxable_amount: taxable,
+      cgst_amount: cgst,
+      sgst_amount: sgst,
+      igst_amount: igst,
+      gst_amount: gstAmount,
+      total_amount: total,
+    };
+  }
+
+  const line = calculateLineItemTax(input, 1, 'none', 0, rate, gstType, 0);
+  const gstAmt = line.cgst + line.sgst + line.igst;
+  return {
+    taxable_amount: line.taxableAmount,
+    cgst_amount: line.cgst,
+    sgst_amount: line.sgst,
+    igst_amount: line.igst,
+    gst_amount: gstAmt,
+    total_amount: line.totalAmount,
+  };
+}
+
 export function calculateLineItemTax(
   unitPrice: number,
   quantity: number,

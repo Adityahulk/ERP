@@ -3,12 +3,31 @@ import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
+import {
+  calculateExpenseGstBreakdown,
+  determineGSTType,
+  stateCodeFromGstin,
+} from '../services/gstService';
+
+async function resolveExpenseGstType(companyId: string, vendorGstin: string | undefined) {
+  const comp = await query(`SELECT gstin, state_code FROM companies WHERE id = $1`, [companyId]);
+  const row = comp.rows[0] || {};
+  const buyerCode = String(row.state_code || '').trim() || stateCodeFromGstin(row.gstin) || '';
+  const supplierCode = stateCodeFromGstin(vendorGstin) || buyerCode || '';
+  const b = buyerCode || supplierCode;
+  const s = supplierCode || b;
+  return determineGSTType(s, b);
+}
 
 // ── POST /api/expenses ────────────────────────────────────────
 export async function createExpense(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body;
+    const gstType = await resolveExpenseGstType(companyId, d.vendor_gstin);
+    const rate = d.gst_rate ?? 0;
+    const includesGst = !!d.amount_includes_gst;
+    const tax = calculateExpenseGstBreakdown(Number(d.amount), rate, gstType, includesGst);
 
     const numRes = await query(
       `SELECT COUNT(*) + 1 as num FROM expenses WHERE company_id = $1`, [companyId]
@@ -18,17 +37,23 @@ export async function createExpense(req: Request, res: Response) {
     const result = await query(
       `INSERT INTO expenses (
         company_id, expense_number, expense_date, category, amount,
-        gst_rate, gst_amount, total_amount,
+        gst_rate, tax_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+        amount_includes_gst,
         payment_mode, reference_number, vendor_name, vendor_gstin,
         description, notes, is_reimbursable, status, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
       [
         companyId, expenseNumber,
         d.expense_date || new Date().toISOString().split('T')[0],
-        d.category, d.amount,
-        d.gst_rate || 0,
-        d.gst_rate ? Math.round(d.amount * d.gst_rate / 100) : 0,
-        d.amount + (d.gst_rate ? Math.round(d.amount * d.gst_rate / 100) : 0),
+        d.category, tax.taxable_amount,
+        rate,
+        tax.gst_amount,
+        tax.gst_amount,
+        tax.cgst_amount,
+        tax.sgst_amount,
+        tax.igst_amount,
+        tax.total_amount,
+        includesGst,
         d.payment_mode || 'cash', d.reference_number,
         d.vendor_name, d.vendor_gstin,
         d.description, d.notes,
@@ -109,19 +134,79 @@ export async function updateExpense(req: Request, res: Response) {
     const { id } = req.params;
     const companyId = req.user!.company_id;
 
-    const fields = ['expense_date','category','amount','gst_rate','payment_mode','reference_number','vendor_name','vendor_gstin','description','notes','is_reimbursable'];
-    const updates: string[] = []; const values: any[] = []; let idx = 1;
+    const cur = await query(
+      `SELECT amount, gst_rate, vendor_gstin, amount_includes_gst FROM expenses WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId]
+    );
+    if (!cur.rows.length) return res.status(404).json(error('Expense not found'));
+
+    const fields = [
+      'expense_date',
+      'category',
+      'payment_mode',
+      'reference_number',
+      'vendor_name',
+      'vendor_gstin',
+      'description',
+      'notes',
+      'is_reimbursable',
+    ];
+    const updates: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
     for (const f of fields) {
-      if (req.body[f] !== undefined) { updates.push(`${f} = $${idx++}`); values.push(req.body[f]); }
+      if (req.body[f] !== undefined) {
+        updates.push(`${f} = $${idx++}`);
+        values.push(req.body[f]);
+      }
     }
 
-    // Recalc GST amounts if amount or rate changed
-    if (req.body.amount !== undefined || req.body.gst_rate !== undefined) {
-      const amt = req.body.amount;
-      const rate = req.body.gst_rate;
-      if (amt !== undefined && rate !== undefined) {
-        updates.push(`gst_amount = $${idx++}`); values.push(Math.round(amt * rate / 100));
-        updates.push(`total_amount = $${idx++}`); values.push(amt + Math.round(amt * rate / 100));
+    const needRecalc =
+      req.body.amount !== undefined ||
+      req.body.gst_rate !== undefined ||
+      req.body.amount_includes_gst !== undefined ||
+      req.body.vendor_gstin !== undefined;
+
+    if (needRecalc) {
+      const row = cur.rows[0];
+      const vendorGst =
+        req.body.vendor_gstin !== undefined ? req.body.vendor_gstin : row.vendor_gstin;
+      const gstType = await resolveExpenseGstType(companyId, vendorGst);
+      const rate = req.body.gst_rate !== undefined ? req.body.gst_rate : row.gst_rate;
+      // Stored `amount` is always taxable (base). Inclusive flag applies only when the client sends a new `amount`.
+      let inputAmt: number;
+      let includesGst: boolean;
+      if (req.body.amount !== undefined) {
+        inputAmt = Number(req.body.amount);
+        includesGst =
+          req.body.amount_includes_gst !== undefined
+            ? !!req.body.amount_includes_gst
+            : !!row.amount_includes_gst;
+      } else {
+        inputAmt = Number(row.amount);
+        includesGst = false;
+      }
+
+      const tax = calculateExpenseGstBreakdown(inputAmt, rate, gstType, includesGst);
+      updates.push(`amount = $${idx++}`);
+      values.push(tax.taxable_amount);
+      updates.push(`gst_rate = $${idx++}`);
+      values.push(rate);
+      updates.push(`tax_amount = $${idx++}`);
+      values.push(tax.gst_amount);
+      updates.push(`gst_amount = $${idx++}`);
+      values.push(tax.gst_amount);
+      updates.push(`cgst_amount = $${idx++}`);
+      values.push(tax.cgst_amount);
+      updates.push(`sgst_amount = $${idx++}`);
+      values.push(tax.sgst_amount);
+      updates.push(`igst_amount = $${idx++}`);
+      values.push(tax.igst_amount);
+      updates.push(`total_amount = $${idx++}`);
+      values.push(tax.total_amount);
+      if (req.body.amount_includes_gst !== undefined || req.body.amount !== undefined) {
+        updates.push(`amount_includes_gst = $${idx++}`);
+        values.push(includesGst);
       }
     }
 
