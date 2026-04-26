@@ -34,9 +34,20 @@ export default function GSTDashboard() {
     }
   };
 
-  const outPaise = (data?.output?.cgst || 0) + (data?.output?.sgst || 0) + (data?.output?.igst || 0);
-  const inPaise = (data?.input?.cgst || 0) + (data?.input?.sgst || 0) + (data?.input?.igst || 0);
-  const liabPaise = (data?.liability?.cgst || 0) + (data?.liability?.sgst || 0) + (data?.liability?.igst || 0);
+  const cessOut = Number(data?.output?.cess || 0);
+  const cessIn = Number(data?.input?.cess || 0);
+  const outPaise =
+    Number(data?.output?.cgst || 0) +
+    Number(data?.output?.sgst || 0) +
+    Number(data?.output?.igst || 0) +
+    cessOut;
+  const inPaise =
+    Number(data?.input?.cgst || 0) + Number(data?.input?.sgst || 0) + Number(data?.input?.igst || 0) + cessIn;
+  const liabPaise =
+    Number(data?.liability?.cgst || 0) +
+    Number(data?.liability?.sgst || 0) +
+    Number(data?.liability?.igst || 0) +
+    Number(data?.liability?.cess || 0);
 
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 max-w-6xl mx-auto">
@@ -68,7 +79,7 @@ export default function GSTDashboard() {
          </Card>
          <Card className="bg-gradient-to-br from-emerald-50 to-white">
             <CardContent className="p-6">
-               <h3 className="text-sm font-medium text-slate-500 mb-1">Total ITC Available (Purchases)</h3>
+               <h3 className="text-sm font-medium text-slate-500 mb-1">Total ITC available (purchases + GST expenses)</h3>
                <div className="text-3xl font-bold text-emerald-700">₹{(inPaise / 100).toFixed(2)}</div>
             </CardContent>
          </Card>

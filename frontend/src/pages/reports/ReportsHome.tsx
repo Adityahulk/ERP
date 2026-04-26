@@ -246,6 +246,7 @@ export default function ReportsHome() {
     'total_value_paise',
     'balance_due',
     'outward_taxable',
+    'cess_payable',
   ]);
   const isMoneyKey = (k: string) =>
     moneyKeys.has(k) ||
@@ -286,7 +287,7 @@ export default function ReportsHome() {
             <div key={e.category} className="flex justify-between"><span>{e.category}</span><span className="tabular-nums">{formatMoney(Number(e.total))}</span></div>
           ))}
         </div>
-        <div className="flex justify-between pt-2 border-t font-semibold"><span>Total expenses (incl. GST)</span><span className="tabular-nums">{formatMoney(Number(pl.total_expenses))}</span></div>
+        <div className="flex justify-between pt-2 border-t font-semibold"><span>Total expenses (booked base)</span><span className="tabular-nums">{formatMoney(Number(pl.total_expenses))}</span></div>
       </div>
       <div className="rounded-lg border p-4 bg-indigo-50/50 border-indigo-100">
         <div className="flex justify-between text-lg font-bold"><span>Net profit</span><span className="tabular-nums">{formatMoney(Number(pl.net_profit))}</span></div>
@@ -347,6 +348,7 @@ export default function ReportsHome() {
         <div className="flex justify-between"><span>CGST</span><span className="tabular-nums">{formatMoney(Number((g.outward_tax as { cgst?: number })?.cgst))}</span></div>
         <div className="flex justify-between"><span>SGST</span><span className="tabular-nums">{formatMoney(Number((g.outward_tax as { sgst?: number })?.sgst))}</span></div>
         <div className="flex justify-between"><span>IGST</span><span className="tabular-nums">{formatMoney(Number((g.outward_tax as { igst?: number })?.igst))}</span></div>
+        <div className="flex justify-between"><span>Cess</span><span className="tabular-nums">{formatMoney(Number((g.outward_tax as { cess?: number })?.cess))}</span></div>
       </CardContent></Card>
       <Card><CardContent className="p-4 space-y-2">
         <h3 className="font-semibold">ITC & net</h3>
@@ -356,6 +358,7 @@ export default function ReportsHome() {
         <div className="pt-2 border-t flex justify-between font-semibold"><span>Net CGST</span><span className="tabular-nums">{formatMoney(Number((g.net_liability as { cgst?: number })?.cgst))}</span></div>
         <div className="flex justify-between font-semibold"><span>Net SGST</span><span className="tabular-nums">{formatMoney(Number((g.net_liability as { sgst?: number })?.sgst))}</span></div>
         <div className="flex justify-between font-semibold"><span>Net IGST</span><span className="tabular-nums">{formatMoney(Number((g.net_liability as { igst?: number })?.igst))}</span></div>
+        <div className="flex justify-between font-semibold"><span>Net cess</span><span className="tabular-nums">{formatMoney(Number((g.net_liability as { cess?: number })?.cess))}</span></div>
       </CardContent></Card>
     </div>
   );
@@ -392,7 +395,9 @@ export default function ReportsHome() {
               <tr key={String(r.gst_rate)} className="border-t">
                 <td className="p-2">{String(r.gst_rate)}%</td>
                 <td className="p-2 text-right tabular-nums">{formatMoney(Number(r.taxable_value))}</td>
-                <td className="p-2 text-right tabular-nums">{formatMoney(Number(r.cgst) + Number(r.sgst) + Number(r.igst))}</td>
+                <td className="p-2 text-right tabular-nums">
+                  {formatMoney(Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess || 0))}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -407,15 +412,24 @@ export default function ReportsHome() {
               <tr key={String(r.gst_rate)} className="border-t">
                 <td className="p-2">{String(r.gst_rate)}%</td>
                 <td className="p-2 text-right tabular-nums">{formatMoney(Number(r.taxable_value))}</td>
-                <td className="p-2 text-right tabular-nums">{formatMoney(Number(r.cgst) + Number(r.sgst) + Number(r.igst))}</td>
+                <td className="p-2 text-right tabular-nums">
+                  {formatMoney(Number(r.cgst) + Number(r.sgst) + Number(r.igst) + Number(r.cess || 0))}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <div className="md:col-span-2 rounded-lg border p-4 bg-amber-50/40 text-sm">
-        <span className="font-semibold">Net GST (out − in): </span>
-        <span className="tabular-nums font-bold">{formatMoney(Number((gst.summary as { total_payable?: number })?.total_payable))}</span>
+      <div className="md:col-span-2 rounded-lg border p-4 bg-amber-50/40 text-sm space-y-1">
+        <div>
+          <span className="font-semibold">Net GST (CGST+SGST+IGST+cess, out − in): </span>
+          <span className="tabular-nums font-bold">
+            {formatMoney(Number((gst.summary as { total_payable?: number })?.total_payable))}
+          </span>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Net cess: {formatMoney(Number((gst.summary as { cess_payable?: number })?.cess_payable ?? 0))}
+        </div>
       </div>
     </div>
   );

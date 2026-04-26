@@ -30,30 +30,61 @@ export async function getGSTSummary(req: Request, res: Response) {
      const { from: df, to: dt } = parsePeriod(month, year);
 
      const outputRes = await query(
-       `SELECT SUM(cgst_amount) as cgst, SUM(sgst_amount) as sgst, SUM(igst_amount) as igst
-        FROM invoices
-        WHERE company_id = $1
-          AND invoice_type IN ('sale','tax_invoice')
-          AND invoice_date >= $2 AND invoice_date < $3
-          AND is_deleted = false AND status != 'cancelled'`,
+       `SELECT COALESCE(SUM(ii.cgst_amount), 0) AS cgst,
+               COALESCE(SUM(ii.sgst_amount), 0) AS sgst,
+               COALESCE(SUM(ii.igst_amount), 0) AS igst,
+               COALESCE(SUM(ii.cess_amount), 0) AS cess
+        FROM invoice_items ii
+        JOIN invoices inv ON ii.invoice_id = inv.id
+        WHERE inv.company_id = $1
+          AND inv.invoice_type IN ('sale', 'tax_invoice')
+          AND inv.invoice_date >= $2 AND inv.invoice_date < $3
+          AND inv.is_deleted = false AND inv.status != 'cancelled'`,
         [companyId, df, dt]
      );
 
-     const inputRes = await query(
-       `SELECT SUM(cgst_amount) as cgst, SUM(sgst_amount) as sgst, SUM(igst_amount) as igst
-        FROM purchase_invoices WHERE company_id = $1 AND bill_date >= $2 AND bill_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+     const inputPiRes = await query(
+       `SELECT COALESCE(SUM(pii.cgst_amount), 0) AS cgst,
+               COALESCE(SUM(pii.sgst_amount), 0) AS sgst,
+               COALESCE(SUM(pii.igst_amount), 0) AS igst
+        FROM purchase_invoice_items pii
+        JOIN purchase_invoices pi ON pii.purchase_invoice_id = pi.id
+        WHERE pi.company_id = $1
+          AND pi.bill_date >= $2 AND pi.bill_date < $3
+          AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'`,
+        [companyId, df, dt]
+     );
+
+     const inputExpRes = await query(
+       `SELECT COALESCE(SUM(cgst_amount), 0) AS cgst,
+               COALESCE(SUM(sgst_amount), 0) AS sgst,
+               COALESCE(SUM(igst_amount), 0) AS igst
+        FROM expenses
+        WHERE company_id = $1
+          AND expense_date >= $2 AND expense_date < $3
+          AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
         [companyId, df, dt]
      );
 
      const output = outputRes.rows[0];
-     const input = inputRes.rows[0];
+     const pi = inputPiRes.rows[0];
+     const ex = inputExpRes.rows[0];
+     const inCgst = Number(pi.cgst || 0) + Number(ex.cgst || 0);
+     const inSgst = Number(pi.sgst || 0) + Number(ex.sgst || 0);
+     const inIgst = Number(pi.igst || 0) + Number(ex.igst || 0);
      res.json(success({
-        output: { cgst: output.cgst || 0, sgst: output.sgst || 0, igst: output.igst || 0 },
-        input: { cgst: input.cgst || 0, sgst: input.sgst || 0, igst: input.igst || 0 },
+        output: {
+          cgst: Number(output.cgst || 0),
+          sgst: Number(output.sgst || 0),
+          igst: Number(output.igst || 0),
+          cess: Number(output.cess || 0),
+        },
+        input: { cgst: inCgst, sgst: inSgst, igst: inIgst, cess: 0 },
         liability: {
-           cgst: (output.cgst || 0) - (input.cgst || 0),
-           sgst: (output.sgst || 0) - (input.sgst || 0),
-           igst: (output.igst || 0) - (input.igst || 0)
+           cgst: Number(output.cgst || 0) - inCgst,
+           sgst: Number(output.sgst || 0) - inSgst,
+           igst: Number(output.igst || 0) - inIgst,
+           cess: Number(output.cess || 0),
         }
      }));
   } catch (err: any) {
@@ -152,7 +183,7 @@ export async function getGSTR2AReconciliation(req: Request, res: Response) {
        LEFT JOIN parties p ON p.id = pi.party_id
        WHERE pi.company_id = $1
          AND pi.bill_date >= $2 AND pi.bill_date < $3
-         AND pi.is_deleted = false AND pi.status != 'cancelled'
+         AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
        ORDER BY pi.bill_date DESC`,
       [companyId, df, dt]
     );
@@ -176,27 +207,32 @@ export async function getGSTR3B(req: Request, res: Response) {
      const { from: df, to: dt, fp } = parsePeriod(month, year);
      const outward = await query(
       `SELECT
-          COALESCE(SUM(taxable_amount),0) AS taxable,
-          COALESCE(SUM(cgst_amount),0) AS cgst,
-          COALESCE(SUM(sgst_amount),0) AS sgst,
-          COALESCE(SUM(igst_amount),0) AS igst
-       FROM invoices
-       WHERE company_id = $1
-         AND invoice_type IN ('sale','tax_invoice')
-         AND invoice_date >= $2 AND invoice_date < $3
-         AND is_deleted = false AND status != 'cancelled'`,
+          COALESCE(SUM(ii.taxable_amount),0) AS taxable,
+          COALESCE(SUM(ii.cgst_amount),0) AS cgst,
+          COALESCE(SUM(ii.sgst_amount),0) AS sgst,
+          COALESCE(SUM(ii.igst_amount),0) AS igst,
+          COALESCE(SUM(ii.cess_amount),0) AS cess
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       WHERE inv.company_id = $1
+         AND inv.invoice_type IN ('sale','tax_invoice')
+         AND inv.invoice_date >= $2 AND inv.invoice_date < $3
+         AND inv.is_deleted = false AND inv.status != 'cancelled'`,
       [companyId, df, dt]
      );
      const inwardPi = await query(
       `SELECT
-          COALESCE(SUM(taxable_amount),0) AS taxable,
-          COALESCE(SUM(cgst_amount),0) AS cgst,
-          COALESCE(SUM(sgst_amount),0) AS sgst,
-          COALESCE(SUM(igst_amount),0) AS igst
-       FROM purchase_invoices
-       WHERE company_id = $1
-         AND bill_date >= $2 AND bill_date < $3
-         AND is_deleted = false AND COALESCE(status, '') != 'cancelled'`,
+          COALESCE(SUM(
+            pii.total_amount - COALESCE(pii.cgst_amount,0) - COALESCE(pii.sgst_amount,0) - COALESCE(pii.igst_amount,0)
+          ),0) AS taxable,
+          COALESCE(SUM(pii.cgst_amount),0) AS cgst,
+          COALESCE(SUM(pii.sgst_amount),0) AS sgst,
+          COALESCE(SUM(pii.igst_amount),0) AS igst
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pii.purchase_invoice_id = pi.id
+       WHERE pi.company_id = $1
+         AND pi.bill_date >= $2 AND pi.bill_date < $3
+         AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'`,
       [companyId, df, dt]
      );
      const inwardExp = await query(
@@ -218,6 +254,7 @@ export async function getGSTR3B(req: Request, res: Response) {
      const itcSgst = Number(pi.sgst || 0) + Number(ex.sgst || 0);
      const itcIgst = Number(pi.igst || 0) + Number(ex.igst || 0);
      const itcTaxable = Number(pi.taxable || 0) + Number(ex.taxable || 0);
+     const outwardCess = Number(o.cess || 0);
      res.json(success({
       fp,
       outward_taxable: Number(o.taxable || 0),
@@ -225,6 +262,7 @@ export async function getGSTR3B(req: Request, res: Response) {
         cgst: Number(o.cgst || 0),
         sgst: Number(o.sgst || 0),
         igst: Number(o.igst || 0),
+        cess: outwardCess,
       },
       itc_available: {
         taxable: itcTaxable,
@@ -238,6 +276,7 @@ export async function getGSTR3B(req: Request, res: Response) {
         cgst: Number(o.cgst || 0) - itcCgst,
         sgst: Number(o.sgst || 0) - itcSgst,
         igst: Number(o.igst || 0) - itcIgst,
+        cess: outwardCess,
       },
      }));
   } catch (err: any) {
@@ -252,17 +291,42 @@ export async function exportGSTR3B(req: Request, res: Response) {
     const { from: df, to: dt, fp } = parsePeriod(month, year);
     const cRes = await query(`SELECT gstin FROM companies WHERE id = $1`, [companyId]);
     const out = await query(
-      `SELECT COALESCE(SUM(taxable_amount),0) AS taxable, COALESCE(SUM(cgst_amount),0) AS cgst, COALESCE(SUM(sgst_amount),0) AS sgst, COALESCE(SUM(igst_amount),0) AS igst
-       FROM invoices
-       WHERE company_id = $1 AND invoice_type IN ('sale','tax_invoice') AND invoice_date >= $2 AND invoice_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+      `SELECT COALESCE(SUM(ii.taxable_amount),0) AS taxable,
+              COALESCE(SUM(ii.cgst_amount),0) AS cgst,
+              COALESCE(SUM(ii.sgst_amount),0) AS sgst,
+              COALESCE(SUM(ii.igst_amount),0) AS igst,
+              COALESCE(SUM(ii.cess_amount),0) AS cess
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       WHERE inv.company_id = $1 AND inv.invoice_type IN ('sale','tax_invoice')
+         AND inv.invoice_date >= $2 AND inv.invoice_date < $3
+         AND inv.is_deleted = false AND inv.status != 'cancelled'`,
       [companyId, df, dt]
     );
-    const itc = await query(
-      `SELECT COALESCE(SUM(cgst_amount),0) AS cgst, COALESCE(SUM(sgst_amount),0) AS sgst, COALESCE(SUM(igst_amount),0) AS igst
-       FROM purchase_invoices
-       WHERE company_id = $1 AND bill_date >= $2 AND bill_date < $3 AND is_deleted = false AND status != 'cancelled'`,
+    const itcPi = await query(
+      `SELECT COALESCE(SUM(pii.cgst_amount),0) AS cgst,
+              COALESCE(SUM(pii.sgst_amount),0) AS sgst,
+              COALESCE(SUM(pii.igst_amount),0) AS igst
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pii.purchase_invoice_id = pi.id
+       WHERE pi.company_id = $1 AND pi.bill_date >= $2 AND pi.bill_date < $3
+         AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'`,
       [companyId, df, dt]
     );
+    const itcEx = await query(
+      `SELECT COALESCE(SUM(cgst_amount),0) AS cgst,
+              COALESCE(SUM(sgst_amount),0) AS sgst,
+              COALESCE(SUM(igst_amount),0) AS igst
+       FROM expenses
+       WHERE company_id = $1 AND expense_date >= $2 AND expense_date < $3
+         AND is_deleted = false AND COALESCE(gst_rate, 0) > 0`,
+      [companyId, df, dt]
+    );
+    const itcRow = {
+      cgst: Number(itcPi.rows[0]?.cgst || 0) + Number(itcEx.rows[0]?.cgst || 0),
+      sgst: Number(itcPi.rows[0]?.sgst || 0) + Number(itcEx.rows[0]?.sgst || 0),
+      igst: Number(itcPi.rows[0]?.igst || 0) + Number(itcEx.rows[0]?.igst || 0),
+    };
     const retPeriod = fp;
     res.json(success({
       meta: {
@@ -277,7 +341,7 @@ export async function exportGSTR3B(req: Request, res: Response) {
       fp,
       ret_period: retPeriod,
       outward: out.rows[0],
-      itc: itc.rows[0],
+      itc: itcRow,
     }));
   } catch (err: any) {
     gstErrorResponse(res, err);
@@ -289,14 +353,15 @@ export async function getHSNSummary(req: Request, res: Response) {
      const { month, year } = req.query as any;
      const { from: df, to: dt } = parsePeriod(month, year);
      const result = await query(
-       `SELECT item_id, hsn_code, SUM(quantity) as qty, SUM(taxable_amount) as taxable, SUM(cgst_amount+sgst_amount+igst_amount) as tax
+      `SELECT i.item_id, i.hsn_code, SUM(i.quantity) as qty, SUM(i.taxable_amount) as taxable,
+              SUM(COALESCE(i.cgst_amount,0) + COALESCE(i.sgst_amount,0) + COALESCE(i.igst_amount,0) + COALESCE(i.cess_amount,0)) as tax
         FROM invoice_items i
         JOIN invoices p ON i.invoice_id = p.id
         WHERE p.company_id = $1 AND p.is_deleted = false
           AND p.invoice_type IN ('sale','tax_invoice')
           AND p.status != 'cancelled'
           AND p.invoice_date >= $2 AND p.invoice_date < $3
-        GROUP BY item_id, hsn_code`,
+        GROUP BY i.item_id, i.hsn_code`,
         [req.user!.company_id, df, dt]
      );
      res.json(success(result.rows));

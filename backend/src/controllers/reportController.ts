@@ -52,7 +52,12 @@ export async function getDashboard(req: Request, res: Response) {
     const lowStock = await query(
       `SELECT COUNT(DISTINCT i.id) as count
        FROM items i
-       LEFT JOIN (SELECT item_id, SUM(quantity) as qty FROM item_stock GROUP BY item_id) s ON s.item_id = i.id
+       LEFT JOIN (
+         SELECT item_id, SUM(quantity) AS qty
+         FROM item_stock
+         WHERE company_id = $1
+         GROUP BY item_id
+       ) s ON s.item_id = i.id
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.track_inventory = true
          AND i.reorder_point > 0 AND COALESCE(s.qty, 0) <= i.reorder_point`,
       [companyId]
@@ -100,8 +105,8 @@ export async function getDashboard(req: Request, res: Response) {
     // Payments today
     const todayPayments = await query(
       `SELECT 
-         COALESCE(SUM(amount) FILTER (WHERE payment_type = 'payment_in'), 0) as received,
-         COALESCE(SUM(amount) FILTER (WHERE payment_type = 'payment_out'), 0) as paid
+         COALESCE(SUM(amount) FILTER (WHERE payment_type IN ('payment_in', 'incoming')), 0) as received,
+         COALESCE(SUM(amount) FILTER (WHERE payment_type IN ('payment_out', 'outgoing')), 0) as paid
        FROM payments WHERE company_id = $1 AND payment_date = $2 AND is_deleted = false`,
       [companyId, today]
     );
@@ -113,8 +118,8 @@ export async function getDashboard(req: Request, res: Response) {
       },
       month: {
         sales: monthSales.rows[0],
-        expenses: parseInt(monthExpenses.rows[0].total),
-        profit: parseInt(monthSales.rows[0].total) - parseInt(monthExpenses.rows[0].total),
+        expenses: Number(monthExpenses.rows[0].total || 0),
+        profit: Number(monthSales.rows[0].total || 0) - Number(monthExpenses.rows[0].total || 0),
       },
       balances: balances.rows[0],
       overdue: overdue.rows[0],
@@ -155,9 +160,9 @@ export async function profitLoss(req: Request, res: Response) {
       [companyId, from, to]
     );
 
-    // Expenses (cash / book cost incl. GST — matches dashboard and expense list totals)
+    // Expenses: `amount` is stored taxable base; `total_amount` is cash paid (incl. GST). Match revenue (ex-GST) using SUM(amount).
     const expenses = await query(
-      `SELECT category, COALESCE(SUM(total_amount), 0) as total
+      `SELECT category, COALESCE(SUM(COALESCE(amount, 0)), 0) as total
        FROM expenses WHERE company_id = $1 AND is_deleted = false
          AND expense_date >= $2 AND expense_date <= $3
        GROUP BY category ORDER BY total DESC`,
@@ -195,17 +200,17 @@ export async function gstReport(req: Request, res: Response) {
 
     // Outward tax (sales / tax invoices) — line level
     const outward = await query(
-      `SELECT gst_rate, COUNT(*)::int as line_count,
-              COALESCE(SUM(taxable_amount), 0)::bigint as taxable_value,
-              COALESCE(SUM(cgst_amount), 0)::bigint as cgst,
-              COALESCE(SUM(sgst_amount), 0)::bigint as sgst,
-              COALESCE(SUM(igst_amount), 0)::bigint as igst,
-              COALESCE(SUM(cess_amount), 0)::bigint as cess
+      `SELECT ii.gst_rate, COUNT(*)::int as line_count,
+              COALESCE(SUM(ii.taxable_amount), 0)::bigint as taxable_value,
+              COALESCE(SUM(ii.cgst_amount), 0)::bigint as cgst,
+              COALESCE(SUM(ii.sgst_amount), 0)::bigint as sgst,
+              COALESCE(SUM(ii.igst_amount), 0)::bigint as igst,
+              COALESCE(SUM(ii.cess_amount), 0)::bigint as cess
        FROM invoice_items ii
        JOIN invoices inv ON ii.invoice_id = inv.id
        WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice') AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
-       GROUP BY gst_rate ORDER BY gst_rate`,
+       GROUP BY ii.gst_rate ORDER BY ii.gst_rate`,
       [companyId, from, to]
     );
 
@@ -264,6 +269,8 @@ export async function gstReport(req: Request, res: Response) {
     const totalInwardCgst = inward.rows.reduce((s: number, r: any) => s + num(r.cgst), 0);
     const totalInwardSgst = inward.rows.reduce((s: number, r: any) => s + num(r.sgst), 0);
     const totalInwardIgst = inward.rows.reduce((s: number, r: any) => s + num(r.igst), 0);
+    const totalOutwardCess = outward.rows.reduce((s: number, r: any) => s + num(r.cess), 0);
+    const totalInwardCess = inward.rows.reduce((s: number, r: any) => s + num(r.cess), 0);
 
     res.json(success({
       period: { from, to },
@@ -273,7 +280,12 @@ export async function gstReport(req: Request, res: Response) {
         cgst_payable: totalOutwardCgst - totalInwardCgst,
         sgst_payable: totalOutwardSgst - totalInwardSgst,
         igst_payable: totalOutwardIgst - totalInwardIgst,
-        total_payable: (totalOutwardCgst - totalInwardCgst) + (totalOutwardSgst - totalInwardSgst) + (totalOutwardIgst - totalInwardIgst),
+        cess_payable: totalOutwardCess - totalInwardCess,
+        total_payable:
+          (totalOutwardCgst - totalInwardCgst) +
+          (totalOutwardSgst - totalInwardSgst) +
+          (totalOutwardIgst - totalInwardIgst) +
+          (totalOutwardCess - totalInwardCess),
       },
     }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
@@ -360,7 +372,14 @@ export async function stockSummary(req: Request, res: Response) {
       `SELECT i.id, i.name, i.sku,
               COALESCE(SUM(s.quantity), 0)::bigint AS total_qty,
               COALESCE(i.purchase_price, 0)::bigint AS purchase_price_paise,
-              (COALESCE(SUM(s.quantity), 0) * COALESCE(i.purchase_price, 0))::bigint AS total_value_paise
+              COALESCE(
+                SUM(
+                  ROUND(
+                    s.quantity::numeric * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)::numeric
+                  )
+                ),
+                0
+              )::bigint AS total_value_paise
        FROM items i
        LEFT JOIN item_stock s ON s.item_id = i.id AND s.company_id = i.company_id
        WHERE i.company_id = $1 AND i.is_deleted = false
@@ -398,11 +417,11 @@ export async function outstandingPayables(req: Request, res: Response) {
   try {
     const result = await query(
       `SELECT pi.bill_number, pi.bill_date, p.name as party_name,
-              (pi.total_amount - pi.paid_amount)::bigint AS balance_due
+              (pi.total_amount - COALESCE(pi.paid_amount, 0))::bigint AS balance_due
        FROM purchase_invoices pi
        JOIN parties p ON pi.party_id = p.id
        WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
-         AND (pi.total_amount - pi.paid_amount) > 0
+         AND (pi.total_amount - COALESCE(pi.paid_amount, 0)) > 0
        ORDER BY pi.bill_date ASC`,
       [req.user!.company_id]
     );
@@ -483,16 +502,17 @@ export async function partyWiseSales(req: Request, res: Response) {
   try {
     const { from, to } = parseRange(req);
     const result = await query(
-      `SELECT p.id AS party_id, p.name AS party_name,
+      `SELECT COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid) AS party_id,
+              COALESCE(p.name, 'Walk-in / unassigned') AS party_name,
               COUNT(inv.id)::int AS invoice_count,
               COALESCE(SUM(inv.taxable_amount), 0)::bigint AS taxable_total_paise,
               COALESCE(SUM(inv.total_amount), 0)::bigint AS invoice_total_paise
        FROM invoices inv
-       JOIN parties p ON p.id = inv.party_id
+       LEFT JOIN parties p ON p.id = inv.party_id
        WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
          AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
-       GROUP BY p.id, p.name
+       GROUP BY COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(p.name, 'Walk-in / unassigned')
        ORDER BY invoice_total_paise DESC`,
       [req.user!.company_id, from, to]
     );
@@ -506,15 +526,16 @@ export async function partyWisePurchase(req: Request, res: Response) {
   try {
     const { from, to } = parseRange(req);
     const result = await query(
-      `SELECT p.id AS party_id, p.name AS party_name,
+      `SELECT COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid) AS party_id,
+              COALESCE(p.name, 'Unassigned supplier') AS party_name,
               COUNT(pi.id)::int AS bill_count,
               COALESCE(SUM(pi.taxable_amount), 0)::bigint AS taxable_total_paise,
               COALESCE(SUM(pi.total_amount), 0)::bigint AS bill_total_paise
        FROM purchase_invoices pi
-       JOIN parties p ON p.id = pi.party_id
+       LEFT JOIN parties p ON p.id = pi.party_id
        WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
          AND pi.bill_date >= $2 AND pi.bill_date <= $3
-       GROUP BY p.id, p.name
+       GROUP BY COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(p.name, 'Unassigned supplier')
        ORDER BY bill_total_paise DESC`,
       [req.user!.company_id, from, to]
     );
@@ -539,8 +560,8 @@ export async function dayBook(req: Request, res: Response) {
          UNION ALL
          SELECT p.payment_date, 'payment', COALESCE(p.payment_number, p.id::text),
                 COALESCE(NULLIF(TRIM(p.notes), ''), p.payment_type),
-                CASE WHEN p.payment_type = 'payment_in' THEN p.amount::bigint ELSE 0 END,
-                CASE WHEN p.payment_type = 'payment_out' THEN p.amount::bigint ELSE 0 END,
+                CASE WHEN p.payment_type IN ('payment_in', 'incoming') THEN p.amount::bigint ELSE 0 END,
+                CASE WHEN p.payment_type IN ('payment_out', 'outgoing') THEN p.amount::bigint ELSE 0 END,
                 pt.name
          FROM payments p
          LEFT JOIN parties pt ON pt.id = p.party_id
@@ -561,7 +582,7 @@ export async function expenseSummary(req: Request, res: Response) {
     const result = await query(
       `SELECT category,
               COUNT(*)::int AS entries,
-              COALESCE(SUM(total_amount), 0)::bigint AS total_paise
+              COALESCE(SUM(COALESCE(total_amount, amount, 0)), 0)::bigint AS total_paise
        FROM expenses
        WHERE company_id = $1 AND is_deleted = false AND expense_date >= $2 AND expense_date <= $3
        GROUP BY category
@@ -642,7 +663,7 @@ async function computeNetProfitPaise(companyId: string, from: string, to: string
     [companyId, from, to]
   );
   const exp = await query(
-    `SELECT COALESCE(SUM(total_amount), 0) AS e FROM expenses
+    `SELECT COALESCE(SUM(COALESCE(amount, 0)), 0) AS e FROM expenses
      WHERE company_id = $1 AND is_deleted = false AND expense_date >= $2 AND expense_date <= $3`,
     [companyId, from, to]
   );
@@ -660,12 +681,18 @@ export async function trialBalance(req: Request, res: Response) {
       `SELECT a.id, a.code, a.name, a.account_type,
               COALESCE(a.opening_balance, 0)::bigint AS opening_balance_paise,
               COALESCE(SUM(
-                CASE WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
-                ELSE jel.credit - jel.debit END
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
               ), 0)::bigint AS period_net_paise,
               (COALESCE(a.opening_balance, 0) + COALESCE(SUM(
-                CASE WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
-                ELSE jel.credit - jel.debit END
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
               ), 0))::bigint AS closing_balance_paise
        FROM accounts a
        LEFT JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
@@ -690,8 +717,11 @@ export async function balanceSheet(req: Request, res: Response) {
     const tb = await query(
       `SELECT a.code, a.name, a.account_type,
               (COALESCE(a.opening_balance, 0) + COALESCE(SUM(
-                CASE WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
-                ELSE jel.credit - jel.debit END
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
               ), 0))::bigint AS closing_balance_paise
        FROM accounts a
        LEFT JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
