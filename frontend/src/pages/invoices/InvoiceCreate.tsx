@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search, Eye } from 'lucide-react';
+import { ArrowLeft, Trash2, Search, Eye, UserPlus } from 'lucide-react';
 import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
+import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -41,20 +42,49 @@ export default function InvoiceCreate() {
   const [itemSearch, setItemSearch] = useState('');
   const [itemResults, setItemResults] = useState<any[]>([]);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+  const [partySearchLoading, setPartySearchLoading] = useState(false);
+
+  const clearPartySelection = () => {
+    setPartyId('');
+    setPartyName('');
+    setPartyPhone('');
+    setPartySearch('');
+    setPartyResults([]);
+  };
 
   // Search parties
   const searchParties = async (q: string) => {
     setPartySearch(q);
-    if (q.length < 2) { setPartyResults([]); return; }
+    if (q.length < 2) {
+      setPartyResults([]);
+      setPartySearchLoading(false);
+      return;
+    }
+    setPartySearchLoading(true);
     try {
       const { data: res } = await api.get('/parties/search', { params: { q, party_type: invoiceType === 'sale' ? 'customer' : 'supplier' } });
       setPartyResults(res.data || []);
-    } catch { setPartyResults([]); }
+    } catch {
+      setPartyResults([]);
+    } finally {
+      setPartySearchLoading(false);
+    }
   };
 
   const selectParty = (p: any) => {
-    setPartyId(p.id); setPartyName(p.name); setPartyPhone(p.phone || ''); setPartySearch(''); setPartyResults([]);
+    setPartyId(p.id);
+    setPartyName(p.name);
+    setPartyPhone(p.phone || '');
+    setPartySearch('');
+    setPartyResults([]);
     if (p.state_code) setIsInterstate(true); // Simplified — in production, compare company state_code
+  };
+
+  const openQuickAdd = (prefillName?: string) => {
+    setQuickAddDefaultName(prefillName ?? '');
+    setQuickAddOpen(true);
   };
 
   // Search items
@@ -160,8 +190,19 @@ export default function InvoiceCreate() {
 
       {/* Type toggle */}
       <div className="flex gap-2">
-        {(['sale', 'purchase'] as const).map(t => (
-          <button key={t} onClick={() => setInvoiceType(t)} className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${invoiceType === t ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground'}`}>{t === 'sale' ? '📤 Sale Invoice' : '📥 Purchase Invoice'}</button>
+        {(['sale', 'purchase'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => {
+              if (t === invoiceType) return;
+              setInvoiceType(t);
+              clearPartySelection();
+            }}
+            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${invoiceType === t ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground'}`}
+          >
+            {t === 'sale' ? '📤 Sale Invoice' : '📥 Purchase Invoice'}
+          </button>
         ))}
       </div>
 
@@ -175,21 +216,44 @@ export default function InvoiceCreate() {
               {partyId ? (
                 <div className="flex items-center justify-between mt-1 p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
-                  <button className="text-xs text-primary hover:underline" onClick={() => { setPartyId(''); setPartyName(''); setPartyPhone(''); }}>Change</button>
+                  <button type="button" className="text-xs text-primary hover:underline" onClick={() => clearPartySelection()}>
+                    Change
+                  </button>
                 </div>
               ) : (
                 <>
-                  <Input className="mt-1" placeholder="Search by name, phone, GSTIN..." value={partySearch} onChange={e => searchParties(e.target.value)} />
-                  {partyResults.length > 0 && (
-                    <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                      {partyResults.map(p => (
-                        <button key={p.id} className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectParty(p)}>
-                          <span className="font-medium">{p.name}</span>
-                          {p.phone && <span className="text-muted-foreground ml-2">{p.phone}</span>}
-                          {p.gstin && <span className="text-muted-foreground ml-2 font-mono text-xs">{p.gstin}</span>}
-                        </button>
-                      ))}
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-start">
+                    <div className="relative min-w-0 flex-1">
+                      <Input
+                        className="w-full"
+                        placeholder="Search by name, phone, GSTIN..."
+                        value={partySearch}
+                        onChange={(e) => searchParties(e.target.value)}
+                      />
+                      {partyResults.length > 0 && (
+                        <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                          {partyResults.map((p) => (
+                            <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectParty(p)}>
+                              <span className="font-medium">{p.name}</span>
+                              {p.phone && <span className="text-muted-foreground ml-2">{p.phone}</span>}
+                              {p.gstin && <span className="text-muted-foreground ml-2 font-mono text-xs">{p.gstin}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                    <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1 sm:mt-0" onClick={() => openQuickAdd()}>
+                      <UserPlus className="h-4 w-4" />
+                      {invoiceType === 'sale' ? 'New customer' : 'New supplier'}
+                    </Button>
+                  </div>
+                  {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      No matches.{' '}
+                      <button type="button" className="text-primary font-medium hover:underline" onClick={() => openQuickAdd(partySearch)}>
+                        Add “{partySearch.trim()}” as {invoiceType === 'sale' ? 'customer' : 'supplier'}
+                      </button>
+                    </p>
                   )}
                 </>
               )}
@@ -338,6 +402,14 @@ export default function InvoiceCreate() {
         }}
         partyPhone={partyPhone}
         companyName={company?.name}
+      />
+
+      <QuickAddPartySheet
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        partyType={invoiceType === 'sale' ? 'customer' : 'supplier'}
+        defaultName={quickAddDefaultName}
+        onCreated={(row) => selectParty(row)}
       />
     </div>
   );
