@@ -21,11 +21,25 @@ export default function GRNScreen() {
 
   const receiveAction = useMutation({
      mutationFn: async () => {
-       const items = Object.entries(receivals).map(([itemId, qty]) => ({
-           po_item_id: itemId,
-           quantity_received: qty,
-           unit_price: 0 // Ideally fetched from PO item explicitly
-       }));
+       if (!po?.items?.length) {
+         toast.error('Purchase order has no lines');
+         throw new Error('No PO lines');
+       }
+       const items = Object.entries(receivals)
+         .filter(([, qty]) => Number(qty) > 0)
+         .map(([itemId, qty]) => {
+           const line = po?.items?.find((it: { id: string }) => it.id === itemId);
+           return {
+             po_item_id: itemId,
+             quantity_received: Number(qty),
+             unit_price: Number(line?.unit_price) || 0,
+             gst_rate: Number(line?.gst_rate ?? 0),
+           };
+         });
+       if (items.length === 0) {
+         toast.error('Enter at least one positive quantity to receive');
+         throw new Error('No quantities');
+       }
       return api.post(`/purchases/orders/${id}/receive`, {
          bill_number: billNumber,
          bill_date: new Date().toISOString().split('T')[0],

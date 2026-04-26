@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ArrowLeft, Printer, Send, Loader2, CreditCard, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -19,6 +20,7 @@ export default function InvoiceDetail() {
   const paymentMutation = useCreatePayment();
   const [showPayment, setShowPayment] = useState(false);
   const [payForm, setPayForm] = useState<any>({ amount: 0, payment_mode: 'cash' });
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   const inv: any = data?.data;
@@ -27,9 +29,13 @@ export default function InvoiceDetail() {
   const statusColors: Record<string, any> = { paid: 'success', partial: 'warning', unpaid: 'destructive', cancelled: 'secondary' };
 
   const handleCancel = async () => {
-    if (!confirm('Cancel this invoice? Stock and balances will be reversed.')) return;
-    try { await cancelMutation.mutateAsync(id!); toast.success('Invoice cancelled'); }
-    catch (e: any) { toast.error(e.response?.data?.error || 'Failed'); }
+    try {
+      await cancelMutation.mutateAsync(id!);
+      toast.success('Invoice cancelled');
+      setCancelConfirmOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed');
+    }
   };
 
   const handlePayment = async () => {
@@ -68,7 +74,10 @@ export default function InvoiceDetail() {
             </Button>
           )}
           {inv.status !== 'cancelled' && inv.status !== 'paid' && (
-            <Button variant="destructive" size="sm" onClick={handleCancel}><XCircle className="w-4 h-4 mr-1" />Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={() => setCancelConfirmOpen(true)}>
+              <XCircle className="w-4 h-4 mr-1" />
+              Cancel
+            </Button>
           )}
         </div>
       </div>
@@ -192,6 +201,17 @@ export default function InvoiceDetail() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        onOpenChange={setCancelConfirmOpen}
+        title="Cancel invoice?"
+        description="Stock movements and party balances for this invoice will be reversed. This cannot be undone from the UI."
+        confirmLabel="Cancel invoice"
+        variant="destructive"
+        isPending={cancelMutation.isPending}
+        onConfirm={handleCancel}
+      />
     </div>
   );
 }

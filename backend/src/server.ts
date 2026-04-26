@@ -36,6 +36,11 @@ async function start(): Promise<void> {
       logger.info(`🚀 BizFlow API running on http://localhost:${PORT}`);
       logger.info(`📋 Environment: ${env.NODE_ENV}`);
       logger.info(`🏥 Health check: http://localhost:${PORT}/health`);
+      if (env.NODE_ENV === 'production' && env.EINVOICE_MODE === 'mock') {
+        logger.warn(
+          'EINVOICE_MODE is "mock" in production — IRNs will not be generated on the GST network. Set EINVOICE_MODE=sandbox or production and configure GSP credentials.',
+        );
+      }
     });
   } catch (error) {
     logger.error('❌ Failed to start server:', error);

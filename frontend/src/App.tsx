@@ -10,6 +10,7 @@ import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
 import PartyList from '@/pages/parties/PartyList';
 import InvoiceList from '@/pages/sales/InvoiceList';
+// Invoice create: `pages/invoices/` — list & detail: `pages/sales/` (avoid splitting new flows across both without updating routes).
 import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
 import PurchaseOrderList from '@/pages/purchases/PurchaseOrderList';

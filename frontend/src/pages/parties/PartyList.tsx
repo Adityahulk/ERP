@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Label } from '@/components/ui/label';
 import { Search, Users, Truck, UserPlus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 
 export default function PartyList() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function PartyList() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   const activeFilters = { ...filters, search: search || undefined, party_type: typeFilter || undefined };
   const { data, isLoading } = useParties(activeFilters);
@@ -40,10 +42,15 @@ export default function PartyList() {
     } catch (e: any) { toast.error(e.response?.data?.error || 'Failed'); }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete "${name}"?`)) return;
-    try { await deleteMutation.mutateAsync(id); toast.success('Deleted'); }
-    catch (e: any) { toast.error(e.response?.data?.error || 'Failed'); }
+  const runDeleteParty = async () => {
+    if (!pendingDelete) return;
+    try {
+      await deleteMutation.mutateAsync(pendingDelete.id);
+      toast.success('Deleted');
+      setPendingDelete(null);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed');
+    }
   };
 
   const stats = [
@@ -110,8 +117,8 @@ export default function PartyList() {
                     size="icon"
                     className="text-destructive hover:bg-destructive/10 h-8 w-8"
                     title="Delete party"
-                    loading={deleteMutation.isPending && deleteMutation.variables === p.id}
-                    onClick={() => handleDelete(p.id, p.name)}
+                    loading={deleteMutation.isPending && pendingDelete?.id === p.id}
+                    onClick={() => setPendingDelete({ id: p.id, name: p.name })}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
@@ -168,6 +175,23 @@ export default function PartyList() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="Delete party?"
+        description={
+          pendingDelete
+            ? `Remove “${pendingDelete.name}” from customers/suppliers. Invoices referencing this party may block deletion.`
+            : ''
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={runDeleteParty}
+      />
     </div>
   );
 }

@@ -67,7 +67,7 @@ router.post('/bulk-reminder', requireMinRole('accountant'), async (req: Request,
        WHERE i.company_id = $1
          AND i.is_deleted = false
          AND i.status != 'cancelled'
-         AND i.payment_status IN ('unpaid', 'partially_paid', 'overdue')
+         AND i.payment_status IN ('unpaid', 'partial', 'partially_paid', 'overdue')
          AND i.balance_due > 0
          AND COALESCE(i.due_date, i.invoice_date) < CURRENT_DATE`,
       [req.user!.company_id],

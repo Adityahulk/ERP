@@ -107,11 +107,85 @@ export async function getPurchaseOrder(req: Request, res: Response) {
 
 export async function updatePurchaseOrder(req: Request, res: Response) {
   try {
-    const statusCheck = await query('SELECT status FROM purchase_orders WHERE id = $1 AND company_id = $2', [req.params.id, req.user!.company_id]);
-    if (statusCheck.rows[0]?.status !== 'draft') return res.status(400).json(error('Only draft POs can be edited'));
-    // Actual edit logic truncacted, similar to invoice editing relying on delete+recreate items
-    res.json(success({ message: 'Updated' }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const poId = req.params.id;
+    const d = req.body;
+
+    const result = await withTransaction(async (client) => {
+      const statusRes = await client.query(
+        'SELECT status FROM purchase_orders WHERE id = $1 AND company_id = $2 FOR UPDATE',
+        [poId, companyId],
+      );
+      if (!statusRes.rows.length) throw new Error('PO not found');
+      if (statusRes.rows[0].status !== 'draft') throw new Error('Only draft POs can be edited');
+
+      const pRes = await client.query('SELECT state_code, name FROM parties WHERE id = $1', [d.party_id]);
+      if (!pRes.rows.length) throw new Error('Supplier not found');
+
+      const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+      const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const totals = calculateInvoiceTotals(d.items, gstType, 'none', 0);
+
+      await client.query(
+        `UPDATE purchase_orders SET
+          godown_id = $1, expected_date = $2, party_id = $3, party_name_snapshot = $4,
+          subtotal = $5, discount_amount = $6, taxable_amount = $7,
+          cgst_amount = $8, sgst_amount = $9, igst_amount = $10, total_amount = $11,
+          notes = $12
+        WHERE id = $13 AND company_id = $14`,
+        [
+          d.godown_id,
+          d.expected_date,
+          d.party_id,
+          pRes.rows[0].name,
+          totals.subtotal,
+          totals.globalDiscountAmount,
+          totals.totalTaxable,
+          totals.totalCgst,
+          totals.totalSgst,
+          totals.totalIgst,
+          totals.totalAmount,
+          d.notes ?? null,
+          poId,
+          companyId,
+        ],
+      );
+
+      await client.query('DELETE FROM purchase_order_items WHERE po_id = $1', [poId]);
+
+      for (const item of d.items) {
+        const itemTax = calculateInvoiceTotals([item], gstType, 'none', 0);
+        await client.query(
+          `INSERT INTO purchase_order_items (
+            po_id, item_id, item_name, hsn_code, quantity_ordered, unit_price,
+            discount_amount, gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            poId,
+            item.item_id,
+            item.item_name || 'Item',
+            item.hsn_code,
+            item.quantity,
+            item.unit_price,
+            itemTax.totalDiscountLineLevel,
+            item.gst_rate || 0,
+            itemTax.totalCgst,
+            itemTax.totalSgst,
+            itemTax.totalIgst,
+            itemTax.totalAmount,
+          ],
+        );
+      }
+
+      const out = await client.query('SELECT * FROM purchase_orders WHERE id = $1', [poId]);
+      return out.rows[0];
+    });
+
+    await logAction(req.user!.id, companyId, 'update', 'purchase_order', poId);
+    res.json(success(result));
+  } catch (err: any) {
+    res.status(400).json(error(err.message));
+  }
 }
 
 export async function confirmPurchaseOrder(req: Request, res: Response) {
@@ -146,8 +220,37 @@ export async function receiveStock(req: Request, res: Response) {
       const pRes = await client.query('SELECT state_code FROM parties WHERE id = $1', [po.party_id]);
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
-      
-      const invoiceTotals = calculateInvoiceTotals(d.items, gstType, 'none', 0);
+
+      const poItemsRes = await client.query('SELECT * FROM purchase_order_items WHERE po_id = $1', [id]);
+      const poItemById = new Map<string, Record<string, unknown>>(
+        poItemsRes.rows.map((r: Record<string, unknown>) => [String(r.id), r]),
+      );
+
+      const itemsForTotals: Array<{
+        unit_price: number;
+        quantity: number;
+        gst_rate: number;
+        discount_type: 'none';
+        discount_value: number;
+      }> = [];
+      for (const reqItem of d.items as Array<Record<string, unknown>>) {
+        const qty = Number(reqItem.quantity_received);
+        if (!qty || qty <= 0) continue;
+        const poItem = poItemById.get(String(reqItem.po_item_id));
+        if (!poItem) throw new Error('PO line not found for one or more items');
+        const unitPricePaise =
+          Number(reqItem.unit_price) > 0 ? Number(reqItem.unit_price) : Number(poItem.unit_price) || 0;
+        itemsForTotals.push({
+          unit_price: unitPricePaise,
+          quantity: qty,
+          gst_rate: Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0),
+          discount_type: 'none',
+          discount_value: 0,
+        });
+      }
+      if (itemsForTotals.length === 0) throw new Error('No quantities to receive');
+
+      const invoiceTotals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
       // 2. Create Purchase Invoice
       const invRes = await client.query(
@@ -171,19 +274,33 @@ export async function receiveStock(req: Request, res: Response) {
       for (const reqItem of d.items) {
         if (!reqItem.quantity_received || reqItem.quantity_received <= 0) continue;
 
-        // Fetch PO Item reference details
-        const poItemRes = await client.query('SELECT * FROM purchase_order_items WHERE id = $1', [reqItem.po_item_id]);
-        if (!poItemRes.rows.length) throw new Error('PO Item reference missing');
-        const poItem = poItemRes.rows[0];
+        const poItem = poItemById.get(String(reqItem.po_item_id));
+        if (!poItem) throw new Error('PO Item reference missing');
 
         // Ensure received doesn't exceed ordered completely unless explicitly allowing excess. For simplicity, assume exact matching limits
+        const ordered = Number(poItem.quantity_ordered);
         const newReceived = Number(poItem.quantity_received) + Number(reqItem.quantity_received);
-        if (newReceived < Number(poItem.quantity_ordered)) fullyReceived = false;
+        if (newReceived > ordered) {
+          throw new Error(
+            `Receive quantity exceeds ordered for line "${poItem.item_name}": ordered ${ordered}, already ${poItem.quantity_received}, receiving ${reqItem.quantity_received}`,
+          );
+        }
+        if (newReceived < ordered) fullyReceived = false;
+
+        const unitPricePaise =
+          Number(reqItem.unit_price) > 0 ? Number(reqItem.unit_price) : Number(poItem.unit_price) || 0;
+        const lineForTax = {
+          unit_price: unitPricePaise,
+          quantity: Number(reqItem.quantity_received),
+          gst_rate: Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0),
+          discount_type: 'none' as const,
+          discount_value: 0,
+        };
 
         // Update PO Item quantity tracker
         await client.query('UPDATE purchase_order_items SET quantity_received = $1 WHERE id = $2', [newReceived, reqItem.po_item_id]);
 
-        const lineTax = calculateInvoiceTotals([reqItem], gstType, 'none', 0);
+        const lineTax = calculateInvoiceTotals([lineForTax], gstType, 'none', 0);
 
         // Optional Batch Creation
         let batchId = null;
@@ -191,7 +308,7 @@ export async function receiveStock(req: Request, res: Response) {
           const bRes = await client.query(
             `INSERT INTO item_batches (company_id, item_id, batch_number, manufacturing_date, expiry_date, quantity, purchase_price, godown_id)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-             [companyId, poItem.item_id, reqItem.batch_number, reqItem.mfg_date || null, reqItem.expiry_date || null, reqItem.quantity_received, reqItem.unit_price, po.godown_id]
+             [companyId, poItem.item_id, reqItem.batch_number, reqItem.mfg_date || null, reqItem.expiry_date || null, reqItem.quantity_received, unitPricePaise, po.godown_id]
           );
           batchId = bRes.rows[0].id;
         }
@@ -203,7 +320,7 @@ export async function receiveStock(req: Request, res: Response) {
             gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount, batch_id, serial_numbers
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
-            invoice.id, poItem.item_id, poItem.item_name, reqItem.quantity_received, reqItem.unit_price,
+            invoice.id, poItem.item_id, poItem.item_name, reqItem.quantity_received, unitPricePaise,
             reqItem.gst_rate || poItem.gst_rate, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, reqItem.serial_numbers || []
           ]
         );
@@ -219,18 +336,21 @@ export async function receiveStock(req: Request, res: Response) {
                  WHEN item_stock.quantity + EXCLUDED.quantity > 0 
                  THEN ROUND(((item_stock.quantity * item_stock.avg_cost_price) + (EXCLUDED.quantity * EXCLUDED.avg_cost_price)) / (item_stock.quantity + EXCLUDED.quantity))
                  ELSE EXCLUDED.avg_cost_price END
-             RETURNING quantity`,
-            [companyId, poItem.item_id, po.godown_id, reqItem.quantity_received, reqItem.unit_price]
+             RETURNING quantity, avg_cost_price`,
+            [companyId, poItem.item_id, po.godown_id, reqItem.quantity_received, unitPricePaise]
           );
 
+          const mergedRow = stockMerge.rows[0];
+          const avgCost = Number(mergedRow?.avg_cost_price ?? unitPricePaise);
+
           // Update Global Master weighted cost (simplification, using the godown merged price globally for consistency)
-          await client.query('UPDATE items SET purchase_price = $1 WHERE id = $2', [stockMerge.rows[0].avg_cost_price, poItem.item_id]);
+          await client.query('UPDATE items SET purchase_price = $1 WHERE id = $2', [avgCost, poItem.item_id]);
 
           // Insert Movement
           await client.query(
             `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, unit_cost, balance_after, created_by)
              VALUES ($1, $2, $3, 'purchase', 'purchase_invoice', $4, $5, $6, $7, $8)`,
-            [companyId, poItem.item_id, po.godown_id, invoice.id, reqItem.quantity_received, reqItem.unit_price, stockMerge.rows[0].quantity, req.user!.id]
+            [companyId, poItem.item_id, po.godown_id, invoice.id, reqItem.quantity_received, unitPricePaise, mergedRow.quantity, req.user!.id]
           );
         }
 

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
+import { logAction } from '../lib/auditLog';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 
@@ -112,9 +113,97 @@ export async function createPayment(req: Request, res: Response) {
 export async function allocatePayment(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { allocations } = req.body;
-    
-    // In reality, verify the payment still has remaining unallocated amounts, then insert into payment_allocations and update invoices.
-    res.json(success({ message: 'Allocated successfully' }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const { allocations } = req.body as { allocations?: { invoice_id: string; amount: number }[] };
+
+    if (!allocations?.length) {
+      return res.status(400).json(error('allocations array is required'));
+    }
+
+    const result = await withTransaction(async (client) => {
+      const pRes = await client.query(
+        `SELECT * FROM payments WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!pRes.rows.length) throw new Error('Payment not found');
+      const payment = pRes.rows[0];
+
+      const sumRes = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::int AS s FROM payment_allocations WHERE payment_id = $1`,
+        [id],
+      );
+      const alreadyAllocated = Number(sumRes.rows[0]?.s || 0);
+      let add = 0;
+      for (const a of allocations) {
+        add += Number(a.amount) || 0;
+      }
+      if (add <= 0) throw new Error('Allocation amounts must be positive');
+      if (alreadyAllocated + add > Number(payment.amount)) {
+        throw new Error('Total allocations exceed payment amount');
+      }
+
+      const incoming =
+        payment.payment_type === 'incoming' ||
+        payment.payment_type === 'payment_in' ||
+        payment.payment_type === 'receipt';
+
+      for (const alloc of allocations) {
+        const amt = Number(alloc.amount) || 0;
+        if (amt <= 0) continue;
+
+        const sale = await client.query(
+          `SELECT id FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [alloc.invoice_id, companyId],
+        );
+        const purchase = await client.query(
+          `SELECT id FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [alloc.invoice_id, companyId],
+        );
+
+        if (incoming && sale.rows.length) {
+          await client.query(
+            `INSERT INTO payment_allocations (payment_id, invoice_id, amount) VALUES ($1,$2,$3)`,
+            [id, alloc.invoice_id, amt],
+          );
+          await client.query(
+            `UPDATE invoices SET
+               paid_amount = paid_amount + $1,
+               payment_status = CASE
+                 WHEN paid_amount + $1 >= total_amount THEN 'paid'
+                 WHEN paid_amount + $1 > 0 THEN 'partial'
+                 ELSE 'unpaid'
+               END
+             WHERE id = $2 AND company_id = $3`,
+            [amt, alloc.invoice_id, companyId],
+          );
+        } else if (!incoming && purchase.rows.length) {
+          // payment_allocations.invoice_id FK targets sales `invoices` only — purchase lines update PI balances here without a link row.
+          await client.query(
+            `UPDATE purchase_invoices SET
+               paid_amount = paid_amount + $1,
+               payment_status = CASE
+                 WHEN paid_amount + $1 >= total_amount THEN 'paid'
+                 WHEN paid_amount + $1 > 0 THEN 'partial'
+                 ELSE 'unpaid'
+               END
+             WHERE id = $2 AND company_id = $3`,
+            [amt, alloc.invoice_id, companyId],
+          );
+        } else {
+          throw new Error(
+            incoming
+              ? 'Sales allocation requires a valid sales invoice id (payment_allocations references invoices only).'
+              : 'Purchase allocation requires a valid purchase_invoice id for this company.',
+          );
+        }
+      }
+
+      return { payment_id: id, allocated_paise: add, total_allocated_paise: alreadyAllocated + add };
+    });
+
+    await logAction(req.user!.id, companyId, 'update', 'payment', id, undefined, result, req.ip);
+    res.json(success(result));
+  } catch (err: any) {
+    res.status(400).json(error(err.message));
+  }
 }

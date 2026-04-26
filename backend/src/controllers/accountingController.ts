@@ -3,6 +3,19 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 
+/** Default report window for GL-style statements (matches reports module). */
+function parseRange(req: Request): { from: string; to: string } {
+  const d = new Date();
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  const to = String(req.query.to_date || req.query.to || d.toISOString().split('T')[0]);
+  const from = String(req.query.from_date || req.query.from || monthStart);
+  return { from, to };
+}
+
+function accountTypeLower(t: unknown): string {
+  return String(t || '').toLowerCase();
+}
+
 // ── Chart of Accounts ─────────────────────────────────────────
 
 export async function getAccounts(req: Request, res: Response) {
@@ -182,76 +195,240 @@ export async function reverseJournalEntry(req: Request, res: Response) {
 
 export async function getLedger(req: Request, res: Response) {
   try {
-     const { id } = req.params;
-     const { from, to } = req.query;
-     const lines = await query(
-       `SELECT l.*, j.entry_date, j.entry_number 
-        FROM journal_entry_lines l 
-        JOIN journal_entries j ON l.entry_id = j.id
-        WHERE l.account_id = $1 AND j.status = 'posted' AND j.company_id = $2
-        ORDER BY j.entry_date ASC, l.id ASC`,
-       [id, req.user!.company_id]
-     );
-     // Note: Real implementations filter by `from/to` and compute Opening Balance by aggregating transactions strictly before `from`.
-     res.json(success({ lines: lines.rows }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const from = req.query.from ? String(req.query.from) : null;
+    const to = req.query.to ? String(req.query.to) : null;
+
+    const accRes = await query(
+      `SELECT * FROM accounts WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!accRes.rows.length) return res.status(404).json(error('Account not found'));
+    const account = accRes.rows[0];
+    const at = accountTypeLower(account.account_type);
+
+    let priorMovement = 0;
+    if (from) {
+      const priorRes = await query(
+        `SELECT COALESCE(SUM(
+            CASE WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+            ELSE jel.credit - jel.debit END
+          ), 0)::bigint AS prior
+         FROM accounts a
+         JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+         JOIN journal_entries j ON j.id = jel.entry_id AND j.company_id = a.company_id
+         WHERE a.id = $1 AND a.company_id = $2
+           AND j.status = 'posted' AND j.is_deleted = false
+           AND j.entry_date < $3::date`,
+        [id, companyId, from],
+      );
+      priorMovement = Number(priorRes.rows[0]?.prior || 0);
+    }
+    const openingBalancePaise = Number(account.opening_balance || 0) + priorMovement;
+
+    const lineParams: unknown[] = [id, companyId];
+    let lineIdx = 3;
+    let dateFilter = '';
+    if (from) {
+      dateFilter += ` AND j.entry_date >= $${lineIdx}::date`;
+      lineParams.push(from);
+      lineIdx++;
+    }
+    if (to) {
+      dateFilter += ` AND j.entry_date <= $${lineIdx}::date`;
+      lineParams.push(to);
+      lineIdx++;
+    }
+
+    const linesRes = await query(
+      `SELECT l.*, j.entry_date, j.entry_number, j.description AS entry_description
+       FROM journal_entry_lines l
+       JOIN journal_entries j ON l.entry_id = j.id
+       WHERE l.account_id = $1 AND j.company_id = $2
+         AND j.status = 'posted' AND j.is_deleted = false
+         ${dateFilter}
+       ORDER BY j.entry_date ASC, l.sort_order ASC, l.id ASC`,
+      lineParams,
+    );
+
+    let running = openingBalancePaise;
+    const lines = linesRes.rows.map((row: Record<string, unknown>) => {
+      const debit = Number(row.debit || 0);
+      const credit = Number(row.credit || 0);
+      const signed = ['asset', 'expense'].includes(at) ? debit - credit : credit - debit;
+      running += signed;
+      return { ...row, signed_amount_paise: signed, balance_after_paise: running };
+    });
+
+    res.json(
+      success({
+        account: {
+          id: account.id,
+          name: account.name,
+          code: account.code,
+          account_type: account.account_type,
+        },
+        period: { from, to },
+        opening_balance_paise: openingBalancePaise,
+        closing_balance_paise: running,
+        lines,
+      }),
+    );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getTrialBalance(req: Request, res: Response) {
-  // Aggregate sum(debit) - sum(credit) for all accounts.
-  // Using simplified queries.
   try {
-     const result = await query(
-       `SELECT a.id, a.code, a.name, a.account_type,
-          SUM(COALESCE(l.debit, 0)) as total_debit,
-          SUM(COALESCE(l.credit, 0)) as total_credit,
-          SUM(COALESCE(l.debit, 0)) - SUM(COALESCE(l.credit, 0)) as net_balance
+    const companyId = req.user!.company_id;
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT a.id, a.code, a.name, a.account_type,
+              COALESCE(a.opening_balance, 0)::bigint AS opening_balance_paise,
+              COALESCE(SUM(
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
+              ), 0)::bigint AS period_net_paise,
+              (COALESCE(a.opening_balance, 0) + COALESCE(SUM(
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
+              ), 0))::bigint AS closing_balance_paise
         FROM accounts a
-        LEFT JOIN journal_entry_lines l ON a.id = l.account_id
-        LEFT JOIN journal_entries j ON l.entry_id = j.id AND j.status = 'posted'
-        WHERE a.company_id = $1 AND a.is_deleted = false
-        GROUP BY a.id, a.code, a.name, a.account_type
-        HAVING SUM(COALESCE(l.debit, 0)) - SUM(COALESCE(l.credit, 0)) != 0
-        ORDER BY a.code ASC`,
-       [req.user!.company_id]
-     );
+        LEFT JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+        LEFT JOIN journal_entries je ON je.id = jel.entry_id AND je.company_id = a.company_id
+          AND je.is_deleted = false AND COALESCE(je.status, 'posted') = 'posted'
+          AND je.entry_date >= $2::date AND je.entry_date <= $3::date
+        WHERE a.company_id = $1 AND a.is_deleted = false AND a.is_active = true
+        GROUP BY a.id, a.code, a.name, a.account_type, a.opening_balance
+        HAVING (COALESCE(a.opening_balance, 0) + COALESCE(SUM(
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
+              ), 0)) != 0
+        ORDER BY a.account_type, a.code NULLS LAST, a.name`,
+      [companyId, from, to],
+    );
 
-     res.json(success(result.rows));
-  } catch (err:any) { res.status(500).json(error(err.message)); }
+    res.json(success({ period: { from, to }, rows: result.rows }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getProfitLoss(req: Request, res: Response) {
   try {
-     // Simplified implementation fetching 4xxx and 5xxx accounts
-     const result = await query(
-        `SELECT a.account_type, sum(l.credit - l.debit) as balance
-         FROM accounts a
-         JOIN journal_entry_lines l ON a.id = l.account_id
-         JOIN journal_entries j ON l.entry_id = j.id AND j.status = 'posted'
-         WHERE a.company_id = $1 AND a.account_type IN ('Income', 'Expenses')
-         GROUP BY a.account_type`, [req.user!.company_id]
-     );
-     // We map Income (credit normal) and Expenses (debit normal).
-     res.json(success({ components: result.rows }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const { from, to } = parseRange(req);
+    const byAccount = await query(
+      `SELECT a.id, a.code, a.name, a.account_type,
+              COALESCE(SUM(
+                CASE
+                  WHEN LOWER(a.account_type) = 'expense' THEN jel.debit - jel.credit
+                  WHEN LOWER(a.account_type) = 'income' THEN jel.credit - jel.debit
+                  ELSE 0
+                END
+              ), 0)::bigint AS period_net_paise
+       FROM accounts a
+       JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+       JOIN journal_entries j ON j.id = jel.entry_id AND j.company_id = a.company_id
+       WHERE a.company_id = $1 AND a.is_deleted = false
+         AND LOWER(a.account_type) IN ('income', 'expense')
+         AND j.status = 'posted' AND j.is_deleted = false
+         AND j.entry_date >= $2::date AND j.entry_date <= $3::date
+       GROUP BY a.id, a.code, a.name, a.account_type
+       ORDER BY LOWER(a.account_type), a.code NULLS LAST`,
+      [companyId, from, to],
+    );
+
+    const summary = await query(
+      `SELECT LOWER(a.account_type) AS bucket,
+              COALESCE(SUM(
+                CASE
+                  WHEN LOWER(a.account_type) = 'expense' THEN jel.debit - jel.credit
+                  WHEN LOWER(a.account_type) = 'income' THEN jel.credit - jel.debit
+                  ELSE 0
+                END
+              ), 0)::bigint AS net_paise
+       FROM accounts a
+       JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+       JOIN journal_entries j ON j.id = jel.entry_id AND j.company_id = a.company_id
+       WHERE a.company_id = $1 AND a.is_deleted = false
+         AND LOWER(a.account_type) IN ('income', 'expense')
+         AND j.status = 'posted' AND j.is_deleted = false
+         AND j.entry_date >= $2::date AND j.entry_date <= $3::date
+       GROUP BY LOWER(a.account_type)`,
+      [companyId, from, to],
+    );
+
+    res.json(
+      success({
+        period: { from, to },
+        summary: summary.rows,
+        accounts: byAccount.rows,
+        note: 'Journal-based P&L from posted entries only. Operational P&L from sales/expenses lives under /api/reports/profit-loss.',
+      }),
+    );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getBalanceSheet(req: Request, res: Response) {
   try {
-     const result = await query(
-        `SELECT a.account_type, sum(l.debit - l.credit) as balance
-         FROM accounts a
-         JOIN journal_entry_lines l ON a.id = l.account_id
-         JOIN journal_entries j ON l.entry_id = j.id AND j.status = 'posted'
-         WHERE a.company_id = $1 AND a.account_type IN ('Assets', 'Liabilities', 'Equity')
-         GROUP BY a.account_type`, [req.user!.company_id]
-     );
-     res.json(success({ components: result.rows }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT LOWER(a.account_type) AS account_type,
+              COALESCE(SUM(
+                CASE
+                  WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
+              ), 0)::bigint AS period_net_paise
+       FROM accounts a
+       JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+       JOIN journal_entries j ON j.id = jel.entry_id AND j.company_id = a.company_id
+       WHERE a.company_id = $1 AND a.is_deleted = false
+         AND LOWER(a.account_type) IN ('asset', 'liability', 'equity')
+         AND j.status = 'posted' AND j.is_deleted = false
+         AND j.entry_date >= $2::date AND j.entry_date <= $3::date
+       GROUP BY LOWER(a.account_type)`,
+      [companyId, from, to],
+    );
+    res.json(
+      success({
+        period: { from, to },
+        components: result.rows,
+        note: 'Period movement by bucket from journals. Full balance sheet with opening balances: GET /api/reports/balance-sheet.',
+      }),
+    );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getCashFlow(req: Request, res: Response) {
   try {
-     res.json(success({ message: "Not historically active for small business datasets but registered." }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    const { from, to } = parseRange(req);
+    res.json(
+      success({
+        implemented: false,
+        period: { from, to },
+        message:
+          'Cash flow is not computed from journals in this build. Review bank/cash ledgers (asset accounts) and the trial balance for liquidity.',
+      }),
+    );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }

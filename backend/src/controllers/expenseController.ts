@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
@@ -270,9 +270,81 @@ export async function getExpenseCategories(req: Request, res: Response) {
 
 export async function bulkImportExpenses(req: Request, res: Response) {
   try {
-    const { expenses } = req.body; // expected Array of simple objects
-    if (!expenses || !Array.isArray(expenses)) return res.status(400).json(error('Expected an array of expenses'));
-    // Simplistic processing mock
-    res.json(success({ message: `Successfully queued ${expenses.length} records for import.` }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const { expenses } = req.body as { expenses?: Record<string, unknown>[] };
+    if (!expenses || !Array.isArray(expenses)) {
+      return res.status(400).json(error('Expected an array of expenses'));
+    }
+
+    const inserted: Record<string, unknown>[] = [];
+    const errors: { index: number; message: string }[] = [];
+
+    await withTransaction(async (client) => {
+      const numRes = await client.query(`SELECT COUNT(*)::int AS n FROM expenses WHERE company_id = $1`, [companyId]);
+      let seq = parseInt(String(numRes.rows[0]?.n || '0'), 10) + 1;
+
+      for (let i = 0; i < expenses.length; i++) {
+        const raw = expenses[i];
+        try {
+          const expense_date = (raw.expense_date as string) || new Date().toISOString().split('T')[0];
+          const category = String(raw.category || '').trim();
+          if (!category) throw new Error('category is required');
+          const amountInput = Number(raw.amount);
+          if (!Number.isFinite(amountInput) || amountInput <= 0) {
+            throw new Error('amount must be a positive number (paise)');
+          }
+
+          const gstType = await resolveExpenseGstType(companyId, raw.vendor_gstin as string | undefined);
+          const rate = Number(raw.gst_rate ?? 0);
+          const includesGst = !!raw.amount_includes_gst;
+          const tax = calculateExpenseGstBreakdown(Math.round(amountInput), rate, gstType, includesGst);
+
+          const expenseNumber = `EXP-${String(seq).padStart(5, '0')}`;
+          seq += 1;
+
+          const ins = await client.query(
+            `INSERT INTO expenses (
+              company_id, expense_number, expense_date, category, amount,
+              gst_rate, tax_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+              amount_includes_gst,
+              payment_mode, reference_number, vendor_name, vendor_gstin,
+              description, notes, is_reimbursable, status, created_by
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
+            [
+              companyId,
+              expenseNumber,
+              expense_date,
+              category,
+              tax.taxable_amount,
+              rate,
+              tax.gst_amount,
+              tax.gst_amount,
+              tax.cgst_amount,
+              tax.sgst_amount,
+              tax.igst_amount,
+              tax.total_amount,
+              includesGst,
+              (raw.payment_mode as string) || 'cash',
+              (raw.reference_number as string) || null,
+              (raw.vendor_name as string) || null,
+              (raw.vendor_gstin as string) || null,
+              (raw.description as string) || null,
+              (raw.notes as string) || null,
+              !!raw.is_reimbursable,
+              'approved',
+              req.user!.id,
+            ],
+          );
+          inserted.push(ins.rows[0]);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : 'row failed';
+          errors.push({ index: i, message: msg });
+        }
+      }
+    });
+
+    res.json(success({ inserted: inserted.length, records: inserted, errors }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }

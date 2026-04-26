@@ -11,6 +11,7 @@ import ItemForm from './ItemForm';
 import { getApiBaseURL } from '@/lib/api';
 
 import toast from 'react-hot-toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +19,7 @@ export default function ItemDetail() {
   const { data, isLoading } = useItem(id!);
   const deleteMutation = useDeleteItem();
   const [showEdit, setShowEdit] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
@@ -25,8 +27,14 @@ export default function ItemDetail() {
   if (!item) return <div className="text-center py-20 text-muted-foreground">Item not found</div>;
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${item.name}"?`)) return;
-    try { await deleteMutation.mutateAsync(id!); toast.success('Item deleted'); navigate('/items'); } catch (e: any) { toast.error(e.response?.data?.error || 'Failed'); }
+    try {
+      await deleteMutation.mutateAsync(id!);
+      toast.success('Item deleted');
+      setDeleteOpen(false);
+      navigate('/items');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed');
+    }
   };
 
   const stock: any[] = item.stock || [];
@@ -54,7 +62,10 @@ export default function ItemDetail() {
           <Button variant="outline" size="sm"><Printer className="w-4 h-4 mr-1" />Print Label</Button>
           <Button variant="outline" size="sm" onClick={() => window.open(`${getApiBaseURL()}/items/${id}/barcode-image`, '_blank')}><Barcode className="w-4 h-4 mr-1" />Barcode</Button>
           <Button variant="outline" size="sm" onClick={() => setShowEdit(true)}><Edit2 className="w-4 h-4 mr-1" />Edit</Button>
-          <Button variant="destructive" size="sm" onClick={handleDelete}><Trash2 className="w-4 h-4 mr-1" />Delete</Button>
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
+            <Trash2 className="w-4 h-4 mr-1" />
+            Delete
+          </Button>
         </div>
       </div>
 
@@ -186,6 +197,17 @@ export default function ItemDetail() {
       </Tabs>
 
       <ItemForm open={showEdit} onOpenChange={setShowEdit} item={item} />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete item?"
+        description={`This will remove “${item.name}” from the catalog. Linked stock history may be retained depending on company policy.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }
