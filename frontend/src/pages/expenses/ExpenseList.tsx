@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useExpenses, useCreateExpense } from '@/hooks/useBusiness';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { determineGSTType, previewExpenseGst, stateCodeFromGstin } from '@/lib/expenseGst';
@@ -15,9 +16,23 @@ import toast from 'react-hot-toast';
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
 
 export default function ExpenseList() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState<any>({ page: 1, limit: 25 });
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return;
+    setShowForm(true);
+    setSearchParams(
+      (prev) => {
+        const n = new URLSearchParams(prev);
+        n.delete('add');
+        return n;
+      },
+      { replace: true }
+    );
+  }, [searchParams, setSearchParams]);
 
   const { data, isLoading } = useExpenses({ ...filters, search: search || undefined });
   const createMutation = useCreateExpense();

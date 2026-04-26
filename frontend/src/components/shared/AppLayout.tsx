@@ -1,6 +1,7 @@
 import { useState, useEffect, Suspense, useRef } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
+import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt, 
@@ -302,8 +303,9 @@ export default function AppLayout() {
                 <kbd className="ml-auto flex items-center gap-1 font-mono text-[10px] bg-white px-1.5 py-0.5 rounded border">⌘ K</kbd>
              </div>
           </div>
-          <div className="flex items-center gap-3">
-             <Button variant="ghost" size="icon" className="relative text-slate-500">
+          <div className="flex items-center gap-2 sm:gap-3 ml-auto">
+             <NavbarQuickAdd />
+             <Button variant="ghost" size="icon" className="relative text-slate-500 shrink-0">
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
              </Button>
