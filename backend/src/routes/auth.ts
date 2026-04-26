@@ -1,18 +1,10 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { validateBody } from '../middleware/validate';
 import { verifyToken } from '../middleware/auth';
 import * as ctrl from '../controllers/authController';
 
 const router = Router();
-
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
 
 const loginSchema = z.object({
   email: z.string().email('Valid email is required'),
@@ -32,7 +24,7 @@ const resetSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
-router.post('/login', loginLimiter, validateBody(loginSchema), ctrl.login);
+router.post('/login', validateBody(loginSchema), ctrl.login);
 router.post('/refresh', validateBody(refreshSchema), ctrl.refresh);
 router.post('/logout', verifyToken, ctrl.logout);
 router.get('/me', verifyToken, ctrl.getMe);

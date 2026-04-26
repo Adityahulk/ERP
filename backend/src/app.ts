@@ -5,7 +5,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import path from 'path';
-import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import routes from './routes';
@@ -17,16 +16,6 @@ app.use((req, res, next) => {
   (req as express.Request & { reqId?: string }).reqId = id;
   res.setHeader('X-Request-Id', id);
   next();
-});
-
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => `${req.ip}__${(req.headers.authorization || '').slice(-24)}`,
-  // Mounted at `/api`, so paths are like `/auth/login`, not `/api/auth/login`.
-  skip: (req) => req.path === '/auth/login' || req.path === '/auth/refresh',
 });
 
 // ── Security ──────────────────────────────────────────
@@ -55,7 +44,7 @@ app.use(morgan('short', {
 app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR)));
 
 // ── API routes ────────────────────────────────────────
-app.use('/api', apiLimiter, routes);
+app.use('/api', routes);
 
 // ── Health check ──────────────────────────────────────
 app.get('/health', (_req, res) => {
