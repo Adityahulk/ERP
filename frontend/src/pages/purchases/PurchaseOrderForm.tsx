@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 
 type PoLine = {
   item_id: string;
@@ -45,6 +46,8 @@ export default function PurchaseOrderForm() {
     return d.toISOString().split('T')[0];
   });
   const [lines, setLines] = useState<PoLine[]>([]);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
 
   const defaultGodown = useMemo(() => {
     const def = godowns.find((g: any) => g.is_default);
@@ -112,6 +115,23 @@ export default function PurchaseOrderForm() {
 
   const loadingMeta = partiesLoading || itemsLoading;
 
+  const onSupplierCreated = (row: Record<string, unknown>) => {
+    const id = String(row.id);
+    setPartyId(id);
+    qc.setQueryData(['parties', 'suppliers'], (old: unknown) => {
+      const o = old as { data?: unknown[]; pagination?: Record<string, unknown> } | undefined;
+      if (!o || !Array.isArray(o.data)) return o;
+      if (o.data.some((s) => String((s as { id?: string }).id) === id)) return o;
+      return { ...o, data: [...o.data, row] };
+    });
+    void qc.invalidateQueries({ queryKey: ['parties', 'suppliers'] });
+  };
+
+  const openQuickAddSupplier = (prefillName?: string) => {
+    setQuickAddDefaultName(prefillName ?? '');
+    setQuickAddOpen(true);
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -135,19 +155,25 @@ export default function PurchaseOrderForm() {
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
                   <Label>Supplier</Label>
-                  <select
-                    className="mt-1 w-full h-10 rounded-md border bg-background px-3 text-sm"
-                    value={partyId}
-                    onChange={(e) => setPartyId(e.target.value)}
-                  >
-                    <option value="">Select supplier</option>
-                    {suppliers.map((s: any) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                        {s.gstin ? ` — ${s.gstin}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <select
+                      className="h-10 w-full min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                      value={partyId}
+                      onChange={(e) => setPartyId(e.target.value)}
+                    >
+                      <option value="">Select supplier</option>
+                      {suppliers.map((s: any) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.gstin ? ` — ${s.gstin}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1" onClick={() => openQuickAddSupplier()}>
+                      <UserPlus className="h-4 w-4" />
+                      New supplier
+                    </Button>
+                  </div>
                 </div>
                 <div>
                   <Label>Receive into godown</Label>
@@ -268,6 +294,14 @@ export default function PurchaseOrderForm() {
           )}
         </CardContent>
       </Card>
+
+      <QuickAddPartySheet
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        partyType="supplier"
+        defaultName={quickAddDefaultName}
+        onCreated={onSupplierCreated}
+      />
     </div>
   );
 }

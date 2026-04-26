@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -17,6 +17,12 @@ export default function AttendancePage() {
   const canPunch = !isAdmin;
   const [tab, setTab] = useState(canManage ? 'team_today' : 'my_attendance');
 
+  useEffect(() => {
+    if (isAdmin && tab === 'my_leaves') {
+      setTab(canManage ? 'team_today' : 'my_attendance');
+    }
+  }, [isAdmin, tab, canManage]);
+
   // Basic fetching
   const { data: myToday } = useQuery({
     queryKey: ['attendance', 'myToday'],
@@ -31,12 +37,12 @@ export default function AttendancePage() {
   const { data: balances } = useQuery({
     queryKey: ['leaves', 'balance', user?.id],
     queryFn: async () => (await api.get(`/leaves/balance/${user?.id}`)).data?.data,
-    enabled: tab === 'my_leaves' && !!user?.id,
+    enabled: tab === 'my_leaves' && !!user?.id && !isAdmin,
   });
   const { data: leaveTypes } = useQuery({
     queryKey: ['leaves', 'types'],
     queryFn: async () => (await api.get('/leaves/types')).data?.data,
-    enabled: tab === 'my_leaves',
+    enabled: tab === 'my_leaves' && !isAdmin,
   });
   const { data: approvals } = useQuery({
     queryKey: ['leaves', 'applications', 'pending'],
@@ -86,7 +92,15 @@ export default function AttendancePage() {
            </>
         )}
         <button onClick={() => setTab('my_attendance')} className={`py-2 px-4 border-b-2 font-medium ${tab === 'my_attendance' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}>My Attendance</button>
-        <button onClick={() => setTab('my_leaves')} className={`py-2 px-4 border-b-2 font-medium ${tab === 'my_leaves' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}>My Leaves</button>
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={() => setTab('my_leaves')}
+            className={`py-2 px-4 border-b-2 font-medium ${tab === 'my_leaves' ? 'border-primary text-primary' : 'border-transparent text-slate-500'}`}
+          >
+            My Leaves
+          </button>
+        )}
       </div>
 
       {tab === 'team_today' && canManage && (
@@ -139,7 +153,7 @@ export default function AttendancePage() {
          </div>
       )}
 
-      {tab === 'my_leaves' && (
+      {tab === 'my_leaves' && !isAdmin && (
          <div className="space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                {balances?.map((b:any) => (

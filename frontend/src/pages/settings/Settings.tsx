@@ -335,9 +335,9 @@ export default function Settings() {
   const applyItemSchema = async () => {
     try {
       await updateCompany.mutateAsync({
-        item_terminology: itemTerminologySingular,
+        item_terminology: itemTerminologySingular.trim() || 'Item',
         item_terminology_plural: itemTerminologyPlural,
-        default_gst_rate: Number(defaultGstRate) || 0,
+        default_gst_rate: Math.round(Math.min(100, Math.max(0, Number(defaultGstRate) || 0))),
       });
       toast.success('Item schema applied');
     } catch (e: any) {
@@ -704,24 +704,47 @@ export default function Settings() {
                         <p className="font-semibold mb-1">Domain Translation Active</p>
                         BizFlow automatically translates UI text based on your domain setup.
                      </div>
-                     <div className="grid grid-cols-2 gap-4 max-w-lg">
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
                         <div>
                            <label className="text-sm font-medium text-slate-700">Default Item Name</label>
-                          <select className="w-full mt-1 h-10 border rounded px-3 bg-white" value={itemTerminologySingular} onChange={(e) => setItemTerminologySingular(e.target.value)}>
-                             <option>Item</option>
-                             <option>Product</option>
-                             <option>Part</option>
-                             <option>Medicine</option>
-                           </select>
+                          <Input
+                            className="mt-1"
+                            list="item-terminology-suggestions"
+                            value={itemTerminologySingular}
+                            onChange={(e) => setItemTerminologySingular(e.target.value)}
+                            placeholder="e.g. Item, Product, Service"
+                          />
+                          <datalist id="item-terminology-suggestions">
+                            <option value="Item" />
+                            <option value="Product" />
+                            <option value="Part" />
+                            <option value="Medicine" />
+                            <option value="Service" />
+                            <option value="SKU" />
+                          </datalist>
+                          <p className="text-xs text-slate-500 mt-1">Type any word or pick a suggestion from the dropdown.</p>
                         </div>
                         <div>
                            <label className="text-sm font-medium text-slate-700">Primary Default GST %</label>
-                          <select className="w-full mt-1 h-10 border rounded px-3 bg-white" value={defaultGstRate} onChange={(e) => setDefaultGstRate(e.target.value)}>
-                              <option value="18">18% Standard</option>
-                              <option value="12">12%</option>
-                              <option value="5">5%</option>
-                              <option value="0">0%</option>
-                           </select>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            className="mt-1"
+                            list="default-gst-suggestions"
+                            value={defaultGstRate}
+                            onChange={(e) => setDefaultGstRate(e.target.value)}
+                            placeholder="18"
+                          />
+                          <datalist id="default-gst-suggestions">
+                            <option value="0" />
+                            <option value="5" />
+                            <option value="12" />
+                            <option value="18" />
+                            <option value="28" />
+                          </datalist>
+                          <p className="text-xs text-slate-500 mt-1">Enter any whole number 0–100 or pick a suggestion (stored as integer).</p>
                         </div>
                      </div>
                     <div className="space-y-3">
