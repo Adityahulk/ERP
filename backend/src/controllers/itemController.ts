@@ -108,13 +108,16 @@ export async function listItems(req: Request, res: Response) {
     let stockJoin = '';
     if (low_stock === 'true' || godown_id || req.query.out_of_stock === 'true') {
       if (godown_id) {
-        stockJoin = ` LEFT JOIN item_stock s ON s.item_id = i.id AND s.godown_id = $${idx}`;
+        stockJoin = ` LEFT JOIN item_stock s ON s.item_id = i.id AND s.company_id = i.company_id AND s.godown_id = $${idx}`;
         params.push(godown_id); idx++;
       } else {
         stockJoin = ` LEFT JOIN (SELECT item_id, SUM(quantity) as quantity FROM item_stock GROUP BY item_id) s ON s.item_id = i.id`;
       }
       if (low_stock === 'true') { where += ` AND i.track_inventory = true AND COALESCE(s.quantity, 0) <= i.reorder_point AND COALESCE(s.quantity, 0) > 0`; }
       if (req.query.out_of_stock === 'true') { where += ` AND i.track_inventory = true AND COALESCE(s.quantity, 0) = 0`; }
+      if (godown_id && req.query.with_positive_stock_in_godown === 'true') {
+        where += ` AND i.track_inventory = true AND COALESCE(s.quantity, 0) > 0`;
+      }
     }
 
     const countRes = await query(
@@ -122,11 +125,17 @@ export async function listItems(req: Request, res: Response) {
     );
     const total = parseInt(countRes.rows[0].count);
 
+    const godownCols =
+      godown_id && stockJoin.includes('item_stock s')
+        ? `, COALESCE(s.quantity, 0) as godown_quantity, COALESCE(s.available_quantity, 0) as godown_available`
+        : '';
+
     const result = await query(
       `SELECT i.*, 
               c.name as category_name, u.name as unit_name, u.abbreviation as unit_abbr,
               COALESCE(ts.total_stock, 0) as total_stock,
               COALESCE(ts.total_value, 0) as total_stock_value
+              ${godownCols}
        FROM items i
        ${stockJoin}
        LEFT JOIN item_categories c ON i.category_id = c.id

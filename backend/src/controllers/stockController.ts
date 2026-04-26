@@ -114,43 +114,132 @@ export async function createTransfer(req: Request, res: Response) {
       return res.status(400).json(error('Source and destination godowns must be different'));
     }
 
-    // Validate stock availability
-    for (const item of items) {
-      const stockRes = await query(
-        'SELECT quantity, available_quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2',
-        [item.item_id, from_godown_id]
-      );
-      if (!stockRes.rows.length || stockRes.rows[0].available_quantity < item.quantity) {
-        const itemName = await query('SELECT name FROM items WHERE id = $1', [item.item_id]);
-        return res.status(400).json(error(
-          `Insufficient stock for "${itemName.rows[0]?.name || item.item_id}". Available: ${stockRes.rows[0]?.available_quantity || 0}`
-        ));
-      }
-    }
-
     const result = await withTransaction(async (client) => {
-      // Generate transfer number
+      const gCheck = await client.query(
+        `SELECT COUNT(*)::int AS c FROM godowns WHERE company_id = $1 AND id = ANY($2::uuid[]) AND is_deleted = false`,
+        [companyId, [from_godown_id, to_godown_id]]
+      );
+      if (Number(gCheck.rows[0].c) !== 2) {
+        throw new Error('Invalid source or destination godown');
+      }
+
       const numRes = await client.query(
-        `SELECT COUNT(*) + 1 as num FROM stock_transfers WHERE company_id = $1`, [companyId]
+        `SELECT COUNT(*) + 1 as num FROM stock_transfers WHERE company_id = $1`,
+        [companyId]
       );
       const transferNum = `TRF-${String(numRes.rows[0].num).padStart(4, '0')}`;
 
       const transferRes = await client.query(
-        `INSERT INTO stock_transfers (company_id, transfer_number, from_godown_id, to_godown_id, status, transfer_date, notes, created_by)
-         VALUES ($1,$2,$3,$4,'in_transit',$5,$6,$7) RETURNING *`,
+        `INSERT INTO stock_transfers (
+           company_id, transfer_number, from_godown_id, to_godown_id, status, transfer_date,
+           notes, created_by, received_date, received_by
+         ) VALUES ($1,$2,$3,$4,'received',$5,$6,$7,$5,$7) RETURNING *`,
         [companyId, transferNum, from_godown_id, to_godown_id, transfer_date, notes, req.user!.id]
       );
+      const transferId = transferRes.rows[0].id;
 
       for (const item of items) {
+        const qty = Math.floor(Number(item.quantity));
+        if (qty <= 0) throw new Error('Each transfer quantity must be a positive integer');
+
+        const itemRes = await client.query(
+          `SELECT name, track_inventory FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [item.item_id, companyId]
+        );
+        if (!itemRes.rows.length) throw new Error(`Item not found: ${item.item_id}`);
+        if (!itemRes.rows[0].track_inventory) {
+          throw new Error(`Item "${itemRes.rows[0].name}" is not inventory-tracked`);
+        }
+
+        const stockRes = await client.query(
+          `SELECT quantity, reserved_quantity, COALESCE(avg_cost_price, 0) AS avg_cost_price
+           FROM item_stock
+           WHERE item_id = $1 AND godown_id = $2 AND company_id = $3
+           FOR UPDATE`,
+          [item.item_id, from_godown_id, companyId]
+        );
+        if (!stockRes.rows.length) {
+          throw new Error(`No stock row in source godown for "${itemRes.rows[0].name}"`);
+        }
+        const row = stockRes.rows[0];
+        const available = Number(row.quantity) - Number(row.reserved_quantity || 0);
+        if (available < qty) {
+          throw new Error(
+            `Insufficient available stock for "${itemRes.rows[0].name}". Available: ${available}, requested: ${qty}`
+          );
+        }
+        const costPrice = Math.round(Number(row.avg_cost_price) || 0);
+
         await client.query(
-          'INSERT INTO stock_transfer_items (transfer_id, item_id, quantity_sent) VALUES ($1,$2,$3)',
-          [transferRes.rows[0].id, item.item_id, item.quantity]
+          `INSERT INTO stock_transfer_items (transfer_id, item_id, quantity_sent, quantity_received)
+           VALUES ($1,$2,$3,$3)`,
+          [transferId, item.item_id, qty]
         );
 
-        // Reserve stock at source
+        const deduct = await client.query(
+          `UPDATE item_stock
+           SET quantity = quantity - $1,
+               reserved_quantity = LEAST(reserved_quantity, quantity - $1)
+           WHERE company_id = $2 AND item_id = $3 AND godown_id = $4 AND quantity >= $1`,
+          [qty, companyId, item.item_id, from_godown_id]
+        );
+        if (deduct.rowCount !== 1) {
+          throw new Error('Failed to deduct stock at source (concurrent change?)');
+        }
+
         await client.query(
-          'UPDATE item_stock SET reserved_quantity = reserved_quantity + $1 WHERE item_id = $2 AND godown_id = $3',
-          [item.quantity, item.item_id, from_godown_id]
+          `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (item_id, godown_id) DO UPDATE SET
+             quantity = item_stock.quantity + EXCLUDED.quantity,
+             avg_cost_price = CASE
+               WHEN item_stock.quantity + EXCLUDED.quantity > 0 THEN
+                 ROUND(
+                   (item_stock.quantity::numeric * item_stock.avg_cost_price
+                    + EXCLUDED.quantity::numeric * EXCLUDED.avg_cost_price)
+                   / (item_stock.quantity + EXCLUDED.quantity)
+                 )::integer
+               ELSE EXCLUDED.avg_cost_price
+             END`,
+          [companyId, item.item_id, to_godown_id, qty, costPrice]
+        );
+
+        const fromBal = await client.query(
+          'SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2 AND company_id=$3',
+          [item.item_id, from_godown_id, companyId]
+        );
+        await client.query(
+          `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, unit_cost, balance_after, created_by)
+           VALUES ($1,$2,$3,'transfer_out','stock_transfer',$4,$5,$6,$7,$8)`,
+          [
+            companyId,
+            item.item_id,
+            from_godown_id,
+            transferId,
+            -qty,
+            costPrice,
+            fromBal.rows[0]?.quantity ?? 0,
+            req.user!.id,
+          ]
+        );
+
+        const toBal = await client.query(
+          'SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2 AND company_id=$3',
+          [item.item_id, to_godown_id, companyId]
+        );
+        await client.query(
+          `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, unit_cost, balance_after, created_by)
+           VALUES ($1,$2,$3,'transfer_in','stock_transfer',$4,$5,$6,$7,$8)`,
+          [
+            companyId,
+            item.item_id,
+            to_godown_id,
+            transferId,
+            qty,
+            costPrice,
+            toBal.rows[0]?.quantity ?? 0,
+            req.user!.id,
+          ]
         );
       }
 
@@ -159,7 +248,14 @@ export async function createTransfer(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'create', 'stock_transfer', result.id, null, { from: from_godown_id, to: to_godown_id }, req.ip);
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    const badReq =
+      /Insufficient|Invalid|not found|not inventory-tracked|positive integer|Failed to deduct|No stock row|concurrent/i.test(
+        msg
+      );
+    res.status(badReq ? 400 : 500).json(error(msg));
+  }
 }
 
 // ── POST /api/stock/transfer/:id/receive ──────────────────────
@@ -196,34 +292,51 @@ export async function receiveTransfer(req: Request, res: Response) {
         );
         const costPrice = costRes.rows[0]?.avg_cost_price || 0;
 
-        // Deduct from source (un-reserve and remove)
+        // Deduct from source (release reservation from createTransfer + remove quantity)
         await client.query(
-          `UPDATE item_stock SET quantity = quantity - $1, reserved_quantity = reserved_quantity - $1 
-           WHERE item_id = $2 AND godown_id = $3`,
-          [qtySent, item.item_id, transfer.from_godown_id]
+          `UPDATE item_stock
+           SET quantity = quantity - $1,
+               reserved_quantity = GREATEST(0, reserved_quantity - $1)
+           WHERE company_id = $2 AND item_id = $3 AND godown_id = $4 AND quantity >= $1`,
+          [qtySent, companyId, item.item_id, transfer.from_godown_id]
         );
 
-        // Add to destination
+        const recv = Math.floor(Number(item.quantity_received));
         await client.query(
           `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
            VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (item_id, godown_id) DO UPDATE SET quantity = item_stock.quantity + $4`,
-          [companyId, item.item_id, transfer.to_godown_id, item.quantity_received, costPrice]
+           ON CONFLICT (item_id, godown_id) DO UPDATE SET
+             quantity = item_stock.quantity + EXCLUDED.quantity,
+             avg_cost_price = CASE
+               WHEN item_stock.quantity + EXCLUDED.quantity > 0 THEN
+                 ROUND(
+                   (item_stock.quantity::numeric * item_stock.avg_cost_price
+                    + EXCLUDED.quantity::numeric * EXCLUDED.avg_cost_price)
+                   / (item_stock.quantity + EXCLUDED.quantity)
+                 )::integer
+               ELSE EXCLUDED.avg_cost_price
+             END`,
+          [companyId, item.item_id, transfer.to_godown_id, recv, costPrice]
         );
 
-        // Stock movements
-        const fromBalance = await client.query('SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2', [item.item_id, transfer.from_godown_id]);
+        const fromBalance = await client.query(
+          'SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2 AND company_id=$3',
+          [item.item_id, transfer.from_godown_id, companyId]
+        );
         await client.query(
           `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, unit_cost, balance_after, created_by)
-           VALUES ($1,$2,$3,'transfer_out','transfer',$4,$5,$6,$7,$8)`,
+           VALUES ($1,$2,$3,'transfer_out','stock_transfer',$4,$5,$6,$7,$8)`,
           [companyId, item.item_id, transfer.from_godown_id, id, -qtySent, costPrice, fromBalance.rows[0]?.quantity || 0, req.user!.id]
         );
 
-        const toBalance = await client.query('SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2', [item.item_id, transfer.to_godown_id]);
+        const toBalance = await client.query(
+          'SELECT quantity FROM item_stock WHERE item_id=$1 AND godown_id=$2 AND company_id=$3',
+          [item.item_id, transfer.to_godown_id, companyId]
+        );
         await client.query(
           `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, unit_cost, balance_after, created_by)
-           VALUES ($1,$2,$3,'transfer_in','transfer',$4,$5,$6,$7,$8)`,
-          [companyId, item.item_id, transfer.to_godown_id, id, item.quantity_received, costPrice, toBalance.rows[0]?.quantity || 0, req.user!.id]
+           VALUES ($1,$2,$3,'transfer_in','stock_transfer',$4,$5,$6,$7,$8)`,
+          [companyId, item.item_id, transfer.to_godown_id, id, recv, costPrice, toBalance.rows[0]?.quantity || 0, req.user!.id]
         );
       }
 

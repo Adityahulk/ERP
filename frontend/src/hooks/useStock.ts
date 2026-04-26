@@ -41,7 +41,10 @@ export function useCreateTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: any) => api.post('/stock/transfer', data).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['stock'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['items'] });
+    },
   });
 }
 
@@ -49,7 +52,32 @@ export function useReceiveTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => api.post(`/stock/transfer/${id}/receive`, data).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['stock'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['items'] });
+    },
+  });
+}
+
+/** Items with stock in a godown (for transfer picker). */
+export function useItemsForTransfer(search: string, godownId: string | undefined) {
+  return useQuery({
+    queryKey: ['items', 'transfer-picker', godownId, search],
+    queryFn: async () => {
+      const r = await api.get('/items', {
+        params: {
+          search: search.trim() || undefined,
+          godown_id: godownId,
+          limit: 50,
+          with_positive_stock_in_godown: true,
+          is_active: true,
+        },
+      });
+      const page = r.data?.data as { data?: Record<string, unknown>[] } | undefined;
+      return page?.data ?? [];
+    },
+    enabled: !!godownId && search.trim().length >= 1,
+    staleTime: 15_000,
   });
 }
 
