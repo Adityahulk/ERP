@@ -10,6 +10,7 @@ router.post('/search-items', ctrl.searchItems);
 router.post('/scan-barcode', ctrl.scanBarcode);
 router.get('/', ctrl.listInvoices);
 router.post('/', ctrl.createInvoice);
+router.post('/preview-pdf', ctrl.previewInvoicePdf);
 
 router.get('/:id/pdf', ctrl.getInvoicePDF);
 router.post('/:id/whatsapp', ctrl.sendWhatsApp);

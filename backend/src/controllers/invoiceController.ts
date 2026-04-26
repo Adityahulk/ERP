@@ -52,7 +52,10 @@ async function generateInvoiceNumber(companyId: string, invoiceKind: string, god
 function mapLineForGst(raw: any) {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
   const qty = Number(raw.quantity) || 0;
-  const lineDisc = Math.round(Number(raw.discount_amount) || 0);
+  const base = unitPrice * qty;
+  const pct = Number(raw.discount_percent) || 0;
+  const flatFromPct = pct > 0 ? Math.round((base * pct) / 100) : 0;
+  const lineDisc = Math.round(Number(raw.discount_amount) || 0) || flatFromPct;
   return {
     unit_price: unitPrice,
     quantity: qty,
@@ -504,12 +507,116 @@ export async function getInvoicePDF(req: Request, res: Response) {
       ? await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2`, [invRes.rows[0].party_id, req.user!.company_id])
       : { rows: [null] };
 
-    const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyRes.rows[0], partyRes.rows[0], itemsRes.rows);
+    const tpl = String(req.query.template || '');
+    const allowed = ['standard', 'simple', 'performa'] as const;
+    const templateOverride = (allowed as readonly string[]).includes(tpl) ? tpl : undefined;
 
+    const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyRes.rows[0], partyRes.rows[0], itemsRes.rows, {
+      ...(templateOverride ? { templateOverride } : {}),
+    });
+
+    const inline = String(req.query.inline || '') === '1';
+    const fn = `${invRes.rows[0].invoice_number}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=${invRes.rows[0].invoice_number}.pdf`);
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${fn}`);
     res.send(pdfBuffer);
   } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+/** POST /api/invoices/preview-pdf — same line/tax rules as create, no DB write; for live template preview while drafting. */
+export async function previewInvoicePdf(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const templateRaw = String(d.template || 'standard');
+    const template = ['standard', 'simple', 'performa'].includes(templateRaw) ? templateRaw : 'standard';
+
+    if (!Array.isArray(d.items) || d.items.length === 0) {
+      return res.status(400).json(error('At least one line item is required'));
+    }
+
+    const companyRes = await query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
+    if (!companyRes.rows.length) return res.status(400).json(error('Company not found'));
+    const company = companyRes.rows[0];
+
+    let party: any = null;
+    if (d.party_id) {
+      const pRes = await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`, [d.party_id, companyId]);
+      party = pRes.rows[0] || null;
+    }
+
+    let isInterstate = Boolean(d.is_interstate);
+    if (d.is_interstate === undefined && d.party_id) {
+      const pRes = await query(
+        'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+        [d.party_id, companyId],
+      );
+      const cRes = await query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+      isInterstate = determineGSTType(cRes.rows[0]?.state_code, pRes.rows[0]?.billing_state_code) === 'inter';
+    }
+    const gstType = isInterstate ? 'inter' : 'intra';
+
+    const mappedItems = d.items.map((it: any) => mapLineForGst({ ...it, item_name: it.item_name || it.name }));
+    const invDisc = Math.round(Number(d.discount_amount) || 0);
+    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
+
+    const posRow = d.party_id
+      ? await query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
+      : { rows: [{}] };
+    const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
+
+    const partySnap = party
+      ? { name: party.name as string, gstin: party.gstin as string | null, bill: party.billing_address as string | null }
+      : { name: String(d.party_name || 'Walk-in Customer'), gstin: null as string | null, bill: null as string | null };
+
+    const pdfRows: any[] = [];
+    for (let i = 0; i < d.items.length; i++) {
+      const item = d.items[i];
+      const lineGst = mappedItems[i];
+      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
+      pdfRows.push({
+        item_name: item.item_name || item.name || item.description || 'Item',
+        hsn_code: item.hsn_code || null,
+        quantity: lineGst.quantity,
+        unit_price: lineGst.unit_price,
+        discount_amount: taxInfo.totalDiscountLineLevel,
+        taxable_amount: taxInfo.totalTaxable,
+        gst_rate: lineGst.gst_rate,
+        cgst_amount: taxInfo.totalCgst,
+        sgst_amount: taxInfo.totalSgst,
+        igst_amount: taxInfo.totalIgst,
+        total_amount: taxInfo.totalAmount,
+      });
+    }
+
+    const invoice = {
+      invoice_number: 'PREVIEW',
+      invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
+      due_date: d.due_date || null,
+      party_name_snapshot: partySnap.name,
+      party_gstin_snapshot: partySnap.gstin,
+      billing_address_snapshot: partySnap.bill,
+      place_of_supply: placeOfSupply,
+      is_interstate: isInterstate,
+      subtotal: totals.subtotal,
+      discount_amount: totals.totalDiscount,
+      taxable_amount: totals.totalTaxable,
+      cgst_amount: totals.totalCgst,
+      sgst_amount: totals.totalSgst,
+      igst_amount: totals.totalIgst,
+      round_off: totals.roundOff,
+      total_amount: totals.totalAmount,
+      irn: null,
+      qr_code_url: null,
+    };
+
+    const pdfBuffer = await generateInvoicePDF(invoice, company, party, pdfRows, { templateOverride: template });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename=invoice-preview.pdf');
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function sendWhatsApp(req: Request, res: Response) {

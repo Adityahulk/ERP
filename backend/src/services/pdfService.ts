@@ -100,8 +100,9 @@ export async function generateInvoicePDF(
   company: any,
   party: any | null,
   items: any[],
+  opts?: { templateOverride?: string },
 ): Promise<Buffer> {
-  const kind = company.invoice_pdf_template || 'standard';
+  const kind = (opts?.templateOverride || company.invoice_pdf_template || 'standard') as string;
   const tplName =
     kind === 'simple'
       ? 'invoices/template_simple.html'

@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCreateInvoice } from '@/hooks/useBusiness';
+import { useCreateInvoice, useCompany } from '@/hooks/useBusiness';
 import { useGodowns } from '@/hooks/useStock';
 import { formatMoney } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search } from 'lucide-react';
+import { ArrowLeft, Trash2, Search, Eye } from 'lucide-react';
+import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -20,12 +21,14 @@ interface LineItem {
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const createMutation = useCreateInvoice();
+  const { data: company } = useCompany();
   const { data: godownData } = useGodowns();
   const godowns = godownData?.data || [];
 
   const [invoiceType, setInvoiceType] = useState<'sale' | 'purchase'>('sale');
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
+  const [partyPhone, setPartyPhone] = useState('');
   const [partySearch, setPartySearch] = useState('');
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [godownId, setGodownId] = useState('');
@@ -37,6 +40,7 @@ export default function InvoiceCreate() {
   const [items, setItems] = useState<LineItem[]>([]);
   const [itemSearch, setItemSearch] = useState('');
   const [itemResults, setItemResults] = useState<any[]>([]);
+  const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
 
   // Search parties
   const searchParties = async (q: string) => {
@@ -49,7 +53,7 @@ export default function InvoiceCreate() {
   };
 
   const selectParty = (p: any) => {
-    setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]);
+    setPartyId(p.id); setPartyName(p.name); setPartyPhone(p.phone || ''); setPartySearch(''); setPartyResults([]);
     if (p.state_code) setIsInterstate(true); // Simplified — in production, compare company state_code
   };
 
@@ -97,12 +101,37 @@ export default function InvoiceCreate() {
   const grandTotal = subtotal + totalTax + totalCess;
   const balanceDue = grandTotal - amountPaid;
 
+  const draftPreviewPayload = useMemo(
+    () => ({
+      invoice_type: invoiceType,
+      party_id: partyId || undefined,
+      party_name: partyName || undefined,
+      godown_id: godownId || undefined,
+      invoice_date: invoiceDate,
+      due_date: dueDate || undefined,
+      is_interstate: isInterstate,
+      notes: notes || undefined,
+      amount_paid: amountPaid,
+      items: items.map((i) => ({
+        item_id: i.item_id,
+        description: i.name,
+        hsn_code: i.hsn_code,
+        quantity: i.quantity,
+        unit_price: i.unit_price,
+        gst_rate: i.gst_rate,
+        discount_percent: i.discount_percent,
+        cess_rate: i.cess_rate,
+      })),
+    }),
+    [invoiceType, partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items],
+  );
+
   const handleSubmit = async () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
 
     try {
-      const { data: res } = await createMutation.mutateAsync({
+      const res = await createMutation.mutateAsync({
         invoice_type: invoiceType, party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, notes,
@@ -113,15 +142,19 @@ export default function InvoiceCreate() {
           gst_rate: i.gst_rate, discount_percent: i.discount_percent, cess_rate: i.cess_rate,
         })),
       });
-      toast.success(`Invoice created: ${res?.invoice_number || ''}`);
-      navigate('/invoices');
+      const inv = (res as any)?.data ?? res;
+      toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
+      const newId = inv?.id;
+      const skipPreview = readSkipInvoicePreview();
+      if (newId) navigate(skipPreview ? `/sales/${newId}` : `/sales/${newId}?preview=1`);
+      else navigate('/sales');
     } catch (e: any) { toast.error(e.response?.data?.error || 'Failed to create invoice'); }
   };
 
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/invoices')}><ArrowLeft className="w-5 h-5" /></Button>
+        <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}><ArrowLeft className="w-5 h-5" /></Button>
         <div><h1 className="text-2xl font-bold">New {invoiceType === 'sale' ? 'Sale' : 'Purchase'} Invoice</h1></div>
       </div>
 
@@ -142,7 +175,7 @@ export default function InvoiceCreate() {
               {partyId ? (
                 <div className="flex items-center justify-between mt-1 p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
-                  <button className="text-xs text-primary hover:underline" onClick={() => { setPartyId(''); setPartyName(''); }}>Change</button>
+                  <button className="text-xs text-primary hover:underline" onClick={() => { setPartyId(''); setPartyName(''); setPartyPhone(''); }}>Change</button>
                 </div>
               ) : (
                 <>
@@ -277,12 +310,35 @@ export default function InvoiceCreate() {
       )}
 
       {/* Actions */}
-      <div className="flex gap-3 justify-end pb-8">
-        <Button variant="outline" onClick={() => navigate('/invoices')}>Cancel</Button>
+      <div className="flex gap-3 justify-end pb-8 flex-wrap">
+        <Button variant="outline" onClick={() => navigate('/sales')}>Cancel</Button>
+        <Button
+          variant="outline"
+          disabled={!partyId || items.length === 0}
+          onClick={() => setDraftPreviewOpen(true)}
+          className="gap-2"
+        >
+          <Eye className="w-4 h-4" /> Live preview
+        </Button>
         <Button disabled={items.length === 0} loading={createMutation.isPending} onClick={handleSubmit}>
           Create Invoice
         </Button>
       </div>
+
+      <InvoicePreviewWorkspace
+        open={draftPreviewOpen}
+        onClose={() => setDraftPreviewOpen(false)}
+        mode="draft"
+        draftPayload={draftPreviewPayload}
+        shareContext={{
+          invoiceNumber: 'PREVIEW',
+          invoiceDate: invoiceDate,
+          totalAmountPaise: grandTotal,
+          partyName: partyName || 'Customer',
+        }}
+        partyPhone={partyPhone}
+        companyName={company?.name}
+      />
     </div>
   );
 }

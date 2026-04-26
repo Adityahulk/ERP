@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { useCancelEinvoice, useCompany, useGenerateEinvoice } from '@/hooks/useBusiness';
@@ -14,7 +15,7 @@ import { useCancelEinvoice, useCompany, useGenerateEinvoice } from '@/hooks/useB
 export default function InvoiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
+  const [params, setSearchParams] = useSearchParams();
   const { user } = useAuthStore();
   const { data: company } = useCompany();
   const genEinv = useGenerateEinvoice();
@@ -27,6 +28,7 @@ export default function InvoiceDetail() {
   const [printLoading, setPrintLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const { data: raw, isLoading, refetch } = useQuery({
     queryKey: ['invoice', id],
@@ -52,6 +54,14 @@ export default function InvoiceDetail() {
       toast('Record Payment Flow initiated', { icon: '💰' });
     }
   }, [inv, params]);
+
+  useEffect(() => {
+    if (!params.get('preview')) return;
+    setPreviewOpen(true);
+    const next = new URLSearchParams(params);
+    next.delete('preview');
+    setSearchParams(next, { replace: true });
+  }, [params, setSearchParams]);
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading invoice details...</div>;
   if (!inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
@@ -258,6 +268,9 @@ Thank you.
           </Badge>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button variant="default" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700" onClick={() => setPreviewOpen(true)}>
+            <Eye className="h-4 w-4" /> Preview &amp; share
+          </Button>
           <Button variant="outline" size="sm" onClick={printReceipt} loading={printLoading}>
             Print Receipt
           </Button>
@@ -497,6 +510,22 @@ Thank you.
           </Card>
         </div>
       </div>
+
+      <InvoicePreviewWorkspace
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        mode="saved"
+        invoiceId={id}
+        invoiceIdForPrint={id}
+        shareContext={{
+          invoiceNumber: inv.invoice_number,
+          invoiceDate: inv.invoice_date,
+          totalAmountPaise: inv.total_amount,
+          partyName: inv.party_name || inv.party_display_name || 'Customer',
+        }}
+        partyPhone={inv.party_phone}
+        companyName={company?.name}
+      />
     </div>
   );
 }
