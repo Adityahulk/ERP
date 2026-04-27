@@ -219,60 +219,99 @@ export default function PurchaseOrderForm() {
               </div>
 
               {lines.length > 0 && (
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 text-left">
-                      <tr>
-                        <th className="p-2">Item</th>
-                        <th className="p-2 w-24">Qty</th>
-                        <th className="p-2 w-32">Unit price (paise)</th>
-                        <th className="p-2 w-20">GST %</th>
-                        <th className="p-2 w-10" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((line, idx) => (
-                        <tr key={line.item_id} className="border-t">
-                          <td className="p-2">
-                            <div className="font-medium">{line.item_name}</div>
-                            <div className="text-xs text-muted-foreground">HSN {line.hsn_code || '—'}</div>
-                          </td>
-                          <td className="p-2">
-                            <Input
-                              type="number"
-                              min={1}
-                              className="h-9"
-                              value={line.quantity}
-                              onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <Input
-                              type="number"
-                              min={0}
-                              className="h-9 tabular-nums"
-                              value={line.unit_price}
-                              onChange={(e) => updateLine(idx, { unit_price: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <Input
-                              type="number"
-                              min={0}
-                              className="h-9"
-                              value={line.gst_rate}
-                              onChange={(e) => updateLine(idx, { gst_rate: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <Button type="button" variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, i) => i !== idx))}>
-                              <Trash2 className="w-4 h-4 text-destructive" />
-                            </Button>
-                          </td>
+                <div className="space-y-4">
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50 text-left">
+                        <tr>
+                          <th className="p-2">Item</th>
+                          <th className="p-2 w-24">Qty</th>
+                          <th className="p-2 w-32">Unit price (₹)</th>
+                          <th className="p-2 w-20">GST %</th>
+                          <th className="p-2 w-24 text-right">Total (₹)</th>
+                          <th className="p-2 w-10" />
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {lines.map((line, idx) => {
+                          const base = (line.unit_price || 0) * (line.quantity || 0);
+                          const tax = (base * (line.gst_rate || 0)) / 100;
+                          const total = base + tax;
+                          return (
+                            <tr key={line.item_id} className="border-t">
+                              <td className="p-2">
+                                <div className="font-medium">{line.item_name}</div>
+                                <div className="text-xs text-muted-foreground">HSN {line.hsn_code || '—'}</div>
+                              </td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  className="h-9"
+                                  value={line.quantity}
+                                  onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                                />
+                              </td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  className="h-9 tabular-nums"
+                                  value={(line.unit_price / 100).toFixed(2)}
+                                  onChange={(e) => updateLine(idx, { unit_price: Math.round((parseFloat(e.target.value) || 0) * 100) })}
+                                />
+                              </td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  className="h-9"
+                                  value={line.gst_rate}
+                                  onChange={(e) => updateLine(idx, { gst_rate: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                />
+                              </td>
+                              <td className="p-2 text-right tabular-nums font-medium">
+                                {((total) / 100).toFixed(2)}
+                              </td>
+                              <td className="p-2 text-right">
+                                <Button type="button" variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, i) => i !== idx))}>
+                                  <Trash2 className="w-4 h-4 text-destructive" />
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Summary Section */}
+                  <div className="flex justify-end pt-4 border-t">
+                    <div className="w-full max-w-sm space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Subtotal (Excl. Tax)</span>
+                        <span className="tabular-nums font-medium">
+                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total GST (Tax Amount)</span>
+                        <span className="tabular-nums text-indigo-600">
+                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity * l.gst_rate / 100), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t pt-2 text-lg font-bold">
+                        <span>Grand Total</span>
+                        <span className="tabular-nums">
+                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity * (1 + l.gst_rate / 100)), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground text-right italic">
+                        * Calculations are in Paise for maximum precision, shown here in Rupees.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 

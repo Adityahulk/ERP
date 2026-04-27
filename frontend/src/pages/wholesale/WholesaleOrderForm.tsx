@@ -126,10 +126,20 @@ export default function WholesaleOrderForm() {
                 </select>
               </div>
               <div className="col-span-2">{i === 0 && <Label className="text-xs">Qty</Label>}<Input type="number" min={1} className="mt-1" value={item.quantity || ''} onChange={e => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} /></div>
-              <div className="col-span-2">{i === 0 && <Label className="text-xs">Unit Price (paise)</Label>}<Input type="number" min={0} className="mt-1" value={item.unit_price || ''} onChange={e => updateItem(i, 'unit_price', parseInt(e.target.value) || 0)} /></div>
+              <div className="col-span-2">
+                {i === 0 && <Label className="text-xs">Unit Price (₹)</Label>}
+                <Input 
+                  type="number" 
+                  min={0} 
+                  step={0.01}
+                  className="mt-1 tabular-nums" 
+                  value={(item.unit_price / 100).toFixed(2)} 
+                  onChange={e => updateItem(i, 'unit_price', Math.round((parseFloat(e.target.value) || 0) * 100))} 
+                />
+              </div>
               <div className="col-span-1">{i === 0 && <Label className="text-xs">GST %</Label>}<Input type="number" min={0} className="mt-1" value={item.gst_rate || ''} onChange={e => updateItem(i, 'gst_rate', parseInt(e.target.value) || 0)} /></div>
               <div className="col-span-2">{i === 0 && <Label className="text-xs">Tier</Label>}<p className="text-xs text-indigo-600 mt-2 truncate">{item.tier_applied || '—'}</p></div>
-              <div className="col-span-1">{i === 0 && <Label className="text-xs">Line Total</Label>}<p className="text-sm font-bold mt-2">{fmtAmt(lineTotal(item))}</p></div>
+              <div className="col-span-1">{i === 0 && <Label className="text-xs">Total (₹)</Label>}<p className="text-sm font-bold mt-2 text-right">{(lineTotal(item) / 100).toFixed(2)}</p></div>
               <div className="col-span-1 flex justify-end"><Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeItem(i)}><X className="w-4 h-4" /></Button></div>
             </div>
           ))}
@@ -140,9 +150,21 @@ export default function WholesaleOrderForm() {
       {items.length > 0 && (
         <Card className="mb-6 bg-gradient-to-r from-indigo-50 to-blue-50"><CardContent className="p-6">
           <div className="flex justify-end gap-8">
-            <div className="text-right"><p className="text-sm text-slate-500">Subtotal</p><p className="font-bold">{fmtAmt(subtotal)}</p></div>
-            <div className="text-right"><p className="text-sm text-slate-500">Tax</p><p className="font-bold">{fmtAmt(totalTax)}</p></div>
-            <div className="text-right"><p className="text-sm text-slate-500">Grand Total</p><p className="font-bold text-2xl text-indigo-600">{fmtAmt(grandTotal)}</p></div>
+            <div className="text-right">
+              <p className="text-sm text-slate-500">Subtotal (Excl. Tax)</p>
+              <p className="font-bold">{fmtAmt(subtotal)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-slate-500">GST (Tax Amount)</p>
+              <p className="font-bold text-indigo-600">{fmtAmt(totalTax)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-slate-500">Grand Total</p>
+              <p className="font-bold text-2xl text-indigo-700">{fmtAmt(grandTotal)}</p>
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 text-right mt-2 italic">
+            * All values are stored in Paise for precision and displayed in INR (₹).
           </div>
         </CardContent></Card>
       )}

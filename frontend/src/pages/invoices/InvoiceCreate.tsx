@@ -301,10 +301,10 @@ export default function InvoiceCreate() {
                   <th className="p-2 text-left font-medium">Item</th>
                   <th className="p-2 text-left font-medium w-16">HSN</th>
                   <th className="p-2 text-right font-medium w-16">Qty</th>
-                  <th className="p-2 text-right font-medium w-28">Price (₹)</th>
+                  <th className="p-2 text-right font-medium w-28">Price (Basic)</th>
                   <th className="p-2 text-right font-medium w-16">Disc%</th>
                   <th className="p-2 text-right font-medium w-16">GST%</th>
-                  <th className="p-2 text-right font-medium w-24">Total</th>
+                  <th className="p-2 text-right font-medium w-24">Line Total</th>
                   <th className="w-10"></th>
                 </tr></thead>
                 <tbody>
