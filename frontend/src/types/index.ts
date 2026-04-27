@@ -180,3 +180,170 @@ export interface ItemFilters {
   page?: number;
   limit?: number;
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+// MANUFACTURING — BOM, WHOLESALE, JOB WORK
+// ═══════════════════════════════════════════════════════════════
+
+export interface BOM {
+  id: string;
+  company_id: string;
+  finished_item_id: string;
+  finished_item_name?: string;
+  finished_item_sku?: string;
+  bom_name?: string;
+  bom_number?: string;
+  version: number;
+  labour_cost: number;
+  overhead_cost: number;
+  total_cost: number;
+  notes?: string;
+  is_default: boolean;
+  is_active: boolean;
+  items?: BOMItem[];
+  created_at?: string;
+}
+
+export interface BOMItem {
+  id: string;
+  bom_id: string;
+  item_id: string;
+  item_name?: string;
+  item_sku?: string;
+  unit?: string;
+  unit_abbr?: string;
+  quantity: number;
+  wastage_percent: number;
+  unit_cost: number;
+  notes?: string;
+  sort_order: number;
+}
+
+export interface ProductionLog {
+  id: string;
+  bom_id: string;
+  bom_name?: string;
+  finished_item_name?: string;
+  production_number?: string;
+  production_date: string;
+  godown_id?: string;
+  godown_name?: string;
+  quantity_produced: number;
+  labour_cost: number;
+  overhead_cost: number;
+  total_cost: number;
+  notes?: string;
+  status: string;
+  created_by_name?: string;
+  created_at?: string;
+}
+
+export interface WholesalePriceTier {
+  id: string;
+  item_id: string;
+  item_name?: string;
+  item_sku?: string;
+  min_quantity: number;
+  price: number;
+  tier_name?: string;
+  is_active: boolean;
+}
+
+export interface WholesaleOrder {
+  id: string;
+  order_number: string;
+  order_date: string;
+  expected_delivery?: string;
+  party_id?: string;
+  party_name?: string;
+  party_name_snapshot?: string;
+  party_gstin_snapshot?: string;
+  godown_id?: string;
+  godown_name?: string;
+  is_interstate: boolean;
+  subtotal: number;
+  discount_amount: number;
+  taxable_amount: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_due: number;
+  payment_status: 'unpaid' | 'partial' | 'paid';
+  status: 'draft' | 'confirmed' | 'dispatched' | 'delivered' | 'cancelled';
+  dispatch_date?: string;
+  transport_details?: string;
+  lr_number?: string;
+  eway_bill_number?: string;
+  vehicle_number?: string;
+  notes?: string;
+  items?: WholesaleOrderItem[];
+  created_at?: string;
+}
+
+export interface WholesaleOrderItem {
+  id: string;
+  order_id: string;
+  item_id?: string;
+  item_name: string;
+  hsn_code?: string;
+  unit?: string;
+  quantity: number;
+  unit_price: number;
+  discount_amount: number;
+  taxable_amount: number;
+  gst_rate: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  total_amount: number;
+  tier_applied?: string;
+}
+
+export interface JobWorkChallan {
+  id: string;
+  challan_number: string;
+  challan_type: 'outward' | 'inward';
+  challan_date: string;
+  party_id: string;
+  party_name?: string;
+  party_name_snapshot?: string;
+  party_gstin_snapshot?: string;
+  godown_id?: string;
+  godown_name?: string;
+  related_challan_id?: string;
+  related_challan_number?: string;
+  return_due_date?: string;
+  is_capital_goods: boolean;
+  is_returned: boolean;
+  labour_charges: number;
+  other_charges: number;
+  gst_on_charges: number;
+  total_charges: number;
+  total_material_value: number;
+  status: 'draft' | 'sent' | 'partial_return' | 'returned' | 'overdue' | 'cancelled';
+  transport_details?: string;
+  vehicle_number?: string;
+  eway_bill_number?: string;
+  notes?: string;
+  items?: JobWorkChallanItem[];
+  created_at?: string;
+}
+
+export interface JobWorkChallanItem {
+  id: string;
+  challan_id: string;
+  item_id?: string;
+  item_name?: string;
+  hsn_code?: string;
+  unit?: string;
+  quantity_sent: number;
+  quantity_received: number;
+  quantity_rejected: number;
+  wastage: number;
+  unit_price: number;
+  total_value: number;
+  notes?: string;
+}

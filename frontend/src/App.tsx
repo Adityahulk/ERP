@@ -29,6 +29,17 @@ import BillingScreen from '@/pages/billing/BillingScreen';
 import ReportsHome from '@/pages/reports/ReportsHome';
 import Settings from '@/pages/settings/Settings';
 
+// Manufacturing modules
+import BOMList from '@/pages/production/BOMList';
+import BOMForm from '@/pages/production/BOMForm';
+import WholesaleOrderList from '@/pages/wholesale/WholesaleOrderList';
+import WholesaleOrderForm from '@/pages/wholesale/WholesaleOrderForm';
+import WholesaleOrderDetail from '@/pages/wholesale/WholesaleOrderDetail';
+import WholesalePriceTiers from '@/pages/wholesale/WholesalePriceTiers';
+import JobWorkChallanList from '@/pages/jobwork/JobWorkChallanList';
+import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
+import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
+
 // ── Login Page ────────────────────────────────────────────────
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -67,7 +78,7 @@ function LoginPage() {
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4 shadow-xl shadow-blue-500/25">B</div>
           <h1 className="text-3xl font-bold text-white">BizFlow</h1>
-          <p className="text-blue-300 mt-1">Smart ERP for Indian Businesses</p>
+          <p className="text-blue-300 mt-1">Smart ERP for Indian Manufacturers</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 space-y-5">
           <div>
@@ -143,6 +154,22 @@ export default function App() {
 
         {/* HR & Attendance */}
         <Route path="/attendance" element={<AttendancePage />} />
+
+        {/* Production / BOM */}
+        <Route path="/production" element={<BOMList />} />
+        <Route path="/production/new" element={<BOMForm />} />
+        <Route path="/production/:id" element={<BOMForm />} />
+
+        {/* Wholesale */}
+        <Route path="/wholesale" element={<WholesaleOrderList />} />
+        <Route path="/wholesale/new" element={<WholesaleOrderForm />} />
+        <Route path="/wholesale/pricing" element={<WholesalePriceTiers />} />
+        <Route path="/wholesale/:id" element={<WholesaleOrderDetail />} />
+
+        {/* Job Work */}
+        <Route path="/job-work" element={<JobWorkChallanList />} />
+        <Route path="/job-work/new" element={<JobWorkChallanForm />} />
+        <Route path="/job-work/:id" element={<JobWorkChallanDetail />} />
 
         {/* Global Config */}
         <Route path="/settings" element={<Settings />} />

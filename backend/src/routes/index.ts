@@ -23,6 +23,9 @@ import notificationRoutes from './notifications';
 import labelRoutes from './labels';
 import printRoutes from './print';
 import searchRoutes from './search';
+import bomRoutes from './bom';
+import wholesaleRoutes from './wholesale';
+import jobWorkRoutes from './jobWork';
 
 const router = Router();
 
@@ -51,20 +54,23 @@ router.use('/notifications', notificationRoutes);
 router.use('/labels', labelRoutes);
 router.use('/print', printRoutes);
 router.use('/search', searchRoutes);
+router.use('/bom', bomRoutes);
+router.use('/wholesale', wholesaleRoutes);
+router.use('/job-work', jobWorkRoutes);
 
 // API info
 router.get('/', (_req, res) => {
   res.json({
     name: 'BizFlow API',
-    version: '1.0.0',
-    description: 'Generic Indian Business ERP API',
+    version: '2.0.0',
+    description: 'Indian Manufacturing Business ERP API',
     modules: {
       active: [
         'auth', 'company', 'godowns', 'users',
         'item-categories', 'item-units', 'items', 'stock',
         'parties', 'invoices', 'quotations', 'payments', 'expenses', 'reports', 'search',
+        'bom', 'wholesale', 'job-work',
       ],
-      planned: ['quotations', 'employees'],
     },
   });
 });

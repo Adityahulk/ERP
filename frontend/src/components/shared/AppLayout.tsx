@@ -6,7 +6,8 @@ import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt, 
   Warehouse, Database, BarChart3, Cloud, UserCheck, 
-  Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package
+  Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
+  Factory, Truck, Tag, Wrench, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -19,19 +20,39 @@ const navGroups = [
      items: [ { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' } ]
   },
   {
-     label: 'OPERATIONS',
+     label: 'PRODUCTION',
      items: [
-        { to: '/items', icon: Package, label: 'Items & Services' },
-        { to: '/billing', icon: ShoppingBag, label: 'POS Billing' },
+        { to: '/items', icon: Package, label: 'Items & Materials' },
+        { to: '/production', icon: Factory, label: 'BOM & Production' },
+        { to: '/inventory', icon: Warehouse, label: 'Inventory & Stock' },
+     ]
+  },
+  {
+     label: 'WHOLESALE',
+     items: [
+        { to: '/wholesale', icon: Truck, label: 'Wholesale Orders' },
+        { to: '/wholesale/pricing', icon: Tag, label: 'Pricing Tiers' },
+     ]
+  },
+  {
+     label: 'JOB WORK',
+     items: [
+        { to: '/job-work', icon: Wrench, label: 'Job Work Challans' },
+     ]
+  },
+  {
+     label: 'SALES & PURCHASE',
+     items: [
         { to: '/sales', icon: FileText, label: 'Sales & Invoices' },
         { to: '/quotations', icon: ClipboardList, label: 'Quotations' },
         { to: '/purchases', icon: ShoppingBag, label: 'Purchase & GRN' },
-        { to: '/inventory', icon: Warehouse, label: 'Inventory Core' },
+        { to: '/billing', icon: ShoppingBag, label: 'POS Billing' },
      ]
   },
   {
      label: 'FINANCE',
      items: [
+        { to: '/parties', icon: Users, label: 'Parties & Ledger' },
         { to: '/expenses', icon: Receipt, label: 'Expenses' },
         { to: '/accounting', icon: Database, label: 'Accounting' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },

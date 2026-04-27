@@ -20,10 +20,11 @@ interface Props {
 
 const GST_RATES = [0, 5, 12, 18, 28];
 const ITEM_TYPES = [
-  { value: 'product', label: 'Product' },
-  { value: 'service', label: 'Service' },
+  { value: 'finished_good', label: 'Finished Good' },
   { value: 'raw_material', label: 'Raw Material' },
   { value: 'consumable', label: 'Consumable' },
+  { value: 'product', label: 'Product' },
+  { value: 'service', label: 'Service' },
 ];
 
 export default function ItemForm({ open, onOpenChange, item }: Props) {
