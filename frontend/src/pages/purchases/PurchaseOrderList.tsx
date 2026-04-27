@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { formatDate } from '@/lib/formatters';
 
 export default function PurchaseOrderList() {
   const [tab, setTab] = useState('orders');
@@ -46,6 +47,7 @@ export default function PurchaseOrderList() {
                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-medium">
                  <tr>
                     <th className="px-6 py-4">Number</th>
+                    <th className="px-6 py-4">Supplier</th>
                     <th className="px-6 py-4">Date</th>
                     <th className="px-6 py-4">Amount</th>
                     <th className="px-6 py-4">Status</th>
@@ -56,7 +58,8 @@ export default function PurchaseOrderList() {
                   {(data as any)?.data?.map((p: any) => (
                     <tr key={p.id} className="hover:bg-slate-50/50">
                        <td className="px-6 py-4 font-medium text-slate-900">{tab === 'orders' ? p.po_number : p.bill_number}</td>
-                       <td className="px-6 py-4 text-slate-500">{new Date(tab === 'orders' ? p.po_date : p.bill_date).toLocaleDateString()}</td>
+                       <td className="px-6 py-4 text-slate-600">{p.party_name || p.party_name_snapshot || 'Unknown Supplier'}</td>
+                       <td className="px-6 py-4 text-slate-500">{formatDate(tab === 'orders' ? p.po_date : p.bill_date)}</td>
                        <td className="px-6 py-4 font-medium">₹{(p.total_amount / 100).toFixed(2)}</td>
                        <td className="px-6 py-4">
                          <Badge variant="outline" className="capitalize">{p.status}</Badge>
@@ -69,7 +72,7 @@ export default function PurchaseOrderList() {
                     </tr>
                   ))}
                   {!(data as any)?.data?.length && (
-                    <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500">No records found.</td></tr>
+                    <tr><td colSpan={6} className="px-6 py-12 text-center text-slate-500">No records found.</td></tr>
                   )}
                </tbody>
              </table>

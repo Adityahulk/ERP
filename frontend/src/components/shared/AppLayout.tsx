@@ -4,10 +4,10 @@ import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
 import { useAuthStore } from '@/store/authStore';
 import {
-  LayoutDashboard, ShoppingBag, FileText, Receipt, 
-  Warehouse, Database, BarChart3, Cloud, UserCheck, 
+  LayoutDashboard, ShoppingBag, FileText, Receipt,
+  Warehouse, BarChart3, Cloud, UserCheck,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Factory, Truck, Tag, Wrench, Users
+  Factory, Truck, Tag, Wrench
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -52,9 +52,7 @@ const navGroups = [
   {
      label: 'FINANCE',
      items: [
-        { to: '/parties', icon: Users, label: 'Parties & Ledger' },
         { to: '/expenses', icon: Receipt, label: 'Expenses' },
-        { to: '/accounting', icon: Database, label: 'Accounting' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },
      ]
   },

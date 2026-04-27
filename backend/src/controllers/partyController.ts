@@ -268,7 +268,7 @@ export async function searchParties(req: Request, res: Response) {
     if (party_type) { where += ` AND (party_type = $${idx} OR party_type = 'both')`; params.push(party_type); idx++; }
 
     const result = await query(
-      `SELECT id, name, phone, gstin, city, state, state_code, party_type, balance
+      `SELECT id, name, phone, gstin, city, state, state_code, billing_state_code, party_type, balance
        FROM parties WHERE ${where} ORDER BY name LIMIT 20`, params
     );
 

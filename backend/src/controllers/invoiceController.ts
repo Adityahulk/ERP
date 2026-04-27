@@ -75,7 +75,7 @@ function mapLineForGst(raw: any) {
 // ── GET /api/invoices/search-items ──────────────────────────────
 export async function searchItems(req: Request, res: Response) {
   try {
-    const { q, godown_id } = req.query;
+    const { q, godown_id } = req.body;
     const companyId = req.user!.company_id;
 
     if (!q || String(q).length < 2) return res.json(success([]));
@@ -102,7 +102,10 @@ export async function searchItems(req: Request, res: Response) {
     );
 
     res.json(success(result.rows));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── POST /api/invoices/scan-barcode ──────────────────────────────
@@ -139,7 +142,10 @@ export async function scanBarcode(req: Request, res: Response) {
     }
 
     res.json(success({ found: true, item: result.rows[0] }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── POST /api/invoices ────────────────────────────────────────
@@ -234,7 +240,7 @@ export async function createInvoice(req: Request, res: Response) {
           notes, terms_and_conditions, created_by
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, d.godown_id || req.user!.godown_id,
@@ -409,6 +415,7 @@ export async function createInvoice(req: Request, res: Response) {
 
     res.status(201).json(success(result));
   } catch (err: any) {
+    console.error('createInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to create invoice';
     const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
@@ -531,7 +538,10 @@ export async function getInvoice(req: Request, res: Response) {
       items: itemsRes.rows,
       payments: payRes.rows,
     }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function cancelInvoice(req: Request, res: Response) {
@@ -705,7 +715,10 @@ export async function getInvoicePDF(req: Request, res: Response) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${fn}`);
     res.send(pdfBuffer);
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 /** POST /api/invoices/preview-pdf — same line/tax rules as create, no DB write; for live template preview while drafting. */
@@ -939,7 +952,10 @@ export async function generateEinvoice(req: Request, res: Response) {
     );
 
     res.json(success({ irn: irnData.irn, ack_number: irnData.ack_number, ack_date: irnData.ack_date, qr_code_url: qrUrl }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function cancelEinvoice(req: Request, res: Response) {
@@ -962,7 +978,10 @@ export async function cancelEinvoice(req: Request, res: Response) {
     );
 
     res.json(success({ cancelled: true }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getEinvoicePdf(req: Request, res: Response) {
@@ -981,7 +1000,10 @@ export async function getEinvoicePdf(req: Request, res: Response) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=einvoice-${invRes.rows[0].invoice_number}.pdf`);
     res.send(buf);
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function recordPayment(req: Request, res: Response) {
@@ -1051,5 +1073,8 @@ export async function recordPayment(req: Request, res: Response) {
     });
 
     res.json(success({ message: 'Payment tracked', ...result }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }

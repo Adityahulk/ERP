@@ -8,7 +8,6 @@ import ItemDetail from '@/pages/items/ItemDetail';
 import StockList from '@/pages/inventory/StockList';
 import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
-import PartyList from '@/pages/parties/PartyList';
 import InvoiceList from '@/pages/sales/InvoiceList';
 import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
@@ -20,7 +19,6 @@ import QuotationForm from '@/pages/quotations/QuotationForm';
 import QuotationDetail from '@/pages/quotations/QuotationDetail';
 import ExpenseList from '@/pages/expenses/ExpenseList';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
-import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import AttendancePage from '@/pages/hr/AttendancePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
@@ -41,7 +39,7 @@ import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
 import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
 
 // ── Login Page ────────────────────────────────────────────────
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -114,7 +112,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 // ── App ───────────────────────────────────────────────────────
 export default function App() {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, logout } = useAuthStore();
+
+  // If Zustand persist restored isAuthenticated=true but the actual tokens are gone from
+  // localStorage (e.g. cleared externally, or tokens expired before next visit), force
+  // a clean logout so the user is sent to /login instead of hitting 401s on every request.
+  useEffect(() => {
+    if (isAuthenticated && !localStorage.getItem('bizflow_access_token')) {
+      logout();
+    }
+  }, []);
 
   return (
     <Routes>
@@ -131,8 +138,6 @@ export default function App() {
         <Route path="/inventory/transfer" element={<StockTransfer />} />
         <Route path="/inventory/adjust" element={<StockAdjustment />} />
 
-        {/* Parties */}
-        <Route path="/parties" element={<PartyList />} />
 
         {/* Dashboard Core */}
         <Route path="/dashboard" element={<Dashboard />} />
@@ -157,7 +162,6 @@ export default function App() {
         {/* Reports & Accounting */}
         <Route path="/reports" element={<ReportsHome />} />
         <Route path="/gst-filing" element={<GSTDashboard />} />
-        <Route path="/accounting" element={<AccountingDashboard />} />
 
         {/* HR & Attendance */}
         <Route path="/attendance" element={<AttendancePage />} />

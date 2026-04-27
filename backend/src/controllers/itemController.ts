@@ -276,7 +276,7 @@ export async function createItem(req: Request, res: Response) {
           opening_stock, opening_stock_value, opening_stock_date,
           reorder_point, max_stock_level, image_url, custom_fields
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$17,$19,$20,$21,$22,$23,$24,$25,$26
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
         ) RETURNING *`,
         [
           companyId, data.name, data.description, data.sku, data.hsn_code,
@@ -286,7 +286,7 @@ export async function createItem(req: Request, res: Response) {
           data.track_inventory !== false,
           data.is_serialized || false,
           data.purchase_price || 0, data.selling_price || 0,
-          data.tax_preference || 'taxable', gstRate, halfRate,
+          data.tax_preference || 'taxable', gstRate, halfRate, halfRate, gstRate,
           data.cess_rate || 0,
           data.opening_stock || 0, data.opening_stock_value || 0,
           data.opening_stock_date || null,
@@ -321,7 +321,10 @@ export async function createItem(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'create', 'item', result.id, null, { name: data.name }, req.ip);
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── GET /api/items ────────────────────────────────────────────
@@ -390,7 +393,10 @@ export async function listItems(req: Request, res: Response) {
     );
 
     res.json(success(buildPaginatedResponse(result.rows, total, page, limit)));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── GET /api/items/:id ────────────────────────────────────────
@@ -458,7 +464,10 @@ export async function getItem(req: Request, res: Response) {
       activity_summary: activity.summary,
       batches,
     }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── PATCH /api/items/:id ──────────────────────────────────────
@@ -509,7 +518,10 @@ export async function updateItem(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'update', 'item', id, old, result.rows[0], req.ip);
     res.json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── DELETE /api/items/:id ─────────────────────────────────────
@@ -542,7 +554,10 @@ export async function deleteItem(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'delete', 'item', id, null, null, req.ip);
     res.json(success({ message: 'Item deleted' }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── POST /api/items/bulk-import ───────────────────────────────
@@ -621,7 +636,10 @@ export async function bulkImport(req: Request, res: Response) {
     }
 
     res.json(success({ preview, errors, total: rows.length, valid: preview.length, invalid: errors.length }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── GET /api/items/import-template ────────────────────────────
@@ -644,7 +662,10 @@ export async function importTemplate(_req: Request, res: Response) {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename=bizflow_item_import_template.xlsx');
     res.send(buffer);
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── GET /api/items/:id/barcode-image ──────────────────────────
@@ -688,7 +709,10 @@ export async function barcodeImage(req: Request, res: Response) {
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Content-Disposition', `inline; filename=barcode-${item.sku || id}.png`);
     res.send(png);
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── POST /api/items/scan ──────────────────────────────────────
@@ -711,5 +735,8 @@ export async function scanBarcode(req: Request, res: Response) {
 
     if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
     res.json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }

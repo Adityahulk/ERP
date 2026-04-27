@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 
 const rupeesToPaise = (r: number) => Math.round(r * 100);
 const paiseToRupees = (p: number) => (p / 100).toFixed(2);
@@ -33,14 +34,13 @@ export default function QuotationForm() {
   const { data: godownRes } = useGodowns();
   const godowns = (godownRes as any)?.data ?? [];
 
-  const { data: partyRes, isLoading: partiesLoading } = useQuery({
-    queryKey: ['parties', 'customers', 'quotation'],
-    queryFn: () =>
-      api.get('/parties', { params: { party_type: 'customer', limit: 100 } }).then((r) => r.data?.data ?? r.data),
-  });
-  const customers = (partyRes as any)?.data ?? [];
-
   const [partyId, setPartyId] = useState('');
+  const [partyName, setPartyName] = useState('');
+  const [partySearch, setPartySearch] = useState('');
+  const [partyResults, setPartyResults] = useState<any[]>([]);
+  const [partySearchLoading, setPartySearchLoading] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
   const [godownId, setGodownId] = useState('');
   const [quotationNumber, setQuotationNumber] = useState('');
   const [quotationDate, setQuotationDate] = useState(() => new Date().toISOString().split('T')[0]);
@@ -67,6 +67,31 @@ export default function QuotationForm() {
   useEffect(() => {
     if (!godownId && defaultGodown) setGodownId(defaultGodown);
   }, [godownId, defaultGodown]);
+
+  const searchParties = async (q: string) => {
+    setPartySearch(q);
+    if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
+    setPartySearchLoading(true);
+    try {
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
+      setPartyResults(res.data || []);
+    } catch { setPartyResults([]); }
+    finally { setPartySearchLoading(false); }
+  };
+
+  const selectParty = (p: any) => {
+    setPartyId(p.id);
+    setPartyName(p.name);
+    setPartySearch('');
+    setPartyResults([]);
+  };
+
+  const clearParty = () => {
+    setPartyId('');
+    setPartyName('');
+    setPartySearch('');
+    setPartyResults([]);
+  };
 
   const lineTotals = useMemo(() => {
     let subtotal = 0;
@@ -128,7 +153,6 @@ export default function QuotationForm() {
     onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Failed'),
   });
 
-  const loading = partiesLoading;
   const hasLine = lineTotals.normalized.some((x) => x.quantity > 0 && x.unit_price >= 0);
 
   const updateLine = (idx: number, key: keyof QuoteLine, value: string) => {
@@ -192,26 +216,52 @@ export default function QuotationForm() {
           <CardTitle className="text-lg">Customer</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 pt-0">
-          {loading ? (
-            <div className="flex justify-center py-10">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
             <>
               <div>
-                <Label>Bill-to customer</Label>
-                <select
-                  className="mt-1.5 w-full h-10 rounded-md border bg-background px-3 text-sm"
-                  value={partyId}
-                  onChange={(e) => setPartyId(e.target.value)}
-                >
-                  <option value="">Select customer</option>
-                  {customers.map((c: any) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                <Label>Bill-to customer *</Label>
+                {partyId ? (
+                  <div className="mt-1.5 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
+                    <span className="font-medium text-sm">{partyName}</span>
+                    <button type="button" className="text-xs text-primary hover:underline" onClick={clearParty}>
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-start">
+                      <div className="relative min-w-0 flex-1">
+                        <Input
+                          placeholder="Search by name, phone, GSTIN…"
+                          value={partySearch}
+                          onChange={(e) => searchParties(e.target.value)}
+                        />
+                        {partyResults.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                            {partyResults.map((p) => (
+                              <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectParty(p)}>
+                                <span className="font-medium">{p.name}</span>
+                                {p.phone && <span className="text-muted-foreground ml-2">{p.phone}</span>}
+                                {p.gstin && <span className="text-muted-foreground ml-2 font-mono text-xs">{p.gstin}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1" onClick={() => { setQuickAddDefaultName(''); setQuickAddOpen(true); }}>
+                        <UserPlus className="h-4 w-4" />
+                        New customer
+                      </Button>
+                    </div>
+                    {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        No matches.{' '}
+                        <button type="button" className="text-primary font-medium hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
+                          Add "{partySearch.trim()}" as customer
+                        </button>
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
               <div>
                 <Label>Godown / branch context (optional)</Label>
@@ -260,7 +310,6 @@ export default function QuotationForm() {
                 </div>
               </div>
             </>
-          )}
         </CardContent>
       </Card>
 
@@ -389,6 +438,17 @@ export default function QuotationForm() {
           Cancel
         </Button>
       </div>
+
+      <QuickAddPartySheet
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        partyType="customer"
+        defaultName={quickAddDefaultName}
+        onCreated={(row) => {
+          selectParty(row);
+          qc.invalidateQueries({ queryKey: ['parties'] });
+        }}
+      />
     </div>
   );
 }

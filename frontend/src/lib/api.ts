@@ -65,6 +65,17 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // When responseType is 'blob' the server's JSON error body arrives as a Blob.
+    // Parse it back to a plain object so callers can read error.response.data.error.
+    if (error.response?.data instanceof Blob && error.response.data.type === 'application/json') {
+      try {
+        const text = await error.response.data.text();
+        error.response.data = JSON.parse(text);
+      } catch {
+        // leave as-is if parsing fails
+      }
+    }
+
     const originalRequest = error.config;
     const reqUrl = String(originalRequest?.url ?? '');
     const isPublicAuth =
@@ -73,6 +84,7 @@ api.interceptors.response.use(
       reqUrl.includes('/auth/refresh');
 
     // If 401 and not already retried, try refresh
+    // error.response?.status works regardless of responseType — it reads the HTTP status line.
     if (error.response?.status === 401 && !originalRequest._retry && !isPublicAuth) {
       originalRequest._retry = true;
 

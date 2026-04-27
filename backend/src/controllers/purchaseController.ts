@@ -75,7 +75,10 @@ export async function createPurchaseOrder(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'create', 'purchase_order', result.id);
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function listPurchaseOrders(req: Request, res: Response) {
@@ -93,7 +96,10 @@ export async function listPurchaseOrders(req: Request, res: Response) {
     const result = await query(`SELECT * FROM purchase_orders WHERE ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx+1}`, [...params, limit, offset]);
 
     res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit)));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function getPurchaseOrder(req: Request, res: Response) {
@@ -102,7 +108,10 @@ export async function getPurchaseOrder(req: Request, res: Response) {
     if (!po.rows.length) return res.status(404).json(error('Not found'));
     const items = await query('SELECT * FROM purchase_order_items WHERE po_id = $1', [req.params.id]);
     res.json(success({ ...po.rows[0], items: items.rows }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function updatePurchaseOrder(req: Request, res: Response) {
@@ -184,6 +193,7 @@ export async function updatePurchaseOrder(req: Request, res: Response) {
     await logAction(req.user!.id, companyId, 'update', 'purchase_order', poId);
     res.json(success(result));
   } catch (err: any) {
+    console.error('receiveStock error:', err.message, err.detail, err.position);
     res.status(400).json(error(err.message));
   }
 }
@@ -192,14 +202,20 @@ export async function confirmPurchaseOrder(req: Request, res: Response) {
   try {
     await query("UPDATE purchase_orders SET status = 'confirmed' WHERE id = $1 AND status = 'draft'", [req.params.id]);
     res.json(success({ message: 'PO Confirmed' }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function cancelPurchaseOrder(req: Request, res: Response) {
   try {
     await query("UPDATE purchase_orders SET status = 'cancelled' WHERE id = $1 AND status IN ('draft','confirmed')", [req.params.id]);
     res.json(success({ message: 'PO Cancelled' }));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── Receive Stock (GRN) ───────────────────────────────────────
@@ -321,7 +337,7 @@ export async function receiveStock(req: Request, res: Response) {
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             invoice.id, poItem.item_id, poItem.item_name, reqItem.quantity_received, unitPricePaise,
-            reqItem.gst_rate || poItem.gst_rate, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, reqItem.serial_numbers || []
+            reqItem.gst_rate || poItem.gst_rate, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, (reqItem.serial_numbers && reqItem.serial_numbers.length > 0) ? reqItem.serial_numbers : null
           ]
         );
 
@@ -371,17 +387,22 @@ export async function receiveStock(req: Request, res: Response) {
 
       // Update Party outstanding Ledger
       await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2', [invoiceTotals.totalAmount, po.party_id]);
+      const partyBalRes = await client.query('SELECT balance FROM parties WHERE id = $1', [po.party_id]);
+      const partyBalanceAfter = partyBalRes.rows[0]?.balance ?? 0;
       await client.query(
         `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
-         VALUES ($1, $2, 'credit', $3, (SELECT balance FROM parties WHERE id = $2), 'purchase_invoice', $4, $5, $6)`,
-        [companyId, po.party_id, invoiceTotals.totalAmount, invoice.id, `Received GRN Bill ${d.bill_number}`, req.user!.id]
+         VALUES ($1, $2, 'credit', $3, $4, 'purchase_invoice', $5, $6, $7)`,
+        [companyId, po.party_id, invoiceTotals.totalAmount, partyBalanceAfter, invoice.id, `Received GRN Bill ${d.bill_number}`, req.user!.id]
       );
 
       return invoice;
     });
 
     res.json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    console.error('purchaseController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── GET Invoices ──────────────────────────────────────────────

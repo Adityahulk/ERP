@@ -12,6 +12,7 @@ export default function GRNScreen() {
   const navigate = useNavigate();
   
   const [billNumber, setBillNumber] = useState('');
+  const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [receivals, setReceivals] = useState<Record<string, number>>({});
 
   const { data: po, isLoading } = useQuery({
@@ -42,7 +43,7 @@ export default function GRNScreen() {
        }
       return api.post(`/purchases/orders/${id}/receive`, {
          bill_number: billNumber,
-         bill_date: new Date().toISOString().split('T')[0],
+         bill_date: billDate,
          items
        });
      },
@@ -60,9 +61,15 @@ export default function GRNScreen() {
       <h1 className="text-2xl font-bold">Receive Stock (GRN): {po?.po_number}</h1>
       <Card>
          <CardContent className="p-6 space-y-6">
-             <div>
-                <label className="text-sm font-medium">Supplier Bill Number</label>
-                <Input value={billNumber} onChange={e => setBillNumber(e.target.value)} placeholder="e.g. INV-2023" />
+             <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Supplier Bill Number</label>
+                  <Input value={billNumber} onChange={e => setBillNumber(e.target.value)} placeholder="e.g. INV-2023" className="mt-1" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Supplier Bill Date</label>
+                  <Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} className="mt-1" />
+                </div>
              </div>
 
              <div className="space-y-4">
