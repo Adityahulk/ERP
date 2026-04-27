@@ -1,17 +1,19 @@
 export function formatMoney(amountPaise: number | undefined): string {
     if (amountPaise === undefined || amountPaise === null) return '₹0.00';
-    return `₹${amountPaise.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const rupees = amountPaise / 100;
+    return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function formatCurrency(amount: number): string {
     return formatMoney(amount); 
 }
 
-export function formatCurrencyCompact(amount: number): string {
+export function formatCurrencyCompact(amountPaise: number): string {
+    const amount = amountPaise / 100;
     const abs = Math.abs(amount);
     if(abs >= 100000) return `₹${(amount/100000).toFixed(1)}L`;
     if(abs >= 1000) return `₹${(amount/1000).toFixed(1)}K`;
-    return `₹${amount}`;
+    return `₹${amount.toFixed(0)}`;
 }
 
 export function indianNumberFormat(n: number): string {

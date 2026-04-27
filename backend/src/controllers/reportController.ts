@@ -112,6 +112,24 @@ export async function getDashboard(req: Request, res: Response) {
       [companyId, today]
     );
 
+    // Stock valuation
+    const stockValue = await query(
+      `SELECT COALESCE(SUM(s.quantity * COALESCE(i.purchase_price, 0)), 0) as total_value,
+              SUM(s.quantity) as total_qty
+       FROM item_stock s
+       JOIN items i ON s.item_id = i.id
+       WHERE s.company_id = $1 AND i.is_deleted = false`,
+      [companyId]
+    );
+
+    // Production this month
+    const monthProduction = await query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_cost), 0) as total_cost
+       FROM production_logs
+       WHERE company_id = $1 AND production_date >= date_trunc('month', CURRENT_DATE)`,
+      [companyId]
+    ).catch(() => ({ rows: [{ count: 0, total_cost: 0 }] }));
+
     res.json(success({
       today: {
         sales: todaySales.rows[0],
@@ -121,10 +139,13 @@ export async function getDashboard(req: Request, res: Response) {
         sales: monthSales.rows[0],
         expenses: Number(monthExpenses.rows[0].total || 0),
         profit: Number(monthSales.rows[0].total || 0) - Number(monthExpenses.rows[0].total || 0),
+        production: monthProduction.rows[0],
       },
       balances: balances.rows[0],
       overdue: overdue.rows[0],
       low_stock_count: parseInt(lowStock.rows[0].count),
+      stock_value: Number(stockValue.rows[0].total_value || 0),
+      stock_qty: Number(stockValue.rows[0].total_qty || 0),
       recent_invoices: recentInvoices.rows,
       sales_trend: salesTrend.rows,
       top_items: topItems.rows,

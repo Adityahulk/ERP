@@ -81,9 +81,9 @@ export default function PartyList() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search by name, phone, GSTIN..." className="pl-9" value={search} onChange={e => { setSearch(e.target.value); setFilters((f: any) => ({ ...f, page: 1 })); }} />
         </div>
-        {['', 'customer', 'supplier', 'both'].map(t => (
+        {['', 'customer', 'supplier', 'both', 'dealer', 'job_worker'].map(t => (
           <button key={t} onClick={() => { setTypeFilter(t); setFilters((f: any) => ({ ...f, page: 1 })); }} className={`px-3 py-1.5 rounded-md text-xs font-medium ${typeFilter === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
-            {t === '' ? 'All' : t === 'both' ? 'Both' : t === 'customer' ? '👤 Customers' : '🚚 Suppliers'}
+            {t === '' ? 'All' : t === 'both' ? 'Both' : t === 'customer' ? '👤 Customers' : t === 'supplier' ? '🚚 Suppliers' : t === 'dealer' ? '🏪 Dealers' : '🔧 Job Workers'}
           </button>
         ))}
       </div>
@@ -143,8 +143,8 @@ export default function PartyList() {
         <SheetContent side="right" className="overflow-y-auto">
           <SheetHeader className="mb-6"><SheetTitle>New Party</SheetTitle></SheetHeader>
           <div className="space-y-4">
-            <div><Label>Party Type</Label><div className="flex gap-2 mt-1">
-              {['customer','supplier','both'].map(t => (<button key={t} onClick={() => u('party_type', t)} className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize ${form.party_type === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{t}</button>))}
+            <div><Label>Party Type</Label><div className="flex gap-2 mt-1 flex-wrap">
+              {['customer','supplier','both','dealer','job_worker'].map(t => (<button key={t} onClick={() => u('party_type', t)} className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize ${form.party_type === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{t === 'job_worker' ? 'Job Worker' : t}</button>))}
             </div></div>
             <div><Label>Name *</Label><Input className="mt-1" value={form.name || ''} onChange={e => u('name', e.target.value)} autoFocus /></div>
             <div className="grid grid-cols-2 gap-3">

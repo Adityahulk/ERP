@@ -28,6 +28,13 @@ const OTHER_LINKS: QuickLink[] = [
   { label: 'Accounting', to: '/accounting', kbd: '⌥ I' },
 ];
 
+const MANUFACTURING_LINKS: QuickLink[] = [
+  { label: 'Wholesale order', to: '/wholesale/new', kbd: '⌥ W' },
+  { label: 'Job work challan', to: '/job-work/new', kbd: '⌥ K' },
+  { label: 'New BOM', to: '/production/new', kbd: '⌥ D' },
+  { label: 'Pricing tiers', to: '/wholesale/pricing', kbd: '⌥ R' },
+];
+
 function LinkColumn({ title, links, onPick }: { title: string; links: QuickLink[]; onPick: (to: string) => void }) {
   return (
     <div>
@@ -101,6 +108,10 @@ export default function NavbarQuickAdd() {
         a: '/inventory/adjust',
         j: '/parties',
         i: '/accounting',
+        w: '/wholesale/new',
+        k: '/job-work/new',
+        d: '/production/new',
+        r: '/wholesale/pricing',
       };
       if (map[k]) {
         e.preventDefault();
@@ -150,9 +161,10 @@ export default function NavbarQuickAdd() {
           </Button>
           {moreOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] w-[min(92vw,720px)] rounded-xl border border-slate-200 bg-white shadow-2xl z-[60] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-0 sm:divide-x divide-slate-100 p-4 sm:p-5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-0 sm:divide-x divide-slate-100 p-4 sm:p-5">
                 <LinkColumn title="Sale" links={SALE_LINKS} onPick={go} />
                 <LinkColumn title="Purchase" links={PURCHASE_LINKS} onPick={go} />
+                <LinkColumn title="Manufacturing" links={MANUFACTURING_LINKS} onPick={go} />
                 <LinkColumn title="Others" links={OTHER_LINKS} onPick={go} />
               </div>
               <div className="px-4 py-2.5 bg-amber-50 border-t border-amber-100 text-[11px] text-amber-900 flex flex-wrap items-center justify-between gap-2">
@@ -200,6 +212,16 @@ export default function NavbarQuickAdd() {
               <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Purchase</h3>
               <div className="grid grid-cols-2 gap-2">
                 {PURCHASE_LINKS.map((l) => (
+                  <Button key={l.label} variant="outline" className="h-auto py-3 justify-start text-left text-sm" onClick={() => go(l.to)}>
+                    {l.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Manufacturing</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {MANUFACTURING_LINKS.map((l) => (
                   <Button key={l.label} variant="outline" className="h-auto py-3 justify-start text-left text-sm" onClick={() => go(l.to)}>
                     {l.label}
                   </Button>
