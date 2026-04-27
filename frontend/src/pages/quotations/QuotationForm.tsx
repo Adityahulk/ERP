@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 
 const rupeesToPaise = (r: number) => Math.round(r * 100);
