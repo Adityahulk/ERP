@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import AppLayout from '@/components/shared/AppLayout';
 
@@ -10,7 +10,6 @@ import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
 import PartyList from '@/pages/parties/PartyList';
 import InvoiceList from '@/pages/sales/InvoiceList';
-// Invoice create: `pages/invoices/` — list & detail: `pages/sales/` (avoid splitting new flows across both without updating routes).
 import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
 import PurchaseOrderList from '@/pages/purchases/PurchaseOrderList';
@@ -28,6 +27,7 @@ import Onboarding from '@/pages/onboarding/Onboarding';
 import BillingScreen from '@/pages/billing/BillingScreen';
 import ReportsHome from '@/pages/reports/ReportsHome';
 import Settings from '@/pages/settings/Settings';
+import LandingPage from '@/pages/landing/LandingPage';
 
 // Manufacturing modules
 import BOMList from '@/pages/production/BOMList';
@@ -42,7 +42,7 @@ import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ArrowLeft } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -73,27 +73,33 @@ function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-[#2d0444] to-slate-900 p-4">
+      <div className="absolute top-8 left-8">
+        <RouterLink to="/" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
+          <ArrowLeft className="w-4 h-4" />
+          Back to Home
+        </RouterLink>
+      </div>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4 shadow-xl shadow-blue-500/25">B</div>
-          <h1 className="text-3xl font-bold text-white">BizFlow</h1>
-          <p className="text-blue-300 mt-1">Smart ERP for Indian Manufacturers</p>
+          <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-16 mx-auto mb-4 brightness-0 invert" />
+          <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique IT</h1>
+          <p className="text-purple-300 mt-1">Smart ERP for Indian Manufacturers</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 space-y-5">
           <div>
-            <label className="text-sm font-medium text-blue-200">Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-blue-400 focus:border-transparent outline-none transition" />
+            <label className="text-sm font-medium text-purple-200">Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition" />
           </div>
           <div>
-            <label className="text-sm font-medium text-blue-200">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-blue-400 focus:border-transparent outline-none transition" />
+            <label className="text-sm font-medium text-purple-200">Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition" />
           </div>
-          <button type="submit" disabled={loading} className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold rounded-lg shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50">
+          <button type="submit" disabled={loading} className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 transition-all disabled:opacity-50">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
-          <div className="text-center mt-4 text-xs text-blue-300/60">Demo: admin@demo.com / Demo@1234</div>
+          <div className="text-center mt-4 text-xs text-purple-300/60">Demo: admin@demo.com / Demo@1234</div>
         </form>
       </div>
     </div>
@@ -112,6 +118,7 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
 
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -178,7 +185,6 @@ export default function App() {
 
       <Route path="/onboarding" element={isAuthenticated ? <Onboarding /> : <Navigate to="/login" replace />} />
 
-      <Route path="/" element={<Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
