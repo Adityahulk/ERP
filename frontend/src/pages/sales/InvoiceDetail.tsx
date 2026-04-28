@@ -42,10 +42,10 @@ export default function InvoiceDetail() {
 
   useEffect(() => {
     if (inv?.invoice_number) {
-      document.title = `${inv.invoice_number} — BizFlow`;
+      document.title = `${inv.invoice_number} — Microtechnique IT`;
     }
     return () => {
-      document.title = 'BizFlow';
+      document.title = 'Microtechnique IT';
     };
   }, [inv?.invoice_number]);
 
@@ -190,7 +190,7 @@ export default function InvoiceDetail() {
 
 Please find invoice ${inv.invoice_number} dated ${formatDate(inv.invoice_date)} for ${formatMoney(inv.total_amount)}.
 Thank you.
-- ${company?.name || 'BizFlow'}`;
+- ${company?.name || 'Microtechnique IT'}`;
   };
 
   const fetchInvoicePdfFile = async (): Promise<File> => {

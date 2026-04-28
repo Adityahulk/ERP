@@ -88,7 +88,7 @@ export default function AppLayout() {
   useEffect(() => {
     const seg = location.pathname.split('/').filter(Boolean)[0] || 'home';
     const label = seg.charAt(0).toUpperCase() + seg.slice(1).replace(/-/g, ' ');
-    document.title = `${label} — BizFlow`;
+    document.title = `${label} — Microtechnique IT`;
   }, [location.pathname]);
 
   // Command palette toggle hook
@@ -278,7 +278,10 @@ export default function AppLayout() {
       {/* SIDEBAR (Desktop) */}
       <aside className="hidden md:flex w-[220px] bg-[#1E1B4B] flex-col flex-shrink-0 shadow-xl z-20">
         <div className="h-16 flex flex-col justify-center px-6 border-b border-white/10 shrink-0 select-none">
-           <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2"><span className="bg-gradient-to-br from-indigo-400 to-purple-400 w-5 h-5 rounded-sm inline-block"></span> BizFlow</h1>
+           <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+             <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-6 w-auto brightness-0 invert" />
+             Microtechnique IT
+           </h1>
            {user && <span className="text-[10px] text-white/50 tracking-wider truncate uppercase">G{(user as any)?.godown_id || 1} • {user.role}</span>}
         </div>
         
@@ -302,7 +305,7 @@ export default function AppLayout() {
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
-               <h1 className="text-2xl font-bold text-white px-6 mb-4">BizFlow</h1>
+               <h1 className="text-2xl font-bold text-white px-6 mb-4">Microtechnique IT</h1>
                <NavigationList />
                <div className="p-4 bg-white/5"><Button className="w-full bg-red-500/20 text-red-100 hover:bg-red-500/40" onClick={logout}>Log Out</Button></div>
             </div>

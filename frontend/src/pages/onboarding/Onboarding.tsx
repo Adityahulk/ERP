@@ -37,7 +37,7 @@ export default function Onboarding() {
           leaves: quickSetup.leaves,
         },
       });
-      toast.success('All set! Welcome to BizFlow.');
+      toast.success('All set! Welcome to Microtechnique IT.');
       window.location.href = '/dashboard';
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to finalize wizard.');
