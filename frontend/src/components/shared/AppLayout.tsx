@@ -277,12 +277,15 @@ export default function AppLayout() {
 
       {/* SIDEBAR (Desktop) */}
       <aside className="hidden md:flex w-[220px] bg-[#1E1B4B] flex-col flex-shrink-0 shadow-xl z-20">
-        <div className="h-16 flex flex-col justify-center px-6 border-b border-white/10 shrink-0 select-none">
-           <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-             <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-6 w-auto brightness-0 invert" />
-             Microtechnique IT
-           </h1>
-           {user && <span className="text-[10px] text-white/50 tracking-wider truncate uppercase">G{(user as any)?.godown_id || 1} • {user.role}</span>}
+        <div className="h-20 flex flex-col justify-center px-5 border-b border-white/10 shrink-0 select-none">
+           <div className="h-9 rounded-md bg-white/5 border border-white/10 px-2 flex items-center">
+             <img
+               src="/logo-microtechnique.svg"
+               alt="Microtechnique IT"
+               className="h-7 w-full object-contain object-left brightness-0 invert"
+             />
+           </div>
+           {user && <span className="mt-1 text-[10px] text-white/50 tracking-wider truncate uppercase">G{(user as any)?.godown_id || 1} • {user.role}</span>}
         </div>
         
         <NavigationList />
@@ -305,7 +308,15 @@ export default function AppLayout() {
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
-               <h1 className="text-2xl font-bold text-white px-6 mb-4">Microtechnique IT</h1>
+               <div className="px-6 mb-4">
+                 <div className="h-10 rounded-md bg-white/5 border border-white/10 px-2 flex items-center">
+                   <img
+                     src="/logo-microtechnique.svg"
+                     alt="Microtechnique IT"
+                     className="h-8 w-full object-contain object-left brightness-0 invert"
+                   />
+                 </div>
+               </div>
                <NavigationList />
                <div className="p-4 bg-white/5"><Button className="w-full bg-red-500/20 text-red-100 hover:bg-red-500/40" onClick={logout}>Log Out</Button></div>
             </div>
