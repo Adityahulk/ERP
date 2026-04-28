@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, X, Sparkles } from 'lucide-react';
 import type { Item } from '@/types';
 import toast from 'react-hot-toast';
+import { OcrUploadButton, type OcrExtractedData } from '@/components/shared/OcrUploadButton';
 
 interface Props {
   open: boolean;
@@ -99,13 +100,48 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
 
   const isBusy = createMutation.isPending || updateMutation.isPending;
 
+  /**
+   * OCR auto-fill for items:
+   * - party_name  → item name (first prominent text line on the label/catalog)
+   * - invoice_number → SKU / product code
+   * - total_amount_paise → selling price (MRP / rate printed on document)
+   */
+  const handleItemOcr = (data: OcrExtractedData) => {
+    setForm((f: any) => ({
+      ...f,
+      ...(data.party_name ? { name: data.party_name } : {}),
+      ...(data.invoice_number ? { sku: data.invoice_number } : {}),
+      ...(data.total_amount_paise
+        ? { selling_price: Number((data.total_amount_paise / 100).toFixed(2)) }
+        : {}),
+    }));
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
-        <SheetHeader className="mb-6">
-          <SheetTitle>{isEdit ? 'Edit' : 'New'} {form.item_type === 'service' ? 'Service' : 'Product'}</SheetTitle>
-          <SheetDescription>{isEdit ? 'Update item details' : 'Add a new item to your inventory'}</SheetDescription>
+        <SheetHeader className="mb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <SheetTitle>{isEdit ? 'Edit' : 'New'} {form.item_type === 'service' ? 'Service' : 'Product'}</SheetTitle>
+              <SheetDescription>{isEdit ? 'Update item details' : 'Add a new item to your inventory'}</SheetDescription>
+            </div>
+            {!isEdit && (
+              <OcrUploadButton
+                label="Scan Label"
+                onExtracted={handleItemOcr}
+                variant="outline"
+                size="sm"
+                className="shrink-0 mt-0.5"
+              />
+            )}
+          </div>
         </SheetHeader>
+        {!isEdit && (
+          <p className="text-xs text-muted-foreground mb-4">
+            Tip: upload a product label or catalog image to auto-fill item details.
+          </p>
+        )}
 
         <Tabs defaultValue="basic" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4">
