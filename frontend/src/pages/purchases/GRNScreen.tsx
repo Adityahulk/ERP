@@ -6,52 +6,59 @@ import toast from 'react-hot-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { OcrUploadButton, type OcrExtractedData } from '@/components/shared/OcrUploadButton';
 
 export default function GRNScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
-  
+
   const [billNumber, setBillNumber] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [receivals, setReceivals] = useState<Record<string, number>>({});
 
   const { data: po, isLoading } = useQuery({
-     queryKey: ['po', id],
-     queryFn: async () => (await api.get(`/purchases/orders/${id}`)).data?.data
+    queryKey: ['po', id],
+    queryFn: async () => (await api.get(`/purchases/orders/${id}`)).data?.data,
   });
 
+  /** Called when OCR finishes — auto-fill bill number and date */
+  const handleOcrExtracted = (data: OcrExtractedData) => {
+    if (data.invoice_number) setBillNumber(data.invoice_number);
+    if (data.bill_date) setBillDate(data.bill_date);
+  };
+
   const receiveAction = useMutation({
-     mutationFn: async () => {
-       if (!po?.items?.length) {
-         toast.error('Purchase order has no lines');
-         throw new Error('No PO lines');
-       }
-       const items = Object.entries(receivals)
-         .filter(([, qty]) => Number(qty) > 0)
-         .map(([itemId, qty]) => {
-           const line = po?.items?.find((it: { id: string }) => it.id === itemId);
-           return {
-             po_item_id: itemId,
-             quantity_received: Number(qty),
-             unit_price: Number(line?.unit_price) || 0,
-             gst_rate: Number(line?.gst_rate ?? 0),
-           };
-         });
-       if (items.length === 0) {
-         toast.error('Enter at least one positive quantity to receive');
-         throw new Error('No quantities');
-       }
+    mutationFn: async () => {
+      if (!po?.items?.length) {
+        toast.error('Purchase order has no lines');
+        throw new Error('No PO lines');
+      }
+      const items = Object.entries(receivals)
+        .filter(([, qty]) => Number(qty) > 0)
+        .map(([itemId, qty]) => {
+          const line = po?.items?.find((it: { id: string }) => it.id === itemId);
+          return {
+            po_item_id: itemId,
+            quantity_received: Number(qty),
+            unit_price: Number(line?.unit_price) || 0,
+            gst_rate: Number(line?.gst_rate ?? 0),
+          };
+        });
+      if (items.length === 0) {
+        toast.error('Enter at least one positive quantity to receive');
+        throw new Error('No quantities');
+      }
       return api.post(`/purchases/orders/${id}/receive`, {
-         bill_number: billNumber,
-         bill_date: billDate,
-         items
-       });
-     },
-     onSuccess: () => {
-        toast.success('Stock Received via GRN');
-        navigate('/purchases');
-     },
-     onError: (e: any) => toast.error(e.response?.data?.error || 'GRN failed'),
+        bill_number: billNumber,
+        bill_date: billDate,
+        items,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Stock Received via GRN');
+      navigate('/purchases');
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'GRN failed'),
   });
 
   if (isLoading) return <div>Loading...</div>;
@@ -60,38 +67,73 @@ export default function GRNScreen() {
     <div className="max-w-4xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Receive Stock (GRN): {po?.po_number}</h1>
       <Card>
-         <CardContent className="p-6 space-y-6">
-             <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium">Supplier Bill Number</label>
-                  <Input value={billNumber} onChange={e => setBillNumber(e.target.value)} placeholder="e.g. INV-2023" className="mt-1" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Supplier Bill Date</label>
-                  <Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} className="mt-1" />
-                </div>
-             </div>
+        <CardContent className="p-6 space-y-6">
+          {/* Bill details with OCR scan button */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-sm">Supplier Bill Details</h3>
+              <OcrUploadButton
+                label="Scan Bill"
+                onExtracted={handleOcrExtracted}
+                variant="outline"
+                size="sm"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Upload a photo or PDF of the supplier's bill to auto-fill the fields below.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium">Supplier Bill Number</label>
+                <Input
+                  value={billNumber}
+                  onChange={e => setBillNumber(e.target.value)}
+                  placeholder="e.g. INV-2023"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Supplier Bill Date</label>
+                <Input
+                  type="date"
+                  value={billDate}
+                  onChange={e => setBillDate(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          </div>
 
-             <div className="space-y-4">
-                <h3 className="font-semibold border-b pb-2">Items Expected</h3>
-                {po?.items.map((item: any) => (
-                   <div key={item.id} className="flex gap-4 items-center">
-                      <div className="flex-1 font-medium">{item.item_name} (Ordered: {item.quantity_ordered})</div>
-                      <Input 
-                        type="number" 
-                        placeholder="Qty Receiving" 
-                        className="w-32" 
-                        value={receivals[item.id] || ''}
-                        onChange={e => setReceivals({ ...receivals, [item.id]: Number(e.target.value) })}
-                      />
-                   </div>
-                ))}
-             </div>
+          {/* Items */}
+          <div className="space-y-4">
+            <h3 className="font-semibold border-b pb-2">Items Expected</h3>
+            {po?.items.map((item: any) => (
+              <div key={item.id} className="flex gap-4 items-center">
+                <div className="flex-1 font-medium">
+                  {item.item_name}{' '}
+                  <span className="text-muted-foreground font-normal">(Ordered: {item.quantity_ordered})</span>
+                </div>
+                <Input
+                  type="number"
+                  placeholder="Qty Receiving"
+                  className="w-32"
+                  value={receivals[item.id] || ''}
+                  onChange={e =>
+                    setReceivals({ ...receivals, [item.id]: Number(e.target.value) })
+                  }
+                />
+              </div>
+            ))}
+          </div>
 
-             <Button onClick={() => receiveAction.mutate()} className="w-full" loading={receiveAction.isPending}>
-               Confirm Stock Receipt
-             </Button>
-         </CardContent>
+          <Button
+            onClick={() => receiveAction.mutate()}
+            className="w-full"
+            loading={receiveAction.isPending}
+          >
+            Confirm Stock Receipt
+          </Button>
+        </CardContent>
       </Card>
     </div>
   );

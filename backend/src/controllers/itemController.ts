@@ -622,13 +622,23 @@ export async function bulkImport(req: Request, res: Response) {
       for (const p of preview) {
         const d = p.data;
         const halfRate = d.gst_rate / 2;
+        // Use distinct params for every column — $9 gst_rate(integer) vs igst_rate(numeric)
+        // must NOT share a placeholder or PostgreSQL raises "inconsistent types" error.
         await query(
           `INSERT INTO items (company_id, name, sku, hsn_code, brand, item_type, purchase_price, selling_price,
             gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$9,$11,$12,$13)`,
-          [companyId, d.name, d.sku, d.hsn_code, d.brand, d.item_type,
-           d.purchase_price, d.selling_price, d.gst_rate, halfRate,
-           d.opening_stock, d.opening_stock * d.purchase_price, d.reorder_point]
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [
+            companyId, d.name, d.sku, d.hsn_code, d.brand, d.item_type,
+            d.purchase_price, d.selling_price,
+            d.gst_rate,   // $9  → gst_rate integer
+            halfRate,     // $10 → cgst_rate numeric(5,2)
+            halfRate,     // $11 → sgst_rate numeric(5,2)
+            d.gst_rate,   // $12 → igst_rate numeric(5,2)  (separate param from $9)
+            d.opening_stock,                          // $13
+            d.opening_stock * d.purchase_price,       // $14
+            d.reorder_point,                          // $15
+          ]
         );
         inserted++;
       }

@@ -26,6 +26,7 @@ import searchRoutes from './search';
 import bomRoutes from './bom';
 import wholesaleRoutes from './wholesale';
 import jobWorkRoutes from './jobWork';
+import ocrRoutes from './ocr';
 
 const router = Router();
 
@@ -57,6 +58,7 @@ router.use('/search', searchRoutes);
 router.use('/bom', bomRoutes);
 router.use('/wholesale', wholesaleRoutes);
 router.use('/job-work', jobWorkRoutes);
+router.use('/ocr', ocrRoutes);
 
 // API info
 router.get('/', (_req, res) => {

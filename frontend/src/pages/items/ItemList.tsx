@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import api, { getApiBaseURL } from '@/lib/api';
+import api from '@/lib/api';
 import {
   useCreateItemCategory,
   useCreateItemUnit,
@@ -148,6 +148,20 @@ export default function ItemList() {
 
   const handleImportClick = () => fileInputRef.current?.click();
 
+  const downloadTemplate = async () => {
+    try {
+      const res = await api.get('/items/import-template', { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'bizflow_item_import_template.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Could not download template. Please try again.');
+    }
+  };
+
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -213,7 +227,7 @@ export default function ItemList() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.open(`${getApiBaseURL()}/items/import-template`, '_blank')}>
+          <Button variant="outline" size="sm" onClick={downloadTemplate}>
             <Download className="w-4 h-4 mr-1" />
             Template
           </Button>
