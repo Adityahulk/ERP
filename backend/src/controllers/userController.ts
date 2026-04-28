@@ -55,13 +55,32 @@ export async function createUser(req: Request, res: Response) {
 
     const hash = await bcrypt.hash(password, 12);
     const result = await query(
-      `INSERT INTO users (company_id, name, email, phone, password_hash, role) 
+      `INSERT INTO users (company_id, name, email, phone, password_hash, role)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, phone, role, is_active, created_at`,
       [companyId, name, email?.toLowerCase(), phone, hash, role || 'staff']
     );
 
-    await logAction(req.user!.id, companyId, 'create', 'user', result.rows[0].id, null, { name, email, role }, req.ip);
-    res.status(201).json(success(result.rows[0]));
+    const newUser = result.rows[0];
+
+    // Auto-create an employee profile for every non-admin user so HR attendance
+    // and leave tracking work immediately — no manual HR setup required.
+    const nonAdminRoles = ['staff', 'cashier', 'manager', 'accountant', 'warehouse', 'sales', 'purchase'];
+    if (nonAdminRoles.includes(newUser.role)) {
+      const countRes = await query(
+        'SELECT COUNT(*) FROM employee_profiles WHERE company_id = $1', [companyId]
+      );
+      const empNum = parseInt(countRes.rows[0].count) + 1;
+      const empCode = `EMP-${String(empNum).padStart(4, '0')}`;
+      await query(
+        `INSERT INTO employee_profiles (company_id, user_id, employee_code, joining_date)
+         VALUES ($1, $2, $3, CURRENT_DATE)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [companyId, newUser.id, empCode]
+      );
+    }
+
+    await logAction(req.user!.id, companyId, 'create', 'user', newUser.id, null, { name, email, role }, req.ip);
+    res.status(201).json(success(newUser));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
@@ -96,6 +115,46 @@ export async function updateUser(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'update', 'user', id, existing.rows[0], result.rows[0], req.ip);
     res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── POST /api/users/sync-employee-profiles ────────────────────
+// Backfill: auto-create employee_profile rows for every active non-admin user
+// that doesn't already have one. Safe to call multiple times (ON CONFLICT DO NOTHING).
+export async function syncEmployeeProfiles(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const nonAdminRoles = ['staff', 'cashier', 'manager', 'accountant', 'warehouse', 'sales', 'purchase'];
+
+    const usersRes = await query(
+      `SELECT u.id, u.role
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       WHERE u.company_id = $1
+         AND u.is_deleted = false
+         AND u.is_active = true
+         AND u.role = ANY($2::text[])
+         AND ep.id IS NULL`,
+      [companyId, nonAdminRoles]
+    );
+
+    let created = 0;
+    for (const u of usersRes.rows) {
+      const countRes = await query(
+        'SELECT COUNT(*) FROM employee_profiles WHERE company_id = $1', [companyId]
+      );
+      const empNum = parseInt(countRes.rows[0].count) + 1;
+      const empCode = `EMP-${String(empNum).padStart(4, '0')}`;
+      await query(
+        `INSERT INTO employee_profiles (company_id, user_id, employee_code, joining_date)
+         VALUES ($1, $2, $3, CURRENT_DATE)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [companyId, u.id, empCode]
+      );
+      created++;
+    }
+
+    res.json(success({ synced: created, message: `${created} employee profile(s) created` }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 

@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, ScanLine, Trash2, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 
 type PoLine = {
   item_id: string;
@@ -48,6 +49,7 @@ export default function PurchaseOrderForm() {
   const [lines, setLines] = useState<PoLine[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+  const [ocrOpen, setOcrOpen] = useState(false);
 
   const defaultGodown = useMemo(() => {
     const def = godowns.find((g: any) => g.is_default);
@@ -132,16 +134,45 @@ export default function PurchaseOrderForm() {
     setQuickAddOpen(true);
   };
 
+  /**
+   * OCR confirmed from supplier quotation / pro-forma invoice:
+   * - party_name  → search for / seed the supplier select
+   * - bill_date   → set as expected date
+   * We can't auto-select supplier from name alone, so we toast a hint.
+   */
+  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
+    if (data.bill_date) setExpectedDate(data.bill_date);
+    if (data.party_name) {
+      // Find a matching supplier by name (case-insensitive substring)
+      const match = suppliers.find((s: any) =>
+        s.name?.toLowerCase().includes(data.party_name!.toLowerCase())
+      );
+      if (match) {
+        setPartyId(match.id);
+        toast.success(`Supplier matched: ${match.name}`);
+      } else {
+        toast(`Supplier "${data.party_name}" not found — add them or select manually`, { icon: '⚠️' });
+        openQuickAddSupplier(data.party_name ?? '');
+      }
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">New purchase order</h1>
-          <p className="text-sm text-muted-foreground">Choose supplier, godown, and stock lines (same as after seed).</p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold">New Purchase Order</h1>
+            <p className="text-sm text-muted-foreground">Choose supplier, godown, and stock lines.</p>
+          </div>
         </div>
+        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
+          <ScanLine className="w-4 h-4" />
+          Scan Supplier Quote
+        </Button>
       </div>
 
       <Card>
@@ -340,6 +371,13 @@ export default function PurchaseOrderForm() {
         partyType="supplier"
         defaultName={quickAddDefaultName}
         onCreated={onSupplierCreated}
+      />
+
+      <OcrBillSheet
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        context="Supplier Quotation / Invoice"
+        onConfirm={handleOcrConfirm}
       />
     </div>
   );

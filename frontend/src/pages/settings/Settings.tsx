@@ -528,7 +528,25 @@ export default function Settings() {
                   <CardContent className="p-6">
                      <div className="flex justify-between items-center mb-6">
                         <h2 className="text-xl font-bold">Users & Roles</h2>
-                        <Button className="gap-2" onClick={() => setEditingUserId('new')}><Users className="w-4 h-4"/> Invite User</Button>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const r = await api.post('/users/sync-employee-profiles');
+                                const msg = r.data?.data?.message ?? 'Sync done';
+                                toast.success(msg);
+                                qc.invalidateQueries({ queryKey: ['settings-users'] });
+                              } catch (e: any) {
+                                toast.error(e.response?.data?.error ?? 'Sync failed');
+                              }
+                            }}
+                          >
+                            Sync Employees to HR
+                          </Button>
+                          <Button className="gap-2" onClick={() => setEditingUserId('new')}><Users className="w-4 h-4"/> Invite User</Button>
+                        </div>
                      </div>
                      {editingUserId === 'new' && (
                         <div className="mb-4 rounded-lg border p-4 grid md:grid-cols-5 gap-3">

@@ -23,7 +23,7 @@ const navGroups = [
      label: 'PRODUCTION',
      items: [
         { to: '/items', icon: Package, label: 'Items & Materials' },
-        { to: '/production', icon: Factory, label: 'BOM & Production' },
+        { to: '/production', icon: Factory, label: 'Raw Materials & Production' },
         { to: '/inventory', icon: Warehouse, label: 'Inventory & Stock' },
      ]
   },

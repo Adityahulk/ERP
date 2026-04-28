@@ -6,7 +6,8 @@ import toast from 'react-hot-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { OcrUploadButton, type OcrExtractedData } from '@/components/shared/OcrUploadButton';
+import { ScanLine } from 'lucide-react';
+import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 
 export default function GRNScreen() {
   const { id } = useParams();
@@ -15,16 +16,18 @@ export default function GRNScreen() {
   const [billNumber, setBillNumber] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [receivals, setReceivals] = useState<Record<string, number>>({});
+  const [ocrOpen, setOcrOpen] = useState(false);
 
   const { data: po, isLoading } = useQuery({
     queryKey: ['po', id],
     queryFn: async () => (await api.get(`/purchases/orders/${id}`)).data?.data,
   });
 
-  /** Called when OCR finishes — auto-fill bill number and date */
-  const handleOcrExtracted = (data: OcrExtractedData) => {
+  /** OCR confirmed → apply bill number and date */
+  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.invoice_number) setBillNumber(data.invoice_number);
     if (data.bill_date) setBillDate(data.bill_date);
+    toast.success('Bill details applied — verify and confirm receipt');
   };
 
   const receiveAction = useMutation({
@@ -61,26 +64,33 @@ export default function GRNScreen() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'GRN failed'),
   });
 
-  if (isLoading) return <div>Loading...</div>;
+  if (isLoading) return <div>Loading…</div>;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Receive Stock (GRN): {po?.po_number}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Receive Stock (GRN): {po?.po_number}</h1>
+      </div>
+
       <Card>
         <CardContent className="p-6 space-y-6">
-          {/* Bill details with OCR scan button */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-sm">Supplier Bill Details</h3>
-              <OcrUploadButton
-                label="Scan Bill"
-                onExtracted={handleOcrExtracted}
+          {/* Supplier Bill Details */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Supplier Bill Details</h3>
+              <Button
+                type="button"
                 variant="outline"
                 size="sm"
-              />
+                className="gap-1.5"
+                onClick={() => setOcrOpen(true)}
+              >
+                <ScanLine className="w-4 h-4" />
+                Scan Bill
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              Upload a photo or PDF of the supplier's bill to auto-fill the fields below.
+            <p className="text-xs text-muted-foreground">
+              Upload a photo or PDF of the supplier's bill to auto-fill the number and date below.
             </p>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
@@ -88,7 +98,7 @@ export default function GRNScreen() {
                 <Input
                   value={billNumber}
                   onChange={e => setBillNumber(e.target.value)}
-                  placeholder="e.g. INV-2023"
+                  placeholder="e.g. INV-2024-001"
                   className="mt-1"
                 />
               </div>
@@ -107,11 +117,13 @@ export default function GRNScreen() {
           {/* Items */}
           <div className="space-y-4">
             <h3 className="font-semibold border-b pb-2">Items Expected</h3>
-            {po?.items.map((item: any) => (
+            {po?.items?.map((item: any) => (
               <div key={item.id} className="flex gap-4 items-center">
                 <div className="flex-1 font-medium">
                   {item.item_name}{' '}
-                  <span className="text-muted-foreground font-normal">(Ordered: {item.quantity_ordered})</span>
+                  <span className="text-muted-foreground font-normal text-sm">
+                    (Ordered: {item.quantity_ordered})
+                  </span>
                 </div>
                 <Input
                   type="number"
@@ -135,6 +147,13 @@ export default function GRNScreen() {
           </Button>
         </CardContent>
       </Card>
+
+      <OcrBillSheet
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        context="Purchase Bill"
+        onConfirm={handleOcrConfirm}
+      />
     </div>
   );
 }

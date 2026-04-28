@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search, Eye, UserPlus } from 'lucide-react';
+import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine } from 'lucide-react';
 import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -44,6 +45,18 @@ export default function InvoiceCreate() {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
   const [partySearchLoading, setPartySearchLoading] = useState(false);
+  const [ocrOpen, setOcrOpen] = useState(false);
+
+  /** OCR confirmed from a customer PO / incoming bill → pre-fill invoice fields */
+  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
+    if (data.bill_date) setInvoiceDate(data.bill_date);
+    if (data.party_name) {
+      // Seed party search so the user can pick or quick-add the customer
+      setPartySearch(data.party_name);
+      searchParties(data.party_name);
+    }
+    toast.success('Invoice details applied — select the customer and verify');
+  };
 
   const clearPartySelection = () => {
     setPartyId('');
@@ -187,9 +200,15 @@ export default function InvoiceCreate() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}><ArrowLeft className="w-5 h-5" /></Button>
-        <div><h1 className="text-2xl font-bold">New Sale Invoice</h1></div>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}><ArrowLeft className="w-5 h-5" /></Button>
+          <div><h1 className="text-2xl font-bold">New Sale Invoice</h1></div>
+        </div>
+        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
+          <ScanLine className="w-4 h-4" />
+          Scan Customer Bill
+        </Button>
       </div>
 
       {/* Party & Details */}
@@ -399,6 +418,13 @@ export default function InvoiceCreate() {
         partyType="customer"
         defaultName={quickAddDefaultName}
         onCreated={(row) => selectParty(row)}
+      />
+
+      <OcrBillSheet
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        context="Customer Invoice / Purchase Order"
+        onConfirm={handleOcrConfirm}
       />
     </div>
   );
