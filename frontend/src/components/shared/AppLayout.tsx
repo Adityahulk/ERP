@@ -278,12 +278,14 @@ export default function AppLayout() {
       {/* SIDEBAR (Desktop) */}
       <aside className="hidden md:flex w-[220px] bg-[#1E1B4B] flex-col flex-shrink-0 shadow-xl z-20">
         <div className="h-20 flex flex-col justify-center px-5 border-b border-white/10 shrink-0 select-none">
-           <div className="h-9 rounded-md bg-white/5 border border-white/10 px-2 flex items-center">
-             <img
-               src="/logo-microtechnique.svg"
-               alt="Microtechnique IT"
-               className="h-7 w-full object-contain object-left brightness-0 invert"
-             />
+           <div className="flex items-center gap-2">
+             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md">
+               M
+             </div>
+             <div className="leading-tight min-w-0">
+               <p className="text-sm font-semibold text-white truncate">Microtechnique</p>
+               <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
+             </div>
            </div>
            {user && <span className="mt-1 text-[10px] text-white/50 tracking-wider truncate uppercase">G{(user as any)?.godown_id || 1} • {user.role}</span>}
         </div>
@@ -308,13 +310,13 @@ export default function AppLayout() {
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
-               <div className="px-6 mb-4">
-                 <div className="h-10 rounded-md bg-white/5 border border-white/10 px-2 flex items-center">
-                   <img
-                     src="/logo-microtechnique.svg"
-                     alt="Microtechnique IT"
-                     className="h-8 w-full object-contain object-left brightness-0 invert"
-                   />
+               <div className="px-6 mb-4 flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-sm font-black shadow-md">
+                   M
+                 </div>
+                 <div className="leading-tight min-w-0">
+                   <p className="text-sm font-semibold text-white truncate">Microtechnique</p>
+                   <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
                  </div>
                </div>
                <NavigationList />

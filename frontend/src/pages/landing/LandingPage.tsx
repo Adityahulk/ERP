@@ -123,11 +123,13 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <img
-              src="/logo-microtechnique.svg"
-              alt="Microtechnique IT"
-              className="h-14 w-auto"
-            />
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shadow-sm">
+              M
+            </div>
+            <div className="leading-tight">
+              <p className="text-base font-semibold text-slate-900">Microtechnique</p>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-violet-700 font-semibold">IT</p>
+            </div>
           </div>
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
@@ -400,11 +402,15 @@ export default function LandingPage() {
       <footer className="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
-            <img
-              src="/logo-microtechnique.svg"
-              alt="Microtechnique IT"
-              className="h-14 mb-6 brightness-0 invert"
-            />
+            <div className="mb-6 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black">
+                M
+              </div>
+              <div className="leading-tight">
+                <p className="text-base font-semibold text-white">Microtechnique</p>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-violet-300 font-semibold">IT</p>
+              </div>
+            </div>
             <p className="mb-6 max-w-sm">
               India's all-in-one ERP for retail, wholesale, service, and
               manufacturing businesses. Simplify operations and scale faster.
