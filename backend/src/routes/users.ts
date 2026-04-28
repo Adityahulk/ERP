@@ -18,6 +18,7 @@ const createSchema = z.object({
 
 router.get('/', requireMinRole('manager'), ctrl.listUsers);
 router.post('/', requireMinRole('company_admin'), validateBody(createSchema), ctrl.createUser);
+router.post('/sync-employee-profiles', requireMinRole('company_admin'), ctrl.syncEmployeeProfiles);
 router.patch('/:id', requireMinRole('company_admin'), ctrl.updateUser);
 router.delete('/:id', requireMinRole('company_admin'), ctrl.deleteUser);
 
