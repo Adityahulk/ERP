@@ -437,7 +437,7 @@ export default function LandingPage() {
                 <Phone className="w-5 h-5 mt-0.5 text-[#420662]" />
                 <span>+91 93907 54255</span>
               </li>
-              <li>support@mavidyagroup.in</li>
+              <li>support@microtechnique.in</li>
               <li>New Delhi, India</li>
             </ul>
           </div>
