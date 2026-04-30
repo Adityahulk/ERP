@@ -7,7 +7,7 @@ import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Factory, Truck, Tag, Wrench, Users, ArrowDownLeft, RotateCcw
+  Wrench, Users, ArrowDownLeft, RotateCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -20,18 +20,10 @@ const navGroups = [
      items: [ { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' } ]
   },
   {
-     label: 'PRODUCTION',
+     label: 'INVENTORY',
      items: [
         { to: '/items', icon: Package, label: 'Items & Materials' },
-        { to: '/production', icon: Factory, label: 'Raw Materials & Production' },
-        { to: '/inventory', icon: Warehouse, label: 'Inventory & Stock' },
-     ]
-  },
-  {
-     label: 'WHOLESALE',
-     items: [
-        { to: '/wholesale', icon: Truck, label: 'Wholesale Orders' },
-        { to: '/wholesale/pricing', icon: Tag, label: 'Pricing Tiers' },
+        { to: '/inventory', icon: Warehouse, label: 'Stock & Godowns' },
      ]
   },
   {
@@ -76,7 +68,10 @@ const navGroups = [
   },
   {
      label: 'PEOPLE',
-     items: [ { to: '/attendance', icon: UserCheck, label: 'Attendance & HR' } ]
+     items: [
+        { to: '/hr/employees', icon: Users, label: 'Employees' },
+        { to: '/attendance', icon: UserCheck, label: 'Attendance & HR' },
+     ]
   },
   {
      label: 'SYSTEM',

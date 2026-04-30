@@ -28,14 +28,9 @@ import LandingPage from '@/pages/landing/LandingPage';
 import PartyList from '@/pages/parties/PartyList';
 import PartyDetail from '@/pages/parties/PartyDetail';
 import PurchaseExpenseHub from '@/pages/purchase-expense/PurchaseExpenseHub';
+import EmployeeListPage from '@/pages/hr/EmployeeListPage';
+import EmployeeDetailPage from '@/pages/hr/EmployeeDetailPage';
 
-// Manufacturing modules
-import BOMList from '@/pages/production/BOMList';
-import BOMForm from '@/pages/production/BOMForm';
-import WholesaleOrderList from '@/pages/wholesale/WholesaleOrderList';
-import WholesaleOrderForm from '@/pages/wholesale/WholesaleOrderForm';
-import WholesaleOrderDetail from '@/pages/wholesale/WholesaleOrderDetail';
-import WholesalePriceTiers from '@/pages/wholesale/WholesalePriceTiers';
 import JobWorkChallanList from '@/pages/jobwork/JobWorkChallanList';
 import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
 import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
@@ -174,17 +169,8 @@ export default function App() {
         {/* HR & Attendance */}
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/profile" element={<ProfilePage />} />
-
-        {/* Production / BOM */}
-        <Route path="/production" element={<BOMList />} />
-        <Route path="/production/new" element={<BOMForm />} />
-        <Route path="/production/:id" element={<BOMForm />} />
-
-        {/* Wholesale */}
-        <Route path="/wholesale" element={<WholesaleOrderList />} />
-        <Route path="/wholesale/new" element={<WholesaleOrderForm />} />
-        <Route path="/wholesale/pricing" element={<WholesalePriceTiers />} />
-        <Route path="/wholesale/:id" element={<WholesaleOrderDetail />} />
+        <Route path="/hr/employees" element={<EmployeeListPage />} />
+        <Route path="/hr/employees/:userId" element={<EmployeeDetailPage />} />
 
         {/* Job Work */}
         <Route path="/job-work" element={<JobWorkChallanList />} />
