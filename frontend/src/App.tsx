@@ -11,13 +11,10 @@ import StockAdjustment from '@/pages/inventory/StockAdjustment';
 import InvoiceList from '@/pages/sales/InvoiceList';
 import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
-import PurchaseOrderList from '@/pages/purchases/PurchaseOrderList';
-import PurchaseOrderForm from '@/pages/purchases/PurchaseOrderForm';
 import GRNScreen from '@/pages/purchases/GRNScreen';
 import QuotationList from '@/pages/quotations/QuotationList';
 import QuotationForm from '@/pages/quotations/QuotationForm';
 import QuotationDetail from '@/pages/quotations/QuotationDetail';
-import ExpenseList from '@/pages/expenses/ExpenseList';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
 import AttendancePage from '@/pages/hr/AttendancePage';
 import ProfilePage from '@/pages/hr/ProfilePage';
@@ -30,6 +27,7 @@ import LandingPage from '@/pages/landing/LandingPage';
 
 import PartyList from '@/pages/parties/PartyList';
 import PartyDetail from '@/pages/parties/PartyDetail';
+import PurchaseExpenseHub from '@/pages/purchase-expense/PurchaseExpenseHub';
 
 // Manufacturing modules
 import BOMList from '@/pages/production/BOMList';
@@ -160,13 +158,15 @@ export default function App() {
         <Route path="/quotations/new" element={<QuotationForm />} />
         <Route path="/quotations/:id" element={<QuotationDetail />} />
 
-        {/* Purchases */}
-        <Route path="/purchases" element={<PurchaseOrderList />} />
-        <Route path="/purchases/new" element={<PurchaseOrderForm />} />
-        <Route path="/purchases/:id/receive" element={<GRNScreen />} />
+        {/* Purchase & Expense Hub */}
+        <Route path="/purchase-expense" element={<Navigate to="/purchase-expense/bills" replace />} />
+        <Route path="/purchase-expense/:tab" element={<PurchaseExpenseHub />} />
 
-        {/* Expenses */}
-        <Route path="/expenses" element={<ExpenseList />} />
+        {/* Legacy redirects */}
+        <Route path="/purchases" element={<Navigate to="/purchase-expense/orders" replace />} />
+        <Route path="/purchases/new" element={<Navigate to="/purchase-expense/orders" replace />} />
+        <Route path="/purchases/:id/receive" element={<GRNScreen />} />
+        <Route path="/expenses" element={<Navigate to="/purchase-expense/expenses" replace />} />
         {/* Reports & Accounting */}
         <Route path="/reports" element={<ReportsHome />} />
         <Route path="/gst-filing" element={<GSTDashboard />} />

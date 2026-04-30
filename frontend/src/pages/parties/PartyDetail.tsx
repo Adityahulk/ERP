@@ -83,9 +83,14 @@ export default function PartyDetail() {
 
   const openWhatsApp = () => {
     if (!party?.phone) { toast.error('No phone number on file'); return; }
-    const phone = String(party.phone).replace(/\D/g, '');
+    // Strip all non-digits
+    let digits = String(party.phone).replace(/\D/g, '');
+    // If already starts with 91 and is 12 digits, use as-is; otherwise prepend 91 (India)
+    if (digits.length === 10) digits = `91${digits}`;
+    else if (digits.length === 11 && digits.startsWith('0')) digits = `91${digits.slice(1)}`;
+    // If still not valid (not 12 digits starting with 91), try opening with just the number
     const msg = encodeURIComponent(`Hello ${party.name},`);
-    window.open(`https://wa.me/91${phone}?text=${msg}`, '_blank');
+    window.open(`https://wa.me/${digits}?text=${msg}`, '_blank', 'noopener,noreferrer');
   };
 
   if (isLoading) {

@@ -14,6 +14,7 @@ router.post('/orders/:id/cancel', ctrl.cancelPurchaseOrder);
 router.post('/orders/:id/receive', ctrl.receiveStock);
 
 router.get('/invoices', ctrl.listPurchaseInvoices);
+router.post('/invoices', ctrl.createPurchaseInvoiceDirect);
 router.get('/invoices/:id', ctrl.getPurchaseInvoice);
 router.post('/invoices/:id/payment', ctrl.payPurchaseInvoice);
 router.get('/invoices/:id/pdf', ctrl.getPurchaseInvoicePDF);

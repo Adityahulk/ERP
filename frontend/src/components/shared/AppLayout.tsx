@@ -7,7 +7,7 @@ import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Factory, Truck, Tag, Wrench, Users
+  Factory, Truck, Tag, Wrench, Users, ArrowDownLeft, RotateCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -47,18 +47,26 @@ const navGroups = [
      ]
   },
   {
-     label: 'SALES & PURCHASE',
+     label: 'SALES',
      items: [
         { to: '/sales', icon: FileText, label: 'Sales & Invoices' },
         { to: '/quotations', icon: ClipboardList, label: 'Quotations' },
-        { to: '/purchases', icon: ShoppingBag, label: 'Purchase & GRN' },
         { to: '/billing', icon: ShoppingBag, label: 'POS Billing' },
+     ]
+  },
+  {
+     label: 'PURCHASE & EXPENSE',
+     items: [
+        { to: '/purchase-expense/bills', icon: FileText, label: 'Purchase Bills' },
+        { to: '/purchase-expense/orders', icon: ClipboardList, label: 'Purchase Orders' },
+        { to: '/purchase-expense/payment-out', icon: ArrowDownLeft, label: 'Payment-Out' },
+        { to: '/purchase-expense/expenses', icon: Receipt, label: 'Expenses' },
+        { to: '/purchase-expense/returns', icon: RotateCcw, label: 'Purchase Return' },
      ]
   },
   {
      label: 'FINANCE',
      items: [
-        { to: '/expenses', icon: Receipt, label: 'Expenses' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },
      ]
   },

@@ -414,18 +414,146 @@ export async function receiveStock(req: Request, res: Response) {
   }
 }
 
+// ── CREATE Purchase Invoice directly (without PO) ─────────────
+export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body;
+    if (!d.party_id) return res.status(400).json(error('party_id is required'));
+    if (!d.bill_date) return res.status(400).json(error('bill_date is required'));
+    if (!Array.isArray(d.items) || d.items.length === 0) return res.status(400).json(error('items are required'));
+
+    const result = await withTransaction(async (client) => {
+      // Auto-generate bill number if not provided
+      let billNumber = d.bill_number?.trim();
+      if (!billNumber) {
+        const cntRes = await client.query(
+          `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
+          [companyId],
+        );
+        const seq = parseInt(cntRes.rows[0].count) + 1;
+        const yr = new Date().getFullYear().toString().slice(-2);
+        billNumber = `BILL/${yr}/${String(seq).padStart(4, '0')}`;
+      }
+
+      const pRes = await client.query('SELECT state_code FROM parties WHERE id = $1', [d.party_id]);
+      if (!pRes.rows.length) throw new Error('Party not found');
+      const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+      const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const isGst = d.is_gst_invoice !== false;
+
+      const itemsForTotals = d.items.map((it: any) => ({
+        unit_price: Number(it.unit_price) || 0,
+        quantity: Number(it.quantity) || 0,
+        gst_rate: isGst ? Number(it.gst_rate) || 0 : 0,
+        discount_type: 'none' as const,
+        discount_value: 0,
+      }));
+      const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
+
+      const invRes = await client.query(
+        `INSERT INTO purchase_invoices (
+          company_id, godown_id, bill_number, bill_date, po_id, party_id,
+          subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+          paid_amount, payment_status, status, notes, created_by, is_gst_invoice
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,'unpaid','received',$14,$15,$16) RETURNING *`,
+        [
+          companyId, d.godown_id || null, billNumber, d.bill_date,
+          d.po_id || null, d.party_id,
+          totals.subtotal, 0, totals.totalTaxable,
+          totals.totalCgst, totals.totalSgst, totals.totalIgst, totals.totalAmount,
+          d.notes || null, req.user!.id, isGst,
+        ],
+      );
+      const inv = invRes.rows[0];
+
+      for (const item of d.items) {
+        const lineTotals = calculateInvoiceTotals(
+          [{ unit_price: Number(item.unit_price)||0, quantity: Number(item.quantity)||0, gst_rate: isGst ? Number(item.gst_rate)||0 : 0, discount_type: 'none' as const, discount_value: 0 }],
+          gstType, 'none', 0,
+        );
+        await client.query(
+          `INSERT INTO purchase_invoice_items (
+            purchase_invoice_id, item_id, item_name, hsn_code, unit, quantity, unit_price,
+            gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            inv.id, item.item_id || null, item.item_name || 'Item',
+            item.hsn_code || null, item.unit || 'PCS',
+            Number(item.quantity)||0, Number(item.unit_price)||0,
+            isGst ? Number(item.gst_rate)||0 : 0,
+            lineTotals.totalCgst, lineTotals.totalSgst, lineTotals.totalIgst, lineTotals.totalAmount,
+          ],
+        );
+
+        // Update stock if item tracked and godown provided
+        if (item.item_id && d.godown_id) {
+          await client.query(
+            `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (item_id, godown_id) DO UPDATE SET
+               quantity = item_stock.quantity + EXCLUDED.quantity,
+               avg_cost_price = CASE WHEN item_stock.quantity + EXCLUDED.quantity > 0
+                 THEN ROUND(((item_stock.quantity * item_stock.avg_cost_price) + (EXCLUDED.quantity * EXCLUDED.avg_cost_price)) / (item_stock.quantity + EXCLUDED.quantity))
+                 ELSE EXCLUDED.avg_cost_price END`,
+            [companyId, item.item_id, d.godown_id, Number(item.quantity)||0, Number(item.unit_price)||0],
+          );
+        }
+      }
+
+      // Update party ledger (purchase increases payable = decreases balance)
+      await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2', [totals.totalAmount, d.party_id]);
+      const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
+      await client.query(
+        `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+         VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
+        [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, inv.id, `Purchase Bill ${billNumber}`, req.user!.id],
+      );
+
+      return inv;
+    });
+
+    await logAction(req.user!.id, companyId, 'create', 'purchase_invoice', result.id);
+    res.status(201).json(success(result));
+  } catch (err: any) {
+    console.error('createPurchaseInvoiceDirect error:', err.message);
+    res.status(500).json(error(err.message));
+  }
+}
+
 // ── GET Invoices ──────────────────────────────────────────────
 export async function listPurchaseInvoices(req: Request, res: Response) {
   try {
+    const companyId = req.user!.company_id;
     const { page, limit, offset } = parsePagination(req.query);
-    const countRes = await query('SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND is_deleted = false', [req.user!.company_id]);
+    const { payment_status, party_id, search } = req.query;
+
+    let where = 'pi.company_id = $1 AND pi.is_deleted = false';
+    const params: any[] = [companyId];
+    let idx = 2;
+    if (payment_status) { where += ` AND pi.payment_status = $${idx++}`; params.push(payment_status); }
+    if (party_id) { where += ` AND pi.party_id = $${idx++}`; params.push(party_id); }
+    if (search) { where += ` AND (pi.bill_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
+
+    const countRes = await query(`SELECT COUNT(*) FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id WHERE ${where}`, params);
     const result = await query(
-      `SELECT pi.*, p.name as party_name FROM purchase_invoices pi
-       LEFT JOIN parties p ON pi.party_id = p.id
-       WHERE pi.company_id = $1 AND pi.is_deleted = false
-       ORDER BY pi.bill_date DESC LIMIT $2 OFFSET $3`, [req.user!.company_id, limit, offset]
+      `SELECT pi.*, p.name as party_name, p.phone as party_phone
+       FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id
+       WHERE ${where} ORDER BY pi.bill_date DESC LIMIT $${idx} OFFSET $${idx+1}`,
+      [...params, limit, offset],
     );
-    res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit)));
+
+    // Stats
+    const statsRes = await query(
+      `SELECT
+         COALESCE(SUM(total_amount),0) as total_amount,
+         COALESCE(SUM(paid_amount),0) as total_paid,
+         COALESCE(SUM(total_amount - paid_amount),0) as total_unpaid
+       FROM purchase_invoices WHERE company_id = $1 AND is_deleted = false`,
+      [companyId],
+    );
+
+    res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit), statsRes.rows[0]));
   } catch(err: any) { res.status(500).json(error(err.message)); }
 }
 
