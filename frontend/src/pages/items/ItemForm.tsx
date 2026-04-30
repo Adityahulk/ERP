@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCreateItem, useUpdateItem, useItemCategories, useItemUnits } from '@/hooks/useItems';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import api from '@/lib/api';
 
 
 import { Plus, X, Sparkles } from 'lucide-react';
@@ -29,6 +31,7 @@ const ITEM_TYPES = [
 ];
 
 export default function ItemForm({ open, onOpenChange, item }: Props) {
+  const qc = useQueryClient();
   const isEdit = !!item;
   const createMutation = useCreateItem();
   const updateMutation = useUpdateItem();
@@ -41,6 +44,19 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
   const [customFields, setCustomFields] = useState<Array<{ key: string; value: string }>>([]);
   const [newFieldKey, setNewFieldKey] = useState('');
   const [newFieldValue, setNewFieldValue] = useState('');
+  const [showWholesalePricing, setShowWholesalePricing] = useState(false);
+  const [wholesaleTiers, setWholesaleTiers] = useState<Array<{ tier_name: string; min_quantity: number; price: number }>>([]);
+
+  const { data: existingWholesaleTiers } = useQuery({
+    queryKey: ['item-wholesale-tiers', item?.id],
+    enabled: !!item?.id && open,
+    queryFn: () =>
+      api.get('/wholesale/price-tiers', { params: { item_id: item?.id } }).then((r) => r.data?.data ?? []),
+  });
+
+  const saveWholesaleTiers = useMutation({
+    mutationFn: (payload: any) => api.post('/wholesale/price-tiers', payload).then((r) => r.data),
+  });
 
   useEffect(() => {
     if (item) {
@@ -55,11 +71,26 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
       });
       const cf = item.custom_fields ? Object.entries(item.custom_fields).map(([k, v]) => ({ key: k, value: String(v) })) : [];
       setCustomFields(cf);
+      setShowWholesalePricing(false);
     } else {
       setForm({ name: '', item_type: 'product', gst_rate: 18, tax_preference: 'taxable', track_inventory: true, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, reorder_point: 0 });
       setCustomFields([]);
+      setShowWholesalePricing(false);
+      setWholesaleTiers([]);
     }
   }, [item, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!existingWholesaleTiers || !Array.isArray(existingWholesaleTiers)) return;
+    setWholesaleTiers(
+      existingWholesaleTiers.map((t: any) => ({
+        tier_name: t.tier_name || '',
+        min_quantity: Number(t.min_quantity || 1),
+        price: Number(t.price || 0),
+      }))
+    );
+  }, [existingWholesaleTiers, open]);
 
   const update = (field: string, value: any) => setForm((f: any) => ({ ...f, [field]: value }));
 
@@ -81,12 +112,23 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
     }
 
     try {
+      let itemId = item?.id;
       if (isEdit) {
         await updateMutation.mutateAsync({ id: item!.id, data });
         toast.success('Item updated');
       } else {
-        await createMutation.mutateAsync(data);
+        const created = await createMutation.mutateAsync(data);
+        itemId = created?.data?.id || created?.id;
         toast.success('Item created');
+      }
+
+      const validWholesaleTiers = wholesaleTiers.filter((t) => t.min_quantity > 0 && t.price >= 0);
+      if (itemId && validWholesaleTiers.length > 0) {
+        await saveWholesaleTiers.mutateAsync({
+          item_id: itemId,
+          tiers: validWholesaleTiers,
+        });
+        qc.invalidateQueries({ queryKey: ['price-tiers', itemId] });
       }
       onOpenChange(false);
     } catch (e: any) { toast.error(e.response?.data?.error || 'Failed to save'); }
@@ -98,7 +140,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
     setNewFieldKey(''); setNewFieldValue('');
   };
 
-  const isBusy = createMutation.isPending || updateMutation.isPending;
+  const isBusy = createMutation.isPending || updateMutation.isPending || saveWholesaleTiers.isPending;
 
   /**
    * OCR auto-fill for items:
@@ -224,6 +266,92 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                 <option value="taxable">Taxable</option><option value="exempt">Exempt</option>
                 <option value="nil_rated">Nil Rated</option><option value="non_gst">Non-GST</option>
               </select>
+            </div>
+            <div className="pt-2 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const nextShow = !showWholesalePricing;
+                  setShowWholesalePricing(nextShow);
+                  if (nextShow && wholesaleTiers.length === 0) {
+                    setWholesaleTiers([{ tier_name: '', min_quantity: 10, price: Math.round((form.selling_price || 0) * 100) }]);
+                  }
+                }}
+              >
+                Add Wholesale Pricing
+              </Button>
+              {showWholesalePricing && (
+                <div className="mt-3 space-y-2 rounded-md border p-3">
+                  {wholesaleTiers.map((tier, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-4">
+                        <Label className="text-xs">Tier name</Label>
+                        <Input
+                          value={tier.tier_name}
+                          placeholder="e.g. Bulk"
+                          onChange={(e) => {
+                            const next = [...wholesaleTiers];
+                            next[idx] = { ...next[idx], tier_name: e.target.value };
+                            setWholesaleTiers(next);
+                          }}
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <Label className="text-xs">Min qty</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={tier.min_quantity}
+                          onChange={(e) => {
+                            const next = [...wholesaleTiers];
+                            next[idx] = { ...next[idx], min_quantity: parseInt(e.target.value) || 1 };
+                            setWholesaleTiers(next);
+                          }}
+                        />
+                      </div>
+                      <div className="col-span-4">
+                        <Label className="text-xs">Price (paise)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={tier.price}
+                          onChange={(e) => {
+                            const next = [...wholesaleTiers];
+                            next[idx] = { ...next[idx], price: parseInt(e.target.value) || 0 };
+                            setWholesaleTiers(next);
+                          }}
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setWholesaleTiers((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setWholesaleTiers((prev) => [
+                        ...prev,
+                        { tier_name: '', min_quantity: 10, price: Math.round((form.selling_price || 0) * 100) },
+                      ])
+                    }
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Tier
+                  </Button>
+                </div>
+              )}
             </div>
           </TabsContent>
 
