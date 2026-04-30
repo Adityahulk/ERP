@@ -1,18 +1,21 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-bookworm-slim AS build
-
-WORKDIR /app
-
-COPY package*.json ./
+FROM node:20-bookworm-slim AS backend-build
+WORKDIR /app/backend
+COPY backend/package*.json ./
 RUN npm ci
-
-COPY . .
+COPY backend ./
 RUN npm run build
 
-FROM node:20-bookworm-slim
+FROM node:20-bookworm-slim AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
 
-WORKDIR /app
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app/backend
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
@@ -21,17 +24,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV FRONTEND_DIST_DIR=/app/backend/public
 ENV PORT=5000
 ENV RUN_MIGRATIONS=true
 
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --omit=dev
 
-COPY --from=build /app/dist ./dist
+COPY --from=backend-build /app/backend/dist ./dist
+COPY --from=frontend-build /app/frontend/dist ./public
 
-RUN mkdir -p /app/uploads /app/logs && chown -R node:node /app
+RUN mkdir -p /app/backend/uploads /app/backend/logs && chown -R node:node /app/backend
 USER node
 
 EXPOSE 5000

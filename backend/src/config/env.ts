@@ -9,6 +9,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   FRONTEND_URL: z.string().default('http://localhost:3000'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  FRONTEND_DIST_DIR: z.string().default('./public'),
 
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),

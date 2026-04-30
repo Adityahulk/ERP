@@ -104,6 +104,27 @@ Starts stub processors for scheduled queues (`overdueInvoiceReminder`, `lowStock
 
 Docker production: `docker compose up -d --build` after setting `backend/.env`. Backend image runs `node dist/server.js` with Chromium for PDFs.
 
+### Railway deployment (Docker, full-stack single service)
+
+This repo includes a **root `Dockerfile`** that builds and serves:
+- backend API (`/api/*`)
+- frontend SPA (all non-API routes)
+
+1. Create a new Railway service from this repo (Railway auto-detects the root `Dockerfile`).
+2. Set required env vars:
+   - `DATABASE_URL`
+   - `REDIS_URL`
+   - `JWT_SECRET` (>= 32 chars)
+   - `JWT_REFRESH_SECRET` (>= 32 chars)
+   - optional: `CORS_ORIGIN`, `FRONTEND_URL`, `EINVOICE_*`, `TWILIO_*`
+3. Keep `RUN_MIGRATIONS=true` (default) so migrations run automatically at container start.
+4. Railway injects `PORT`; app binds to it automatically.
+5. Open the Railway public URL:
+   - App UI: `/`
+   - API: `/api`
+
+Health endpoint for checks: `/health`
+
 ### Demo Credentials
 | Email | Password | Role |
 |-------|----------|------|

@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import path from 'path';
+import fs from 'fs';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import routes from './routes';
@@ -55,6 +56,18 @@ app.get('/health', (_req, res) => {
     uptime: process.uptime(),
   });
 });
+
+// ── Full-stack static frontend hosting ────────────────
+const frontendDist = path.resolve(env.FRONTEND_DIST_DIR);
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health') return next();
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+} else {
+  logger.warn(`Frontend dist not found at ${frontendDist}; serving API only.`);
+}
 
 // ── 404 handler ───────────────────────────────────────
 app.use((_req, res) => {
