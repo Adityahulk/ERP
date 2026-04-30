@@ -8,26 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Plus, Trash2, UserPlus } from 'lucide-react';
+import { ArrowLeft, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
-
-const rupeesToPaise = (r: number) => Math.round(r * 100);
-const paiseToRupees = (p: number) => (p / 100).toFixed(2);
-
-function FieldHint({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{children}</p>;
-}
-
-type QuoteLine = {
-  item_name: string;
-  item_description: string;
-  quantity: string;
-  unit_price: string;
-  discount_amount: string;
-  gst_rate: string;
-  unit: string;
-};
+import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 
 export default function QuotationForm() {
   const navigate = useNavigate();
@@ -35,6 +19,7 @@ export default function QuotationForm() {
   const { data: godownRes } = useGodowns();
   const godowns = (godownRes as any)?.data ?? [];
 
+  // Party
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
   const [partySearch, setPartySearch] = useState('');
@@ -42,26 +27,32 @@ export default function QuotationForm() {
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+
+  // Doc info
   const [godownId, setGodownId] = useState('');
   const [quotationNumber, setQuotationNumber] = useState('');
   const [quotationDate, setQuotationDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [validUntil, setValidUntil] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 14);
-    return d.toISOString().split('T')[0];
+    const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().split('T')[0];
   });
+
+  // Overrides
   const [partyNameOverride, setPartyNameOverride] = useState('');
   const [partyPhoneOverride, setPartyPhoneOverride] = useState('');
   const [partyEmailOverride, setPartyEmailOverride] = useState('');
-  const [customerNotes, setCustomerNotes] = useState('');
-  const [internalNotes, setInternalNotes] = useState('');
-  const [termsAndConditions, setTermsAndConditions] = useState('');
+
+  // Settings
   const [isGstQuote, setIsGstQuote] = useState(true);
+  const [isInterstate, setIsInterstate] = useState(false);
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
   const [documentTheme, setDocumentTheme] = useState<'classic' | 'modern' | 'compact'>('classic');
-  const [lines, setLines] = useState<QuoteLine[]>([
-    { item_name: '', item_description: '', quantity: '1', unit_price: '', discount_amount: '0', gst_rate: '18', unit: 'PCS' },
-  ]);
+  const [customerNotes, setCustomerNotes] = useState('');
+  const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [internalNotes, setInternalNotes] = useState('');
+  const [showExtras, setShowExtras] = useState(false);
+
+  // Line items
+  const [items, setItems] = useState<VyaparLineItem[]>([]);
 
   const defaultGodown = useMemo(() => {
     const def = godowns.find((g: any) => g.is_default);
@@ -77,70 +68,30 @@ export default function QuotationForm() {
     if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
     finally { setPartySearchLoading(false); }
   };
 
   const selectParty = (p: any) => {
-    setPartyId(p.id);
-    setPartyName(p.name);
-    setPartySearch('');
-    setPartyResults([]);
+    setPartyId(p.id); setPartyName(p.name);
+    setPartySearch(''); setPartyResults([]);
   };
 
   const clearParty = () => {
-    setPartyId('');
-    setPartyName('');
-    setPartySearch('');
-    setPartyResults([]);
+    setPartyId(''); setPartyName('');
+    setPartySearch(''); setPartyResults([]);
   };
-
-  const lineTotals = useMemo(() => {
-    let subtotal = 0;
-    let discount = 0;
-    let tax = 0;
-    let total = 0;
-
-    const normalized = lines.map((ln) => {
-      const qty = Number(ln.quantity) || 0;
-      const price = rupeesToPaise(Number(ln.unit_price) || 0);
-      const gross = Math.max(0, Math.round(qty * price));
-      const disc = rupeesToPaise(Number(ln.discount_amount) || 0);
-      const taxable = Math.max(0, gross - disc);
-      const gst = isGstQuote ? Math.max(0, Number(ln.gst_rate) || 0) : 0;
-      const taxAmt = Math.round((taxable * gst) / 100);
-      const final = taxable + taxAmt;
-
-      subtotal += gross;
-      discount += disc;
-      tax += taxAmt;
-      total += final;
-
-      return {
-        item_name: ln.item_name.trim() || 'Item',
-        item_description: ln.item_description.trim() || undefined,
-        unit: ln.unit.trim() || 'PCS',
-        quantity: qty,
-        unit_price: price,
-        discount_amount: disc,
-        gst_rate: gst,
-      };
-    });
-
-    return { subtotal, discount, tax, total, normalized };
-  }, [lines, isGstQuote]);
 
   const create = useMutation({
     mutationFn: async () => {
-      return api.post('/quotations', {
-        party_id: partyId,
+      const payload = {
+        party_id: partyId || undefined,
         godown_id: godownId || undefined,
         quotation_number: quotationNumber.trim() || undefined,
         quotation_date: quotationDate,
         valid_until: validUntil || undefined,
-        items: lineTotals.normalized,
         is_gst_quote: isGstQuote,
         pdf_template: pdfTemplate,
         document_theme: documentTheme,
@@ -150,319 +101,228 @@ export default function QuotationForm() {
         customer_notes: customerNotes.trim() || undefined,
         internal_notes: internalNotes.trim() || undefined,
         terms_and_conditions: termsAndConditions.trim() || undefined,
-      });
+        items: items.map((item) => ({
+          item_id: item.item_id,
+          item_name: item.name,
+          item_description: item.description || undefined,
+          hsn_code: item.hsn_code || undefined,
+          unit: item.unit || 'PCS',
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          discount_amount: item.discount_amount,
+          gst_rate: isGstQuote ? item.gst_rate : 0,
+        })),
+      };
+      return api.post('/quotations', payload);
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success('Quotation created');
       qc.invalidateQueries({ queryKey: ['quotations'] });
-      navigate('/quotations');
+      const id = (res.data?.data?.id ?? res.data?.id);
+      navigate(id ? `/quotations/${id}` : '/quotations');
     },
-    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Failed'),
+    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Failed to create quotation'),
   });
 
-  const hasLine = lineTotals.normalized.some((x) => x.quantity > 0 && x.unit_price >= 0);
-
-  const updateLine = (idx: number, key: keyof QuoteLine, value: string) => {
-    setLines((prev) => {
-      const copy = [...prev];
-      copy[idx] = { ...copy[idx], [key]: value };
-      return copy;
-    });
-  };
-
-  const addLine = () => {
-    setLines((prev) => [
-      ...prev,
-      { item_name: '', item_description: '', quantity: '1', unit_price: '', discount_amount: '0', gst_rate: '18', unit: 'PCS' },
-    ]);
-  };
-
-  const removeLine = (idx: number) => {
-    setLines((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== idx)));
-  };
+  const canSave = items.length > 0 && !!quotationDate;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 pb-10">
+    <div className="max-w-4xl mx-auto space-y-5 pb-12">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-2xl font-bold">New quotation</h1>
-          <p className="text-sm text-muted-foreground">
-            A quotation (quote) is a formal price offer with line items, GST, validity, and terms.
-          </p>
+          <h1 className="text-2xl font-bold">New Quotation</h1>
+          <p className="text-sm text-muted-foreground">Send a price offer to your customer before raising an invoice</p>
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Quote reference</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-          <div>
-            <Label htmlFor="quote-ref">Quotation number (optional)</Label>
-            <Input
-              id="quote-ref"
-              className="mt-1.5 max-w-md font-mono text-sm"
-              placeholder="e.g. QT-2026-0042 or leave blank for auto-number"
-              value={quotationNumber}
-              onChange={(e) => setQuotationNumber(e.target.value)}
-            />
-            <FieldHint>
-              This is the <strong>document reference</strong> printed on the quote—the same role as an invoice number,
-              but for a pre-sale offer. If you leave it blank, the system assigns the next number from your company&apos;s{' '}
-              <strong>quotation series</strong> (same style as invoices: prefix / branch / financial year / sequence).
-            </FieldHint>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Theme & tax mode</CardTitle>
-        </CardHeader>
-        <CardContent className="grid md:grid-cols-3 gap-3 pt-0">
-          <label className="flex items-center gap-2 text-sm rounded-md border px-3 h-10">
-            <input type="checkbox" checked={isGstQuote} onChange={(e) => setIsGstQuote(e.target.checked)} />
-            GST quotation
-          </label>
-          <select className="h-10 rounded-md border bg-white px-3 text-sm" value={pdfTemplate} onChange={(e) => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
-            {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-          </select>
-          <select className="h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value as typeof documentTheme)}>
-            <option value="classic">Classic theme</option>
-            <option value="modern">Modern theme</option>
-            <option value="compact">Compact theme</option>
-          </select>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Customer</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-            <>
-              <div>
-                <Label>Bill-to customer *</Label>
-                {partyId ? (
-                  <div className="mt-1.5 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
-                    <span className="font-medium text-sm">{partyName}</span>
-                    <button type="button" className="text-xs text-primary hover:underline" onClick={clearParty}>
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-start">
-                      <div className="relative min-w-0 flex-1">
-                        <Input
-                          placeholder="Search by name, phone, GSTIN…"
-                          value={partySearch}
-                          onChange={(e) => searchParties(e.target.value)}
-                        />
-                        {partyResults.length > 0 && (
-                          <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                            {partyResults.map((p) => (
-                              <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectParty(p)}>
-                                <span className="font-medium">{p.name}</span>
-                                {p.phone && <span className="text-muted-foreground ml-2">{p.phone}</span>}
-                                {p.gstin && <span className="text-muted-foreground ml-2 font-mono text-xs">{p.gstin}</span>}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+      {/* Party + Doc Info side by side */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Party */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Bill To (Customer)</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {partyId ? (
+              <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/30">
+                <span className="font-medium text-sm">{partyName}</span>
+                <button type="button" className="text-xs text-primary hover:underline" onClick={clearParty}>Change</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      placeholder="Search customer by name, phone…"
+                      value={partySearch}
+                      onChange={(e) => searchParties(e.target.value)}
+                    />
+                    {partyResults.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                        {partyResults.map((p) => (
+                          <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectParty(p)}>
+                            <span className="font-medium">{p.name}</span>
+                            {p.phone && <span className="text-muted-foreground ml-2 text-xs">{p.phone}</span>}
+                          </button>
+                        ))}
                       </div>
-                      <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1" onClick={() => { setQuickAddDefaultName(''); setQuickAddOpen(true); }}>
-                        <UserPlus className="h-4 w-4" />
-                        New customer
-                      </Button>
-                    </div>
-                    {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        No matches.{' '}
-                        <button type="button" className="text-primary font-medium hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
-                          Add "{partySearch.trim()}" as customer
-                        </button>
-                      </p>
                     )}
-                  </>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="gap-1 shrink-0" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
+                    <UserPlus className="h-4 w-4" />
+                  </Button>
+                </div>
+                {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Not found.{' '}
+                    <button type="button" className="text-primary font-medium hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
+                      Add "{partySearch.trim()}"
+                    </button>
+                  </p>
                 )}
+                <p className="text-xs text-muted-foreground">Optional — leave blank to enter customer name manually on the quote</p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Doc Info */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Quotation Details</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Quote Date</Label>
+                <Input type="date" className="mt-1 h-9" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
               </div>
               <div>
-                <Label>Godown / branch context (optional)</Label>
-                <select
-                  className="mt-1.5 w-full h-10 rounded-md border bg-background px-3 text-sm"
-                  value={godownId}
-                  onChange={(e) => setGodownId(e.target.value)}
-                >
+                <Label className="text-xs">Valid Until</Label>
+                <Input type="date" className="mt-1 h-9" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Quote No. (optional)</Label>
+                <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={quotationNumber} onChange={(e) => setQuotationNumber(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Godown</Label>
+                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={godownId} onChange={(e) => setGodownId(e.target.value)}>
                   <option value="">—</option>
-                  {godowns.map((g: any) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
+                  {godowns.map((g: any) => <option key={g.id} value={g.id}>{g.name}{g.is_default ? ' (default)' : ''}</option>)}
                 </select>
-                <FieldHint>Used for numbering (HQ vs GW) and stock context when you convert this quote to an invoice.</FieldHint>
               </div>
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="sm:col-span-1">
-                  <Label>Display name on quote (optional)</Label>
-                  <Input
-                    className="mt-1.5"
-                    placeholder="Override legal name for this PDF"
-                    value={partyNameOverride}
-                    onChange={(e) => setPartyNameOverride(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label>Quote contact phone (optional)</Label>
-                  <Input
-                    className="mt-1.5"
-                    placeholder="Shown on quote only"
-                    value={partyPhoneOverride}
-                    onChange={(e) => setPartyPhoneOverride(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label>Quote contact email (optional)</Label>
-                  <Input
-                    type="email"
-                    className="mt-1.5"
-                    placeholder="Shown on quote only"
-                    value={partyEmailOverride}
-                    onChange={(e) => setPartyEmailOverride(e.target.value)}
-                  />
-                </div>
-              </div>
-            </>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border px-3 h-8">
+                <input type="checkbox" checked={isGstQuote} onChange={(e) => setIsGstQuote(e.target.checked)} />
+                GST quotation
+              </label>
+              {isGstQuote && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border px-3 h-8">
+                  <input type="checkbox" checked={isInterstate} onChange={(e) => setIsInterstate(e.target.checked)} />
+                  Interstate (IGST)
+                </label>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Line Items */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Items / Services</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <VyaparLineItems
+            items={items}
+            onChange={setItems}
+            isGst={isGstQuote}
+            isInterstate={isInterstate}
+            searchMode="invoice"
+            godownId={godownId}
+            showHsn={true}
+            showUnit={true}
+            showDescription={true}
+          />
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Dates & validity</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 pt-0">
-          <div>
-            <Label>Quotation date</Label>
-            <Input type="date" className="mt-1.5" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
-            <FieldHint>Date the quote is issued.</FieldHint>
-          </div>
-          <div>
-            <Label>Valid until (offer expiry)</Label>
-            <Input type="date" className="mt-1.5" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
-            <FieldHint>Prices and terms normally apply only until this date.</FieldHint>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Extras toggle */}
+      <div>
+        <button
+          type="button"
+          className="text-sm text-primary hover:underline flex items-center gap-1"
+          onClick={() => setShowExtras(!showExtras)}
+        >
+          {showExtras ? '▲' : '▼'} {showExtras ? 'Hide' : 'Show'} notes, terms & PDF options
+        </button>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Line items</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-          {lines.map((ln, idx) => (
-            <div key={idx} className="rounded-md border p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold">Item #{idx + 1}</h4>
-                <Button type="button" variant="ghost" size="sm" onClick={() => removeLine(idx)} disabled={lines.length === 1}>
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <Label>Item / service name</Label>
-                  <Input className="mt-1.5" value={ln.item_name} onChange={(e) => updateLine(idx, 'item_name', e.target.value)} />
-                </div>
-                <div>
-                  <Label>Unit</Label>
-                  <Input className="mt-1.5" value={ln.unit} onChange={(e) => updateLine(idx, 'unit', e.target.value)} />
-                </div>
-                <div>
-                  <Label>Quantity</Label>
-                  <Input type="number" min={0} step="0.001" className="mt-1.5" value={ln.quantity} onChange={(e) => updateLine(idx, 'quantity', e.target.value)} />
-                </div>
-                <div>
-                  <Label>Unit price (₹)</Label>
-                  <Input type="number" min={0} step="0.01" className="mt-1.5" value={ln.unit_price} onChange={(e) => updateLine(idx, 'unit_price', e.target.value)} />
-                </div>
-                <div>
-                  <Label>Line discount (₹)</Label>
-                  <Input type="number" min={0} step="0.01" className="mt-1.5" value={ln.discount_amount} onChange={(e) => updateLine(idx, 'discount_amount', e.target.value)} />
-                </div>
-                <div>
-                  <Label>GST rate (%)</Label>
-                  <Input type="number" min={0} step="1" className="mt-1.5" value={ln.gst_rate} onChange={(e) => updateLine(idx, 'gst_rate', e.target.value)} />
-                </div>
+      {showExtras && (
+        <Card>
+          <CardContent className="pt-5 space-y-4">
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">PDF Template</Label>
+                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={pdfTemplate} onChange={(e) => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
+                  {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
               </div>
               <div>
-                <Label>Description (optional)</Label>
-                <Input className="mt-1.5" value={ln.item_description} onChange={(e) => updateLine(idx, 'item_description', e.target.value)} />
+                <Label className="text-xs">Theme</Label>
+                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value as typeof documentTheme)}>
+                  <option value="classic">Classic</option>
+                  <option value="modern">Modern</option>
+                  <option value="compact">Compact</option>
+                </select>
               </div>
             </div>
-          ))}
-          <div className="flex justify-between items-center pt-1">
-            <Button type="button" variant="outline" onClick={addLine}>
-              <Plus className="w-4 h-4 mr-1" />
-              Add line
-            </Button>
-            <div className="text-sm text-right space-y-0.5 tabular-nums">
-              <div>Subtotal: ₹{paiseToRupees(lineTotals.subtotal)}</div>
-              <div>Discount: ₹{paiseToRupees(lineTotals.discount)}</div>
-              <div>Tax: ₹{paiseToRupees(lineTotals.tax)}</div>
-              <div className="font-semibold">Total: ₹{paiseToRupees(lineTotals.total)}</div>
+
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Display Name (override)</Label>
+                <Input className="mt-1 h-9 text-sm" placeholder="Override on PDF" value={partyNameOverride} onChange={(e) => setPartyNameOverride(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Contact Phone (PDF)</Label>
+                <Input className="mt-1 h-9 text-sm" value={partyPhoneOverride} onChange={(e) => setPartyPhoneOverride(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Contact Email (PDF)</Label>
+                <Input type="email" className="mt-1 h-9 text-sm" value={partyEmailOverride} onChange={(e) => setPartyEmailOverride(e.target.value)} />
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Notes & terms</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-          <div>
-            <Label>Customer notes (optional)</Label>
-            <textarea
-              className="mt-1.5 w-full min-h-[88px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Message printed on the quote for the customer—e.g. delivery timeline, scope summary."
-              value={customerNotes}
-              onChange={(e) => setCustomerNotes(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Internal notes (optional)</Label>
-            <textarea
-              className="mt-1.5 w-full min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Not shown to customer—margin, competitor, follow-up reminders."
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Terms & conditions (optional)</Label>
-            <textarea
-              className="mt-1.5 w-full min-h-[100px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Payment terms, warranty, exclusions, validity, etc."
-              value={termsAndConditions}
-              onChange={(e) => setTermsAndConditions(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
+            <div>
+              <Label className="text-xs">Customer Notes <span className="text-muted-foreground">(printed on quote)</span></Label>
+              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={customerNotes} onChange={(e) => setCustomerNotes(e.target.value)} placeholder="e.g. Delivery in 7 days, free installation included" />
+            </div>
+            <div>
+              <Label className="text-xs">Terms & Conditions</Label>
+              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={3} value={termsAndConditions} onChange={(e) => setTermsAndConditions(e.target.value)} placeholder="Payment terms, warranty, validity, exclusions…" />
+            </div>
+            <div>
+              <Label className="text-xs">Internal Notes <span className="text-muted-foreground">(not on PDF)</span></Label>
+              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Margin details, follow-up reminders…" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      <div className="flex gap-2">
+      {/* Actions */}
+      <div className="flex gap-3 justify-end flex-wrap pb-6">
+        <Button type="button" variant="outline" onClick={() => navigate('/quotations')}>Cancel</Button>
         <Button
           onClick={() => create.mutate()}
-          disabled={!partyId || !quotationDate || !hasLine}
+          disabled={!canSave}
           loading={create.isPending}
+          className="gap-1.5"
         >
-          Save quotation
-        </Button>
-        <Button type="button" variant="outline" onClick={() => navigate('/quotations')}>
-          Cancel
+          Save Quotation
         </Button>
       </div>
 

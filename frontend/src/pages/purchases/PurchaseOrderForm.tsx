@@ -1,25 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Loader2, Plus, ScanLine, Trash2, UserPlus } from 'lucide-react';
+import { ArrowLeft, ScanLine, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
-
-type PoLine = {
-  item_id: string;
-  item_name: string;
-  hsn_code: string;
-  quantity: number;
-  unit_price: number;
-  gst_rate: number;
-};
+import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 
 export default function PurchaseOrderForm() {
   const navigate = useNavigate();
@@ -27,28 +19,26 @@ export default function PurchaseOrderForm() {
   const { data: godownRes } = useGodowns();
   const godowns = (godownRes as any)?.data ?? [];
 
-  const { data: partyRes, isLoading: partiesLoading } = useQuery({
-    queryKey: ['parties', 'suppliers'],
-    queryFn: () => api.get('/parties', { params: { party_type: 'supplier', limit: 100 } }).then((r) => r.data?.data ?? r.data),
-  });
-  const suppliers = (partyRes as any)?.data ?? [];
-
-  const { data: itemRes, isLoading: itemsLoading } = useQuery({
-    queryKey: ['items', 'po-form'],
-    queryFn: () => api.get('/items', { params: { limit: 100 } }).then((r) => r.data?.data ?? r.data),
-  });
-  const catalogItems = (itemRes as any)?.data ?? [];
-
+  // Supplier
   const [partyId, setPartyId] = useState('');
-  const [godownId, setGodownId] = useState('');
-  const [expectedDate, setExpectedDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 7);
-    return d.toISOString().split('T')[0];
-  });
-  const [lines, setLines] = useState<PoLine[]>([]);
+  const [partyName, setPartyName] = useState('');
+  const [partySearch, setPartySearch] = useState('');
+  const [partyResults, setPartyResults] = useState<any[]>([]);
+  const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+
+  // Doc info
+  const [godownId, setGodownId] = useState('');
+  const [expectedDate, setExpectedDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
+  });
+  const [notes, setNotes] = useState('');
+
+  // Line items
+  const [items, setItems] = useState<VyaparLineItem[]>([]);
+
+  // Misc
   const [ocrOpen, setOcrOpen] = useState(false);
 
   const defaultGodown = useMemo(() => {
@@ -60,32 +50,34 @@ export default function PurchaseOrderForm() {
     if (!godownId && defaultGodown) setGodownId(defaultGodown);
   }, [godownId, defaultGodown]);
 
-  const addLineFromItemId = (itemId: string) => {
-    const it = catalogItems.find((x: any) => x.id === itemId);
-    if (!it || it.item_type === 'service' || !it.track_inventory) return;
-    if (lines.some((l) => l.item_id === it.id)) {
-      toast.error('Item already on this PO');
-      return;
-    }
-    setLines((prev) => [
-      ...prev,
-      {
-        item_id: it.id,
-        item_name: it.name,
-        hsn_code: it.hsn_code || '',
-        quantity: 1,
-        unit_price: it.purchase_price ?? 0,
-        gst_rate: it.gst_rate ?? 0,
-      },
-    ]);
+  const searchSuppliers = async (q: string) => {
+    setPartySearch(q);
+    if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
+    setPartySearchLoading(true);
+    try {
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      setPartyResults(res.data || []);
+    } catch { setPartyResults([]); }
+    finally { setPartySearchLoading(false); }
   };
 
-  const updateLine = (idx: number, patch: Partial<PoLine>) => {
-    setLines((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], ...patch };
-      return next;
-    });
+  const selectSupplier = (p: any) => {
+    setPartyId(p.id); setPartyName(p.name);
+    setPartySearch(''); setPartyResults([]);
+  };
+
+  const clearSupplier = () => {
+    setPartyId(''); setPartyName('');
+    setPartySearch(''); setPartyResults([]);
+  };
+
+  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
+    if (data.bill_date) setExpectedDate(data.bill_date);
+    if (data.party_name) {
+      setPartySearch(data.party_name);
+      searchSuppliers(data.party_name);
+      toast('Supplier name applied — search & select or add new', { icon: 'ℹ️' });
+    }
   };
 
   const createPO = useMutation({
@@ -95,13 +87,14 @@ export default function PurchaseOrderForm() {
         godown_id: godownId,
         po_date: new Date().toISOString().split('T')[0],
         expected_date: expectedDate,
-        items: lines.map((l) => ({
-          item_id: l.item_id,
-          item_name: l.item_name,
-          hsn_code: l.hsn_code,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          gst_rate: l.gst_rate,
+        notes: notes.trim() || undefined,
+        items: items.map((item) => ({
+          item_id: item.item_id,
+          item_name: item.name,
+          hsn_code: item.hsn_code || undefined,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          gst_rate: item.gst_rate,
         })),
       });
     },
@@ -110,55 +103,14 @@ export default function PurchaseOrderForm() {
       qc.invalidateQueries({ queryKey: ['purchases'] });
       navigate('/purchases');
     },
-    onError: (e: any) => {
-      toast.error(e.response?.data?.error || e.message || 'Failed to create PO');
-    },
+    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Failed to create PO'),
   });
 
-  const loadingMeta = partiesLoading || itemsLoading;
-
-  const onSupplierCreated = (row: Record<string, unknown>) => {
-    const id = String(row.id);
-    setPartyId(id);
-    qc.setQueryData(['parties', 'suppliers'], (old: unknown) => {
-      const o = old as { data?: unknown[]; pagination?: Record<string, unknown> } | undefined;
-      if (!o || !Array.isArray(o.data)) return o;
-      if (o.data.some((s) => String((s as { id?: string }).id) === id)) return o;
-      return { ...o, data: [...o.data, row] };
-    });
-    void qc.invalidateQueries({ queryKey: ['parties', 'suppliers'] });
-  };
-
-  const openQuickAddSupplier = (prefillName?: string) => {
-    setQuickAddDefaultName(prefillName ?? '');
-    setQuickAddOpen(true);
-  };
-
-  /**
-   * OCR confirmed from supplier quotation / pro-forma invoice:
-   * - party_name  → search for / seed the supplier select
-   * - bill_date   → set as expected date
-   * We can't auto-select supplier from name alone, so we toast a hint.
-   */
-  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
-    if (data.bill_date) setExpectedDate(data.bill_date);
-    if (data.party_name) {
-      // Find a matching supplier by name (case-insensitive substring)
-      const match = suppliers.find((s: any) =>
-        s.name?.toLowerCase().includes(data.party_name!.toLowerCase())
-      );
-      if (match) {
-        setPartyId(match.id);
-        toast.success(`Supplier matched: ${match.name}`);
-      } else {
-        toast(`Supplier "${data.party_name}" not found — add them or select manually`, { icon: '⚠️' });
-        openQuickAddSupplier(data.party_name ?? '');
-      }
-    }
-  };
+  const canSave = !!partyId && !!godownId && items.length > 0;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-5 pb-12">
+      {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
@@ -166,7 +118,7 @@ export default function PurchaseOrderForm() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold">New Purchase Order</h1>
-            <p className="text-sm text-muted-foreground">Choose supplier, godown, and stock lines.</p>
+            <p className="text-sm text-muted-foreground">Select supplier and add items to order</p>
           </div>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
@@ -175,202 +127,126 @@ export default function PurchaseOrderForm() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="p-6 space-y-6">
-          {loadingMeta ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <Label>Supplier</Label>
-                  <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <select
-                      className="h-10 w-full min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
-                      value={partyId}
-                      onChange={(e) => setPartyId(e.target.value)}
-                    >
-                      <option value="">Select supplier</option>
-                      {suppliers.map((s: any) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                          {s.gstin ? ` — ${s.gstin}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1" onClick={() => openQuickAddSupplier()}>
-                      <UserPlus className="h-4 w-4" />
-                      New supplier
-                    </Button>
-                  </div>
-                </div>
-                <div>
-                  <Label>Receive into godown</Label>
-                  <select
-                    className="mt-1 w-full h-10 rounded-md border bg-background px-3 text-sm"
-                    value={godownId}
-                    onChange={(e) => setGodownId(e.target.value)}
-                  >
-                    {godowns.map((g: any) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                        {g.is_default ? ' (default)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <Label>Expected date</Label>
-                  <Input type="date" className="mt-1 max-w-xs" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
-                </div>
+      {/* Supplier + Doc Info */}
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Supplier */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Supplier</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {partyId ? (
+              <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/30">
+                <span className="font-medium text-sm">{partyName}</span>
+                <button type="button" className="text-xs text-primary hover:underline" onClick={clearSupplier}>Change</button>
               </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      placeholder="Search supplier by name, GSTIN…"
+                      value={partySearch}
+                      onChange={(e) => searchSuppliers(e.target.value)}
+                    />
+                    {partyResults.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                        {partyResults.map((p: any) => (
+                          <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectSupplier(p)}>
+                            <span className="font-medium">{p.name}</span>
+                            {p.gstin && <span className="text-muted-foreground ml-2 font-mono text-xs">{p.gstin}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="gap-1 shrink-0" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
+                    <UserPlus className="h-4 w-4" />
+                  </Button>
+                </div>
+                {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Not found.{' '}
+                    <button type="button" className="text-primary font-medium hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
+                      Add "{partySearch.trim()}" as supplier
+                    </button>
+                  </p>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
 
+        {/* PO Info */}
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Order Details</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Add item</Label>
-                <select
-                  className="mt-1 w-full h-10 rounded-md border bg-background px-3 text-sm"
-                  defaultValue=""
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v) addLineFromItemId(v);
-                    e.target.value = '';
-                  }}
-                >
-                  <option value="">Select product to add…</option>
-                  {catalogItems
-                    .filter((it: any) => it.track_inventory && it.item_type !== 'service')
-                    .map((it: any) => (
-                      <option key={it.id} value={it.id}>
-                        {it.name}
-                      </option>
-                    ))}
+                <Label className="text-xs">Expected Date</Label>
+                <Input type="date" className="mt-1 h-9" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Receive into Godown</Label>
+                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={godownId} onChange={(e) => setGodownId(e.target.value)}>
+                  <option value="">Select godown</option>
+                  {godowns.map((g: any) => (
+                    <option key={g.id} value={g.id}>{g.name}{g.is_default ? ' (default)' : ''}</option>
+                  ))}
                 </select>
               </div>
+            </div>
+            <div>
+              <Label className="text-xs">Notes (optional)</Label>
+              <textarea
+                className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none"
+                rows={2}
+                placeholder="Delivery instructions, special requirements…"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-              {lines.length > 0 && (
-                <div className="space-y-4">
-                  <div className="border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50 text-left">
-                        <tr>
-                          <th className="p-2">Item</th>
-                          <th className="p-2 w-24">Qty</th>
-                          <th className="p-2 w-32">Unit price (₹)</th>
-                          <th className="p-2 w-20">GST %</th>
-                          <th className="p-2 w-24 text-right">Total (₹)</th>
-                          <th className="p-2 w-10" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((line, idx) => {
-                          const base = (line.unit_price || 0) * (line.quantity || 0);
-                          const tax = (base * (line.gst_rate || 0)) / 100;
-                          const total = base + tax;
-                          return (
-                            <tr key={line.item_id} className="border-t">
-                              <td className="p-2">
-                                <div className="font-medium">{line.item_name}</div>
-                                <div className="text-xs text-muted-foreground">HSN {line.hsn_code || '—'}</div>
-                              </td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  className="h-9"
-                                  value={line.quantity}
-                                  onChange={(e) => updateLine(idx, { quantity: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                                />
-                              </td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  step={0.01}
-                                  className="h-9 tabular-nums"
-                                  value={(line.unit_price / 100).toFixed(2)}
-                                  onChange={(e) => updateLine(idx, { unit_price: Math.round((parseFloat(e.target.value) || 0) * 100) })}
-                                />
-                              </td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  className="h-9"
-                                  value={line.gst_rate}
-                                  onChange={(e) => updateLine(idx, { gst_rate: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                                />
-                              </td>
-                              <td className="p-2 text-right tabular-nums font-medium">
-                                {((total) / 100).toFixed(2)}
-                              </td>
-                              <td className="p-2 text-right">
-                                <Button type="button" variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, i) => i !== idx))}>
-                                  <Trash2 className="w-4 h-4 text-destructive" />
-                                </Button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Summary Section */}
-                  <div className="flex justify-end pt-4 border-t">
-                    <div className="w-full max-w-sm space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Subtotal (Excl. Tax)</span>
-                        <span className="tabular-nums font-medium">
-                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Total GST (Tax Amount)</span>
-                        <span className="tabular-nums text-indigo-600">
-                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity * l.gst_rate / 100), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="flex justify-between border-t pt-2 text-lg font-bold">
-                        <span>Grand Total</span>
-                        <span className="tabular-nums">
-                          ₹{(lines.reduce((s, l) => s + (l.unit_price * l.quantity * (1 + l.gst_rate / 100)), 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground text-right italic">
-                        * Calculations are in Paise for maximum precision, shown here in Rupees.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => createPO.mutate()}
-                  disabled={!partyId || !godownId || lines.length === 0}
-                  loading={createPO.isPending}
-                  className="gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Save purchase order
-                </Button>
-                <Button type="button" variant="outline" onClick={() => navigate('/purchases')}>
-                  Cancel
-                </Button>
-              </div>
-            </>
-          )}
+      {/* Line Items */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Items to Order</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <VyaparLineItems
+            items={items}
+            onChange={setItems}
+            isGst={true}
+            searchMode="catalog"
+            godownId={godownId}
+            showHsn={true}
+            showUnit={true}
+          />
         </CardContent>
       </Card>
+
+      {/* Actions */}
+      <div className="flex gap-3 justify-end flex-wrap pb-6">
+        <Button type="button" variant="outline" onClick={() => navigate('/purchases')}>Cancel</Button>
+        <Button
+          onClick={() => createPO.mutate()}
+          disabled={!canSave}
+          loading={createPO.isPending}
+        >
+          Save Purchase Order
+        </Button>
+      </div>
 
       <QuickAddPartySheet
         open={quickAddOpen}
         onOpenChange={setQuickAddOpen}
         partyType="supplier"
         defaultName={quickAddDefaultName}
-        onCreated={onSupplierCreated}
+        onCreated={(row) => {
+          selectSupplier(row);
+          qc.invalidateQueries({ queryKey: ['parties'] });
+        }}
       />
 
       <OcrBillSheet

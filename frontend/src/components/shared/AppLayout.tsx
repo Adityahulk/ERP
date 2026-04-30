@@ -7,7 +7,7 @@ import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Factory, Truck, Tag, Wrench
+  Factory, Truck, Tag, Wrench, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -38,6 +38,12 @@ const navGroups = [
      label: 'JOB WORK',
      items: [
         { to: '/job-work', icon: Wrench, label: 'Job Work Challans' },
+     ]
+  },
+  {
+     label: 'PARTIES',
+     items: [
+        { to: '/parties', icon: Users, label: 'Customers & Suppliers' },
      ]
   },
   {
@@ -217,7 +223,7 @@ export default function AppLayout() {
                                  value={`party-${p.id}`}
                                  onSelect={() => {
                                    setCmdOpen(false);
-                                   navigate('/parties');
+                                   navigate(`/parties/${p.id}`);
                                  }}
                                  className="flex flex-col gap-0.5 p-3 hover:bg-indigo-50 rounded-md cursor-pointer text-slate-700"
                                >

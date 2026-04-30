@@ -28,6 +28,9 @@ import ReportsHome from '@/pages/reports/ReportsHome';
 import Settings from '@/pages/settings/Settings';
 import LandingPage from '@/pages/landing/LandingPage';
 
+import PartyList from '@/pages/parties/PartyList';
+import PartyDetail from '@/pages/parties/PartyDetail';
+
 // Manufacturing modules
 import BOMList from '@/pages/production/BOMList';
 import BOMForm from '@/pages/production/BOMForm';
@@ -139,6 +142,10 @@ export default function App() {
         <Route path="/inventory/transfer" element={<StockTransfer />} />
         <Route path="/inventory/adjust" element={<StockAdjustment />} />
 
+
+        {/* Parties */}
+        <Route path="/parties" element={<PartyList />} />
+        <Route path="/parties/:id" element={<PartyDetail />} />
 
         {/* Dashboard Core */}
         <Route path="/dashboard" element={<Dashboard />} />
