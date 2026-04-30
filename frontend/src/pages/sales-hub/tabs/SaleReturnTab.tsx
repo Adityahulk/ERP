@@ -1,0 +1,194 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '@/lib/api';
+import { formatMoney, formatDate } from '@/lib/formatters';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Plus, RotateCcw, UserPlus } from 'lucide-react';
+import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import toast from 'react-hot-toast';
+
+export default function SaleReturnTab() {
+  const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+
+  const [partyId, setPartyId] = useState('');
+  const [partyName, setPartyName] = useState('');
+  const [partySearch, setPartySearch] = useState('');
+  const [partyResults, setPartyResults] = useState<any[]>([]);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
+  const [refInvoiceNo, setRefInvoiceNo] = useState('');
+  const [reason, setReason] = useState('');
+  const [items, setItems] = useState<VyaparLineItem[]>([]);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['sale-returns'],
+    queryFn: () => api.get('/sales/returns', { params: { limit: 50 } }).then(r => r.data),
+  });
+  const returns = (data as any)?.data?.data || [];
+
+  // Lookup invoice by number to get its id
+  const [invoiceId, setInvoiceId] = useState('');
+  const lookupInvoice = async (num: string) => {
+    setRefInvoiceNo(num);
+    if (!num.trim()) { setInvoiceId(''); return; }
+    try {
+      const res = await api.get('/invoices', { params: { search: num, limit: 5 } });
+      const found = res.data?.data?.data?.find((inv: any) => inv.invoice_number === num.trim());
+      setInvoiceId(found?.id || '');
+    } catch { setInvoiceId(''); }
+  };
+
+  const createMut = useMutation({
+    mutationFn: (payload: any) => api.post('/sales/returns', payload),
+    onSuccess: () => {
+      toast.success('Sale return / credit note recorded');
+      qc.invalidateQueries({ queryKey: ['sale-returns'] });
+      resetForm(); setShowForm(false);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
+  });
+
+  const searchCustomers = async (q: string) => {
+    setPartySearch(q);
+    if (q.length < 2) { setPartyResults([]); return; }
+    try {
+      const { data: res } = await api.get('/parties/search', { params: { q } });
+      setPartyResults(res.data || []);
+    } catch { setPartyResults([]); }
+  };
+
+  const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
+  const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
+  const resetForm = () => { clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
+
+  const handleCreate = () => {
+    if (!partyId && !partyName) { toast.error('Select a customer'); return; }
+    if (items.length === 0) { toast.error('Add at least one returned item'); return; }
+    createMut.mutate({
+      party_id: partyId || undefined,
+      party_name: partyName,
+      invoice_id: invoiceId || undefined,
+      return_date: returnDate,
+      reason: reason.trim() || undefined,
+      items: items.map(it => ({
+        item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
+        unit: it.unit, quantity: it.quantity, unit_price: it.unit_price, gst_rate: it.gst_rate,
+      })),
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">Record goods returned by customers and issue credit notes to adjust receivables.</p>
+        <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
+          <Plus className="w-4 h-4" /> Add Credit Note
+        </Button>
+      </div>
+
+      <div className="border rounded-xl bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/40">
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Credit Note No.</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Customer</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Reason</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading && <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {!isLoading && returns.length === 0 && (
+              <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">
+                <RotateCcw className="w-10 h-10 mx-auto mb-2 opacity-30" />No sale returns / credit notes yet.
+              </td></tr>
+            )}
+            {returns.map((r: any) => (
+              <tr key={r.id} className="border-b hover:bg-muted/20">
+                <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(r.return_date)}</td>
+                <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{r.credit_note_number}</td>
+                <td className="px-4 py-2.5 font-medium">{r.party_name_snapshot || r.party_name || '—'}</td>
+                <td className="px-4 py-2.5 text-xs text-muted-foreground hidden lg:table-cell truncate max-w-[200px]">{r.reason || '—'}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-red-500">{formatMoney(parseInt(r.total_amount)||0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
+        <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
+          <SheetHeader className="mb-5"><SheetTitle>Sale Return / Credit Note</SheetTitle></SheetHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Customer *</Label>
+              {partyId ? (
+                <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
+                  <span className="font-medium text-sm">{partyName}</span>
+                  <button type="button" className="text-xs text-primary hover:underline" onClick={clearCustomer}>Change</button>
+                </div>
+              ) : (
+                <div className="mt-1 flex gap-2">
+                  <div className="relative flex-1">
+                    <Input placeholder="Search customer…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
+                    {partyResults.length > 0 && (
+                      <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                        {partyResults.map((p: any) => (
+                          <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectCustomer(p)}>
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>
+                    <UserPlus className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Return Date</Label>
+                <Input type="date" className="mt-1 h-9" value={returnDate} onChange={e => setReturnDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Against Invoice No. (optional)</Label>
+                <Input className="mt-1 h-9 font-mono text-xs" placeholder="Original invoice number" value={refInvoiceNo} onChange={e => lookupInvoice(e.target.value)} />
+                {refInvoiceNo && (
+                  <p className="text-[10px] mt-0.5 text-muted-foreground">{invoiceId ? '✓ Invoice found' : 'Invoice not found (will record without link)'}</p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs mb-2 block">Items Returned</Label>
+              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn showUnit />
+            </div>
+
+            <div>
+              <Label className="text-xs">Reason for Return (optional)</Label>
+              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Damaged goods, wrong item received" />
+            </div>
+
+            <div className="flex gap-3 pt-3 border-t">
+              <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
+              <Button className="flex-1" loading={createMut.isPending} onClick={handleCreate} disabled={items.length === 0}>
+                Save Credit Note
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="customer" defaultName="" onCreated={(row) => selectCustomer(row)} />
+    </div>
+  );
+}

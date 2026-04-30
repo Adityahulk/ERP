@@ -27,6 +27,9 @@ import bomRoutes from './bom';
 import wholesaleRoutes from './wholesale';
 import jobWorkRoutes from './jobWork';
 import ocrRoutes from './ocr';
+import salesOrderRoutes from './salesOrders';
+import deliveryChallanRoutes from './deliveryChallans';
+import saleReturnRoutes from './saleReturns';
 
 const router = Router();
 
@@ -59,6 +62,9 @@ router.use('/bom', bomRoutes);
 router.use('/wholesale', wholesaleRoutes);
 router.use('/job-work', jobWorkRoutes);
 router.use('/ocr', ocrRoutes);
+router.use('/sales/orders', salesOrderRoutes);
+router.use('/sales/challans', deliveryChallanRoutes);
+router.use('/sales/returns', saleReturnRoutes);
 
 // API info
 router.get('/', (_req, res) => {

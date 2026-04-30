@@ -7,7 +7,7 @@ import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Wrench, Users, ArrowDownLeft, RotateCcw
+  Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -41,9 +41,13 @@ const navGroups = [
   {
      label: 'SALES',
      items: [
-        { to: '/sales', icon: FileText, label: 'Sales & Invoices' },
-        { to: '/quotations', icon: ClipboardList, label: 'Quotations' },
-        { to: '/billing', icon: ShoppingBag, label: 'POS Billing' },
+        { to: '/sales-hub/invoices',   icon: FileText,      label: 'Sale Invoices' },
+        { to: '/sales-hub/quotations', icon: ClipboardList, label: 'Estimate / Quotation' },
+        { to: '/sales-hub/orders',     icon: ShoppingBag,   label: 'Sale Orders' },
+        { to: '/sales-hub/challans',   icon: Truck,         label: 'Delivery Challan' },
+        { to: '/sales-hub/payment-in', icon: ArrowUpRight,  label: 'Payment-In' },
+        { to: '/sales-hub/returns',    icon: RotateCcw,     label: 'Sale Return' },
+        { to: '/billing',             icon: Receipt,        label: 'POS Billing' },
      ]
   },
   {

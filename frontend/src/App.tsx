@@ -8,11 +8,9 @@ import ItemDetail from '@/pages/items/ItemDetail';
 import StockList from '@/pages/inventory/StockList';
 import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
-import InvoiceList from '@/pages/sales/InvoiceList';
 import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
 import InvoiceDetail from '@/pages/sales/InvoiceDetail';
 import GRNScreen from '@/pages/purchases/GRNScreen';
-import QuotationList from '@/pages/quotations/QuotationList';
 import QuotationForm from '@/pages/quotations/QuotationForm';
 import QuotationDetail from '@/pages/quotations/QuotationDetail';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
@@ -30,6 +28,7 @@ import PartyDetail from '@/pages/parties/PartyDetail';
 import PurchaseExpenseHub from '@/pages/purchase-expense/PurchaseExpenseHub';
 import EmployeeListPage from '@/pages/hr/EmployeeListPage';
 import EmployeeDetailPage from '@/pages/hr/EmployeeDetailPage';
+import SalesHub from '@/pages/sales-hub/SalesHub';
 
 import JobWorkChallanList from '@/pages/jobwork/JobWorkChallanList';
 import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
@@ -143,13 +142,18 @@ export default function App() {
         {/* Dashboard Core */}
         <Route path="/dashboard" element={<Dashboard />} />
 
-        {/* Sales & Billing */}
+        {/* Sales Hub */}
+        <Route path="/sales-hub" element={<Navigate to="/sales-hub/invoices" replace />} />
+        <Route path="/sales-hub/:tab" element={<SalesHub />} />
+
+        {/* Legacy redirects */}
+        <Route path="/sales" element={<Navigate to="/sales-hub/invoices" replace />} />
+        <Route path="/quotations" element={<Navigate to="/sales-hub/quotations" replace />} />
+
+        {/* Keep detail + create pages accessible */}
         <Route path="/billing" element={<BillingScreen />} />
-        <Route path="/sales" element={<InvoiceList />} />
         <Route path="/sales/new" element={<InvoiceCreate />} />
         <Route path="/sales/:id" element={<InvoiceDetail />} />
-
-        <Route path="/quotations" element={<QuotationList />} />
         <Route path="/quotations/new" element={<QuotationForm />} />
         <Route path="/quotations/:id" element={<QuotationDetail />} />
 
