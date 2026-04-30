@@ -73,7 +73,6 @@ const navGroups = [
   {
      label: 'PEOPLE',
      items: [
-        { to: '/hr/employees', icon: Users, label: 'Employees' },
         { to: '/attendance', icon: UserCheck, label: 'Attendance & HR' },
      ]
   },

@@ -5,14 +5,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2 } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
 
 export default function Settings() {
   const { user, logout } = useAuthStore();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const isAdmin = user?.role === 'super_admin' || user?.role === 'company_admin';
   const { data: company, isLoading: companyLoading } = useCompany();
@@ -461,6 +462,17 @@ export default function Settings() {
     toast.success('Printer preference saved');
   };
 
+  const syncEmployeesToHr = async () => {
+    try {
+      const r = await api.post('/users/sync-employee-profiles');
+      const msg = r.data?.data?.message ?? 'Sync done';
+      toast.success(msg);
+      qc.invalidateQueries({ queryKey: ['settings-users'] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error ?? 'Sync failed');
+    }
+  };
+
   const testPrint = async () => {
     setTestPrintRunning(true);
     const t = toast.loading('Preparing sample print…');
@@ -662,6 +674,34 @@ export default function Settings() {
                        </div>
                      </div>
                     <div className="pt-4"><Button onClick={saveProfile} loading={updateCompany.isPending}>Save Profile</Button></div>
+                    <div className="border-t pt-6">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={syncEmployeesToHr}
+                        >
+                          Sync Employees to HR
+                        </Button>
+                        <Button
+                          className="gap-2"
+                          onClick={() => {
+                            setTab('users');
+                            setEditingUserId('new');
+                          }}
+                        >
+                          <Users className="w-4 h-4" /> Invite User
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => navigate('/hr/employees')}
+                        >
+                          <UserRound className="w-4 h-4" /> Add Employees
+                        </Button>
+                      </div>
+                    </div>
 
                      <div className="border-t pt-8 space-y-4">
                         <h3 className="font-semibold text-slate-900">e-Invoice (GST / NIC)</h3>
@@ -697,25 +737,7 @@ export default function Settings() {
                   <CardContent className="p-6">
                      <div className="flex justify-between items-center mb-6">
                         <h2 className="text-xl font-bold">Users & Roles</h2>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={async () => {
-                              try {
-                                const r = await api.post('/users/sync-employee-profiles');
-                                const msg = r.data?.data?.message ?? 'Sync done';
-                                toast.success(msg);
-                                qc.invalidateQueries({ queryKey: ['settings-users'] });
-                              } catch (e: any) {
-                                toast.error(e.response?.data?.error ?? 'Sync failed');
-                              }
-                            }}
-                          >
-                            Sync Employees to HR
-                          </Button>
-                          <Button className="gap-2" onClick={() => setEditingUserId('new')}><Users className="w-4 h-4"/> Invite User</Button>
-                        </div>
+                        <Button className="gap-2" onClick={() => setEditingUserId('new')}><Users className="w-4 h-4"/> Invite User</Button>
                      </div>
                      {editingUserId === 'new' && (
                         <div className="mb-4 rounded-lg border p-4 grid md:grid-cols-5 gap-3">
@@ -754,7 +776,14 @@ export default function Settings() {
                                   <td className="px-4 py-3">{u.godown_name || '—'}</td>
                                   <td className="px-4 py-3"><span className={`font-medium text-xs ${u.is_active ? 'text-emerald-600' : 'text-slate-500'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
                                   <td className="px-4 py-3 text-right space-x-2">
-                                    <Button variant="ghost" size="sm" onClick={() => openEditUser(u)}>Manage</Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label="Open employee profile"
+                                      onClick={() => navigate(`/hr/employees/${u.id}`)}
+                                    >
+                                      <UserRound className="h-4 w-4" />
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="sm"
