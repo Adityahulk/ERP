@@ -260,10 +260,10 @@ export async function createInvoice(req: Request, res: Response) {
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, terms_and_conditions, created_by, is_gst_invoice, pdf_template, document_theme
+          notes, terms_and_conditions, created_by, pdf_template, document_theme
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, d.godown_id || req.user!.godown_id,
@@ -292,7 +292,6 @@ export async function createInvoice(req: Request, res: Response) {
           d.notes || null,
           d.terms_and_conditions || null,
           req.user!.id,
-          isGstInvoice,
           ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
           ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
         ]
