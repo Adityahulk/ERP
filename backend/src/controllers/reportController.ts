@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { getExpenseGstSql } from '../services/expenseReportingService';
+import fs from 'fs';
+import { XMLParser } from 'fast-xml-parser';
 
 /** Default report window: first day of current month → today (inclusive). */
 function parseRange(req: Request): { from: string; to: string } {
@@ -790,6 +792,245 @@ export async function balanceSheet(req: Request, res: Response) {
         },
       })
     );
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+function escXml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+async function getTallyExportData(companyId: string) {
+  const [companyRes, unitsRes, categoriesRes, itemsRes, partiesRes, salesRes, purchaseRes] = await Promise.all([
+    query('SELECT id, name, legal_name, gstin, state, state_code FROM companies WHERE id = $1', [companyId]),
+    query('SELECT id, name, abbreviation, is_default FROM item_units WHERE company_id = $1 ORDER BY name', [companyId]),
+    query('SELECT id, name FROM item_categories WHERE company_id = $1 AND is_deleted = false ORDER BY name', [companyId]),
+    query(
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.gst_rate, i.purchase_price, i.selling_price,
+              i.opening_stock, i.opening_stock_value, c.name AS category_name, u.name AS unit_name
+       FROM items i
+       LEFT JOIN item_categories c ON c.id = i.category_id
+       LEFT JOIN item_units u ON u.id = i.unit_id
+       WHERE i.company_id = $1 AND i.is_deleted = false
+       ORDER BY i.name`,
+      [companyId]
+    ),
+    query(
+      `SELECT id, name, party_type, gstin, phone, email, billing_address, billing_city, billing_state,
+              billing_pincode, opening_balance
+       FROM parties
+       WHERE company_id = $1 AND is_deleted = false
+       ORDER BY name`,
+      [companyId]
+    ),
+    query(
+      `SELECT id, invoice_number AS number, invoice_date AS date, total_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, status
+       FROM invoices
+       WHERE company_id = $1 AND is_deleted = false AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice')
+       ORDER BY invoice_date`,
+      [companyId]
+    ),
+    query(
+      `SELECT id, bill_number AS number, bill_date AS date, total_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, status
+       FROM purchase_invoices
+       WHERE company_id = $1 AND is_deleted = false
+       ORDER BY bill_date`,
+      [companyId]
+    ),
+  ]);
+
+  return {
+    company: companyRes.rows[0] || null,
+    units: unitsRes.rows,
+    categories: categoriesRes.rows,
+    items: itemsRes.rows,
+    parties: partiesRes.rows,
+    sales: salesRes.rows,
+    purchases: purchaseRes.rows,
+  };
+}
+
+export async function tallyExport(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const format = String(req.query.format || 'json').toLowerCase();
+    const payload = await getTallyExportData(companyId);
+
+    if (format === 'xml') {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>All Masters</REPORTNAME>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        <TALLYMESSAGE>
+          <COMPANY NAME="${escXml(payload.company?.name || 'Company')}">
+            <NAME>${escXml(payload.company?.name || '')}</NAME>
+            <LEGALNAME>${escXml(payload.company?.legal_name || '')}</LEGALNAME>
+            <GSTIN>${escXml(payload.company?.gstin || '')}</GSTIN>
+          </COMPANY>
+          ${payload.units.map((u: any) => `<UNIT NAME="${escXml(u.name)}"><NAME>${escXml(u.name)}</NAME><ORIGINALNAME>${escXml(u.abbreviation || '')}</ORIGINALNAME></UNIT>`).join('')}
+          ${payload.items
+            .map(
+              (i: any) => `<STOCKITEM NAME="${escXml(i.name)}">
+  <NAME>${escXml(i.name)}</NAME>
+  <BASEUNITS>${escXml(i.unit_name || '')}</BASEUNITS>
+  <GSTAPPLICABLE>Applicable</GSTAPPLICABLE>
+  <GSTTYPEOFSUPPLY>Goods</GSTTYPEOFSUPPLY>
+  <RATEOFTAXCALCULATION>${Number(i.gst_rate || 0)}</RATEOFTAXCALCULATION>
+  <OPENINGBALANCE>${Number(i.opening_stock || 0)}</OPENINGBALANCE>
+</STOCKITEM>`
+            )
+            .join('')}
+          ${payload.parties.map((p: any) => `<LEDGER NAME="${escXml(p.name)}"><NAME>${escXml(p.name)}</NAME><GSTIN>${escXml(p.gstin || '')}</GSTIN></LEDGER>`).join('')}
+        </TALLYMESSAGE>
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+
+      res.setHeader('Content-Type', 'application/xml');
+      res.setHeader('Content-Disposition', `attachment; filename=tally-export-${new Date().toISOString().slice(0, 10)}.xml`);
+      return res.send(xml);
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename=tally-export-${new Date().toISOString().slice(0, 10)}.json`);
+    res.json(success(payload));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function tallyImport(req: Request, res: Response) {
+  try {
+    if (!req.file) return res.status(400).json(error('No import file uploaded'));
+    const companyId = req.user!.company_id;
+    const content = fs.readFileSync(req.file.path, 'utf-8');
+    const ext = (req.file.originalname.split('.').pop() || '').toLowerCase();
+
+    let createdUnits = 0;
+    let createdParties = 0;
+    let createdItems = 0;
+
+    if (ext === 'json') {
+      const body = JSON.parse(content);
+      const data = body?.data || body;
+
+      for (const u of data.units || []) {
+        const name = String(u.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM item_units WHERE company_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          await query('INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,$4)', [companyId, name, u.abbreviation || null, !!u.is_default]);
+          createdUnits++;
+        }
+      }
+
+      for (const p of data.parties || []) {
+        const name = String(p.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM parties WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          await query(
+            `INSERT INTO parties (company_id, party_type, name, gstin, phone, email, billing_address, billing_city, billing_state, billing_pincode, opening_balance)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            [companyId, p.party_type || 'customer', name, p.gstin || null, p.phone || null, p.email || null, p.billing_address || null, p.billing_city || null, p.billing_state || null, p.billing_pincode || null, Number(p.opening_balance || 0)]
+          );
+          createdParties++;
+        }
+      }
+
+      for (const i of data.items || []) {
+        const name = String(i.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          await query(
+            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, gst_rate, cgst_rate, sgst_rate, igst_rate, purchase_price, selling_price, opening_stock, opening_stock_value)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              companyId,
+              name,
+              i.sku || null,
+              i.barcode || null,
+              i.hsn_code || null,
+              Number(i.gst_rate || 0),
+              Number(i.gst_rate || 0) / 2,
+              Number(i.gst_rate || 0) / 2,
+              Number(i.gst_rate || 0),
+              Number(i.purchase_price || 0),
+              Number(i.selling_price || 0),
+              Number(i.opening_stock || 0),
+              Number(i.opening_stock_value || 0),
+            ]
+          );
+          createdItems++;
+        }
+      }
+    } else if (ext === 'xml') {
+      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+      const parsed = parser.parse(content);
+      const message = parsed?.ENVELOPE?.BODY?.IMPORTDATA?.REQUESTDATA?.TALLYMESSAGE;
+
+      const stockItems = Array.isArray(message?.STOCKITEM) ? message.STOCKITEM : message?.STOCKITEM ? [message.STOCKITEM] : [];
+      const ledgers = Array.isArray(message?.LEDGER) ? message.LEDGER : message?.LEDGER ? [message.LEDGER] : [];
+      const units = Array.isArray(message?.UNIT) ? message.UNIT : message?.UNIT ? [message.UNIT] : [];
+
+      for (const u of units) {
+        const name = String(u.NAME || u.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM item_units WHERE company_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          await query('INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,false)', [companyId, name, u.ORIGINALNAME || null]);
+          createdUnits++;
+        }
+      }
+
+      for (const l of ledgers) {
+        const name = String(l.NAME || l.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM parties WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          await query(
+            `INSERT INTO parties (company_id, party_type, name, gstin)
+             VALUES ($1,'customer',$2,$3)`,
+            [companyId, name, l.GSTIN || null]
+          );
+          createdParties++;
+        }
+      }
+
+      for (const s of stockItems) {
+        const name = String(s.NAME || s.name || '').trim();
+        if (!name) continue;
+        const exists = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
+        if (!exists.rows.length) {
+          const gstRate = Number(s.RATEOFTAXCALCULATION || 0);
+          await query(
+            `INSERT INTO items (company_id, name, gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [companyId, name, gstRate, gstRate / 2, gstRate / 2, gstRate, Number(s.OPENINGBALANCE || 0)]
+          );
+          createdItems++;
+        }
+      }
+    } else {
+      return res.status(400).json(error('Unsupported file format. Upload JSON or XML.'));
+    }
+
+    try { fs.unlinkSync(req.file.path); } catch {}
+    res.json(success({ created_units: createdUnits, created_parties: createdParties, created_items: createdItems }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

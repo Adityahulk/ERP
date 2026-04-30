@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifyToken } from '../middleware/auth';
 import * as ctrl from '../controllers/reportController';
+import { uploadImportFile } from '../services/fileUpload';
 
 const router = Router();
 router.use(verifyToken);
@@ -25,5 +26,7 @@ router.get('/payment-collection', ctrl.paymentCollection);
 router.get('/tcs-tds', ctrl.tcsTds);
 router.get('/balance-sheet', ctrl.balanceSheet);
 router.get('/trial-balance', ctrl.trialBalance);
+router.get('/tally-export', ctrl.tallyExport);
+router.post('/tally-import', uploadImportFile, ctrl.tallyImport);
 
 export default router;

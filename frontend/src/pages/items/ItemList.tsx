@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
+import { getApiBaseURL } from '@/lib/api';
 import {
   useCreateItemCategory,
   useCreateItemUnit,
@@ -26,16 +27,18 @@ import {
   Edit2,
   Package,
   Plus,
+  Printer,
   Search,
   Trash2,
   Upload,
   Warehouse,
+  Barcode,
 } from 'lucide-react';
 import type { Item } from '@/types';
 import ItemForm from './ItemForm';
 import toast from 'react-hot-toast';
 
-type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
+type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units' | 'barcodes';
 
 function qtyText(value: unknown) {
   const num = Number(value || 0);
@@ -115,11 +118,11 @@ export default function ItemList() {
   );
 
   useEffect(() => {
-    if ((activeTab === 'products' || activeTab === 'services') && visibleItems.length > 0) {
+    if ((activeTab === 'products' || activeTab === 'services' || activeTab === 'barcodes') && visibleItems.length > 0) {
       const exists = visibleItems.some((item) => item.id === selectedItemId);
       if (!exists) setSelectedItemId(visibleItems[0].id);
     }
-    if ((activeTab === 'products' || activeTab === 'services') && visibleItems.length === 0) {
+    if ((activeTab === 'products' || activeTab === 'services' || activeTab === 'barcodes') && visibleItems.length === 0) {
       setSelectedItemId('');
     }
   }, [activeTab, selectedItemId, visibleItems]);
@@ -255,11 +258,12 @@ export default function ItemList() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ItemWorkspaceTab)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4 lg:w-[520px]">
+        <TabsList className="grid w-full grid-cols-5 lg:w-[680px]">
           <TabsTrigger value="products">Products</TabsTrigger>
           <TabsTrigger value="services">Services</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
           <TabsTrigger value="units">Units</TabsTrigger>
+          <TabsTrigger value="barcodes">Barcodes</TabsTrigger>
         </TabsList>
 
         <TabsContent value="products" className="space-y-4">
@@ -617,6 +621,62 @@ export default function ItemList() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+        <TabsContent value="barcodes" className="space-y-4">
+          <Card>
+            <CardContent className="p-4 md:p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold text-lg">Barcode Generator</h2>
+                  <p className="text-xs text-muted-foreground">Generate and print barcodes in a dedicated section.</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => selectedItemId && window.open(`${getApiBaseURL()}/items/${selectedItemId}/barcode-image`, '_blank')}
+                    disabled={!selectedItemId}
+                  >
+                    <Barcode className="w-4 h-4 mr-1" />
+                    Generate
+                  </Button>
+                  <Button
+                    onClick={() => selectedItemId && navigate(`/items/${selectedItemId}`)}
+                    disabled={!selectedItemId}
+                  >
+                    <Printer className="w-4 h-4 mr-1" />
+                    Open Print Detail
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <div className="rounded-lg border max-h-[65vh] overflow-y-auto">
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedItemId(item.id)}
+                      className={`w-full border-b p-3 text-left hover:bg-muted/30 ${selectedItemId === item.id ? 'bg-primary/5' : ''}`}
+                    >
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-xs text-muted-foreground">{item.sku || 'No SKU'}</div>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-xl border p-4 min-h-[320px] flex items-center justify-center">
+                  {!selectedItemId ? (
+                    <p className="text-sm text-muted-foreground">Select an item to generate or preview barcode.</p>
+                  ) : (
+                    <img
+                      src={`${getApiBaseURL()}/items/${selectedItemId}/barcode-image`}
+                      alt="Item barcode"
+                      className="max-w-full max-h-[300px] object-contain"
+                    />
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 

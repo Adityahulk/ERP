@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
@@ -48,6 +48,7 @@ export default function Settings() {
   const [editUserForm, setEditUserForm] = useState({ name: '', email: '', phone: '', role: 'staff', is_active: true });
   const [editGodownForm, setEditGodownForm] = useState({ name: '', code: '', city: '', state: '', is_default: false, is_active: true });
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const tallyImportFileRef = useRef<HTMLInputElement | null>(null);
   const pendingImportFile = useRef<File | null>(null);
   const logoFileRef = useRef<HTMLInputElement | null>(null);
   const signatureFileRef = useRef<HTMLInputElement | null>(null);
@@ -81,6 +82,8 @@ export default function Settings() {
   const [dataDumping, setDataDumping] = useState(false);
   const [templateDownloading, setTemplateDownloading] = useState(false);
   const [testPrintRunning, setTestPrintRunning] = useState(false);
+  const [tallyExporting, setTallyExporting] = useState(false);
+  const [tallyImporting, setTallyImporting] = useState(false);
 
   const { data: usersPage, isLoading: usersLoading } = useQuery({
     queryKey: ['settings-users'],
@@ -166,17 +169,6 @@ export default function Settings() {
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Update failed'),
   });
-
-  const openEditUser = (u: any) => {
-    setEditingUserId(u.id);
-    setEditUserForm({
-      name: u.name || '',
-      email: u.email || '',
-      phone: u.phone || '',
-      role: u.role || 'staff',
-      is_active: !!u.is_active,
-    });
-  };
 
   const openEditGodown = (g: any) => {
     setEditingGodownId(g.id);
@@ -493,6 +485,45 @@ export default function Settings() {
       toast.error(e.response?.data?.error || 'Test print failed', { id: t });
     } finally {
       setTestPrintRunning(false);
+    }
+  };
+
+  const exportTally = async (format: 'json' | 'xml') => {
+    setTallyExporting(true);
+    try {
+      const res = await api.get('/reports/tally-export', { params: { format }, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tally-export-${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Tally ${format.toUpperCase()} exported`);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Tally export failed');
+    } finally {
+      setTallyExporting(false);
+    }
+  };
+
+  const importTally = async (file?: File) => {
+    if (!file) return;
+    setTallyImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await api.post('/reports/tally-import', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const d = res.data?.data ?? res.data;
+      toast.success(`Imported from Tally: ${d.created_items || 0} items, ${d.created_parties || 0} parties, ${d.created_units || 0} units`);
+      qc.invalidateQueries({ queryKey: ['items'] });
+      qc.invalidateQueries({ queryKey: ['item-units'] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Tally import failed');
+    } finally {
+      setTallyImporting(false);
+      if (tallyImportFileRef.current) tallyImportFileRef.current.value = '';
     }
   };
 
@@ -983,6 +1014,13 @@ export default function Settings() {
                        className="hidden"
                        onChange={(e) => previewImportFile(e.target.files?.[0])}
                      />
+                    <input
+                      ref={tallyImportFileRef}
+                      type="file"
+                      accept=".json,.xml"
+                      className="hidden"
+                      onChange={(e) => importTally(e.target.files?.[0])}
+                    />
                      <div className="grid md:grid-cols-2 gap-6">
                         <Card className="border-indigo-100 shadow-sm">
                            <CardContent className="p-6 flex flex-col items-center text-center">
@@ -1030,6 +1068,24 @@ export default function Settings() {
                               <p className="text-sm text-slate-500 mb-4">Push localized records to universal schemas.</p>
                               <Button variant="outline" className="w-full border-emerald-600 text-emerald-700" onClick={dumpData} loading={dataDumping}>Dump Data</Button>
                            </CardContent>
+                        </Card>
+                        <Card className="border-violet-100 shadow-sm">
+                          <CardContent className="p-6 flex flex-col items-center text-center">
+                            <div className="w-12 h-12 bg-violet-50 rounded-full flex items-center justify-center text-violet-600 mb-3"><FileText className="w-6 h-6"/></div>
+                            <h3 className="font-bold text-slate-900 mb-1">Tally Data Bridge</h3>
+                            <p className="text-sm text-slate-500 mb-4">Export entire company data for Tally and import Tally JSON/XML back.</p>
+                            <div className="w-full space-y-2">
+                              <Button variant="outline" className="w-full" onClick={() => exportTally('json')} loading={tallyExporting}>
+                                <Download className="w-4 h-4 mr-2" /> Export Tally JSON
+                              </Button>
+                              <Button variant="outline" className="w-full" onClick={() => exportTally('xml')} loading={tallyExporting}>
+                                <Download className="w-4 h-4 mr-2" /> Export Tally XML
+                              </Button>
+                              <Button variant="outline" className="w-full" onClick={() => tallyImportFileRef.current?.click()} disabled={tallyImporting}>
+                                <Upload className="w-4 h-4 mr-2" /> {tallyImporting ? 'Importing...' : 'Import from Tally'}
+                              </Button>
+                            </div>
+                          </CardContent>
                         </Card>
                      </div>
                   </CardContent>
