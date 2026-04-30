@@ -67,6 +67,12 @@ export const uploadBill = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 }).single('bill');
 
+/** Employee document upload: /uploads/employees/ — max 10MB */
+export const uploadEmployeeDocument = multer({
+  storage: makeStorage('employees'),
+  limits: { fileSize: 10 * 1024 * 1024 },
+}).single('document');
+
 /**
  * Get the public URL path for an uploaded file
  */

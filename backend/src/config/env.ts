@@ -51,6 +51,9 @@ const envSchema = z.object({
   TAXPRO_PASSWORD: z.string().optional(),
   TAXPRO_IRN_ENDPOINT: z.string().optional(),
   TAXPRO_CANCEL_ENDPOINT: z.string().optional(),
+  GSTIN_LOOKUP_API_URL: z.string().optional(),
+  GSTIN_LOOKUP_API_KEY: z.string().optional(),
+  GSTIN_LOOKUP_API_KEY_HEADER: z.string().default('Authorization'),
   /** 64 hex chars (32 bytes) for AES-256-GCM storage of GSP passwords at rest */
   CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
 });

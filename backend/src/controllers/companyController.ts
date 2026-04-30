@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import { getUploadUrl } from '../services/fileUpload';
 import { encryptSecret } from '../lib/credentialsCrypto';
 import { removeRefreshToken } from '../middleware/auth';
+import { lookupGstinDetails } from '../services/gstService';
 import {
   ensurePrimaryGodown,
   applyOnboardingSeeds,
@@ -43,6 +44,9 @@ export async function updateCompany(req: Request, res: Response) {
       'default_due_days', 'currency', 'timezone',
       'item_terminology', 'item_terminology_plural', 'default_gst_rate', 'default_hsn',
       'bank_name', 'bank_account_number', 'bank_ifsc', 'bank_branch', 'upi_id',
+      'business_category',
+      'gstin_legal_name', 'gstin_trade_name', 'gstin_status', 'gstin_taxpayer_type',
+      'gstin_address', 'gstin_last_fetched_at', 'gstin_lookup_payload',
       'terms_and_conditions', 'invoice_notes', 'onboarding_completed',
       'einvoice_enabled', 'einvoice_turnover_above_5cr', 'einvoice_sandbox',
       'einvoice_gsp_username', 'document_primary_color', 'receipt_footer_message', 'invoice_pdf_template',
@@ -80,6 +84,109 @@ export async function updateCompany(req: Request, res: Response) {
     await logAction(req.user!.id, companyId, 'update', 'company', companyId, old, result.rows[0], req.ip);
     res.json(success(sanitizeCompany(result.rows[0] as any)));
   } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function lookupGstin(req: Request, res: Response) {
+  try {
+    const details = await lookupGstinDetails(String(req.params.gstin || req.query.gstin || ''));
+    res.json(success(details));
+  } catch (err: any) {
+    res.status(400).json(error(err.message));
+  }
+}
+
+export async function listBankAccounts(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT *
+       FROM company_bank_accounts
+       WHERE company_id = $1 AND is_deleted = false
+       ORDER BY is_primary DESC, created_at ASC`,
+      [req.user!.company_id],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function upsertBankAccount(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const id = d.id || req.params.id || null;
+    if (!String(d.bank_name || '').trim()) return res.status(400).json(error('Bank name is required'));
+    if (!String(d.account_number || '').trim()) return res.status(400).json(error('Account number is required'));
+
+    const row = await withTransaction(async (client) => {
+      if (d.is_primary) {
+        await client.query(
+          `UPDATE company_bank_accounts SET is_primary = false WHERE company_id = $1 AND is_deleted = false`,
+          [companyId],
+        );
+      }
+
+      if (id) {
+        const r = await client.query(
+          `UPDATE company_bank_accounts SET
+             account_label = $1, bank_name = $2, account_number = $3, ifsc = $4, branch = $5,
+             upi_id = $6, is_primary = $7, is_active = $8
+           WHERE id = $9 AND company_id = $10 AND is_deleted = false
+           RETURNING *`,
+          [
+            d.account_label || null,
+            String(d.bank_name).trim(),
+            String(d.account_number).trim(),
+            d.ifsc ? String(d.ifsc).trim().toUpperCase() : null,
+            d.branch || null,
+            d.upi_id || null,
+            !!d.is_primary,
+            d.is_active !== false,
+            id,
+            companyId,
+          ],
+        );
+        if (!r.rows.length) throw new Error('Bank account not found');
+        return r.rows[0];
+      }
+
+      const r = await client.query(
+        `INSERT INTO company_bank_accounts (
+           company_id, account_label, bank_name, account_number, ifsc, branch, upi_id, is_primary, is_active
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [
+          companyId,
+          d.account_label || null,
+          String(d.bank_name).trim(),
+          String(d.account_number).trim(),
+          d.ifsc ? String(d.ifsc).trim().toUpperCase() : null,
+          d.branch || null,
+          d.upi_id || null,
+          !!d.is_primary,
+          d.is_active !== false,
+        ],
+      );
+      return r.rows[0];
+    });
+
+    res.json(success(row));
+  } catch (err: any) {
+    res.status(/not found|required/i.test(err.message) ? 400 : 500).json(error(err.message));
+  }
+}
+
+export async function deleteBankAccount(req: Request, res: Response) {
+  try {
+    const r = await query(
+      `UPDATE company_bank_accounts SET is_deleted = true, is_active = false
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
+      [req.params.id, req.user!.company_id],
+    );
+    if (!r.rows.length) return res.status(404).json(error('Bank account not found'));
+    res.json(success({ message: 'Bank account removed' }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── POST /api/company/logo ────────────────────────────────────
@@ -180,10 +287,29 @@ export async function softDeleteCompany(req: Request, res: Response) {
     const old = await query(`SELECT id, name FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
     if (!old.rows.length) return res.status(404).json(error('Company not found'));
 
-    await query(
-      `UPDATE companies SET is_deleted = true, is_active = false, updated_at = NOW() WHERE id = $1`,
-      [companyId],
-    );
+    await withTransaction(async (client) => {
+      const snapshot: Record<string, unknown> = {};
+      for (const table of [
+        'companies', 'users', 'godowns', 'parties', 'items', 'invoices', 'invoice_items',
+        'purchase_orders', 'purchase_invoices', 'quotations', 'payments', 'employee_profiles',
+      ]) {
+        try {
+          const rows = await client.query(`SELECT * FROM ${table} WHERE company_id = $1`, [companyId]);
+          snapshot[table] = rows.rows;
+        } catch {
+          snapshot[table] = [];
+        }
+      }
+      await client.query(
+        `INSERT INTO owner_backup_snapshots (company_id, entity_type, entity_id, action, snapshot, created_by)
+         VALUES ($1, 'company', $1, 'delete_workspace', $2, $3)`,
+        [companyId, snapshot, req.user!.id],
+      );
+      await client.query(
+        `UPDATE companies SET is_deleted = true, is_active = false, updated_at = NOW() WHERE id = $1`,
+        [companyId],
+      );
+    });
 
     const users = await query(`SELECT id FROM users WHERE company_id = $1 AND is_deleted = false`, [companyId]);
     for (const row of users.rows) {

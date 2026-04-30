@@ -1,3 +1,137 @@
+import { env } from '../config/env';
+
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const GSTIN_CHECK_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+const STATE_NAMES: Record<string, string> = {
+  '01': 'Jammu and Kashmir',
+  '02': 'Himachal Pradesh',
+  '03': 'Punjab',
+  '04': 'Chandigarh',
+  '05': 'Uttarakhand',
+  '06': 'Haryana',
+  '07': 'Delhi',
+  '08': 'Rajasthan',
+  '09': 'Uttar Pradesh',
+  '10': 'Bihar',
+  '11': 'Sikkim',
+  '12': 'Arunachal Pradesh',
+  '13': 'Nagaland',
+  '14': 'Manipur',
+  '15': 'Mizoram',
+  '16': 'Tripura',
+  '17': 'Meghalaya',
+  '18': 'Assam',
+  '19': 'West Bengal',
+  '20': 'Jharkhand',
+  '21': 'Odisha',
+  '22': 'Chhattisgarh',
+  '23': 'Madhya Pradesh',
+  '24': 'Gujarat',
+  '26': 'Dadra and Nagar Haveli and Daman and Diu',
+  '27': 'Maharashtra',
+  '29': 'Karnataka',
+  '30': 'Goa',
+  '31': 'Lakshadweep',
+  '32': 'Kerala',
+  '33': 'Tamil Nadu',
+  '34': 'Puducherry',
+  '35': 'Andaman and Nicobar Islands',
+  '36': 'Telangana',
+  '37': 'Andhra Pradesh',
+  '38': 'Ladakh',
+  '97': 'Other Territory',
+};
+
+function isValidGstinChecksum(gstin: string): boolean {
+  const body = gstin.slice(0, 14);
+  let factor = 2;
+  let sum = 0;
+  for (let i = body.length - 1; i >= 0; i--) {
+    const codePoint = GSTIN_CHECK_CHARS.indexOf(body[i]);
+    if (codePoint < 0) return false;
+    const digit = factor * codePoint;
+    factor = factor === 2 ? 1 : 2;
+    sum += Math.floor(digit / 36) + (digit % 36);
+  }
+  const checkCodePoint = (36 - (sum % 36)) % 36;
+  return GSTIN_CHECK_CHARS[checkCodePoint] === gstin[14];
+}
+
+function pickProviderField(raw: any, keys: string[]) {
+  for (const key of keys) {
+    const value = key.split('.').reduce((acc, part) => (acc == null ? acc : acc[part]), raw);
+    if (value != null && String(value).trim() !== '') return String(value).trim();
+  }
+  return null;
+}
+
+export type GstinLookupDetails = {
+  gstin: string;
+  valid: boolean;
+  source: 'provider' | 'local';
+  legal_name: string | null;
+  trade_name: string | null;
+  status: string | null;
+  taxpayer_type: string | null;
+  address: string | null;
+  state_code: string | null;
+  state: string | null;
+  raw: Record<string, unknown>;
+};
+
+export async function lookupGstinDetails(input: string): Promise<GstinLookupDetails> {
+  const gstin = String(input || '').replace(/\s+/g, '').toUpperCase();
+  const stateCode = stateCodeFromGstin(gstin);
+  const state = stateCode ? STATE_NAMES[stateCode] || null : null;
+  if (!GSTIN_RE.test(gstin) || !isValidGstinChecksum(gstin)) {
+    throw new Error('Invalid GSTIN format or checksum');
+  }
+
+  if (env.GSTIN_LOOKUP_API_URL) {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (env.GSTIN_LOOKUP_API_KEY) {
+      headers[env.GSTIN_LOOKUP_API_KEY_HEADER] =
+        env.GSTIN_LOOKUP_API_KEY_HEADER.toLowerCase() === 'authorization'
+          ? `Bearer ${env.GSTIN_LOOKUP_API_KEY}`
+          : env.GSTIN_LOOKUP_API_KEY;
+    }
+    const url = env.GSTIN_LOOKUP_API_URL.includes('{gstin}')
+      ? env.GSTIN_LOOKUP_API_URL.replace('{gstin}', encodeURIComponent(gstin))
+      : `${env.GSTIN_LOOKUP_API_URL.replace(/\/$/, '')}/${encodeURIComponent(gstin)}`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) throw new Error(`GSTIN lookup failed (${response.status})`);
+    const raw = await response.json();
+    return {
+      gstin,
+      valid: true,
+      source: 'provider',
+      legal_name: pickProviderField(raw, ['legal_name', 'lgnm', 'data.legal_name', 'data.lgnm']),
+      trade_name: pickProviderField(raw, ['trade_name', 'tradeNam', 'data.trade_name', 'data.tradeNam']),
+      status: pickProviderField(raw, ['status', 'sts', 'data.status', 'data.sts']),
+      taxpayer_type: pickProviderField(raw, ['taxpayer_type', 'dty', 'data.taxpayer_type', 'data.dty']),
+      address: pickProviderField(raw, ['address', 'pradr.addr.bnm', 'data.address', 'data.pradr.addr.bnm']),
+      state_code: stateCode,
+      state,
+      raw: raw as Record<string, unknown>,
+    };
+  }
+
+  return {
+    gstin,
+    valid: true,
+    source: 'local',
+    legal_name: null,
+    trade_name: null,
+    status: null,
+    taxpayer_type: null,
+    address: null,
+    state_code: stateCode,
+    state,
+    raw: { note: 'Local GSTIN format, checksum, and state-code validation only. Configure GSTIN_LOOKUP_API_URL for live registry details.' },
+  };
+}
+
 export function determineGSTType(supplierStateCode: string, buyerStateCode: string): 'intra' | 'inter' {
   if (!supplierStateCode || !buyerStateCode) return 'intra'; // fallback
   return supplierStateCode === buyerStateCode ? 'intra' : 'inter';

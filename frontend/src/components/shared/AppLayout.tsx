@@ -293,9 +293,14 @@ export default function AppLayout() {
         <NavigationList />
 
         <div className="p-4 border-t border-white/10 flex items-center gap-3 shrink-0 bg-black/20">
-           <div className="w-9 h-9 rounded-full bg-indigo-500 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md ring-2 ring-indigo-400">
-             {getInitials(user?.name || '?')}
-           </div>
+           <button
+             type="button"
+             onClick={() => navigate('/profile')}
+             className="w-9 h-9 rounded-full bg-indigo-500 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md ring-2 ring-indigo-400 overflow-hidden"
+             aria-label="Open profile"
+           >
+             {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : getInitials(user?.name || '?')}
+           </button>
            <div className="flex-1 min-w-0">
              <p className="text-sm font-medium text-white truncate">{user?.name}</p>
              <p className="text-[10px] text-white/60 truncate">{user?.email}</p>
@@ -345,6 +350,14 @@ export default function AppLayout() {
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
              </Button>
+             <button
+               type="button"
+               onClick={() => navigate('/profile')}
+               className="h-9 w-9 rounded-full bg-indigo-600 text-white text-sm font-semibold overflow-hidden"
+               aria-label="Open profile"
+             >
+               {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : getInitials(user?.name || '?')}
+             </button>
           </div>
         </header>
 

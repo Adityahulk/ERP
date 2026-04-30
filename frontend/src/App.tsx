@@ -20,6 +20,7 @@ import QuotationDetail from '@/pages/quotations/QuotationDetail';
 import ExpenseList from '@/pages/expenses/ExpenseList';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
 import AttendancePage from '@/pages/hr/AttendancePage';
+import ProfilePage from '@/pages/hr/ProfilePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
 import BillingScreen from '@/pages/billing/BillingScreen';
@@ -165,6 +166,7 @@ export default function App() {
 
         {/* HR & Attendance */}
         <Route path="/attendance" element={<AttendancePage />} />
+        <Route path="/profile" element={<ProfilePage />} />
 
         {/* Production / BOM */}
         <Route path="/production" element={<BOMList />} />

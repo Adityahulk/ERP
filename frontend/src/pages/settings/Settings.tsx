@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
@@ -26,6 +26,11 @@ export default function Settings() {
   const [printerType, setPrinterType] = useState<'a4' | 'thermal80' | 'thermal58'>('a4');
   const [legalName, setLegalName] = useState('');
   const [gstin, setGstin] = useState('');
+  const [companyEmail, setCompanyEmail] = useState('');
+  const [businessType, setBusinessType] = useState('');
+  const [businessCategory, setBusinessCategory] = useState('');
+  const [gstinDetails, setGstinDetails] = useState<any>(null);
+  const [gstinFetching, setGstinFetching] = useState(false);
   const [bankName, setBankName] = useState('');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankIfsc, setBankIfsc] = useState('');
@@ -45,6 +50,7 @@ export default function Settings() {
   const pendingImportFile = useRef<File | null>(null);
   const logoFileRef = useRef<HTMLInputElement | null>(null);
   const signatureFileRef = useRef<HTMLInputElement | null>(null);
+  const lastAutoFetchedGstin = useRef('');
   const [importing, setImporting] = useState(false);
   const [importPreview, setImportPreview] = useState<{
     preview?: { row: number; data: Record<string, unknown>; valid: boolean }[];
@@ -86,6 +92,39 @@ export default function Settings() {
     queryFn: () => api.get('/godowns').then((r) => r.data?.data ?? r.data),
   });
   const godownRows = (godownsData as any) ?? [];
+
+  const { data: bankAccounts = [] } = useQuery({
+    queryKey: ['company-bank-accounts'],
+    queryFn: () => api.get('/company/bank-accounts').then((r) => r.data?.data ?? r.data),
+  });
+  const [bankForm, setBankForm] = useState({
+    account_label: '',
+    bank_name: '',
+    account_number: '',
+    ifsc: '',
+    branch: '',
+    upi_id: '',
+    is_primary: false,
+  });
+
+  const saveBankAccount = useMutation({
+    mutationFn: () => api.post('/company/bank-accounts', bankForm),
+    onSuccess: () => {
+      toast.success('Bank account added');
+      setBankForm({ account_label: '', bank_name: '', account_number: '', ifsc: '', branch: '', upi_id: '', is_primary: false });
+      qc.invalidateQueries({ queryKey: ['company-bank-accounts'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Bank save failed'),
+  });
+
+  const removeBankAccount = useMutation({
+    mutationFn: (id: string) => api.delete(`/company/bank-accounts/${id}`),
+    onSuccess: () => {
+      toast.success('Bank account removed');
+      qc.invalidateQueries({ queryKey: ['company-bank-accounts'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Remove failed'),
+  });
 
   const createUser = useMutation({
     mutationFn: () => api.post('/users', newUser),
@@ -293,6 +332,19 @@ export default function Settings() {
     if (saved === 'thermal80' || saved === 'thermal58' || saved === 'a4') setPrinterType(saved);
     setLegalName(company.legal_name || company.name || '');
     setGstin(company.gstin || '');
+    setCompanyEmail(company.email || '');
+    setBusinessType(company.business_type || '');
+    setBusinessCategory(company.business_category || '');
+    setGstinDetails(company.gstin ? {
+      legal_name: company.gstin_legal_name,
+      trade_name: company.gstin_trade_name,
+      status: company.gstin_status,
+      taxpayer_type: company.gstin_taxpayer_type,
+      address: company.gstin_address,
+      state_code: company.state_code,
+      state: company.state,
+      source: company.gstin_lookup_payload ? 'saved' : undefined,
+    } : null);
     setBankName(company.bank_name || '');
     setBankAccountNumber(company.bank_account_number || '');
     setBankIfsc(company.bank_ifsc || '');
@@ -309,6 +361,18 @@ export default function Settings() {
       await updateCompany.mutateAsync({
         legal_name: legalName.trim() || null,
         gstin: gstin.trim().toUpperCase() || null,
+        email: companyEmail.trim() || null,
+        business_type: businessType || null,
+        business_category: businessCategory.trim() || null,
+        gstin_legal_name: gstinDetails?.legal_name || null,
+        gstin_trade_name: gstinDetails?.trade_name || null,
+        gstin_status: gstinDetails?.status || null,
+        gstin_taxpayer_type: gstinDetails?.taxpayer_type || null,
+        gstin_address: gstinDetails?.address || null,
+        state_code: gstinDetails?.state_code || company?.state_code || null,
+        state: gstinDetails?.state || company?.state || null,
+        gstin_last_fetched_at: gstinDetails?.source ? new Date().toISOString() : company?.gstin_last_fetched_at || null,
+        gstin_lookup_payload: gstinDetails?.raw || company?.gstin_lookup_payload || null,
         bank_name: bankName.trim() || null,
         bank_account_number: bankAccountNumber.trim() || null,
         bank_ifsc: bankIfsc.trim().toUpperCase() || null,
@@ -319,6 +383,37 @@ export default function Settings() {
       toast.error(e.response?.data?.error || 'Save failed');
     }
   };
+
+  const fetchGstin = async () => {
+    const g = gstin.trim().toUpperCase();
+    if (g.length !== 15) {
+      toast.error('Enter a 15-character GSTIN first');
+      return;
+    }
+    setGstinFetching(true);
+    const t = toast.loading('Fetching GSTIN details…');
+    try {
+      const res = await api.get(`/company/gstin/${g}`);
+      const details = res.data?.data ?? res.data;
+      setGstinDetails(details);
+      if (details.legal_name) setLegalName(details.legal_name);
+      toast.success(details.source === 'provider' ? 'GSTIN details fetched' : 'GSTIN verified locally', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'GSTIN lookup failed', { id: t });
+    } finally {
+      setGstinFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    const g = gstin.trim().toUpperCase();
+    if (g.length !== 15 || g === lastAutoFetchedGstin.current) return;
+    const timer = window.setTimeout(() => {
+      lastAutoFetchedGstin.current = g;
+      fetchGstin();
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [gstin]);
 
   const saveInvoicePreferences = async () => {
     try {
@@ -474,7 +569,50 @@ export default function Settings() {
                            </div>
                            <div>
                               <label className="text-sm font-medium text-slate-700">GSTIN</label>
-                             <Input value={gstin} onChange={(e) => setGstin(e.target.value)} className="mt-1 uppercase" />
+                             <div className="mt-1 flex gap-2">
+                               <Input value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} className="uppercase font-mono" maxLength={15} />
+                               <Button type="button" variant="outline" size="icon" onClick={fetchGstin} loading={gstinFetching} aria-label="Fetch GSTIN details">
+                                 <Search className="h-4 w-4" />
+                               </Button>
+                             </div>
+                             {gstinDetails && (
+                               <div className="mt-2 rounded-md border bg-slate-50 p-3 text-xs text-slate-700 space-y-1">
+                                 <p><span className="font-semibold">Legal:</span> {gstinDetails.legal_name || 'Verified GSTIN format only'}</p>
+                                 {gstinDetails.trade_name && <p><span className="font-semibold">Trade:</span> {gstinDetails.trade_name}</p>}
+                                 <p><span className="font-semibold">State:</span> {[gstinDetails.state_code, gstinDetails.state].filter(Boolean).join(' - ') || '—'}</p>
+                                 {gstinDetails.status && <p><span className="font-semibold">Status:</span> {gstinDetails.status}</p>}
+                               </div>
+                             )}
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Email ID</label>
+                             <Input value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)} className="mt-1" type="email" />
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Business Type</label>
+                             <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={businessType} onChange={(e) => setBusinessType(e.target.value)}>
+                               <option value="">Select business type</option>
+                               <option value="retail">Retail</option>
+                               <option value="wholesaler">Wholesaler</option>
+                               <option value="manufacturing">Manufacturing</option>
+                               <option value="distributor">Distributor</option>
+                               <option value="service">Service</option>
+                               <option value="others">Others</option>
+                             </select>
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Business Category</label>
+                             <Input list="business-category-suggestions" value={businessCategory} onChange={(e) => setBusinessCategory(e.target.value)} className="mt-1" placeholder="e.g. Accounting CA, Salon, Shop" />
+                             <datalist id="business-category-suggestions">
+                               <option value="Accounting / CA Firm" />
+                               <option value="Salon / Beauty Studio" />
+                               <option value="Retail Shop" />
+                               <option value="Manufacturing Unit" />
+                               <option value="Distributor / Trader" />
+                               <option value="Professional Services" />
+                               <option value="Restaurant / Cafe" />
+                               <option value="Healthcare / Clinic" />
+                             </datalist>
                            </div>
                         </div>
                      </div>
@@ -491,6 +629,37 @@ export default function Settings() {
                           <Input placeholder="UPI ID (e.g. upi@hdfcbank)" value={upiId} onChange={(e) => setUpiId(e.target.value)} />
                            <p className="text-xs text-slate-500">QR Code will be dynamically generated on the invoice PDF based on total payload requirements automatically.</p>
                         </div>
+                     </div>
+                     <div className="border-t pt-6 space-y-4">
+                       <div className="flex items-center justify-between">
+                         <h3 className="font-semibold text-slate-900">Multiple Bank Accounts</h3>
+                         <span className="text-xs text-slate-500">Primary account is used first on PDFs.</span>
+                       </div>
+                       <div className="grid gap-3">
+                         {(bankAccounts as any[]).map((b: any) => (
+                           <div key={b.id} className="flex items-center justify-between rounded-lg border bg-slate-50 p-3">
+                             <div>
+                               <p className="font-medium text-sm">{b.account_label || b.bank_name} {b.is_primary ? <span className="text-xs text-indigo-600">(Primary)</span> : null}</p>
+                               <p className="text-xs text-slate-500">{b.bank_name} • {b.account_number} • {b.ifsc || 'IFSC —'} {b.upi_id ? `• ${b.upi_id}` : ''}</p>
+                             </div>
+                             <Button variant="ghost" size="icon" onClick={() => removeBankAccount.mutate(b.id)} aria-label="Remove bank">
+                               <Trash2 className="h-4 w-4 text-red-600" />
+                             </Button>
+                           </div>
+                         ))}
+                       </div>
+                       <div className="grid md:grid-cols-4 gap-3 rounded-lg border p-4">
+                         <Input placeholder="Label" value={bankForm.account_label} onChange={(e) => setBankForm((s) => ({ ...s, account_label: e.target.value }))} />
+                         <Input placeholder="Bank name" value={bankForm.bank_name} onChange={(e) => setBankForm((s) => ({ ...s, bank_name: e.target.value }))} />
+                         <Input placeholder="Account number" value={bankForm.account_number} onChange={(e) => setBankForm((s) => ({ ...s, account_number: e.target.value }))} />
+                         <Input placeholder="IFSC" className="uppercase" value={bankForm.ifsc} onChange={(e) => setBankForm((s) => ({ ...s, ifsc: e.target.value.toUpperCase() }))} />
+                         <Input placeholder="Branch" value={bankForm.branch} onChange={(e) => setBankForm((s) => ({ ...s, branch: e.target.value }))} />
+                         <Input placeholder="UPI ID" value={bankForm.upi_id} onChange={(e) => setBankForm((s) => ({ ...s, upi_id: e.target.value }))} />
+                         <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={bankForm.is_primary} onChange={(e) => setBankForm((s) => ({ ...s, is_primary: e.target.checked }))} />Primary</label>
+                         <Button type="button" onClick={() => saveBankAccount.mutate()} disabled={!bankForm.bank_name || !bankForm.account_number} loading={saveBankAccount.isPending} className="gap-1">
+                           <Plus className="h-4 w-4" /> Add bank
+                         </Button>
+                       </div>
                      </div>
                     <div className="pt-4"><Button onClick={saveProfile} loading={updateCompany.isPending}>Save Profile</Button></div>
 

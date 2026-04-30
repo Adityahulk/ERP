@@ -113,6 +113,7 @@ export async function createQuotation(req: Request, res: Response) {
       const qn = customNo || (await generateQuotationNumber(companyId, godownId));
 
       let isInterstate = Boolean(d.is_interstate);
+      const isGstQuote = d.is_gst_quote !== false;
       if (d.is_interstate === undefined && d.party_id) {
         const pRes = await client.query(
           'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
@@ -133,7 +134,7 @@ export async function createQuotation(req: Request, res: Response) {
       let total = 0;
 
       const prepared = items.map((it) => {
-        const t = calculateLine(it, isInterstate);
+        const t = calculateLine({ ...it, gst_rate: isGstQuote ? it.gst_rate : 0 }, isInterstate);
         subtotal += t.gross;
         discount += t.discountAmount;
         taxable += t.taxable;
@@ -150,9 +151,9 @@ export async function createQuotation(req: Request, res: Response) {
            party_name_override, party_phone_override, party_email_override,
            subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
            customer_notes, internal_notes, terms_and_conditions,
-           status, created_by
+           status, created_by, is_gst_quote, pdf_template, document_theme
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'draft',$20
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'draft',$20,$21,$22,$23
          ) RETURNING *`,
         [
           companyId,
@@ -175,6 +176,9 @@ export async function createQuotation(req: Request, res: Response) {
           trimOrNull(d.internal_notes),
           trimOrNull(d.terms_and_conditions),
           req.user!.id,
+          isGstQuote,
+          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
+          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
         ]
       );
       const quotation = qRes.rows[0];

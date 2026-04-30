@@ -10,6 +10,7 @@ import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Plus, Trash2, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 
 const rupeesToPaise = (r: number) => Math.round(r * 100);
 const paiseToRupees = (p: number) => (p / 100).toFixed(2);
@@ -55,6 +56,9 @@ export default function QuotationForm() {
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [isGstQuote, setIsGstQuote] = useState(true);
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
+  const [documentTheme, setDocumentTheme] = useState<'classic' | 'modern' | 'compact'>('classic');
   const [lines, setLines] = useState<QuoteLine[]>([
     { item_name: '', item_description: '', quantity: '1', unit_price: '', discount_amount: '0', gst_rate: '18', unit: 'PCS' },
   ]);
@@ -105,7 +109,7 @@ export default function QuotationForm() {
       const gross = Math.max(0, Math.round(qty * price));
       const disc = rupeesToPaise(Number(ln.discount_amount) || 0);
       const taxable = Math.max(0, gross - disc);
-      const gst = Math.max(0, Number(ln.gst_rate) || 0);
+      const gst = isGstQuote ? Math.max(0, Number(ln.gst_rate) || 0) : 0;
       const taxAmt = Math.round((taxable * gst) / 100);
       const final = taxable + taxAmt;
 
@@ -126,7 +130,7 @@ export default function QuotationForm() {
     });
 
     return { subtotal, discount, tax, total, normalized };
-  }, [lines]);
+  }, [lines, isGstQuote]);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -137,6 +141,9 @@ export default function QuotationForm() {
         quotation_date: quotationDate,
         valid_until: validUntil || undefined,
         items: lineTotals.normalized,
+        is_gst_quote: isGstQuote,
+        pdf_template: pdfTemplate,
+        document_theme: documentTheme,
         party_name_override: partyNameOverride.trim() || undefined,
         party_phone_override: partyPhoneOverride.trim() || undefined,
         party_email_override: partyEmailOverride.trim() || undefined,
@@ -208,6 +215,26 @@ export default function QuotationForm() {
               <strong>quotation series</strong> (same style as invoices: prefix / branch / financial year / sequence).
             </FieldHint>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg">Theme & tax mode</CardTitle>
+        </CardHeader>
+        <CardContent className="grid md:grid-cols-3 gap-3 pt-0">
+          <label className="flex items-center gap-2 text-sm rounded-md border px-3 h-10">
+            <input type="checkbox" checked={isGstQuote} onChange={(e) => setIsGstQuote(e.target.checked)} />
+            GST quotation
+          </label>
+          <select className="h-10 rounded-md border bg-white px-3 text-sm" value={pdfTemplate} onChange={(e) => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
+            {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+          <select className="h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value as typeof documentTheme)}>
+            <option value="classic">Classic theme</option>
+            <option value="modern">Modern theme</option>
+            <option value="compact">Compact theme</option>
+          </select>
         </CardContent>
       </Card>
 

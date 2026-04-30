@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine } from 'lucide-react';
 import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
+import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import api from '@/lib/api';
@@ -36,6 +37,9 @@ export default function InvoiceCreate() {
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
   const [isInterstate, setIsInterstate] = useState(false);
+  const [isGstInvoice, setIsGstInvoice] = useState(true);
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
+  const [documentTheme, setDocumentTheme] = useState<'classic' | 'modern' | 'compact'>('classic');
   const [notes, setNotes] = useState('');
   const [amountPaid, setAmountPaid] = useState(0);
   const [items, setItems] = useState<LineItem[]>([]);
@@ -136,8 +140,8 @@ export default function InvoiceCreate() {
     const lineTotal = item.quantity * item.unit_price;
     const discount = lineTotal * item.discount_percent / 100;
     const taxable = lineTotal - discount;
-    const gst = Math.round(taxable * item.gst_rate / 100);
-    const cess = Math.round(taxable * item.cess_rate / 100);
+    const gst = isGstInvoice ? Math.round(taxable * item.gst_rate / 100) : 0;
+    const cess = isGstInvoice ? Math.round(taxable * item.cess_rate / 100) : 0;
     return { lineTotal, discount, taxable, gst, cess, total: taxable + gst + cess };
   };
 
@@ -149,7 +153,10 @@ export default function InvoiceCreate() {
 
   const draftPreviewPayload = useMemo(
     () => ({
-      invoice_type: 'sale',
+      invoice_type: isGstInvoice ? 'sale' : 'non_gst',
+      is_gst_invoice: isGstInvoice,
+      pdf_template: pdfTemplate,
+      document_theme: documentTheme,
       party_id: partyId || undefined,
       party_name: partyName || undefined,
       godown_id: godownId || undefined,
@@ -169,7 +176,7 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items],
+    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme],
   );
 
   const handleSubmit = async () => {
@@ -179,14 +186,18 @@ export default function InvoiceCreate() {
 
     try {
       const res = await createMutation.mutateAsync({
-        invoice_type: 'sale', party_id: partyId, godown_id: godownId || undefined,
+        invoice_type: isGstInvoice ? 'sale' : 'non_gst',
+        is_gst_invoice: isGstInvoice,
+        pdf_template: pdfTemplate,
+        document_theme: documentTheme,
+        party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, notes,
         amount_paid: amountPaid,
         items: items.map(i => ({
           item_id: i.item_id, description: i.name, hsn_code: i.hsn_code,
           quantity: i.quantity, unit_price: i.unit_price,
-          gst_rate: i.gst_rate, discount_percent: i.discount_percent, cess_rate: i.cess_rate,
+          gst_rate: isGstInvoice ? i.gst_rate : 0, discount_percent: i.discount_percent, cess_rate: isGstInvoice ? i.cess_rate : 0,
         })),
       });
       const inv = (res as any)?.data ?? res;
@@ -282,10 +293,24 @@ export default function InvoiceCreate() {
               </div>
               <div className="flex items-end gap-2 pb-1">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={isInterstate} onChange={e => setIsInterstate(e.target.checked)} className="rounded border-input" />
+                  <input type="checkbox" checked={isInterstate} onChange={e => setIsInterstate(e.target.checked)} disabled={!isGstInvoice} className="rounded border-input" />
                   Interstate (IGST)
                 </label>
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border p-2">
+                <input type="checkbox" checked={isGstInvoice} onChange={e => setIsGstInvoice(e.target.checked)} className="rounded border-input" />
+                GST invoice
+              </label>
+              <select className="w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={pdfTemplate} onChange={e => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
+                {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+              <select className="col-span-2 w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={documentTheme} onChange={e => setDocumentTheme(e.target.value as typeof documentTheme)}>
+                <option value="classic">Classic theme</option>
+                <option value="modern">Modern theme</option>
+                <option value="compact">Compact theme</option>
+              </select>
             </div>
           </CardContent>
         </Card>
@@ -360,7 +385,9 @@ export default function InvoiceCreate() {
         <div className="flex justify-end">
           <div className="w-full max-w-sm space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="tabular-nums font-medium">{formatMoney(subtotal)}</span></div>
-            {isInterstate ? (
+            {!isGstInvoice ? (
+              <div className="flex justify-between"><span className="text-muted-foreground">GST</span><span className="tabular-nums">Non-GST invoice</span></div>
+            ) : isInterstate ? (
               <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatMoney(totalTax)}</span></div>
             ) : (
               <>

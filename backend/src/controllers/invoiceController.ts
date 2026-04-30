@@ -72,6 +72,26 @@ function mapLineForGst(raw: any) {
   };
 }
 
+async function backupInvoiceSnapshot(client: any, companyId: string, invoiceId: string, action: string, createdBy: string) {
+  const inv = await client.query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2`, [invoiceId, companyId]);
+  const items = await client.query(
+    `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
+    [invoiceId, companyId],
+  );
+  const payments = await client.query(
+    `SELECT p.*
+     FROM payments p
+     JOIN payment_allocations pa ON pa.payment_id = p.id
+     WHERE pa.invoice_id = $1 AND p.company_id = $2`,
+    [invoiceId, companyId],
+  );
+  await client.query(
+    `INSERT INTO owner_backup_snapshots (company_id, entity_type, entity_id, action, snapshot, created_by)
+     VALUES ($1, 'invoice', $2, $3, $4, $5)`,
+    [companyId, invoiceId, action, { invoice: inv.rows[0] || null, items: items.rows, payments: payments.rows }, createdBy],
+  );
+}
+
 // ── GET /api/invoices/search-items ──────────────────────────────
 export async function searchItems(req: Request, res: Response) {
   try {
@@ -156,17 +176,20 @@ export async function createInvoice(req: Request, res: Response) {
     if (!Array.isArray(d.items) || d.items.length === 0) {
       return res.status(400).json(error('At least one line item is required'));
     }
-    if (d.invoice_type && d.invoice_type !== 'sale' && d.invoice_type !== 'tax_invoice') {
+    if (d.invoice_type && !['sale', 'tax_invoice', 'non_gst'].includes(d.invoice_type)) {
       return res.status(400).json(error('Use the purchase module for supplier bills. This form only creates sales invoices.'));
     }
+    const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
 
     const mappedItems = d.items.map((it: any) => mapLineForGst({
       ...it,
       item_name: it.item_name || it.name,
+      gst_rate: isGstInvoice ? it.gst_rate : 0,
+      cess_rate: isGstInvoice ? it.cess_rate : 0,
     }));
 
     const result = await withTransaction(async (client) => {
-      const rawType = d.invoice_type || 'tax_invoice';
+      const rawType = d.invoice_type === 'non_gst' ? 'sale' : (d.invoice_type || 'tax_invoice');
       const isPurchase = rawType === 'purchase';
       const invoiceType = isPurchase ? 'purchase' : 'tax_invoice';
 
@@ -237,10 +260,10 @@ export async function createInvoice(req: Request, res: Response) {
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, terms_and_conditions, created_by
+          notes, terms_and_conditions, created_by, is_gst_invoice, pdf_template, document_theme
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, d.godown_id || req.user!.godown_id,
@@ -269,6 +292,9 @@ export async function createInvoice(req: Request, res: Response) {
           d.notes || null,
           d.terms_and_conditions || null,
           req.user!.id,
+          isGstInvoice,
+          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
+          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
         ]
       );
 
@@ -277,10 +303,15 @@ export async function createInvoice(req: Request, res: Response) {
 
       for (let i = 0; i < d.items.length; i++) {
         const item = d.items[i];
-        const lineGst = mapLineForGst({ ...item, item_name: item.item_name || item.name });
+        const lineGst = mapLineForGst({
+          ...item,
+          item_name: item.item_name || item.name,
+          gst_rate: isGstInvoice ? item.gst_rate : 0,
+          cess_rate: isGstInvoice ? item.cess_rate : 0,
+        });
         const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
 
-        const gstRt = Number(item.gst_rate) || 0;
+        const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const half = gstRt / 2;
 
         await client.query(
@@ -573,6 +604,8 @@ export async function cancelInvoice(req: Request, res: Response) {
         [id, companyId]
       );
 
+      await backupInvoiceSnapshot(client, companyId, id, 'cancel_invoice', req.user!.id);
+
       if (inv.invoice_type !== 'purchase' && inv.godown_id) {
         for (const row of itemsRes.rows) {
           if (!row.item_id || !row.track_inventory) continue;
@@ -628,6 +661,7 @@ export async function cancelInvoice(req: Request, res: Response) {
       await client.query(
         `UPDATE invoices
          SET status = 'cancelled',
+             is_deleted = true,
              payment_status = CASE WHEN paid_amount > 0 THEN payment_status ELSE 'unpaid' END,
              updated_at = NOW()
          WHERE id = $1 AND company_id = $2`,
@@ -666,10 +700,13 @@ export async function deleteInvoice(req: Request, res: Response) {
     if (inv.status !== 'draft' && inv.status !== 'cancelled') {
       return res.status(400).json(error('Only draft or already-cancelled invoices can be deleted. Cancel the invoice first.'));
     }
-    await query(
-      `UPDATE invoices SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`,
-      [id, companyId],
-    );
+    await withTransaction(async (client) => {
+      await backupInvoiceSnapshot(client, companyId, id, 'delete_invoice', req.user!.id);
+      await client.query(
+        `UPDATE invoices SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`,
+        [id, companyId],
+      );
+    });
     await logAction(
       req.user!.id,
       companyId,
@@ -694,6 +731,22 @@ export async function getInvoicePDF(req: Request, res: Response) {
     if (!invRes.rows.length) return res.status(404).send('Invoice not found');
 
     const companyRes = await query('SELECT * FROM companies WHERE id = $1', [req.user!.company_id]);
+    const bankRes = await query(
+      `SELECT * FROM company_bank_accounts
+       WHERE company_id = $1 AND is_deleted = false AND is_active = true
+       ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
+      [req.user!.company_id],
+    );
+    const companyForPdf = bankRes.rows[0]
+      ? {
+          ...companyRes.rows[0],
+          bank_name: bankRes.rows[0].bank_name,
+          bank_account_number: bankRes.rows[0].account_number,
+          bank_ifsc: bankRes.rows[0].ifsc,
+          bank_branch: bankRes.rows[0].branch,
+          upi_id: bankRes.rows[0].upi_id || companyRes.rows[0].upi_id,
+        }
+      : companyRes.rows[0];
     const itemsRes = await query(
       `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
       [id, req.user!.company_id]
@@ -704,9 +757,9 @@ export async function getInvoicePDF(req: Request, res: Response) {
 
     const tpl = String(req.query.template || '');
     const allowed = ['standard', 'simple', 'performa'] as const;
-    const templateOverride = (allowed as readonly string[]).includes(tpl) ? tpl : undefined;
+    const templateOverride = (allowed as readonly string[]).includes(tpl) ? tpl : invRes.rows[0].pdf_template || undefined;
 
-    const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyRes.rows[0], partyRes.rows[0], itemsRes.rows, {
+    const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyForPdf, partyRes.rows[0], itemsRes.rows, {
       ...(templateOverride ? { templateOverride } : {}),
     });
 
@@ -735,7 +788,22 @@ export async function previewInvoicePdf(req: Request, res: Response) {
 
     const companyRes = await query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
     if (!companyRes.rows.length) return res.status(400).json(error('Company not found'));
-    const company = companyRes.rows[0];
+    const bankRes = await query(
+      `SELECT * FROM company_bank_accounts
+       WHERE company_id = $1 AND is_deleted = false AND is_active = true
+       ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
+      [companyId],
+    );
+    const company = bankRes.rows[0]
+      ? {
+          ...companyRes.rows[0],
+          bank_name: bankRes.rows[0].bank_name,
+          bank_account_number: bankRes.rows[0].account_number,
+          bank_ifsc: bankRes.rows[0].ifsc,
+          bank_branch: bankRes.rows[0].branch,
+          upi_id: bankRes.rows[0].upi_id || companyRes.rows[0].upi_id,
+        }
+      : companyRes.rows[0];
 
     let party: any = null;
     if (d.party_id) {
@@ -754,7 +822,13 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     }
     const gstType = isInterstate ? 'inter' : 'intra';
 
-    const mappedItems = d.items.map((it: any) => mapLineForGst({ ...it, item_name: it.item_name || it.name }));
+    const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
+    const mappedItems = d.items.map((it: any) => mapLineForGst({
+      ...it,
+      item_name: it.item_name || it.name,
+      gst_rate: isGstInvoice ? it.gst_rate : 0,
+      cess_rate: isGstInvoice ? it.cess_rate : 0,
+    }));
     const invDisc = Math.round(Number(d.discount_amount) || 0);
     const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
 

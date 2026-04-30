@@ -34,8 +34,12 @@ export async function createPurchaseOrder(req: Request, res: Response) {
 
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const isGstInvoice = d.is_gst_invoice !== false;
 
-      const totals = calculateInvoiceTotals(d.items, gstType, 'none', 0);
+      const itemsForTotals = Array.isArray(d.items)
+        ? d.items.map((item: any) => ({ ...item, gst_rate: isGstInvoice ? item.gst_rate : 0 }))
+        : [];
+      const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
       const poRes = await client.query(
         `INSERT INTO purchase_orders (
@@ -55,7 +59,8 @@ export async function createPurchaseOrder(req: Request, res: Response) {
       const poId = poRes.rows[0].id;
 
       for (const item of d.items) {
-        const itemTax = calculateInvoiceTotals([item], gstType, 'none', 0);
+        const itemForTax = { ...item, gst_rate: isGstInvoice ? item.gst_rate : 0 };
+        const itemTax = calculateInvoiceTotals([itemForTax], gstType, 'none', 0);
         await client.query(
           `INSERT INTO purchase_order_items (
             po_id, item_id, item_name, hsn_code, quantity_ordered, unit_price,
@@ -64,7 +69,7 @@ export async function createPurchaseOrder(req: Request, res: Response) {
           [
             poId, item.item_id, item.item_name || 'Item', item.hsn_code,
             item.quantity, item.unit_price, itemTax.totalDiscountLineLevel,
-            item.gst_rate || 0, itemTax.totalCgst, itemTax.totalSgst, itemTax.totalIgst,
+            isGstInvoice ? item.gst_rate || 0 : 0, itemTax.totalCgst, itemTax.totalSgst, itemTax.totalIgst,
             itemTax.totalAmount
           ]
         );
@@ -236,6 +241,7 @@ export async function receiveStock(req: Request, res: Response) {
       const pRes = await client.query('SELECT state_code FROM parties WHERE id = $1', [po.party_id]);
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const isGstInvoice = d.is_gst_invoice !== false;
 
       const poItemsRes = await client.query('SELECT * FROM purchase_order_items WHERE po_id = $1', [id]);
       const poItemById = new Map<string, Record<string, unknown>>(
@@ -259,7 +265,7 @@ export async function receiveStock(req: Request, res: Response) {
         itemsForTotals.push({
           unit_price: unitPricePaise,
           quantity: qty,
-          gst_rate: Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0),
+          gst_rate: isGstInvoice ? Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0) : 0,
           discount_type: 'none',
           discount_value: 0,
         });
@@ -273,13 +279,16 @@ export async function receiveStock(req: Request, res: Response) {
         `INSERT INTO purchase_invoices (
           company_id, godown_id, bill_number, bill_date, po_id, party_id,
           subtotal, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
-          status, created_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13) RETURNING *`,
+          status, created_by, is_gst_invoice, pdf_template, document_theme
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13,$14,$15,$16) RETURNING *`,
         [
           companyId, po.godown_id, d.bill_number, d.bill_date, po.id, po.party_id,
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
-          invoiceTotals.totalAmount, req.user!.id
+          invoiceTotals.totalAmount, req.user!.id,
+          isGstInvoice,
+          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
+          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
         ]
       );
       const invoice = invRes.rows[0];
@@ -308,7 +317,7 @@ export async function receiveStock(req: Request, res: Response) {
         const lineForTax = {
           unit_price: unitPricePaise,
           quantity: Number(reqItem.quantity_received),
-          gst_rate: Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0),
+          gst_rate: isGstInvoice ? Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0) : 0,
           discount_type: 'none' as const,
           discount_value: 0,
         };
@@ -337,7 +346,7 @@ export async function receiveStock(req: Request, res: Response) {
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             invoice.id, poItem.item_id, poItem.item_name, reqItem.quantity_received, unitPricePaise,
-            reqItem.gst_rate || poItem.gst_rate, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, (reqItem.serial_numbers && reqItem.serial_numbers.length > 0) ? reqItem.serial_numbers : null
+            isGstInvoice ? (reqItem.gst_rate || poItem.gst_rate) : 0, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, (reqItem.serial_numbers && reqItem.serial_numbers.length > 0) ? reqItem.serial_numbers : null
           ]
         );
 
