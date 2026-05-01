@@ -3,6 +3,7 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { redis } from '../config/redis';
+import { determineGSTType } from '../services/gstService';
 
 function trimOrNull(v: unknown): string | null {
   if (v == null) return null;
@@ -325,43 +326,101 @@ export async function convertToInvoice(req: Request, res: Response) {
       const qItems = qItemsRes.rows;
       if (!qItems.length) return { err: 'Quotation has no line items' as const };
 
+      let partySnap: {
+        name: string | null;
+        gstin: string | null;
+        bill: string | null;
+        ship: string | null;
+      } = {
+        name: trimOrNull(q.party_name_override),
+        gstin: null,
+        bill: null,
+        ship: null,
+      };
+      let isInterstate = false;
+      let placeOfSupply: string | null = null;
+
+      if (q.party_id) {
+        const pr = await client.query(
+          `SELECT name, gstin, billing_address, shipping_address, billing_state_code
+           FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [q.party_id, companyId],
+        );
+        if (pr.rows[0]) {
+          partySnap = {
+            name: trimOrNull(q.party_name_override) || (pr.rows[0].name as string) || null,
+            gstin: (pr.rows[0].gstin as string) || null,
+            bill: (pr.rows[0].billing_address as string) || null,
+            ship: (pr.rows[0].shipping_address as string) || null,
+          };
+          placeOfSupply = String(pr.rows[0].billing_state_code || '').slice(0, 5) || null;
+          const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+          isInterstate =
+            determineGSTType(cRes.rows[0]?.state_code, pr.rows[0]?.billing_state_code) === 'inter';
+        }
+      } else if (Number(q.igst_amount) > 0) {
+        isInterstate = true;
+      }
+
+      const compEinv = await client.query(
+        `SELECT einvoice_enabled, einvoice_turnover_above_5cr FROM companies WHERE id = $1`,
+        [companyId],
+      );
+      const einvOn = compEinv.rows[0]?.einvoice_enabled && compEinv.rows[0]?.einvoice_turnover_above_5cr;
+      const einvoiceStatus = einvOn ? 'pending' : 'not_applicable';
+
+      const pdfTpl = String(q.pdf_template || '');
+      const themeRaw = String(q.document_theme || '');
+      const pdfTemplate = ['standard', 'simple', 'performa'].includes(pdfTpl) ? q.pdf_template : null;
+      const documentTheme = ['classic', 'modern', 'compact'].includes(themeRaw) ? themeRaw : 'classic';
+
       const invRes = await client.query(
         `INSERT INTO invoices (
           company_id, invoice_number, invoice_type, party_id, godown_id,
           invoice_date, due_date, is_interstate, place_of_supply,
-          party_name_snapshot,
+          party_name_snapshot, party_gstin_snapshot, billing_address_snapshot, shipping_address_snapshot,
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, terms_and_conditions, created_by
+          notes, terms_and_conditions, created_by, pdf_template, document_theme
         ) VALUES (
-          $1,$2,'tax_invoice',$3,$4,$5,$6,$7,NULL,
-          $7,
-          $8,$9,$10,
-          $11,$12,$13,0,0,$14,
-          0,'unpaid',NULL,'confirmed','not_applicable',
-          $15,$16,$17
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
         ) RETURNING id`,
         [
           companyId,
           invoiceNumber,
+          'tax_invoice',
           q.party_id || null,
           q.godown_id || req.user!.godown_id || null,
           q.quotation_date || new Date().toISOString().split('T')[0],
           q.valid_until || null,
-          Number(q.igst_amount) > 0,
-          q.party_name_override || null,
+          isInterstate,
+          placeOfSupply,
+          partySnap.name,
+          partySnap.gstin,
+          partySnap.bill,
+          partySnap.ship,
           Number(q.subtotal) || Number(q.total_amount) || 0,
           Number(q.discount_amount) || 0,
           Number(q.taxable_amount) || Number(q.subtotal) || Number(q.total_amount) || 0,
           Number(q.cgst_amount) || 0,
           Number(q.sgst_amount) || 0,
           Number(q.igst_amount) || 0,
+          0,
+          0,
           Number(q.total_amount) || 0,
+          0,
+          'unpaid',
+          null,
+          'confirmed',
+          einvoiceStatus,
           q.customer_notes || `Converted from quotation ${q.quotation_number}`,
           q.terms_and_conditions || null,
           req.user!.id,
-        ]
+          pdfTemplate,
+          documentTheme,
+        ],
       );
       const invoiceId = invRes.rows[0].id;
 
