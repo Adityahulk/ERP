@@ -60,8 +60,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: bizflow_frontend
+    # Host port 80 → http://<server-ip>/ with no :port (avoid host nginx on 80 or use FRONTEND_PORT=8080 + reverse proxy).
     ports:
-      - "${FRONTEND_PORT:-18080}:80"
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
       - backend
     restart: unless-stopped
