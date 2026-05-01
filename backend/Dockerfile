@@ -8,7 +8,8 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+ARG TS_BUILD_HEAP_MB=2048
+RUN NODE_OPTIONS="--max-old-space-size=${TS_BUILD_HEAP_MB}" npm run build
 
 FROM node:20-bookworm-slim
 

@@ -5,14 +5,16 @@ WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci
 COPY backend ./
-RUN npm run build
+ARG TS_BUILD_HEAP_MB=2048
+RUN NODE_OPTIONS="--max-old-space-size=${TS_BUILD_HEAP_MB}" npm run build
 
 FROM node:20-bookworm-slim AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend ./
-RUN npm run build
+ARG VITE_BUILD_HEAP_MB=2048
+RUN NODE_OPTIONS="--max-old-space-size=${VITE_BUILD_HEAP_MB}" npm run build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app/backend
