@@ -34,6 +34,7 @@ import deliveryChallanRoutes from './deliveryChallans';
 import saleReturnRoutes from './saleReturns';
 import superAdminRoutes from './superAdmin';
 
+import { verifyToken } from '../middleware/auth';
 import { moduleGuard } from '../middleware/moduleGuard';
 
 const router = Router();
@@ -65,17 +66,17 @@ router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
 
-// Tier-gated modules
-router.use('/reports', moduleGuard('reports'), reportRoutes);
-router.use('/expenses', moduleGuard('expenses'), expenseRoutes);
-router.use('/gst', moduleGuard('gst'), gstRoutes);
-router.use('/employees', moduleGuard('employees'), employeeRoutes);
-router.use('/attendance', moduleGuard('attendance'), attendanceRoutes);
-router.use('/leaves', moduleGuard('leaves'), leaveRoutes);
-router.use('/bom', moduleGuard('bom'), bomRoutes);
-router.use('/wholesale', moduleGuard('wholesale'), wholesaleRoutes);
-router.use('/job-work', moduleGuard('job-work'), jobWorkRoutes);
-router.use('/ocr', moduleGuard('ocr'), ocrRoutes);
+// Tier-gated modules — verify JWT before moduleGuard (guard needs req.user)
+router.use('/reports', verifyToken, moduleGuard('reports'), reportRoutes);
+router.use('/expenses', verifyToken, moduleGuard('expenses'), expenseRoutes);
+router.use('/gst', verifyToken, moduleGuard('gst'), gstRoutes);
+router.use('/employees', verifyToken, moduleGuard('employees'), employeeRoutes);
+router.use('/attendance', verifyToken, moduleGuard('attendance'), attendanceRoutes);
+router.use('/leaves', verifyToken, moduleGuard('leaves'), leaveRoutes);
+router.use('/bom', verifyToken, moduleGuard('bom'), bomRoutes);
+router.use('/wholesale', verifyToken, moduleGuard('wholesale'), wholesaleRoutes);
+router.use('/job-work', verifyToken, moduleGuard('job-work'), jobWorkRoutes);
+router.use('/ocr', verifyToken, moduleGuard('ocr'), ocrRoutes);
 
 // API info
 router.get('/', (_req, res) => {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { getApiBaseURL } from '@/lib/api';
+import { openItemBarcodeInNewTab } from '@/lib/itemBarcode';
 import {
   useCreateItemCategory,
   useCreateItemUnit,
@@ -64,6 +64,7 @@ export default function ItemList() {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string>('');
+  const [barcodePreviewUrl, setBarcodePreviewUrl] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [selectedUnitId, setSelectedUnitId] = useState<string>('');
   const [categoryName, setCategoryName] = useState('');
@@ -126,6 +127,32 @@ export default function ItemList() {
       setSelectedItemId('');
     }
   }, [activeTab, selectedItemId, visibleItems]);
+
+  useEffect(() => {
+    if (activeTab !== 'barcodes' || !selectedItemId) {
+      setBarcodePreviewUrl(null);
+      return;
+    }
+    const ctrl = { url: null as string | null, cancelled: false };
+    api
+      .get(`/items/${selectedItemId}/barcode-image`, { responseType: 'blob' })
+      .then((res) => {
+        if (ctrl.cancelled) return;
+        ctrl.url = URL.createObjectURL(res.data as Blob);
+        setBarcodePreviewUrl(ctrl.url);
+      })
+      .catch(() => {
+        if (!ctrl.cancelled) {
+          setBarcodePreviewUrl(null);
+          toast.error('Could not load barcode preview');
+        }
+      });
+    return () => {
+      ctrl.cancelled = true;
+      if (ctrl.url) URL.revokeObjectURL(ctrl.url);
+      setBarcodePreviewUrl(null);
+    };
+  }, [activeTab, selectedItemId]);
 
   useEffect(() => {
     if (!selectedCategoryId && categories.length > 0) {
@@ -631,7 +658,7 @@ export default function ItemList() {
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => selectedItemId && window.open(`${getApiBaseURL()}/items/${selectedItemId}/barcode-image`, '_blank')}
+                    onClick={() => selectedItemId && openItemBarcodeInNewTab(selectedItemId)}
                     disabled={!selectedItemId}
                   >
                     <Barcode className="w-4 h-4 mr-1" />
@@ -665,11 +692,15 @@ export default function ItemList() {
                   {!selectedItemId ? (
                     <p className="text-sm text-muted-foreground">Select an item to generate or preview barcode.</p>
                   ) : (
+                    barcodePreviewUrl ? (
                     <img
-                      src={`${getApiBaseURL()}/items/${selectedItemId}/barcode-image`}
+                      src={barcodePreviewUrl}
                       alt="Item barcode"
                       className="max-w-full max-h-[300px] object-contain"
                     />
+                    ) : (
+                    <p className="text-sm text-muted-foreground">Loading preview…</p>
+                    )
                   )}
                 </div>
               </div>
