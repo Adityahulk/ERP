@@ -35,7 +35,7 @@ const navGroups = [
   {
      label: 'PARTIES',
      items: [
-        { to: '/parties', icon: Users, label: 'Customers & Suppliers' },
+        { to: '/parties', icon: Users, label: 'Parties' },
      ]
   },
   {
