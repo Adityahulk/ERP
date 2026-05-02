@@ -129,6 +129,16 @@ const IDS = {
 
 async function seed(): Promise<void> {
   console.log('🌱 Starting seed...\n');
+
+  const alreadySeeded = await pool.query(
+    `SELECT 1 FROM registrants WHERE email = 'owner@demo.com' LIMIT 1`,
+  );
+  if (alreadySeeded.rows.length > 0) {
+    console.log('ℹ️  Demo data already exists (owner@demo.com). Seed skipped — safe to re-run.\n');
+    await pool.end();
+    return;
+  }
+
   const passwordHash = await bcrypt.hash('Demo@1234', 12);
 
   try {
