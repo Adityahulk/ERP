@@ -15,6 +15,8 @@ const pool = new Pool({
 
 const IDS = {
   company: uuidv4(),
+  registrant: uuidv4(),
+  license: uuidv4(),
 
   // Users
   admin: uuidv4(),
@@ -132,7 +134,28 @@ async function seed(): Promise<void> {
   try {
     await pool.query('BEGIN');
 
-    // ─── 1. Company ─────────────────────────────────────────
+    // ─── 1. Registrant + License (created first so company can ref license_id) ──
+    console.log('  🔑 Creating demo registrant and Diamond license...');
+
+    // Fetch Diamond tier id
+    const tierResult = await pool.query(`SELECT id FROM license_tiers WHERE name = 'diamond' LIMIT 1`);
+    const diamondTierId = tierResult.rows[0]?.id;
+    if (!diamondTierId) {
+      throw new Error('Diamond tier not found — run migration 010 first');
+    }
+
+    await pool.query(`
+      INSERT INTO registrants (id, name, email, phone, password_hash, is_verified, is_active)
+      VALUES ($1, 'Demo Owner', 'owner@demo.com', '9876543210', $2, true, true)
+    `, [IDS.registrant, passwordHash]);
+
+    await pool.query(`
+      INSERT INTO licenses (id, registrant_id, tier_id, status, company_id, activated_at, expires_at, notes)
+      VALUES ($1, $2, $3, 'active', $4, NOW(), NOW() + INTERVAL '10 years',
+              'Demo license — pre-activated for demonstration purposes')
+    `, [IDS.license, IDS.registrant, diamondTierId, IDS.company]);
+
+    // ─── 2. Company ─────────────────────────────────────────
     console.log('  📦 Creating company...');
     await pool.query(`
       INSERT INTO companies (
@@ -142,7 +165,7 @@ async function seed(): Promise<void> {
         invoice_prefix, po_prefix, quotation_prefix,
         default_due_days, default_gst_rate,
         bank_name, bank_account_number, bank_ifsc, bank_branch, upi_id,
-        terms_and_conditions, onboarding_completed, is_active
+        terms_and_conditions, onboarding_completed, is_active, license_id
       ) VALUES (
         $1, 'BizFlow Demo — General Store', 'BizFlow Demo Private Limited',
         'Retail', '27AABCD1234E1Z5', 'AABCD1234E',
@@ -152,9 +175,9 @@ async function seed(): Promise<void> {
         30, 18,
         'HDFC Bank', '50100123456789', 'HDFC0001234', 'Fort, Mumbai', 'bizflowdemo@upi',
         E'1. Goods once sold will not be taken back.\n2. All disputes subject to Mumbai jurisdiction.\n3. Interest @ 2% per month on overdue payments.',
-        true, true
+        true, true, $2
       )
-    `, [IDS.company]);
+    `, [IDS.company, IDS.license]);
 
     // ─── 2. Users ───────────────────────────────────────────
     console.log('  👤 Creating users...');
