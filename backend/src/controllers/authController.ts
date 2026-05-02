@@ -7,6 +7,7 @@ import { logAction } from '../lib/auditLog';
 import {
   generateAccessToken, generateRefreshToken, verifyRefreshTokenJWT,
   storeRefreshToken, validateRefreshToken, removeRefreshToken,
+  cacheSessionVersion,
   JwtPayload,
 } from '../middleware/auth';
 
@@ -16,10 +17,10 @@ export async function login(req: Request, res: Response) {
     const { email, password } = req.body;
 
     const result = await query(
-      `SELECT u.*, 
+      `SELECT u.*,
               c.name as company_name, c.gstin as company_gstin, c.logo_url as company_logo,
               c.item_terminology, c.item_terminology_plural, c.onboarding_completed,
-              c.plan_type,
+              c.plan_type, c.is_active as company_is_active,
               COALESCE(ep.godown_id, dg.id) as resolved_godown_id
        FROM users u
        JOIN companies c ON u.company_id = c.id AND c.is_deleted = false
@@ -51,22 +52,36 @@ export async function login(req: Request, res: Response) {
       return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
     }
 
+    if (user.company_is_active === false) {
+      return res.status(403).json(error('Your company license has been deactivated. Please contact support.'));
+    }
+
+    // Increment session_version — this kicks out any previously logged-in device
+    const versionResult = await query(
+      `UPDATE users SET session_version = session_version + 1, last_login_at = NOW()
+       WHERE id = $1
+       RETURNING session_version`,
+      [user.id]
+    );
+    const newSessionVersion = versionResult.rows[0].session_version;
+
+    // Cache the new session version in Redis for fast single-device checks
+    await cacheSessionVersion(user.id, newSessionVersion);
+
     const tokenPayload: JwtPayload = {
       id: user.id,
       company_id: user.company_id,
       role: user.role,
       godown_id: user.resolved_godown_id || null,
       email: user.email,
+      session_version: newSessionVersion,
     };
 
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
 
-    // Store refresh token in Redis
+    // Store refresh token in Redis (replaces any existing — old device refresh fails)
     await storeRefreshToken(user.id, refreshToken);
-
-    // Update last login
-    await query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
 
     // Audit
     await logAction(user.id, user.company_id, 'login', 'user', user.id, null, null, req.ip, req.get('User-Agent'));
@@ -118,8 +133,9 @@ export async function refresh(req: Request, res: Response) {
 
     // Fetch fresh user data
     const result = await query(
-      `SELECT u.role, u.is_active, u.email, u.company_id,
-              COALESCE(ep.godown_id, dg.id) as resolved_godown_id
+      `SELECT u.role, u.is_active, u.email, u.company_id, u.session_version,
+              COALESCE(ep.godown_id, dg.id) as resolved_godown_id,
+              c.is_active as company_is_active
        FROM users u
        INNER JOIN companies c ON c.id = u.company_id AND c.is_deleted = false AND c.is_active = true
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
@@ -134,17 +150,32 @@ export async function refresh(req: Request, res: Response) {
     }
 
     const user = result.rows[0];
+
+    // Verify session version matches — old device refresh is rejected
+    if (decoded.session_version !== user.session_version) {
+      await removeRefreshToken(decoded.id);
+      return res.status(401).json({
+        success: false,
+        error: 'You have been signed in on another device. Please log in again.',
+        code: 'SESSION_REPLACED',
+      });
+    }
+
     const payload: JwtPayload = {
       id: decoded.id,
       company_id: user.company_id,
       role: user.role,
       godown_id: user.resolved_godown_id || null,
       email: user.email,
+      session_version: user.session_version,
     };
 
     const newAccessToken = generateAccessToken(payload);
     const newRefreshToken = generateRefreshToken(payload);
     await storeRefreshToken(decoded.id, newRefreshToken);
+
+    // Refresh the Redis session version cache TTL
+    await cacheSessionVersion(decoded.id, user.session_version);
 
     res.json(success({ accessToken: newAccessToken, refreshToken: newRefreshToken }));
   } catch (err: any) {
@@ -177,12 +208,22 @@ export async function getMe(req: Request, res: Response) {
               c.item_terminology, c.item_terminology_plural, c.default_gst_rate, c.default_hsn,
               c.bank_name, c.bank_account_number, c.bank_ifsc, c.bank_branch, c.upi_id,
               c.terms_and_conditions, c.invoice_notes,
-              c.plan_type, c.onboarding_completed,
-              g.id as godown_id, g.name as godown_name
+              c.plan_type, c.onboarding_completed, c.license_id,
+              g.id as godown_id, g.name as godown_name,
+              -- License info
+              lic.license_key, lic.status as license_status,
+              lic.activated_at as license_activated_at, lic.expires_at as license_expires_at,
+              lt.name as license_tier_name, lt.display_name as license_tier_display_name,
+              lt.max_users as license_max_users,
+              (SELECT COUNT(*) FROM users u2
+               WHERE u2.company_id = u.company_id AND u2.is_deleted = false AND u2.is_active = true
+              ) as license_used_users
        FROM users u
        JOIN companies c ON u.company_id = c.id AND c.is_deleted = false AND c.is_active = true
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns g ON g.id = COALESCE(ep.godown_id, (SELECT id FROM godowns WHERE company_id = u.company_id AND is_default = true AND is_deleted = false LIMIT 1))
+       LEFT JOIN licenses lic ON lic.id = c.license_id AND lic.is_deleted = false
+       LEFT JOIN license_tiers lt ON lt.id = lic.tier_id
        WHERE u.id = $1 AND u.is_deleted = false`,
       [req.user!.id]
     );
@@ -212,6 +253,16 @@ export async function getMe(req: Request, res: Response) {
         terms_and_conditions: r.terms_and_conditions, invoice_notes: r.invoice_notes,
         plan_type: r.plan_type, onboarding_completed: r.onboarding_completed,
       },
+      license: r.license_id ? {
+        license_key: r.license_key,
+        status: r.license_status,
+        tier_name: r.license_tier_name,
+        tier_display_name: r.license_tier_display_name,
+        max_users: r.license_max_users,
+        used_users: parseInt(r.license_used_users),
+        activated_at: r.license_activated_at,
+        expires_at: r.license_expires_at,
+      } : null,
       godown: r.godown_id ? { id: r.godown_id, name: r.godown_name } : null,
     }));
   } catch (err: any) {
@@ -228,7 +279,6 @@ export async function forgotPassword(req: Request, res: Response) {
       [email.toLowerCase().trim()]
     );
 
-    // Always return success to prevent email enumeration
     if (!result.rows.length) {
       return res.json(success({ message: 'If the email exists, a reset link has been sent.' }));
     }
@@ -242,8 +292,6 @@ export async function forgotPassword(req: Request, res: Response) {
       [resetToken, expires, user.id]
     );
 
-    // In production: send email with reset link
-    // In dev: return token directly
     const responseData: any = { message: 'If the email exists, a reset link has been sent.' };
     if (process.env.NODE_ENV === 'development') {
       responseData.resetToken = resetToken;
@@ -261,7 +309,7 @@ export async function resetPassword(req: Request, res: Response) {
     const { token, password } = req.body;
 
     const result = await query(
-      `SELECT id, company_id FROM users 
+      `SELECT id, company_id FROM users
        WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND is_deleted = false`,
       [token]
     );

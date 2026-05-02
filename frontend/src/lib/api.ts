@@ -83,6 +83,15 @@ api.interceptors.response.use(
       reqUrl.includes('/auth/register') ||
       reqUrl.includes('/auth/refresh');
 
+    // If 401 with SESSION_REPLACED, kick user to login immediately — no refresh attempt
+    if (error.response?.status === 401 && error.response?.data?.code === 'SESSION_REPLACED') {
+      useAuthStore.getState().logout();
+      // Show a friendly message via sessionStorage so LoginPage can display it
+      sessionStorage.setItem('session_replaced_msg', error.response.data.error || 'You have been signed in on another device.');
+      window.location.replace('/login');
+      return Promise.reject(error);
+    }
+
     // If 401 and not already retried, try refresh
     // error.response?.status works regardless of responseType — it reads the HTTP status line.
     if (error.response?.status === 401 && !originalRequest._retry && !isPublicAuth) {

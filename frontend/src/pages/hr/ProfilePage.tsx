@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, FileText, ReceiptIndianRupee, Plus } from 'lucide-react';
+import { Upload, FileText, ReceiptIndianRupee, Plus, ShieldCheck, Users, Calendar, Key, CheckCircle2, AlertCircle } from 'lucide-react';
 import api, { getApiBaseURL } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/button';
@@ -12,8 +12,19 @@ import toast from 'react-hot-toast';
 const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
 const fileUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase()}${url || ''}`);
 
+function formatDate(d: string | null | undefined) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+const TIER_COLORS: Record<string, string> = {
+  silver: 'text-slate-400',
+  gold: 'text-yellow-500',
+  diamond: 'text-cyan-400',
+};
+
 export default function ProfilePage() {
-  const { user } = useAuthStore();
+  const { user, license } = useAuthStore();
   const qc = useQueryClient();
   const [docType, setDocType] = useState('ID Proof');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -75,6 +86,65 @@ export default function ProfilePage() {
         <h1 className="text-2xl font-bold">My Profile</h1>
         <p className="text-sm text-slate-500">Personal, documents, bank, salary and payroll details.</p>
       </div>
+
+      {/* ── License Info Card ── */}
+      {license && (
+        <Card className="border-violet-200 bg-gradient-to-r from-violet-50 to-indigo-50">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-violet-600" />
+              License Information
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Plan</p>
+                <p className={`font-bold text-lg ${TIER_COLORS[license.tier_name] || 'text-violet-700'}`}>
+                  {license.tier_display_name}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                  <Users className="w-3 h-3" /> User Seats
+                </p>
+                <p className="font-semibold text-slate-800">
+                  {license.used_users} / {license.max_users} used
+                </p>
+                <div className="mt-1.5 h-1.5 bg-slate-200 rounded-full overflow-hidden w-24">
+                  <div
+                    className="h-full bg-violet-500 rounded-full"
+                    style={{ width: `${Math.min((license.used_users / license.max_users) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> Expires
+                </p>
+                <p className="font-medium text-slate-700">{formatDate(license.expires_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Status</p>
+                <div className={`inline-flex items-center gap-1.5 text-sm font-semibold ${license.status === 'active' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {license.status === 'active'
+                    ? <CheckCircle2 className="w-4 h-4" />
+                    : <AlertCircle className="w-4 h-4" />
+                  }
+                  {license.status.charAt(0).toUpperCase() + license.status.slice(1)}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-violet-100 flex items-center gap-2">
+              <Key className="w-3 h-3 text-slate-400" />
+              <span className="text-xs text-slate-400">License Key:</span>
+              <span className="text-xs font-mono text-slate-500">
+                {license.license_key.slice(0, 8)}…{license.license_key.slice(-4)}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid md:grid-cols-2 gap-6">
         <Card>

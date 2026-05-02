@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import authRoutes from './auth';
+import registrationRoutes from './registration';
+import licenseRoutes from './license';
 import companyRoutes from './company';
 import godownRoutes from './godowns';
 import userRoutes from './users';
@@ -31,10 +33,15 @@ import salesOrderRoutes from './salesOrders';
 import deliveryChallanRoutes from './deliveryChallans';
 import saleReturnRoutes from './saleReturns';
 
+import { moduleGuard } from '../middleware/moduleGuard';
+
 const router = Router();
 
 // ── Module routes ─────────────────────────────────────────────
+// Core (always available — no license feature required)
 router.use('/auth', authRoutes);
+router.use('/register', registrationRoutes);
+router.use('/licenses', licenseRoutes);
 router.use('/company', companyRoutes);
 router.use('/godowns', godownRoutes);
 router.use('/users', userRoutes);
@@ -45,26 +52,28 @@ router.use('/stock', stockRoutes);
 router.use('/parties', partyRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/payments', paymentRoutes);
-router.use('/expenses', expenseRoutes);
-router.use('/reports', reportRoutes);
 router.use('/quotations', quotationRoutes);
 router.use('/purchases', purchaseRoutes);
-router.use('/accounting', accountingRoutes);
-router.use('/gst', gstRoutes);
-router.use('/employees', employeeRoutes);
-router.use('/attendance', attendanceRoutes);
-router.use('/leaves', leaveRoutes);
-router.use('/notifications', notificationRoutes);
 router.use('/labels', labelRoutes);
 router.use('/print', printRoutes);
 router.use('/search', searchRoutes);
-router.use('/bom', bomRoutes);
-router.use('/wholesale', wholesaleRoutes);
-router.use('/job-work', jobWorkRoutes);
-router.use('/ocr', ocrRoutes);
+router.use('/accounting', accountingRoutes);
+router.use('/notifications', notificationRoutes);
 router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
+
+// Tier-gated modules
+router.use('/reports', moduleGuard('reports'), reportRoutes);
+router.use('/expenses', moduleGuard('expenses'), expenseRoutes);
+router.use('/gst', moduleGuard('gst'), gstRoutes);
+router.use('/employees', moduleGuard('employees'), employeeRoutes);
+router.use('/attendance', moduleGuard('attendance'), attendanceRoutes);
+router.use('/leaves', moduleGuard('leaves'), leaveRoutes);
+router.use('/bom', moduleGuard('bom'), bomRoutes);
+router.use('/wholesale', moduleGuard('wholesale'), wholesaleRoutes);
+router.use('/job-work', moduleGuard('job-work'), jobWorkRoutes);
+router.use('/ocr', moduleGuard('ocr'), ocrRoutes);
 
 // API info
 router.get('/', (_req, res) => {

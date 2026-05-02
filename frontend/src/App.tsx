@@ -1,6 +1,13 @@
 import { Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
+import { useRegistrantStore } from '@/store/registrantStore';
 import AppLayout from '@/components/shared/AppLayout';
+import RegisterPage from '@/pages/register/RegisterPage';
+import RegisterLoginPage from '@/pages/register/RegisterLoginPage';
+import RegisterDashboard from '@/pages/register/RegisterDashboard';
+import LicenseTiersPage from '@/pages/register/LicenseTiersPage';
+import LicenseDetailPage from '@/pages/register/LicenseDetailPage';
+import ModuleGate from '@/components/shared/ModuleGate';
 
 // Pages
 import ItemList from '@/pages/items/ItemList';
@@ -46,6 +53,11 @@ function LoginPage() {
   const [email, setEmail] = useState(prefillDemo ? 'admin@demo.com' : '');
   const [password, setPassword] = useState(prefillDemo ? 'Demo@1234' : '');
   const [loading, setLoading] = useState(false);
+  const [sessionMsg] = useState(() => {
+    const msg = sessionStorage.getItem('session_replaced_msg');
+    if (msg) sessionStorage.removeItem('session_replaced_msg');
+    return msg;
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +92,11 @@ function LoginPage() {
           <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique IT</h1>
           <p className="text-purple-300 mt-1">Smart ERP for Indian Manufacturers</p>
         </div>
+        {sessionMsg && (
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-sm text-center">
+            {sessionMsg}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 space-y-5">
           <div>
             <label className="text-sm font-medium text-purple-200">Email</label>
@@ -95,6 +112,14 @@ function LoginPage() {
           </button>
           <div className="text-center mt-4 text-xs text-purple-300/60">Demo: admin@demo.com / Demo@1234</div>
         </form>
+        <div className="text-center mt-4 space-y-2">
+          <p className="text-sm text-slate-400">
+            Want to purchase a license?{' '}
+            <RouterLink to="/register" className="text-purple-400 hover:text-purple-300 font-medium">
+              Register here
+            </RouterLink>
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -104,6 +129,12 @@ function LoginPage() {
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
+}
+
+// ── Registrant Protected Route ────────────────────────────────
+function RegistrantRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useRegistrantStore();
+  return isAuthenticated ? <>{children}</> : <Navigate to="/register/login" replace />;
 }
 
 // ── App ───────────────────────────────────────────────────────
@@ -167,19 +198,19 @@ export default function App() {
         <Route path="/purchases/:id/receive" element={<GRNScreen />} />
         <Route path="/expenses" element={<Navigate to="/purchase-expense/expenses" replace />} />
         {/* Reports & Accounting */}
-        <Route path="/reports" element={<ReportsHome />} />
-        <Route path="/gst-filing" element={<GSTDashboard />} />
+        <Route path="/reports" element={<ModuleGate featureKey="basic_reports" featureLabel="Business Reports"><ReportsHome /></ModuleGate>} />
+        <Route path="/gst-filing" element={<ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><GSTDashboard /></ModuleGate>} />
 
         {/* HR & Attendance */}
-        <Route path="/attendance" element={<AttendancePage />} />
+        <Route path="/attendance" element={<ModuleGate featureKey="hr" featureLabel="HR & Attendance"><AttendancePage /></ModuleGate>} />
         <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/hr/employees" element={<EmployeeListPage />} />
-        <Route path="/hr/employees/:userId" element={<EmployeeDetailPage />} />
+        <Route path="/hr/employees" element={<ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeListPage /></ModuleGate>} />
+        <Route path="/hr/employees/:userId" element={<ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeDetailPage /></ModuleGate>} />
 
         {/* Job Work */}
-        <Route path="/job-work" element={<JobWorkChallanList />} />
-        <Route path="/job-work/new" element={<JobWorkChallanForm />} />
-        <Route path="/job-work/:id" element={<JobWorkChallanDetail />} />
+        <Route path="/job-work" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanList /></ModuleGate>} />
+        <Route path="/job-work/new" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanForm /></ModuleGate>} />
+        <Route path="/job-work/:id" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanDetail /></ModuleGate>} />
 
         {/* Global Config */}
         <Route path="/settings" element={<Settings />} />
@@ -187,6 +218,22 @@ export default function App() {
       </Route>
 
       <Route path="/onboarding" element={isAuthenticated ? <Onboarding /> : <Navigate to="/login" replace />} />
+
+      {/* ── Registrant / License routes ─────────────────────── */}
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/register/login" element={<RegisterLoginPage />} />
+      <Route
+        path="/register/dashboard"
+        element={<RegistrantRoute><RegisterDashboard /></RegistrantRoute>}
+      />
+      <Route
+        path="/register/licenses"
+        element={<RegistrantRoute><LicenseTiersPage /></RegistrantRoute>}
+      />
+      <Route
+        path="/register/licenses/:id"
+        element={<RegistrantRoute><LicenseDetailPage /></RegistrantRoute>}
+      />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -83,9 +83,19 @@ const navGroups = [
 ];
 
 export default function AppLayout() {
-  const { user, logout } = useAuthStore();
+  const { user, logout, license, setLicense } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Fetch license info from /auth/me once on mount and populate store
+  useEffect(() => {
+    api.get('/auth/me').then((res) => {
+      const data = res.data?.data ?? res.data;
+      if (data?.license !== undefined) {
+        setLicense(data.license);
+      }
+    }).catch(() => { /* non-blocking — license info is supplemental */ });
+  }, []);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
@@ -303,6 +313,32 @@ export default function AppLayout() {
         </div>
         
         <NavigationList />
+
+        {/* License badge */}
+        {license && (
+          <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-violet-300 uppercase tracking-wider">
+                {license.tier_display_name} Plan
+              </span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${license.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                {license.status}
+              </span>
+            </div>
+            <div className="mt-1.5">
+              <div className="flex justify-between text-[10px] text-white/40 mb-1">
+                <span>Users</span>
+                <span>{license.used_users}/{license.max_users}</span>
+              </div>
+              <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-violet-400 rounded-full"
+                  style={{ width: `${Math.min((license.used_users / license.max_users) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-4 border-t border-white/10 flex items-center gap-3 shrink-0 bg-black/20">
            <button

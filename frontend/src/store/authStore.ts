@@ -19,9 +19,21 @@ export interface Company {
   itemTerminologyPlural: string;
 }
 
+export interface LicenseInfo {
+  license_key: string;
+  status: string;
+  tier_name: string;
+  tier_display_name: string;
+  max_users: number;
+  used_users: number;
+  activated_at: string | null;
+  expires_at: string | null;
+}
+
 interface AuthState {
   user: User | null;
   company: Company | null;
+  license: LicenseInfo | null;
   isAuthenticated: boolean;
   accessToken: string | null;
   refreshToken: string | null;
@@ -32,6 +44,7 @@ interface AuthState {
   updateUser: (updates: Partial<User>) => void;
   updateCompany: (updates: Partial<Company>) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
+  setLicense: (license: LicenseInfo | null) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -39,6 +52,7 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       company: null,
+      license: null,
       isAuthenticated: false,
       accessToken: null,
       refreshToken: null,
@@ -61,6 +75,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           user: null,
           company: null,
+          license: null,
           isAuthenticated: false,
           accessToken: null,
           refreshToken: null,
@@ -82,12 +97,15 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem('bizflow_refresh_token', refreshToken);
         set({ accessToken, refreshToken });
       },
+
+      setLicense: (license) => set({ license }),
     }),
     {
       name: 'bizflow-auth',
       partialize: (state) => ({
         user: state.user,
         company: state.company,
+        license: state.license,
         isAuthenticated: state.isAuthenticated,
       }),
     }

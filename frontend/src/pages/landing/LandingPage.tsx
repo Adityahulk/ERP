@@ -16,7 +16,98 @@ import {
   TrendingUp,
   ClipboardList,
   ScanLine,
+  Star,
+  Zap,
+  Diamond,
+  XCircle,
+  UserPlus,
+  Mail,
 } from 'lucide-react';
+
+const TIERS = [
+  {
+    name: 'silver',
+    display: 'Silver',
+    icon: Star,
+    price: '₹4,999',
+    period: '/year',
+    maxUsers: 4,
+    description: 'Perfect for small businesses. Core ERP features to get started.',
+    gradient: 'from-slate-500 to-slate-400',
+    textColor: 'text-slate-200',
+    included: [
+      'GST Invoicing & Billing',
+      'Inventory Management',
+      'Purchase Orders & GRN',
+      'Parties & Ledger',
+      'Basic Reports',
+      '4 User Seats',
+    ],
+    excluded: [
+      'GST Filing (GSTR-1/3B)',
+      'Expense Tracking',
+      'HR & Attendance',
+      'Manufacturing & BOM',
+      'Job Work Challans',
+      'OCR Bill Scanning',
+    ],
+  },
+  {
+    name: 'gold',
+    display: 'Gold',
+    icon: Zap,
+    price: '₹8,999',
+    period: '/year',
+    maxUsers: 5,
+    description: 'Grow confidently. Full ERP with GST filing and expense management.',
+    gradient: 'from-yellow-500 to-amber-400',
+    textColor: 'text-yellow-900',
+    badge: 'Most Popular',
+    included: [
+      'GST Invoicing & Billing',
+      'Inventory Management',
+      'Purchase Orders & GRN',
+      'Parties & Ledger',
+      'Advanced Reports',
+      '5 User Seats',
+      'GST Filing (GSTR-1/3B)',
+      'Expense Tracking',
+      'OCR Bill Scanning',
+    ],
+    excluded: [
+      'HR & Attendance',
+      'Manufacturing & BOM',
+      'Job Work Challans',
+    ],
+  },
+  {
+    name: 'diamond',
+    display: 'Diamond',
+    icon: Diamond,
+    price: '₹14,999',
+    period: '/year',
+    maxUsers: 7,
+    description: 'Enterprise-grade. Every module, 7 seats, priority support.',
+    gradient: 'from-cyan-500 to-blue-500',
+    textColor: 'text-cyan-900',
+    badge: 'Best Value',
+    included: [
+      'GST Invoicing & Billing',
+      'Inventory Management',
+      'Purchase Orders & GRN',
+      'Parties & Ledger',
+      'Advanced Reports',
+      '7 User Seats',
+      'GST Filing (GSTR-1/3B)',
+      'Expense Tracking',
+      'OCR Bill Scanning',
+      'HR & Attendance',
+      'Manufacturing & BOM',
+      'Job Work Challans',
+    ],
+    excluded: [],
+  },
+];
 
 export default function LandingPage() {
   const [showPhone, setShowPhone] = useState(false);
@@ -89,27 +180,27 @@ export default function LandingPage() {
   const faqs = [
     {
       q: 'Is my data secure?',
-      a: 'Yes, we use bank-level encryption and automated backups to ensure your business data is always safe and accessible only by you.',
+      a: 'Yes. Every company\'s data is completely isolated — no other company can ever see your data. We use bank-level encryption and automated backups.',
     },
     {
       q: 'Is it GST compliant?',
-      a: 'Absolutely. The software is designed for Indian SMEs, ensuring 100% compliance with current GST laws, HSN/SAC codes, and GSTR filing requirements.',
+      a: 'Absolutely. Designed for Indian SMEs with 100% GST compliance — HSN/SAC codes, GSTR-1/3B filing, e-way bills, and more.',
     },
     {
-      q: 'Which types of businesses can use this?',
-      a: 'Any Indian business that needs GST billing, inventory management, or financial tracking — retail shops, service providers, wholesalers, manufacturers, freelancers, and more.',
+      q: 'How does licensing work?',
+      a: 'Register on our website, choose a plan (Silver, Gold, or Diamond), and contact us to complete payment. We then activate your company and provide login credentials for you and your team.',
     },
     {
       q: 'Can multiple users access the system?',
-      a: 'Yes! Add multiple users — accountants, sales staff, managers — each with specific role-based permissions so everyone sees only what they need.',
+      a: 'Yes! Silver gives 4 seats, Gold gives 5, and Diamond gives 7. Each user gets their own login with role-based permissions.',
     },
     {
-      q: 'Do I need accounting knowledge?',
-      a: 'Not at all. The interface is designed for business owners, making it extremely easy to manage finances without a CA degree.',
+      q: 'Can one user log in on multiple devices?',
+      a: 'For security, each user can be logged in on only one device at a time. Logging in on a new device automatically signs out the previous session.',
     },
     {
       q: 'How does OCR bill scanning work?',
-      a: 'Simply photograph or upload a PDF of your supplier\'s bill. The system reads the text automatically and pre-fills the bill number, date, and amount so you can confirm and save in seconds.',
+      a: 'Simply photograph or upload a PDF of your supplier\'s bill. The system reads the text automatically and pre-fills the bill number, date, and amount — confirm and save in seconds.',
     },
   ];
 
@@ -135,26 +226,33 @@ export default function LandingPage() {
             <a href="#features" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
               Features
             </a>
+            <a href="#pricing" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
+              Pricing
+            </a>
             <a href="#who-its-for" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
               Who It's For
-            </a>
-            <a href="#how-it-works" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
-              How It Works
             </a>
             <a href="#faq" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
               FAQ
             </a>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <Link
               to="/login"
               className="text-sm font-medium text-[#420662] hover:text-[#2d0444] transition-colors hidden sm:block"
             >
               Login
             </Link>
+            <Link
+              to="/register"
+              className="hidden sm:inline-flex items-center gap-2 bg-[#420662] hover:bg-[#2d0444] text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-[#420662]/30"
+            >
+              <UserPlus className="w-4 h-4" />
+              Register Now
+            </Link>
             <button
               onClick={() => setShowPhone(!showPhone)}
-              className="bg-[#420662] hover:bg-[#2d0444] text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 shadow-lg shadow-[#420662]/30 active:scale-95 w-44 justify-center"
+              className="bg-white border border-slate-200 hover:border-[#420662] text-slate-700 hover:text-[#420662] px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 active:scale-95"
             >
               <Phone className="w-4 h-4" />
               {showPhone ? '+91 93907 54255' : 'Contact Us'}
@@ -191,22 +289,22 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
-                to="/login"
+                to="/register"
                 className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#420662] to-indigo-600 hover:from-[#2d0444] hover:to-indigo-700 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-[#420662]/30 flex items-center justify-center gap-2 group"
               >
-                Access Dashboard
+                <UserPlus className="w-5 h-5" />
+                Register Now — Free
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
-              <button
-                onClick={() => setShowPhone(true)}
+              <Link
+                to="/login"
                 className="w-full sm:w-auto px-8 py-4 bg-white border-2 border-slate-200 hover:border-[#420662] hover:text-[#420662] text-slate-700 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2"
               >
-                <Phone className="w-5 h-5" />
-                {showPhone ? '+91 93907 54255' : 'Request Demo'}
-              </button>
+                Already have access? Sign In
+              </Link>
             </div>
             <p className="mt-4 text-sm text-slate-500">
-              No credit card required &bull; Free onboarding support
+              No credit card required &bull; Free registration &bull; Activate after payment
             </p>
           </div>
         </div>
@@ -221,11 +319,11 @@ export default function LandingPage() {
           <div className="flex flex-wrap justify-center gap-8 md:gap-16 text-slate-400">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-6 h-6 text-[#420662]" />
-              <span className="font-bold text-slate-700">100% Secure</span>
+              <span className="font-bold text-slate-700">100% Secure & Isolated</span>
             </div>
             <div className="flex items-center gap-2">
               <Users className="w-6 h-6 text-[#420662]" />
-              <span className="font-bold text-slate-700">10,000+ Users</span>
+              <span className="font-bold text-slate-700">Multi-User Access</span>
             </div>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-6 h-6 text-[#420662]" />
@@ -292,6 +390,95 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Pricing / License Tiers ── */}
+      <section
+        id="pricing"
+        className="py-24 bg-gradient-to-br from-slate-900 via-[#2d0444] to-slate-900 relative overflow-hidden"
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(120,50,200,0.15),_transparent_70%)] pointer-events-none" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+              Simple, Transparent Pricing
+            </h2>
+            <p className="text-lg text-purple-300 max-w-2xl mx-auto">
+              Register free, choose a plan, and contact us to activate. All plans include
+              full data isolation — your business data stays yours.
+            </p>
+            <div className="flex items-center justify-center gap-4 mt-6 text-sm text-purple-300">
+              <a href="tel:+919876543210" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+                <Phone className="w-4 h-4" />
+                +91-9876543210
+              </a>
+              <span className="text-white/20">|</span>
+              <a href="mailto:sales@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+                <Mail className="w-4 h-4" />
+                sales@microtechnique.in
+              </a>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {TIERS.map((tier) => {
+              const TierIcon = tier.icon;
+              return (
+                <div
+                  key={tier.name}
+                  className={`relative bg-white/5 border border-white/10 rounded-2xl p-8 flex flex-col hover:border-white/20 transition-all ${tier.badge ? 'ring-1 ring-yellow-500/40' : ''}`}
+                >
+                  {tier.badge && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className={`px-4 py-1 rounded-full text-xs font-bold bg-gradient-to-r ${tier.gradient} text-slate-900`}>
+                        {tier.badge}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${tier.gradient} flex items-center justify-center mb-4`}>
+                    <TierIcon className="w-6 h-6 text-white" />
+                  </div>
+
+                  <h3 className="text-2xl font-bold text-white mb-1">{tier.display}</h3>
+                  <p className="text-slate-400 text-sm mb-5">{tier.description}</p>
+
+                  <div className="mb-5">
+                    <span className="text-4xl font-bold text-white">{tier.price}</span>
+                    <span className="text-slate-400">{tier.period}</span>
+                    <p className="text-purple-300 text-sm mt-1">{tier.maxUsers} user seats</p>
+                  </div>
+
+                  <ul className="space-y-2.5 mb-8 flex-1">
+                    {tier.included.map((f) => (
+                      <li key={f} className="flex items-center gap-2.5 text-sm text-slate-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                    {tier.excluded.map((f) => (
+                      <li key={f} className="flex items-center gap-2.5 text-sm text-slate-600">
+                        <XCircle className="w-4 h-4 text-slate-700 flex-shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <Link
+                    to="/register"
+                    className={`w-full py-3 rounded-xl font-semibold text-sm text-center transition-all bg-gradient-to-r ${tier.gradient} text-slate-900 hover:opacity-90 hover:shadow-lg`}
+                  >
+                    Get {tier.display} Plan
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-center text-slate-500 text-sm mt-10">
+            Payments processed offline via call or email. Our team responds within 24 hours.
+          </p>
+        </div>
+      </section>
+
       {/* ── How it Works ── */}
       <section
         id="how-it-works"
@@ -300,39 +487,53 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">
-              Up and Running in 3 Steps
+              Up and Running in 4 Steps
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              Get your business running efficiently in minutes, not days.
+              From registration to live business operations in under 24 hours.
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-12 relative">
-            <div className="hidden md:block absolute top-12 left-1/6 right-1/6 h-0.5 bg-gradient-to-r from-[#420662]/20 via-[#420662]/50 to-[#420662]/20 z-0" />
+          <div className="grid md:grid-cols-4 gap-8 relative">
             {[
               {
                 step: '1',
-                title: 'Set Up Your Account',
-                desc: 'Enter your GSTIN and let us auto-fetch your company details. Add your items, parties, and opening stock.',
+                title: 'Register Free',
+                desc: 'Create your registrant account on our website. No payment needed upfront.',
               },
               {
                 step: '2',
-                title: 'Start Billing & Buying',
-                desc: 'Create invoices for your customers and purchase orders for suppliers — GST calculated automatically.',
+                title: 'Choose a Plan',
+                desc: 'Pick Silver, Gold, or Diamond based on your team size and feature needs.',
               },
               {
                 step: '3',
-                title: 'Track & Grow',
-                desc: 'Monitor profit, stock levels, outstanding payments, and GSTR reports from a single dashboard.',
+                title: 'Pay & Activate',
+                desc: 'Contact us via phone or email to complete payment. We activate your company and send login credentials.',
+              },
+              {
+                step: '4',
+                title: 'Start Operating',
+                desc: 'Log in, complete onboarding, and start billing, managing stock, and filing GST.',
               },
             ].map((s, i) => (
               <div key={i} className="relative z-10 text-center">
-                <div className="w-24 h-24 mx-auto bg-white rounded-full border-4 border-[#420662] flex items-center justify-center text-3xl font-black text-[#420662] shadow-xl mb-6">
+                <div className="w-20 h-20 mx-auto bg-white rounded-full border-4 border-[#420662] flex items-center justify-center text-2xl font-black text-[#420662] shadow-xl mb-5">
                   {s.step}
                 </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-3">{s.title}</h3>
-                <p className="text-slate-600">{s.desc}</p>
+                <h3 className="text-lg font-bold text-slate-900 mb-2">{s.title}</h3>
+                <p className="text-slate-600 text-sm">{s.desc}</p>
               </div>
             ))}
+          </div>
+          <div className="text-center mt-12">
+            <Link
+              to="/register"
+              className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-[#420662] to-indigo-600 hover:from-[#2d0444] hover:to-indigo-700 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-[#420662]/30 group"
+            >
+              <UserPlus className="w-5 h-5" />
+              Start with Step 1 — Register Free
+              <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            </Link>
           </div>
         </div>
       </section>
@@ -357,7 +558,7 @@ export default function LandingPage() {
                 >
                   <span className="font-bold text-slate-800 text-lg">{faq.q}</span>
                   <ChevronDown
-                    className={`w-5 h-5 text-slate-500 transition-transform duration-300 ${
+                    className={`w-5 h-5 text-slate-500 transition-transform duration-300 flex-shrink-0 ${
                       activeFaq === i ? 'rotate-180' : ''
                     }`}
                   />
@@ -385,16 +586,24 @@ export default function LandingPage() {
             Ready to simplify how you run your business?
           </h2>
           <p className="text-xl text-purple-200 mb-10">
-            Join thousands of Indian SMEs managing billing, stock, and GST
-            effortlessly with Microtechnique IT.
+            Register free today. Choose your plan, pay offline, and go live in 24 hours.
           </p>
-          <button
-            onClick={() => setShowPhone(true)}
-            className="px-10 py-5 bg-white text-[#420662] hover:bg-purple-50 rounded-xl font-extrabold text-xl transition-all shadow-2xl hover:shadow-white/20 hover:scale-105 flex items-center justify-center gap-3 mx-auto"
-          >
-            <Phone className="w-6 h-6" />
-            {showPhone ? '+91 93907 54255' : 'Contact Us Today'}
-          </button>
+          <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
+            <Link
+              to="/register"
+              className="px-10 py-5 bg-white text-[#420662] hover:bg-purple-50 rounded-xl font-extrabold text-xl transition-all shadow-2xl hover:shadow-white/20 hover:scale-105 flex items-center justify-center gap-3"
+            >
+              <UserPlus className="w-6 h-6" />
+              Register Now — Free
+            </Link>
+            <button
+              onClick={() => setShowPhone(true)}
+              className="px-10 py-5 bg-transparent border-2 border-white/30 hover:border-white text-white rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3"
+            >
+              <Phone className="w-5 h-5" />
+              {showPhone ? '+91 93907 54255' : 'Contact Sales'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -425,8 +634,9 @@ export default function LandingPage() {
             <h4 className="text-white font-bold mb-6">Company</h4>
             <ul className="space-y-3">
               <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
-              <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
+              <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
+              <li><Link to="/register" className="hover:text-white transition-colors">Register</Link></li>
               <li><Link to="/login" className="hover:text-white transition-colors">Login to ERP</Link></li>
             </ul>
           </div>
@@ -437,16 +647,19 @@ export default function LandingPage() {
                 <Phone className="w-5 h-5 mt-0.5 text-[#420662]" />
                 <span>+91 93907 54255</span>
               </li>
-              <li>support@microtechnique.in</li>
-              <li>New Delhi, India</li>
+              <li className="flex items-start gap-2">
+                <Mail className="w-5 h-5 mt-0.5 text-[#420662]" />
+                <span>sales@microtechnique.in</span>
+              </li>
             </ul>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 pt-8 border-t border-slate-800 text-sm text-center md:text-left flex flex-col md:flex-row justify-between items-center">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-10 pt-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm">
           <p>&copy; {new Date().getFullYear()} Microtechnique IT. All rights reserved.</p>
-          <div className="flex gap-6 mt-4 md:mt-0">
-            <a href="#" className="hover:text-white">Privacy Policy</a>
-            <a href="#" className="hover:text-white">Terms of Service</a>
+          <div className="flex gap-6">
+            <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="#" className="hover:text-white transition-colors">Refund Policy</a>
           </div>
         </div>
       </footer>
