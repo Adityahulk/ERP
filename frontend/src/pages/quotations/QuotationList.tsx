@@ -131,7 +131,7 @@ export default function QuotationList() {
                 {!rows.length && (
                   <tr>
                     <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
-                      No quotations yet. Create one or run seed for demo rows.
+                      No quotations yet. Create one to get started.
                     </td>
                   </tr>
                 )}

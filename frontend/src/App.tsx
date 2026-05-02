@@ -110,7 +110,6 @@ function LoginPage() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
-          <div className="text-center mt-4 text-xs text-purple-300/60">Demo: admin@demo.com / Demo@1234</div>
         </form>
         <div className="text-center mt-4 space-y-2">
           <p className="text-sm text-slate-400">

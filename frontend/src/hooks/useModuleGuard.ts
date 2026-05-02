@@ -2,7 +2,7 @@ import { useAuthStore } from '@/store/authStore';
 
 /**
  * Tier → feature keys that are included.
- * Mirrors the backend seed data in 010_licensing_system.sql.
+ * Mirrors `license_tier_features` from migration `010_licensing_system.sql`.
  */
 const TIER_FEATURES: Record<string, string[]> = {
   silver: ['invoicing', 'inventory', 'purchases', 'parties', 'basic_reports'],

@@ -50,7 +50,7 @@ cp .env.example .env
 # Edit .env: JWT_SECRET and JWT_REFRESH_SECRET must each be at least 32 characters.
 npm install
 npm run migrate
-npm run seed
+npm run seed   # optional: verifies DB connectivity (no demo rows inserted)
 npm run dev
 
 # 3. Frontend
@@ -125,14 +125,9 @@ This repo includes a **root `Dockerfile`** that builds and serves:
 
 Health endpoint for checks: `/health`
 
-### Demo Credentials
-| Email | Password | Role |
-|-------|----------|------|
-| admin@demo.com | Demo@1234 | Company Admin |
-| accountant@demo.com | Demo@1234 | Accountant |
-| manager@demo.com | Demo@1234 | Manager |
-| cashier@demo.com | Demo@1234 | Cashier |
-| staff@demo.com | Demo@1234 | Staff |
+### First-time data
+
+There is **no bundled demo company or users**. After `npm run migrate`, create a registrant/company through **Register** (`/register`) and onboarding, or insert rows via SQL for automated tests.
 
 ## 💰 Formatting Rules
 

@@ -5,7 +5,7 @@
 #   1) Start Redis + Postgres (Homebrew)
 #   2) Ensure DB role/database `bizflow`
 #   3) Run `npm run migrate:dev` in backend (applies any pending SQL migrations)
-#   4) Run `npm run seed:dev` only if the `users` table is empty (so login works: admin@demo.com / Demo@1234)
+#   4) Optionally run `npm run seed:dev` when FORCE_SEED=1 (no demo data; connectivity check only)
 #   5) Start backend + frontend dev servers
 #
 # Usage (from repo root):
@@ -14,8 +14,8 @@
 #
 # Optional env:
 #   SKIP_MIGRATE=1   — do not run migrations
-#   SKIP_SEED=1     — do not auto-seed when DB has no users
-#   FORCE_SEED=1    — always run seed (fails if demo data already exists; use backend `npm run reset` instead)
+#   SKIP_SEED=1     — skip optional seed step
+#   FORCE_SEED=1    — run `npm run seed:dev` (no-op data load; verifies DB)
 #
 # Prerequisites:
 #   brew install postgresql@15 redis
@@ -151,21 +151,22 @@ else
   echo "→ Skipping migrations (SKIP_MIGRATE=1)."
 fi
 
-# --- Seed demo users when DB is empty ---------------------------------------
+# --- Optional seed (no demo data) ------------------------------------------
 if [[ "${SKIP_SEED:-}" != "1" ]]; then
-  user_count="$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*)::bigint FROM users WHERE is_deleted = false;" 2>/dev/null | tr -d '[:space:]' || true)"
-  [[ "$user_count" =~ ^[0-9]+$ ]] || user_count=0
   if [[ "${FORCE_SEED:-}" == "1" ]]; then
-    echo "→ FORCE_SEED=1: running npm run seed:dev (will error if data already exists)…"
-    (cd "$ROOT/backend" && npm run seed:dev)
-  elif [[ "$user_count" -eq 0 ]]; then
-    echo "→ No users found; running npm run seed:dev (demo: admin@demo.com / Demo@1234)…"
+    echo "→ FORCE_SEED=1: running npm run seed:dev…"
     (cd "$ROOT/backend" && npm run seed:dev)
   else
-    echo "→ Found ${user_count} user(s); skipping seed. (Wipe + reseed: cd backend && npm run reset)"
+    user_count="$(psql "$DATABASE_URL" -tAc "SELECT COUNT(*)::bigint FROM users WHERE is_deleted = false;" 2>/dev/null | tr -d '[:space:]' || true)"
+    [[ "$user_count" =~ ^[0-9]+$ ]] || user_count=0
+    if [[ "$user_count" -eq 0 ]]; then
+      echo "→ No users yet — use /register or onboarding. (Set FORCE_SEED=1 to run seed script.)"
+    else
+      echo "→ Found ${user_count} user(s). (Schema: migrations only; wipe DB: cd backend && npm run reset)"
+    fi
   fi
 else
-  echo "→ Skipping seed check (SKIP_SEED=1)."
+  echo "→ Skipping seed (SKIP_SEED=1)."
 fi
 
 # --- Dev servers ------------------------------------------------------------
