@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound, Download } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
@@ -111,6 +111,17 @@ export default function Settings() {
     is_primary: false,
   });
 
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [editBankForm, setEditBankForm] = useState({
+    account_label: '',
+    bank_name: '',
+    account_number: '',
+    ifsc: '',
+    branch: '',
+    upi_id: '',
+    is_primary: false,
+  });
+
   const saveBankAccount = useMutation({
     mutationFn: () => api.post('/company/bank-accounts', bankForm),
     onSuccess: () => {
@@ -121,10 +132,33 @@ export default function Settings() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'Bank save failed'),
   });
 
+  const updateBankAccount = useMutation({
+    mutationFn: (payload: {
+      id: string;
+      account_label: string | null;
+      bank_name: string;
+      account_number: string | null;
+      ifsc: string | null;
+      branch: string | null;
+      upi_id: string | null;
+      is_primary: boolean;
+    }) => {
+      const { id, ...body } = payload;
+      return api.patch(`/company/bank-accounts/${id}`, body);
+    },
+    onSuccess: () => {
+      toast.success('Bank account updated');
+      setEditingBankId(null);
+      qc.invalidateQueries({ queryKey: ['company-bank-accounts'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Update failed'),
+  });
+
   const removeBankAccount = useMutation({
     mutationFn: (id: string) => api.delete(`/company/bank-accounts/${id}`),
-    onSuccess: () => {
+    onSuccess: (_data, deletedId) => {
       toast.success('Bank account removed');
+      setEditingBankId((cur) => (cur === deletedId ? null : cur));
       qc.invalidateQueries({ queryKey: ['company-bank-accounts'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Remove failed'),
@@ -672,14 +706,159 @@ export default function Settings() {
                        </div>
                        <div className="grid gap-3">
                          {(bankAccounts as any[]).map((b: any) => (
-                           <div key={b.id} className="flex items-center justify-between rounded-lg border bg-slate-50 p-3">
-                             <div>
-                               <p className="font-medium text-sm">{b.account_label || b.bank_name} {b.is_primary ? <span className="text-xs text-indigo-600">(Primary)</span> : null}</p>
-                               <p className="text-xs text-slate-500">{b.bank_name} • {b.account_number} • {b.ifsc || 'IFSC —'} {b.upi_id ? `• ${b.upi_id}` : ''}</p>
+                           <div key={b.id} className="rounded-lg border bg-slate-50 overflow-hidden">
+                             <div className="flex items-center justify-between gap-2 p-3">
+                               <div className="min-w-0 flex-1">
+                                 <p className="font-medium text-sm">
+                                   {b.account_label || b.bank_name}{' '}
+                                   {b.is_primary ? <span className="text-xs text-indigo-600">(Primary)</span> : null}
+                                 </p>
+                                 <p className="text-xs text-slate-500 break-words">
+                                   {b.bank_name || '—'} • {b.account_number || '—'} • {b.ifsc || '—'}
+                                   {b.branch ? ` • ${b.branch}` : ''}
+                                   {b.upi_id ? ` • ${b.upi_id}` : ''}
+                                 </p>
+                               </div>
+                               <div className="flex shrink-0 items-center gap-1">
+                                 <Button
+                                   type="button"
+                                   variant="ghost"
+                                   size="sm"
+                                   className="h-8 gap-1 text-xs"
+                                   onClick={() => {
+                                     if (editingBankId === b.id) {
+                                       setEditingBankId(null);
+                                       return;
+                                     }
+                                     setEditingBankId(b.id);
+                                     setEditBankForm({
+                                       account_label: b.account_label || '',
+                                       bank_name: b.bank_name || '',
+                                       account_number: b.account_number || '',
+                                       ifsc: b.ifsc || '',
+                                       branch: b.branch || '',
+                                       upi_id: b.upi_id || '',
+                                       is_primary: !!b.is_primary,
+                                     });
+                                   }}
+                                 >
+                                   <Pencil className="h-3.5 w-3.5" />
+                                   {editingBankId === b.id ? 'Close' : 'Edit'}
+                                 </Button>
+                                 <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-8 w-8"
+                                   onClick={() => removeBankAccount.mutate(b.id)}
+                                   aria-label="Remove bank"
+                                 >
+                                   <Trash2 className="h-4 w-4 text-red-600" />
+                                 </Button>
+                               </div>
                              </div>
-                             <Button variant="ghost" size="icon" onClick={() => removeBankAccount.mutate(b.id)} aria-label="Remove bank">
-                               <Trash2 className="h-4 w-4 text-red-600" />
-                             </Button>
+                             {editingBankId === b.id && (
+                               <div className="border-t bg-white p-4 space-y-3">
+                                 <div className="grid sm:grid-cols-2 gap-3">
+                                   <div>
+                                     <label className="text-xs font-medium text-slate-600">Display label</label>
+                                     <Input
+                                       className="mt-1 h-9"
+                                       value={editBankForm.account_label}
+                                       onChange={(e) => setEditBankForm((s) => ({ ...s, account_label: e.target.value }))}
+                                       placeholder="e.g. Main current"
+                                     />
+                                   </div>
+                                   <div>
+                                     <label className="text-xs font-medium text-slate-600">Bank name</label>
+                                     <Input
+                                       className="mt-1 h-9"
+                                       value={editBankForm.bank_name}
+                                       onChange={(e) => setEditBankForm((s) => ({ ...s, bank_name: e.target.value }))}
+                                     />
+                                   </div>
+                                   <div>
+                                     <label className="text-xs font-medium text-slate-600">Account number</label>
+                                     <Input
+                                       className="mt-1 h-9 font-mono text-sm"
+                                       value={editBankForm.account_number}
+                                       onChange={(e) => setEditBankForm((s) => ({ ...s, account_number: e.target.value }))}
+                                     />
+                                   </div>
+                                   <div>
+                                     <label className="text-xs font-medium text-slate-600">IFSC</label>
+                                     <Input
+                                       className="mt-1 h-9 font-mono text-sm uppercase"
+                                       value={editBankForm.ifsc}
+                                       onChange={(e) =>
+                                         setEditBankForm((s) => ({ ...s, ifsc: e.target.value.toUpperCase() }))
+                                       }
+                                     />
+                                   </div>
+                                   <div className="sm:col-span-2">
+                                     <label className="text-xs font-medium text-slate-600">Branch</label>
+                                     <Input
+                                       className="mt-1 h-9"
+                                       value={editBankForm.branch}
+                                       onChange={(e) => setEditBankForm((s) => ({ ...s, branch: e.target.value }))}
+                                     />
+                                   </div>
+                                   <div className="sm:col-span-2">
+                                     <label className="text-xs font-medium text-slate-600">UPI ID</label>
+                                     <Input
+                                       className="mt-1 h-9"
+                                       value={editBankForm.upi_id}
+                                       onChange={(e) => setEditBankForm((s) => ({ ...s, upi_id: e.target.value }))}
+                                       placeholder="name@upi"
+                                     />
+                                   </div>
+                                 </div>
+                                 <label className="flex items-center gap-2 text-sm">
+                                   <input
+                                     type="checkbox"
+                                     checked={editBankForm.is_primary}
+                                     onChange={(e) =>
+                                       setEditBankForm((s) => ({ ...s, is_primary: e.target.checked }))
+                                     }
+                                   />
+                                   Primary (shown first on invoices when none is selected)
+                                 </label>
+                                 <div className="flex flex-wrap gap-2 pt-1">
+                                   <Button
+                                     type="button"
+                                     size="sm"
+                                     loading={updateBankAccount.isPending}
+                                     disabled={
+                                       !editBankForm.bank_name.trim() && !editBankForm.account_label.trim()
+                                     }
+                                     onClick={() =>
+                                       updateBankAccount.mutate({
+                                         id: b.id,
+                                         account_label: editBankForm.account_label.trim() || null,
+                                         bank_name:
+                                           editBankForm.bank_name.trim() ||
+                                           editBankForm.account_label.trim() ||
+                                           'Bank account',
+                                         account_number: editBankForm.account_number.trim() || null,
+                                         ifsc: editBankForm.ifsc.trim() || null,
+                                         branch: editBankForm.branch.trim() || null,
+                                         upi_id: editBankForm.upi_id.trim() || null,
+                                         is_primary: editBankForm.is_primary,
+                                       })
+                                     }
+                                   >
+                                     Save changes
+                                   </Button>
+                                   <Button
+                                     type="button"
+                                     variant="outline"
+                                     size="sm"
+                                     onClick={() => setEditingBankId(null)}
+                                   >
+                                     Cancel
+                                   </Button>
+                                 </div>
+                               </div>
+                             )}
                            </div>
                          ))}
                        </div>
