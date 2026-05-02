@@ -7,7 +7,7 @@ import { logger } from '../config/logger';
  */
 export async function logAction(
   userId: string | null,
-  companyId: string,
+  companyId: string | null,
   action: string,
   entity: string,
   entityId?: string | null,

@@ -85,10 +85,16 @@ export function moduleGuard(moduleName: string) {
     }
 
     try {
+      const companyId = req.user.company_id;
+      if (!companyId) {
+        res.status(401).json({ success: false, error: 'Company context required' });
+        return;
+      }
+
       // Companies without a license_id get unrestricted access (demo / legacy)
       const companyResult = await query(
         'SELECT license_id FROM companies WHERE id = $1 AND is_deleted = false',
-        [req.user.company_id]
+        [companyId]
       );
 
       const company = companyResult.rows[0];
@@ -97,7 +103,7 @@ export function moduleGuard(moduleName: string) {
         return;
       }
 
-      const allowedFeatures = await getCompanyAllowedFeatures(req.user.company_id);
+      const allowedFeatures = await getCompanyAllowedFeatures(companyId);
 
       if (!allowedFeatures.has(requiredFeature)) {
         res.status(403).json({

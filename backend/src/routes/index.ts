@@ -32,6 +32,7 @@ import ocrRoutes from './ocr';
 import salesOrderRoutes from './salesOrders';
 import deliveryChallanRoutes from './deliveryChallans';
 import saleReturnRoutes from './saleReturns';
+import superAdminRoutes from './superAdmin';
 
 import { moduleGuard } from '../middleware/moduleGuard';
 
@@ -40,6 +41,7 @@ const router = Router();
 // ── Module routes ─────────────────────────────────────────────
 // Core (always available — no license feature required)
 router.use('/auth', authRoutes);
+router.use('/superadmin', superAdminRoutes);
 router.use('/register', registrationRoutes);
 router.use('/licenses', licenseRoutes);
 router.use('/company', companyRoutes);

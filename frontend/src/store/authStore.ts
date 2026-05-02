@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 
 export interface User {
   id: string;
-  companyId: string;
+  companyId: string | null;
   name: string;
   email: string;
   role: string;
@@ -39,7 +39,7 @@ interface AuthState {
   refreshToken: string | null;
 
   // Actions
-  login: (user: User, company: Company, accessToken: string, refreshToken: string) => void;
+  login: (user: User, company: Company | null, accessToken: string, refreshToken: string) => void;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
   updateCompany: (updates: Partial<Company>) => void;

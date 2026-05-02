@@ -64,6 +64,10 @@ export function requireOwnership(tableName: string, paramName: string = 'id') {
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
+    if (req.user.role === 'super_admin') {
+      next();
+      return;
+    }
     const entityId = req.params[paramName];
     if (!entityId) { next(); return; }
 

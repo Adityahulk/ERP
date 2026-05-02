@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
+import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 const CONTACT_PHONE = '+91-9876543210';
 const CONTACT_EMAIL = 'sales@microtechnique.in';
@@ -295,26 +296,40 @@ export async function adminListLicenses(req: Request, res: Response) {
 export async function revokeLicense(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason } = req.body as { reason?: string };
+
+    const stamp =
+      reason && String(reason).trim()
+        ? `\n[${new Date().toISOString()}] Revoked: ${String(reason).trim()}`
+        : `\n[${new Date().toISOString()}] Revoked`;
 
     const result = await query(
-      `UPDATE licenses SET status = 'revoked', notes = COALESCE($1, notes), updated_at = NOW()
-       WHERE id = $2 AND status = 'active' AND is_deleted = false
-       RETURNING id, license_key, status`,
-      [reason || null, id]
+      `UPDATE licenses
+       SET status = 'revoked',
+           notes = CASE
+             WHEN notes IS NULL OR trim(notes) = '' THEN trim($2::text)
+             ELSE trim(notes) || $2::text
+           END,
+           updated_at = NOW()
+       WHERE id = $1 AND status = 'active' AND is_deleted = false
+       RETURNING id, license_key, status, company_id`,
+      [id, stamp]
     );
 
     if (!result.rows.length) {
       return res.status(404).json(error('Active license not found'));
     }
 
-    // Deactivate the company so its users can no longer log in
-    await query(
-      `UPDATE companies SET is_active = false WHERE license_id = $1`,
-      [id]
-    );
+    const row = result.rows[0];
 
-    res.json(success({ license: result.rows[0], message: 'License revoked and company deactivated' }));
+    // Deactivate the company so its users can no longer log in
+    await query(`UPDATE companies SET is_active = false WHERE license_id = $1`, [id]);
+
+    if (row.company_id) {
+      await clearTierFeaturesCache(row.company_id);
+    }
+
+    res.json(success({ license: { id: row.id, license_key: row.license_key, status: row.status }, message: 'License revoked and company deactivated' }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

@@ -8,6 +8,7 @@ function refreshTokenHash(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+/** Tenant users: real company UUID. Platform super_admin: empty string (DB user.company_id is null). */
 export interface JwtPayload {
   id: string;
   company_id: string;
@@ -58,7 +59,8 @@ export async function verifyToken(req: Request, res: Response, next: NextFunctio
 
   let decoded: JwtPayload;
   try {
-    decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    const raw = jwt.verify(token, env.JWT_SECRET) as JwtPayload & { company_id?: string };
+    decoded = { ...raw, company_id: raw.company_id ?? '' };
   } catch (err: any) {
     if (err.name === 'TokenExpiredError') {
       res.status(401).json({ success: false, error: 'Access token expired', code: 'TOKEN_EXPIRED' });
@@ -102,7 +104,8 @@ export function generateRefreshToken(payload: JwtPayload): string {
  * Verify a refresh token
  */
 export function verifyRefreshTokenJWT(token: string): JwtPayload {
-  return jwt.verify(token, env.JWT_REFRESH_SECRET) as JwtPayload;
+  const raw = jwt.verify(token, env.JWT_REFRESH_SECRET) as JwtPayload & { company_id?: string };
+  return { ...raw, company_id: raw.company_id ?? '' };
 }
 
 /**
@@ -137,7 +140,8 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      req.user = jwt.verify(authHeader.split(' ')[1], env.JWT_SECRET) as JwtPayload;
+      const raw = jwt.verify(authHeader.split(' ')[1], env.JWT_SECRET) as JwtPayload & { company_id?: string };
+      req.user = { ...raw, company_id: raw.company_id ?? '' };
     } catch { /* continue without user */ }
   }
   next();

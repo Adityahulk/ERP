@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
+import { Routes, Route, Navigate, Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useRegistrantStore } from '@/store/registrantStore';
 import AppLayout from '@/components/shared/AppLayout';
@@ -41,6 +41,13 @@ import JobWorkChallanList from '@/pages/jobwork/JobWorkChallanList';
 import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
 import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
 
+import SuperAdminLayout from '@/components/superadmin/SuperAdminLayout';
+import SuperAdminDashboard from '@/pages/superadmin/SuperAdminDashboard';
+import SuperAdminLicenses from '@/pages/superadmin/SuperAdminLicenses';
+import SuperAdminLicenseDetail from '@/pages/superadmin/SuperAdminLicenseDetail';
+import SuperAdminCompanies from '@/pages/superadmin/SuperAdminCompanies';
+import SuperAdminCompanyDetail from '@/pages/superadmin/SuperAdminCompanyDetail';
+
 // ── Login Page ────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
 import { Loader2, ArrowLeft } from 'lucide-react';
@@ -49,6 +56,7 @@ import toast from 'react-hot-toast';
 
 function LoginPage() {
   const { login } = useAuthStore();
+  const navigate = useNavigate();
   const prefillDemo = import.meta.env.VITE_PREFILL_DEMO_LOGIN === 'true';
   const [email, setEmail] = useState(prefillDemo ? 'admin@demo.com' : '');
   const [password, setPassword] = useState(prefillDemo ? 'Demo@1234' : '');
@@ -65,13 +73,30 @@ function LoginPage() {
     try {
       const { data: res } = await api.post('/auth/login', { email, password });
       if (res.success) {
+        const company = res.data.company;
+        const isSuper = res.data.user.role === 'super_admin';
         login(
-          { id: res.data.user.id, companyId: res.data.company.id, name: res.data.user.name, email: res.data.user.email, role: res.data.user.role },
-          { id: res.data.company.id, name: res.data.company.name, gstin: res.data.company.gstin, itemTerminology: res.data.company.item_terminology || 'Product', itemTerminologyPlural: res.data.company.item_terminology_plural || 'Products' },
+          {
+            id: res.data.user.id,
+            companyId: company?.id ?? null,
+            name: res.data.user.name,
+            email: res.data.user.email,
+            role: res.data.user.role,
+          },
+          company
+            ? {
+                id: company.id,
+                name: company.name,
+                gstin: company.gstin,
+                itemTerminology: company.item_terminology || 'Product',
+                itemTerminologyPlural: company.item_terminology_plural || 'Products',
+              }
+            : null,
           res.data.accessToken,
           res.data.refreshToken
         );
         toast.success(`Welcome back, ${res.data.user.name}!`);
+        navigate(isSuper ? '/superadmin' : '/dashboard', { replace: true });
       }
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Login failed');
@@ -130,6 +155,42 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+function TenantGate({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  if (user?.role === 'super_admin') {
+    return <Navigate to="/superadmin" replace />;
+  }
+  return <>{children}</>;
+}
+
+function SuperAdminShell() {
+  const { isAuthenticated, user } = useAuthStore();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role !== 'super_admin') return <Navigate to="/dashboard" replace />;
+  return <SuperAdminLayout />;
+}
+
+function AuthHomeRedirect() {
+  const { isAuthenticated, user } = useAuthStore();
+  if (!isAuthenticated) return <LandingPage />;
+  return <Navigate to={user?.role === 'super_admin' ? '/superadmin' : '/dashboard'} replace />;
+}
+
+function LoginEntry() {
+  const { isAuthenticated, user } = useAuthStore();
+  if (isAuthenticated) {
+    return <Navigate to={user?.role === 'super_admin' ? '/superadmin' : '/dashboard'} replace />;
+  }
+  return <LoginPage />;
+}
+
+function OnboardingEntry() {
+  const { isAuthenticated, user } = useAuthStore();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role === 'super_admin') return <Navigate to="/superadmin" replace />;
+  return <Onboarding />;
+}
+
 // ── Registrant Protected Route ────────────────────────────────
 function RegistrantRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useRegistrantStore();
@@ -151,10 +212,18 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
-      <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      <Route path="/" element={<AuthHomeRedirect />} />
+      <Route path="/login" element={<LoginEntry />} />
 
-      <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+      <Route path="/superadmin" element={<SuperAdminShell />}>
+        <Route index element={<SuperAdminDashboard />} />
+        <Route path="licenses" element={<SuperAdminLicenses />} />
+        <Route path="licenses/:id" element={<SuperAdminLicenseDetail />} />
+        <Route path="companies" element={<SuperAdminCompanies />} />
+        <Route path="companies/:id" element={<SuperAdminCompanyDetail />} />
+      </Route>
+
+      <Route element={<ProtectedRoute><TenantGate><AppLayout /></TenantGate></ProtectedRoute>}>
         {/* Items */}
         <Route path="/items" element={<ItemList />} />
         <Route path="/items/:id" element={<ItemDetail />} />
@@ -216,7 +285,7 @@ export default function App() {
 
       </Route>
 
-      <Route path="/onboarding" element={isAuthenticated ? <Onboarding /> : <Navigate to="/login" replace />} />
+      <Route path="/onboarding" element={<OnboardingEntry />} />
 
       {/* ── Registrant / License routes ─────────────────────── */}
       <Route path="/register" element={<RegisterPage />} />

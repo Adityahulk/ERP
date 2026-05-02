@@ -23,10 +23,14 @@ export async function login(req: Request, res: Response) {
               c.plan_type, c.is_active as company_is_active,
               COALESCE(ep.godown_id, dg.id) as resolved_godown_id
        FROM users u
-       JOIN companies c ON u.company_id = c.id AND c.is_deleted = false
+       LEFT JOIN companies c ON c.id = u.company_id AND c.is_deleted = false
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
-       WHERE u.email = $1 AND u.is_deleted = false`,
+       WHERE u.email = $1 AND u.is_deleted = false
+         AND (
+           u.role = 'super_admin'
+           OR (u.company_id IS NOT NULL AND c.id IS NOT NULL)
+         )`,
       [email.toLowerCase().trim()]
     );
 
@@ -52,7 +56,7 @@ export async function login(req: Request, res: Response) {
       return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
     }
 
-    if (user.company_is_active === false) {
+    if (user.role !== 'super_admin' && user.company_id != null && user.company_is_active === false) {
       return res.status(403).json(error('Your company license has been deactivated. Please contact support.'));
     }
 
@@ -70,9 +74,9 @@ export async function login(req: Request, res: Response) {
 
     const tokenPayload: JwtPayload = {
       id: user.id,
-      company_id: user.company_id,
+      company_id: user.role === 'super_admin' ? '' : user.company_id,
       role: user.role,
-      godown_id: user.resolved_godown_id || null,
+      godown_id: user.role === 'super_admin' ? null : user.resolved_godown_id || null,
       email: user.email,
       session_version: newSessionVersion,
     };
@@ -84,7 +88,21 @@ export async function login(req: Request, res: Response) {
     await storeRefreshToken(user.id, refreshToken);
 
     // Audit
-    await logAction(user.id, user.company_id, 'login', 'user', user.id, null, null, req.ip, req.get('User-Agent'));
+    await logAction(user.id, user.company_id ?? null, 'login', 'user', user.id, null, null, req.ip, req.get('User-Agent'));
+
+    const companyPayload =
+      user.role === 'super_admin' || user.company_id == null
+        ? null
+        : {
+            id: user.company_id,
+            name: user.company_name,
+            gstin: user.company_gstin,
+            logo_url: user.company_logo,
+            item_terminology: user.item_terminology,
+            item_terminology_plural: user.item_terminology_plural,
+            onboarding_completed: user.onboarding_completed,
+            plan_type: user.plan_type,
+          };
 
     res.json(success({
       user: {
@@ -95,16 +113,7 @@ export async function login(req: Request, res: Response) {
         role: user.role,
         avatar_url: user.avatar_url,
       },
-      company: {
-        id: user.company_id,
-        name: user.company_name,
-        gstin: user.company_gstin,
-        logo_url: user.company_logo,
-        item_terminology: user.item_terminology,
-        item_terminology_plural: user.item_terminology_plural,
-        onboarding_completed: user.onboarding_completed,
-        plan_type: user.plan_type,
-      },
+      company: companyPayload,
       accessToken,
       refreshToken,
     }));
@@ -137,7 +146,7 @@ export async function refresh(req: Request, res: Response) {
               COALESCE(ep.godown_id, dg.id) as resolved_godown_id,
               c.is_active as company_is_active
        FROM users u
-       INNER JOIN companies c ON c.id = u.company_id AND c.is_deleted = false AND c.is_active = true
+       LEFT JOIN companies c ON c.id = u.company_id AND c.is_deleted = false
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
        WHERE u.id = $1 AND u.is_deleted = false`,
@@ -151,6 +160,13 @@ export async function refresh(req: Request, res: Response) {
 
     const user = result.rows[0];
 
+    if (user.role !== 'super_admin') {
+      if (!user.company_id || !user.company_is_active) {
+        await removeRefreshToken(decoded.id);
+        return res.status(401).json(error('Account not found or company inactive'));
+      }
+    }
+
     // Verify session version matches — old device refresh is rejected
     if (decoded.session_version !== user.session_version) {
       await removeRefreshToken(decoded.id);
@@ -163,9 +179,9 @@ export async function refresh(req: Request, res: Response) {
 
     const payload: JwtPayload = {
       id: decoded.id,
-      company_id: user.company_id,
+      company_id: user.role === 'super_admin' ? '' : user.company_id,
       role: user.role,
-      godown_id: user.resolved_godown_id || null,
+      godown_id: user.role === 'super_admin' ? null : user.resolved_godown_id || null,
       email: user.email,
       session_version: user.session_version,
     };
@@ -188,7 +204,7 @@ export async function logout(req: Request, res: Response) {
   try {
     if (req.user) {
       await removeRefreshToken(req.user.id);
-      await logAction(req.user.id, req.user.company_id, 'logout', 'user', req.user.id);
+      await logAction(req.user.id, req.user.company_id ? req.user.company_id : null, 'logout', 'user', req.user.id);
     }
     res.json(success({ message: 'Logged out successfully' }));
   } catch (err: any) {
@@ -199,6 +215,35 @@ export async function logout(req: Request, res: Response) {
 // ── GET /api/auth/me ──────────────────────────────────────────
 export async function getMe(req: Request, res: Response) {
   try {
+    const roleCheck = await query(`SELECT role, company_id FROM users WHERE id = $1 AND is_deleted = false`, [
+      req.user!.id,
+    ]);
+    if (!roleCheck.rows.length) {
+      return res.status(404).json(error('User not found'));
+    }
+    if (roleCheck.rows[0].role === 'super_admin') {
+      const uRes = await query(
+        `SELECT id, name, email, phone, role, avatar_url, company_id FROM users WHERE id = $1 AND is_deleted = false`,
+        [req.user!.id]
+      );
+      const u = uRes.rows[0];
+      return res.json(
+        success({
+          user: {
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            phone: u.phone,
+            role: u.role,
+            avatar_url: u.avatar_url,
+          },
+          company: null,
+          license: null,
+          godown: null,
+        })
+      );
+    }
+
     const result = await query(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.company_id,
               c.name as company_name, c.legal_name, c.gstin, c.pan, c.logo_url, c.signature_url,
@@ -327,7 +372,7 @@ export async function resetPassword(req: Request, res: Response) {
     );
 
     await removeRefreshToken(user.id);
-    await logAction(user.id, user.company_id, 'reset_password', 'user', user.id);
+    await logAction(user.id, user.company_id ?? null, 'reset_password', 'user', user.id);
 
     res.json(success({ message: 'Password reset successfully. Please login with your new password.' }));
   } catch (err: any) {
