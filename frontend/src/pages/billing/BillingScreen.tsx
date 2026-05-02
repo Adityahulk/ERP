@@ -6,7 +6,8 @@ import { BarcodeScanner } from '@/components/shared/BarcodeScanner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode } from 'lucide-react';
+import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus } from 'lucide-react';
+import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import { formatMoney } from '@/lib/formatters';
 
 interface BillItem {
@@ -34,6 +35,8 @@ export default function BillingScreen() {
   const [discountTotal] = useState(0);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [amountTendered, setAmountTendered] = useState<number | ''>('');
+  const [quickAddItemOpen, setQuickAddItemOpen] = useState(false);
+  const [quickAddItemDefaultName, setQuickAddItemDefaultName] = useState('');
 
   // Search Results
   const { data: searchResults, isFetching: isSearching } = useQuery({
@@ -238,6 +241,20 @@ export default function BillingScreen() {
             )}
           </div>
           
+          <Button
+            size="lg"
+            variant="outline"
+            className="h-12 px-3 shrink-0 gap-1.5"
+            type="button"
+            onClick={() => {
+              setQuickAddItemDefaultName(searchQuery.trim());
+              setQuickAddItemOpen(true);
+            }}
+            title="Add item to catalog and bill"
+          >
+            <PackagePlus className="h-5 w-5" />
+            <span className="hidden sm:inline text-sm font-medium">Add item</span>
+          </Button>
           <Button size="lg" variant="secondary" className="h-12 w-12 px-0 shrink-0" onClick={() => setScannerOpen(true)}>
             <Camera className="h-5 w-5" />
           </Button>
@@ -420,6 +437,22 @@ export default function BillingScreen() {
            // Mimic keyboard ENTER payload behavior via state sync timeout 
            setTimeout(() => handleSearchKeyPress({ key: 'Enter' } as any), 50);
         }} 
+      />
+
+      <QuickAddItemSheet
+        open={quickAddItemOpen}
+        onOpenChange={setQuickAddItemOpen}
+        defaultName={quickAddItemDefaultName}
+        onCreated={(row) => {
+          addItem({
+            id: row.id,
+            name: row.name as string,
+            sku: String(row.sku ?? ''),
+            hsn_code: String(row.hsn_code ?? ''),
+            unit_price: Number(row.selling_price ?? 0),
+            gst_rate: Number(row.gst_rate ?? 0),
+          });
+        }}
       />
     </div>
   );

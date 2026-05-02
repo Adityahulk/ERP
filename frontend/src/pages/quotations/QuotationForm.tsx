@@ -135,7 +135,7 @@ export default function QuotationForm() {
         </Button>
         <div>
           <h1 className="text-2xl font-bold">New Quotation</h1>
-          <p className="text-sm text-muted-foreground">Send a price offer to your customer before raising an invoice</p>
+          <p className="text-sm text-muted-foreground">Send a price offer before raising an invoice</p>
         </div>
       </div>
 
@@ -143,7 +143,7 @@ export default function QuotationForm() {
       <div className="grid md:grid-cols-2 gap-4">
         {/* Party */}
         <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm">Bill To (Customer)</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Bill to (party)</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {partyId ? (
               <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/30">
@@ -155,7 +155,7 @@ export default function QuotationForm() {
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Input
-                      placeholder="Search customer by name, phone…"
+                      placeholder="Search party by name, phone, GSTIN…"
                       value={partySearch}
                       onChange={(e) => searchParties(e.target.value)}
                     />
@@ -182,7 +182,7 @@ export default function QuotationForm() {
                     </button>
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground">Optional — leave blank to enter customer name manually on the quote</p>
+                <p className="text-xs text-muted-foreground">Optional — leave blank to enter party name manually on the quote</p>
               </>
             )}
           </CardContent>
@@ -298,7 +298,7 @@ export default function QuotationForm() {
             </div>
 
             <div>
-              <Label className="text-xs">Customer Notes <span className="text-muted-foreground">(printed on quote)</span></Label>
+              <Label className="text-xs">Party notes <span className="text-muted-foreground">(printed on quote)</span></Label>
               <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={customerNotes} onChange={(e) => setCustomerNotes(e.target.value)} placeholder="e.g. Delivery in 7 days, free installation included" />
             </div>
             <div>
@@ -329,7 +329,6 @@ export default function QuotationForm() {
       <QuickAddPartySheet
         open={quickAddOpen}
         onOpenChange={setQuickAddOpen}
-        partyType="customer"
         defaultName={quickAddDefaultName}
         onCreated={(row) => {
           selectParty(row);

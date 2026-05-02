@@ -79,7 +79,7 @@ export default function PurchaseOrdersTab() {
     if (q.length < 2) { setPartyResults([]); return; }
 
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -126,7 +126,7 @@ export default function PurchaseOrdersTab() {
   };
 
   const handleCreatePO = () => {
-    if (!partyId) { toast.error('Select a supplier'); return; }
+    if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     createPO.mutate({
       party_id: partyId,
@@ -206,7 +206,7 @@ export default function PurchaseOrdersTab() {
           <SheetHeader className="mb-5"><SheetTitle>New Purchase Order</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Supplier *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -215,7 +215,7 @@ export default function PurchaseOrdersTab() {
               ) : (
                 <div className="mt-1 flex gap-2">
                   <div className="relative flex-1">
-                    <Input placeholder="Search supplier…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
+                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
                     {partyResults.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {partyResults.map((p: any) => (
@@ -226,7 +226,7 @@ export default function PurchaseOrdersTab() {
                       </div>
                     )}
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>+ New</Button>
+                  <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>Add party</Button>
                 </div>
               )}
             </div>
@@ -245,7 +245,16 @@ export default function PurchaseOrdersTab() {
             </div>
             <div>
               <Label className="text-xs mb-2 block">Items to Order</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" godownId={godownId} showHsn={true} showUnit={true} />
+              <VyaparLineItems
+                items={items}
+                onChange={setItems}
+                isGst={true}
+                searchMode="catalog"
+                defaultRateFrom="purchase"
+                godownId={godownId}
+                showHsn={true}
+                showUnit={true}
+              />
             </div>
             <div>
               <Label className="text-xs">Notes</Label>
@@ -271,11 +280,11 @@ export default function PurchaseOrdersTab() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs">Supplier Bill Date</Label>
+                <Label className="text-xs">Vendor bill date</Label>
                 <Input type="date" className="mt-1 h-9" value={billDate} onChange={e => setBillDate(e.target.value)} />
               </div>
               <div>
-                <Label className="text-xs">Supplier Bill No. (optional)</Label>
+                <Label className="text-xs">Vendor bill no. (optional)</Label>
                 <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={billNumber} onChange={e => setBillNumber(e.target.value)} />
               </div>
             </div>
@@ -310,13 +319,7 @@ export default function PurchaseOrdersTab() {
         </div>
       )}
 
-      <QuickAddPartySheet
-        open={quickAddOpen}
-        onOpenChange={setQuickAddOpen}
-        partyType="supplier"
-        defaultName=""
-        onCreated={(row) => selectSupplier(row)}
-      />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
     </div>
   );
 }

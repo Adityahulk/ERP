@@ -63,7 +63,7 @@ export default function PurchaseReturnTab() {
     if (q.length < 2) { setPartyResults([]); return; }
 
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -73,7 +73,7 @@ export default function PurchaseReturnTab() {
   const resetForm = () => { clearSupplier(); setReturnDate(new Date().toISOString().split('T')[0]); setDebitNoteNo(''); setRefBillNo(''); setReason(''); setItems([]); };
 
   const handleCreate = () => {
-    if (!partyId && !partySearch) { toast.error('Select a supplier'); return; }
+    if (!partyId && !partySearch) { toast.error('Select or enter a party'); return; }
     if (items.length === 0) { toast.error('Add at least one returned item'); return; }
     createReturn.mutate({ party_id: partyId, party_name: partyName || partySearch, return_date: returnDate, debit_note_no: debitNoteNo, ref_bill_no: refBillNo, reason });
   };
@@ -84,7 +84,7 @@ export default function PurchaseReturnTab() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">
-            Record goods returned to suppliers and issue debit notes to adjust payables.
+            Record purchase returns and issue debit notes to adjust payables.
           </p>
         </div>
         <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
@@ -131,7 +131,7 @@ export default function PurchaseReturnTab() {
           <SheetHeader className="mb-5"><SheetTitle>Purchase Return / Debit Note</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Supplier *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -140,7 +140,7 @@ export default function PurchaseReturnTab() {
               ) : (
                 <div className="mt-1 flex gap-2">
                   <div className="relative flex-1">
-                    <Input placeholder="Search supplier…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
+                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
                     {partyResults.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {partyResults.map((p: any) => (
@@ -175,7 +175,15 @@ export default function PurchaseReturnTab() {
 
             <div>
               <Label className="text-xs mb-2 block">Items Returned</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn={true} showUnit={true} />
+              <VyaparLineItems
+                items={items}
+                onChange={setItems}
+                isGst={true}
+                searchMode="catalog"
+                defaultRateFrom="purchase"
+                showHsn={true}
+                showUnit={true}
+              />
             </div>
 
             <div>
@@ -193,7 +201,7 @@ export default function PurchaseReturnTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="supplier" defaultName="" onCreated={(row) => selectSupplier(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
     </div>
   );
 }

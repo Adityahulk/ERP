@@ -67,7 +67,7 @@ export default function SaleReturnTab() {
   const resetForm = () => { clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
 
   const handleCreate = () => {
-    if (!partyId && !partyName) { toast.error('Select a customer'); return; }
+    if (!partyId && !partyName) { toast.error('Select or enter a party'); return; }
     if (items.length === 0) { toast.error('Add at least one returned item'); return; }
     createMut.mutate({
       party_id: partyId || undefined,
@@ -85,7 +85,7 @@ export default function SaleReturnTab() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Record goods returned by customers and issue credit notes to adjust receivables.</p>
+        <p className="text-sm text-muted-foreground">Record returns and issue credit notes to adjust receivables.</p>
         <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
           <Plus className="w-4 h-4" /> Add Credit Note
         </Button>
@@ -97,7 +97,7 @@ export default function SaleReturnTab() {
             <tr className="border-b bg-muted/40">
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Credit Note No.</th>
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Customer</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Reason</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
             </tr>
@@ -127,7 +127,7 @@ export default function SaleReturnTab() {
           <SheetHeader className="mb-5"><SheetTitle>Sale Return / Credit Note</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Customer *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -136,7 +136,7 @@ export default function SaleReturnTab() {
               ) : (
                 <div className="mt-1 flex gap-2">
                   <div className="relative flex-1">
-                    <Input placeholder="Search customer…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
+                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
                     {partyResults.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {partyResults.map((p: any) => (
@@ -188,7 +188,7 @@ export default function SaleReturnTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="customer" defaultName="" onCreated={(row) => selectCustomer(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectCustomer(row)} />
     </div>
   );
 }

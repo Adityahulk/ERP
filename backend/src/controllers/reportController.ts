@@ -945,7 +945,7 @@ export async function tallyImport(req: Request, res: Response) {
           await query(
             `INSERT INTO parties (company_id, party_type, name, gstin, phone, email, billing_address, billing_city, billing_state, billing_pincode, opening_balance)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [companyId, p.party_type || 'customer', name, p.gstin || null, p.phone || null, p.email || null, p.billing_address || null, p.billing_city || null, p.billing_state || null, p.billing_pincode || null, Number(p.opening_balance || 0)]
+            [companyId, 'party', name, p.gstin || null, p.phone || null, p.email || null, p.billing_address || null, p.billing_city || null, p.billing_state || null, p.billing_pincode || null, Number(p.opening_balance || 0)]
           );
           createdParties++;
         }
@@ -1004,7 +1004,7 @@ export async function tallyImport(req: Request, res: Response) {
         if (!exists.rows.length) {
           await query(
             `INSERT INTO parties (company_id, party_type, name, gstin)
-             VALUES ($1,'customer',$2,$3)`,
+             VALUES ($1,'party',$2,$3)`,
             [companyId, name, l.GSTIN || null]
           );
           createdParties++;

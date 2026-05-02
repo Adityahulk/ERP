@@ -88,7 +88,7 @@ export default function PurchaseBillsTab() {
     setPartySearch(q);
     if (q.length < 2) { setPartyResults([]); return; }
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -103,7 +103,7 @@ export default function PurchaseBillsTab() {
   };
 
   const handleCreate = () => {
-    if (!partyId) { toast.error('Select a supplier'); return; }
+    if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     createMutation.mutate({
       party_id: partyId,
@@ -169,7 +169,7 @@ export default function PurchaseBillsTab() {
             <tr className="border-b bg-muted/40">
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Bill No.</th>
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Supplier</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden sm:table-cell">Status</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground hidden md:table-cell">Balance</th>
@@ -222,10 +222,10 @@ export default function PurchaseBillsTab() {
             <SheetTitle>Add Purchase Bill</SheetTitle>
           </SheetHeader>
           <div className="space-y-4">
-            {/* Supplier */}
+            {/* Party */}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <Label className="text-xs">Supplier *</Label>
+                <Label className="text-xs">Party *</Label>
                 {partyId ? (
                   <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                     <span className="font-medium text-sm">{partyName}</span>
@@ -234,7 +234,7 @@ export default function PurchaseBillsTab() {
                 ) : (
                   <div className="mt-1 flex gap-2">
                     <div className="relative flex-1">
-                      <Input placeholder="Search supplier…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
+                      <Input placeholder="Search party…" value={partySearch} onChange={e => searchSuppliers(e.target.value)} className="h-9" />
                       {partyResults.length > 0 && (
                         <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                           {partyResults.map((p: any) => (
@@ -257,7 +257,7 @@ export default function PurchaseBillsTab() {
                 <Input type="date" className="mt-1 h-9" value={billDate} onChange={e => setBillDate(e.target.value)} />
               </div>
               <div>
-                <Label className="text-xs">Supplier Bill No. (optional)</Label>
+                <Label className="text-xs">Vendor bill no. (optional)</Label>
                 <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={billNumber} onChange={e => setBillNumber(e.target.value)} />
               </div>
               <div>
@@ -283,6 +283,7 @@ export default function PurchaseBillsTab() {
                 onChange={setItems}
                 isGst={isGst}
                 searchMode="catalog"
+                defaultRateFrom="purchase"
                 godownId={godownId}
                 showHsn={true}
                 showUnit={true}
@@ -334,13 +335,7 @@ export default function PurchaseBillsTab() {
         </div>
       )}
 
-      <QuickAddPartySheet
-        open={quickAddOpen}
-        onOpenChange={setQuickAddOpen}
-        partyType="supplier"
-        defaultName=""
-        onCreated={(row) => selectSupplier(row)}
-      />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
     </div>
   );
 }

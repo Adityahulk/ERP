@@ -9,12 +9,13 @@
  *  - Live totals (subtotal / tax / grand total)
  */
 
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/lib/formatters';
-import { Plus, Search, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
 import api from '@/lib/api';
+import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 
 export interface VyaparLineItem {
   item_id?: string;
@@ -36,6 +37,8 @@ interface Props {
   isInterstate?: boolean;
   /** 'invoice' uses /invoices/search-items; 'catalog' uses /items */
   searchMode?: 'invoice' | 'catalog';
+  /** When picking or quick-creating an item, prefer this price for the line rate */
+  defaultRateFrom?: 'selling' | 'purchase';
   godownId?: string;
   showHsn?: boolean;
   showUnit?: boolean;
@@ -63,6 +66,7 @@ export default function VyaparLineItems({
   isGst = true,
   isInterstate = false,
   searchMode = 'invoice',
+  defaultRateFrom = 'selling',
   godownId,
   showHsn = true,
   showUnit = false,
@@ -73,7 +77,19 @@ export default function VyaparLineItems({
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const lineUnitPriceFromItem = (item: any) => {
+    const sp = Number(item.selling_price ?? 0);
+    const pp = Number(item.purchase_price ?? 0);
+    const up = Number(item.unit_price ?? 0);
+    if (defaultRateFrom === 'purchase') {
+      return pp || sp || up;
+    }
+    return up || sp || pp;
+  };
 
   const runSearch = (q: string) => {
     setQuery(q);
@@ -107,7 +123,7 @@ export default function VyaparLineItems({
         hsn_code: item.hsn_code || '',
         unit: item.unit || item.unit_name || 'PCS',
         quantity: 1,
-        unit_price: Number(item.unit_price ?? item.selling_price ?? item.purchase_price ?? 0),
+        unit_price: lineUnitPriceFromItem(item),
         discount_amount: 0,
         gst_rate: Number(item.gst_rate ?? 18),
         cess_rate: Number(item.cess_rate ?? 0),
@@ -115,6 +131,27 @@ export default function VyaparLineItems({
     ]);
     setQuery('');
     setResults([]);
+  };
+
+  const openQuickAddItem = () => {
+    setQuickAddDefaultName(query.trim());
+    setQuickAddOpen(true);
+  };
+
+  const onQuickItemCreated = (row: Record<string, unknown>) => {
+    const item = {
+      id: row.id,
+      name: row.name,
+      sku: row.sku,
+      hsn_code: row.hsn_code,
+      selling_price: row.selling_price,
+      purchase_price: row.purchase_price,
+      gst_rate: row.gst_rate,
+      cess_rate: row.cess_rate ?? 0,
+      unit_price: row.selling_price,
+      unit_name: row.unit_name,
+    };
+    addFromCatalog(item);
   };
 
   const addManualLine = () => {
@@ -157,8 +194,8 @@ export default function VyaparLineItems({
     <div className="space-y-3">
       {/* Search / Add Row */}
       <div className="relative">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
+        <div className="flex gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
               className="pl-9 h-10"
@@ -168,6 +205,16 @@ export default function VyaparLineItems({
               onKeyDown={(e) => e.key === 'Enter' && query.trim() && addManualLine()}
             />
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-10 gap-1.5 shrink-0"
+            onClick={openQuickAddItem}
+          >
+            <PackagePlus className="w-4 h-4" />
+            Add item
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -218,6 +265,13 @@ export default function VyaparLineItems({
         )}
       </div>
 
+      <QuickAddItemSheet
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        defaultName={quickAddDefaultName}
+        onCreated={onQuickItemCreated}
+      />
+
       {/* Items Table */}
       {items.length > 0 && (
         <div className="border rounded-xl overflow-hidden">
@@ -240,8 +294,8 @@ export default function VyaparLineItems({
                 const c = calcLine(item, isGst);
                 const expanded = expandedRows.has(idx);
                 return (
-                  <>
-                    <tr key={idx} className="border-b hover:bg-muted/10">
+                  <Fragment key={idx}>
+                    <tr className="border-b hover:bg-muted/10">
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           <Input
@@ -319,7 +373,7 @@ export default function VyaparLineItems({
 
                     {/* Expanded row for extra fields */}
                     {expanded && (
-                      <tr key={`${idx}-expand`} className="bg-muted/20 border-b">
+                      <tr className="bg-muted/20 border-b">
                         <td colSpan={7} className="px-4 py-3">
                           <div className="flex flex-wrap gap-3 text-xs">
                             {showHsn && (
@@ -401,7 +455,7 @@ export default function VyaparLineItems({
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -411,7 +465,7 @@ export default function VyaparLineItems({
 
       {items.length === 0 && (
         <div className="border-2 border-dashed rounded-xl p-8 text-center text-muted-foreground text-sm">
-          Search for items above or click <strong>Add Line</strong> to enter manually
+          Search for items above, use <strong>Add item</strong> to save to your catalog, or <strong>Add Line</strong> for a one-off row
         </div>
       )}
 

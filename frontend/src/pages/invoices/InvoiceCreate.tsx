@@ -7,10 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine } from 'lucide-react';
+import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine, PackagePlus } from 'lucide-react';
 import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
 import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -48,6 +49,8 @@ export default function InvoiceCreate() {
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+  const [quickAddItemOpen, setQuickAddItemOpen] = useState(false);
+  const [quickAddItemDefaultName, setQuickAddItemDefaultName] = useState('');
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
 
@@ -59,7 +62,7 @@ export default function InvoiceCreate() {
       setPartySearch(data.party_name);
       searchParties(data.party_name);
     }
-    toast.success('Invoice details applied — select the customer and verify');
+    toast.success('Invoice details applied — select the party and verify');
   };
 
   const clearPartySelection = () => {
@@ -80,7 +83,7 @@ export default function InvoiceCreate() {
     }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch {
       setPartyResults([]);
@@ -105,6 +108,11 @@ export default function InvoiceCreate() {
   const openQuickAdd = (prefillName?: string) => {
     setQuickAddDefaultName(prefillName ?? '');
     setQuickAddOpen(true);
+  };
+
+  const openQuickAddItem = (prefillName?: string) => {
+    setQuickAddItemDefaultName(prefillName ?? itemSearch.trim());
+    setQuickAddItemOpen(true);
   };
 
   // Search items
@@ -218,7 +226,7 @@ export default function InvoiceCreate() {
         </div>
         <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
           <ScanLine className="w-4 h-4" />
-          Scan Customer Bill
+          Scan party bill
         </Button>
       </div>
 
@@ -228,7 +236,7 @@ export default function InvoiceCreate() {
           <CardHeader className="pb-3"><CardTitle className="text-sm">Party Details</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="relative">
-              <Label>Select Customer *</Label>
+              <Label>Select party *</Label>
               {partyId ? (
                 <div className="flex items-center justify-between mt-1 p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -260,14 +268,14 @@ export default function InvoiceCreate() {
                     </div>
                     <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1 sm:mt-0" onClick={() => openQuickAdd()}>
                       <UserPlus className="h-4 w-4" />
-                      New customer
+                      Add party
                     </Button>
                   </div>
                   {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
                     <p className="mt-1 text-sm text-muted-foreground">
                       No matches.{' '}
                       <button type="button" className="text-primary font-medium hover:underline" onClick={() => openQuickAdd(partySearch)}>
-                        Add “{partySearch.trim()}” as customer
+                        Add “{partySearch.trim()}” as party
                       </button>
                     </p>
                   )}
@@ -320,23 +328,48 @@ export default function InvoiceCreate() {
       <Card>
         <CardHeader><CardTitle className="text-base">Line Items</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input className="pl-9" placeholder="Search products to add..." value={itemSearch} onChange={e => searchItems(e.target.value)} />
-            {itemResults.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {itemResults.map((it: any) => (
-                  <button key={it.id} className="w-full text-left px-4 py-2 hover:bg-muted text-sm flex justify-between" onClick={() => addItem(it)}>
-                    <span>{it.name} <span className="text-muted-foreground">{it.sku}</span></span>
-                    <span className="tabular-nums">
-                      {formatMoney(Number(it.unit_price || 0))}
-                      {typeof it.available_stock === 'number' ? ` • Stock ${it.available_stock}` : ''}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search products to add..."
+                value={itemSearch}
+                onChange={(e) => searchItems(e.target.value)}
+              />
+              {itemResults.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {itemResults.map((it: any) => (
+                    <button
+                      key={it.id}
+                      className="w-full text-left px-4 py-2 hover:bg-muted text-sm flex justify-between"
+                      onClick={() => addItem(it)}
+                    >
+                      <span>
+                        {it.name} <span className="text-muted-foreground">{it.sku}</span>
+                      </span>
+                      <span className="tabular-nums">
+                        {formatMoney(Number(it.unit_price || 0))}
+                        {typeof it.available_stock === 'number' ? ` • Stock ${it.available_stock}` : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => openQuickAddItem()}>
+              <PackagePlus className="h-4 w-4" />
+              Add item
+            </Button>
           </div>
+          {itemSearch.length >= 2 && itemResults.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No matches.{' '}
+              <button type="button" className="text-primary font-medium hover:underline" onClick={() => openQuickAddItem(itemSearch)}>
+                Add “{itemSearch.trim()}” as item
+              </button>
+            </p>
+          )}
 
           {items.length > 0 && (
             <div className="border rounded-lg overflow-x-auto">
@@ -376,7 +409,11 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {items.length === 0 && <p className="text-center text-muted-foreground py-8 text-sm">Search and add items above</p>}
+          {items.length === 0 && (
+            <p className="text-center text-muted-foreground py-8 text-sm">
+              Search above or use <strong>Add item</strong> to save a product to your catalog and add it here.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -439,12 +476,21 @@ export default function InvoiceCreate() {
         companyName={company?.name}
       />
 
-      <QuickAddPartySheet
-        open={quickAddOpen}
-        onOpenChange={setQuickAddOpen}
-        partyType="customer"
-        defaultName={quickAddDefaultName}
-        onCreated={(row) => selectParty(row)}
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName={quickAddDefaultName} onCreated={(row) => selectParty(row)} />
+
+      <QuickAddItemSheet
+        open={quickAddItemOpen}
+        onOpenChange={setQuickAddItemOpen}
+        defaultName={quickAddItemDefaultName}
+        onCreated={(row) => {
+          addItem({
+            id: row.id,
+            name: String(row.name ?? ''),
+            hsn_code: String(row.hsn_code ?? ''),
+            unit_price: Number(row.selling_price ?? 0),
+            gst_rate: Number(row.gst_rate ?? 18),
+          });
+        }}
       />
 
       <OcrBillSheet

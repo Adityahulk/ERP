@@ -15,14 +15,6 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const TYPE_COLORS: Record<string, string> = {
-  customer: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
-  supplier: 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300',
-  both: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
-  dealer: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
-  job_worker: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
-};
-
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     paid: 'bg-emerald-100 text-emerald-700',
@@ -51,7 +43,6 @@ export default function PartyDetail() {
   const openEdit = () => {
     if (!party) return;
     setForm({
-      party_type: party.party_type,
       name: party.name,
       phone: party.phone || '',
       email: party.email || '',
@@ -68,9 +59,19 @@ export default function PartyDetail() {
   };
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { toast.error('Name is required'); return; }
+    if (!form.name?.trim()) {
+      toast.error('Name is required');
+      return;
+    }
+    const g = String(form.gstin || '')
+      .trim()
+      .toUpperCase();
+    if (g.length > 0 && g.length !== 15) {
+      toast.error('GSTIN must be exactly 15 characters, or leave it blank');
+      return;
+    }
     try {
-      const payload: any = { ...form };
+      const payload: any = { ...form, gstin: g.length === 15 ? g : null };
       if (payload.credit_limit !== '') payload.credit_limit = Math.round(parseFloat(payload.credit_limit) * 100);
       await updateMutation.mutateAsync({ id: id!, data: payload });
       toast.success('Party updated');
@@ -162,8 +163,8 @@ export default function PartyDetail() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold">{party.name}</h1>
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${TYPE_COLORS[party.party_type] || 'bg-slate-100 text-slate-600'}`}>
-                {party.party_type?.replace('_', ' ')}
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-200">
+                Party
               </span>
               {!party.is_active && (
                 <Badge variant="outline" className="text-[10px]">Inactive</Badge>
@@ -186,16 +187,12 @@ export default function PartyDetail() {
             <Edit2 className="w-4 h-4" />
             Edit Party
           </Button>
-          {(party.party_type === 'customer' || party.party_type === 'both') && (
-            <Button size="sm" onClick={() => navigate(`/sales/new?party_id=${party.id}`)}>
-              + New Invoice
-            </Button>
-          )}
-          {(party.party_type === 'supplier' || party.party_type === 'both') && (
-            <Button size="sm" variant="outline" onClick={() => navigate(`/purchases/new?party_id=${party.id}`)}>
-              + Purchase Order
-            </Button>
-          )}
+          <Button size="sm" onClick={() => navigate(`/sales/new?party_id=${party.id}`)}>
+            + New invoice
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => navigate(`/purchases/new?party_id=${party.id}`)}>
+            + Purchase order
+          </Button>
         </div>
       </div>
 
@@ -363,21 +360,6 @@ export default function PartyDetail() {
           </SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label>Party Type</Label>
-              <div className="flex gap-2 mt-1 flex-wrap">
-                {['customer', 'supplier', 'both', 'dealer', 'job_worker'].map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setForm((p: any) => ({ ...p, party_type: t }))}
-                    className={`flex-1 py-2 rounded-lg text-xs font-medium capitalize ${form.party_type === t ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
-                  >
-                    {t === 'job_worker' ? 'Job Worker' : t}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <Label>Name *</Label>
               <Input className="mt-1" value={form.name || ''} onChange={(e) => setForm((p: any) => ({ ...p, name: e.target.value }))} />
             </div>
@@ -395,8 +377,13 @@ export default function PartyDetail() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>GSTIN</Label>
-                <Input className="mt-1 font-mono uppercase" maxLength={15} value={form.gstin || ''} onChange={(e) => setForm((p: any) => ({ ...p, gstin: e.target.value.toUpperCase() }))} />
+                <Label>GSTIN (optional)</Label>
+                <Input
+                  className="mt-1 font-mono uppercase"
+                  maxLength={15}
+                  value={form.gstin || ''}
+                  onChange={(e) => setForm((p: any) => ({ ...p, gstin: e.target.value.toUpperCase() }))}
+                />
               </div>
               <div>
                 <Label>PAN</Label>

@@ -55,7 +55,7 @@ export default function PurchaseOrderForm() {
     if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
     finally { setPartySearchLoading(false); }
@@ -76,7 +76,7 @@ export default function PurchaseOrderForm() {
     if (data.party_name) {
       setPartySearch(data.party_name);
       searchSuppliers(data.party_name);
-      toast('Supplier name applied — search & select or add new', { icon: 'ℹ️' });
+      toast('Party name applied — search & select or add new', { icon: 'ℹ️' });
     }
   };
 
@@ -118,7 +118,7 @@ export default function PurchaseOrderForm() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold">New Purchase Order</h1>
-            <p className="text-sm text-muted-foreground">Select supplier and add items to order</p>
+            <p className="text-sm text-muted-foreground">Select party and add items to order</p>
           </div>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
@@ -131,7 +131,7 @@ export default function PurchaseOrderForm() {
       <div className="grid md:grid-cols-2 gap-4">
         {/* Supplier */}
         <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm">Supplier</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">Party</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {partyId ? (
               <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/30">
@@ -143,7 +143,7 @@ export default function PurchaseOrderForm() {
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <Input
-                      placeholder="Search supplier by name, GSTIN…"
+                      placeholder="Search party by name, GSTIN…"
                       value={partySearch}
                       onChange={(e) => searchSuppliers(e.target.value)}
                     />
@@ -166,7 +166,7 @@ export default function PurchaseOrderForm() {
                   <p className="text-xs text-muted-foreground">
                     Not found.{' '}
                     <button type="button" className="text-primary font-medium hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>
-                      Add "{partySearch.trim()}" as supplier
+                      Add "{partySearch.trim()}" as party
                     </button>
                   </p>
                 )}
@@ -219,6 +219,7 @@ export default function PurchaseOrderForm() {
             onChange={setItems}
             isGst={true}
             searchMode="catalog"
+            defaultRateFrom="purchase"
             godownId={godownId}
             showHsn={true}
             showUnit={true}
@@ -241,7 +242,6 @@ export default function PurchaseOrderForm() {
       <QuickAddPartySheet
         open={quickAddOpen}
         onOpenChange={setQuickAddOpen}
-        partyType="supplier"
         defaultName={quickAddDefaultName}
         onCreated={(row) => {
           selectSupplier(row);

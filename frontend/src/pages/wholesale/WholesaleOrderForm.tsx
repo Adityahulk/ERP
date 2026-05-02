@@ -16,7 +16,7 @@ export default function WholesaleOrderForm() {
 
   const { data: partiesData } = useQuery({
     queryKey: ['parties-for-ws'],
-    queryFn: () => api.get('/parties/search', { params: { party_type: 'customer' } }).then(r => r.data?.data ?? r.data),
+    queryFn: () => api.get('/parties/search', { params: {} }).then((r) => r.data?.data ?? r.data),
   });
   const parties = partiesData ?? [];
 
@@ -88,7 +88,7 @@ export default function WholesaleOrderForm() {
       <Card className="mb-6"><CardContent className="p-6 space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="col-span-2">
-            <Label>Party / Dealer *</Label>
+            <Label>Party *</Label>
             <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}>
               <option value="">— Select party —</option>
               {parties.map((p: any) => <option key={p.id} value={p.id}>{p.name} {p.gstin ? `(${p.gstin})` : ''}</option>)}

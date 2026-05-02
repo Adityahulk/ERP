@@ -77,7 +77,7 @@ export default function PaymentOutTab() {
     if (q.length < 2) { setPartyResults([]); return; }
 
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
+      const { data: res } = await api.get('/parties/search', { params: { q } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -101,7 +101,7 @@ export default function PaymentOutTab() {
             <ArrowDownLeft className="w-5 h-5 text-red-500" />
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Total Paid to Suppliers</p>
+            <p className="text-xs text-muted-foreground">Total paid (to parties)</p>
             <p className="text-xl font-bold tabular-nums">{formatMoney(totalPaid)}</p>
             <p className="text-xs text-muted-foreground">{bills.length} payment{bills.length !== 1 ? 's' : ''} recorded</p>
           </div>
@@ -154,7 +154,7 @@ export default function PaymentOutTab() {
           <SheetHeader className="mb-5"><SheetTitle>Add Payment-Out</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Supplier / Party *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -219,7 +219,7 @@ export default function PaymentOutTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="supplier" defaultName="" onCreated={(row) => selectSupplier(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
     </div>
   );
 }

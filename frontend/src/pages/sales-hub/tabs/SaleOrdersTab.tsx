@@ -81,7 +81,7 @@ export default function SaleOrdersTab() {
   };
 
   const handleCreate = () => {
-    if (!partyId) { toast.error('Select a customer'); return; }
+    if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     createMut.mutate({
       party_id: partyId,
@@ -101,7 +101,7 @@ export default function SaleOrdersTab() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Manage confirmed customer orders before dispatch.</p>
+        <p className="text-sm text-muted-foreground">Manage confirmed orders before dispatch.</p>
         <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
           <Plus className="w-4 h-4" /> Add Sale Order
         </Button>
@@ -111,7 +111,7 @@ export default function SaleOrdersTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/40">
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Customer</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">SO No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden sm:table-cell">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Exp. Delivery</th>
@@ -158,7 +158,7 @@ export default function SaleOrdersTab() {
           <SheetHeader className="mb-5"><SheetTitle>New Sale Order</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Customer *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -167,7 +167,7 @@ export default function SaleOrdersTab() {
               ) : (
                 <div className="mt-1 flex gap-2">
                   <div className="relative flex-1">
-                    <Input placeholder="Search customer…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
+                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
                     {partyResults.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {partyResults.map((p: any) => (
@@ -216,7 +216,7 @@ export default function SaleOrdersTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="customer" defaultName="" onCreated={(row) => selectCustomer(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectCustomer(row)} />
     </div>
   );
 }

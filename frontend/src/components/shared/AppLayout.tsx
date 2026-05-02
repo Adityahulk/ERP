@@ -102,7 +102,7 @@ export default function AppLayout() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHits, setSearchHits] = useState<{
     invoices: { id: string; invoice_number: string; invoice_date?: string }[];
-    parties: { id: string; name: string; party_type?: string }[];
+    parties: { id: string; name: string; gstin?: string | null }[];
     items: { id: string; name: string; sku?: string }[];
   } | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -244,7 +244,7 @@ export default function AppLayout() {
                                  className="flex flex-col gap-0.5 p-3 hover:bg-indigo-50 rounded-md cursor-pointer text-slate-700"
                                >
                                  <span className="font-medium">{p.name}</span>
-                                 <span className="text-xs text-slate-500 capitalize">{p.party_type || 'party'}</span>
+                                 {p.gstin ? <span className="text-xs font-mono text-slate-500">{p.gstin}</span> : null}
                                </Command.Item>
                              ))}
                            </Command.Group>

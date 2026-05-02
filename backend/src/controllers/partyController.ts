@@ -40,9 +40,7 @@ export async function listParties(req: Request, res: Response) {
     // Summary stats
     const statsRes = await query(
       `SELECT 
-         COUNT(*) FILTER (WHERE party_type = 'customer') as total_customers,
-         COUNT(*) FILTER (WHERE party_type = 'supplier') as total_suppliers,
-         COUNT(*) FILTER (WHERE party_type = 'both') as total_both,
+         COUNT(*)::int as total_parties,
          COALESCE(SUM(balance) FILTER (WHERE balance > 0), 0) as total_receivable,
          COALESCE(SUM(ABS(balance)) FILTER (WHERE balance < 0), 0) as total_payable
        FROM parties WHERE company_id = $1 AND is_deleted = false`,
@@ -104,12 +102,14 @@ export async function createParty(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const d = req.body;
 
-    // GSTIN uniqueness within company
-    if (d.gstin) {
-      const dup = await query(
-        'SELECT id FROM parties WHERE company_id = $1 AND gstin = $2 AND is_deleted = false', [companyId, d.gstin]
+    const gstin =
+      d.gstin && String(d.gstin).trim().length === 15 ? String(d.gstin).trim().toUpperCase() : null;
+    if (gstin) {
+      const dupGst = await query(
+        'SELECT id FROM parties WHERE company_id = $1 AND gstin = $2 AND is_deleted = false',
+        [companyId, gstin],
       );
-      if (dup.rows.length) return res.status(400).json(error('A party with this GSTIN already exists'));
+      if (dupGst.rows.length) return res.status(400).json(error('A party with this GSTIN already exists'));
     }
 
     // Phone uniqueness check
@@ -120,20 +120,32 @@ export async function createParty(req: Request, res: Response) {
       if (dup.rows.length) return res.status(400).json(error('A party with this phone number already exists'));
     }
 
+    const opening = d.opening_balance || 0;
     const result = await query(
       `INSERT INTO parties (
         company_id, name, party_type, phone, email, gstin, pan,
         billing_address, shipping_address, city, state, pincode, state_code,
         credit_limit, payment_terms, opening_balance, balance,
         contact_person, notes, custom_fields
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19) RETURNING *`,
+      ) VALUES ($1,$2,'party',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18) RETURNING *`,
       [
-        companyId, d.name, d.party_type || 'customer',
-        d.phone, d.email, d.gstin, d.pan,
-        d.billing_address, d.shipping_address, d.city, d.state, d.pincode, d.state_code,
-        d.credit_limit || 0, d.payment_terms || 30,
-        d.opening_balance || 0,
-        d.contact_person, d.notes,
+        companyId,
+        d.name,
+        d.phone || null,
+        d.email || null,
+        gstin,
+        d.pan || null,
+        d.billing_address || null,
+        d.shipping_address || null,
+        d.city || null,
+        d.state || null,
+        d.pincode || null,
+        d.state_code || null,
+        d.credit_limit || 0,
+        d.payment_terms || 30,
+        opening,
+        d.contact_person || null,
+        d.notes || null,
         d.custom_fields ? JSON.stringify(d.custom_fields) : '{}',
       ]
     );
@@ -148,7 +160,7 @@ export async function createParty(req: Request, res: Response) {
       );
     }
 
-    await logAction(req.user!.id, companyId, 'create', 'party', result.rows[0].id, null, { name: d.name, type: d.party_type }, req.ip);
+    await logAction(req.user!.id, companyId, 'create', 'party', result.rows[0].id, null, { name: d.name, gstin: gstin ?? undefined }, req.ip);
     res.status(201).json(success(result.rows[0]));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
@@ -162,14 +174,22 @@ export async function updateParty(req: Request, res: Response) {
     const existing = await query('SELECT * FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false', [id, companyId]);
     if (!existing.rows.length) return res.status(404).json(error('Party not found'));
 
-    // GSTIN uniqueness
+    if (req.body.gstin !== undefined) {
+      const raw = String(req.body.gstin ?? '').trim().toUpperCase();
+      if (raw.length > 0 && raw.length !== 15) {
+        return res.status(400).json(error('GSTIN must be exactly 15 characters or left empty'));
+      }
+      req.body.gstin = raw.length === 0 ? null : raw;
+    }
+
+    // GSTIN uniqueness (skip when cleared / null)
     if (req.body.gstin && req.body.gstin !== existing.rows[0].gstin) {
       const dup = await query('SELECT id FROM parties WHERE company_id = $1 AND gstin = $2 AND is_deleted = false AND id != $3', [companyId, req.body.gstin, id]);
       if (dup.rows.length) return res.status(400).json(error('A party with this GSTIN already exists'));
     }
 
     const fields = [
-      'name','party_type','phone','email','gstin','pan',
+      'name','phone','email','gstin','pan',
       'billing_address','shipping_address','city','state','pincode','state_code',
       'credit_limit','payment_terms','contact_person','notes','is_active','custom_fields',
     ];
@@ -257,7 +277,7 @@ export async function getPartyLedger(req: Request, res: Response) {
 // ── GET /api/parties/search ───────────────────────────────────
 export async function searchParties(req: Request, res: Response) {
   try {
-    const { q, party_type } = req.query;
+    const { q } = req.query;
     const companyId = req.user!.company_id;
 
     let where = 'company_id = $1 AND is_deleted = false AND is_active = true';
@@ -265,7 +285,6 @@ export async function searchParties(req: Request, res: Response) {
     let idx = 2;
 
     if (q) { where += ` AND (name ILIKE $${idx} OR phone ILIKE $${idx} OR gstin ILIKE $${idx})`; params.push(`%${q}%`); idx++; }
-    if (party_type) { where += ` AND (party_type = $${idx} OR party_type = 'both')`; params.push(party_type); idx++; }
 
     const result = await query(
       `SELECT id, name, phone, gstin, city, state, state_code, billing_state_code, party_type, balance

@@ -75,7 +75,7 @@ export default function PaymentInTab() {
   const resetForm = () => { clearCustomer(); setAmount(''); setPayDate(new Date().toISOString().split('T')[0]); setPayMode('cash'); setRefNumber(''); setNotes(''); };
 
   const handleCreate = () => {
-    if (!partyId) { toast.error('Select a customer'); return; }
+    if (!partyId) { toast.error('Select a party'); return; }
     if (!amount || parseFloat(amount) <= 0) { toast.error('Enter a valid amount'); return; }
     const payload: any = {
       party_id: partyId,
@@ -100,7 +100,7 @@ export default function PaymentInTab() {
             <ArrowUpRight className="w-5 h-5 text-emerald-600" />
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Total Received from Customers</p>
+            <p className="text-xs text-muted-foreground">Total received (from parties)</p>
             <p className="text-xl font-bold tabular-nums">{formatMoney(totalReceived)}</p>
             <p className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? 's' : ''} recorded</p>
           </div>
@@ -148,7 +148,7 @@ export default function PaymentInTab() {
           <SheetHeader className="mb-5"><SheetTitle>Record Payment-In</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs">Customer *</Label>
+              <Label className="text-xs">Party *</Label>
               {partyId ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
                   <span className="font-medium text-sm">{partyName}</span>
@@ -157,7 +157,7 @@ export default function PaymentInTab() {
               ) : (
                 <div className="mt-1 flex gap-2">
                   <div className="relative flex-1">
-                    <Input placeholder="Search customer…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
+                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
                     {partyResults.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {partyResults.map((p: any) => (
@@ -227,7 +227,7 @@ export default function PaymentInTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} partyType="customer" defaultName="" onCreated={(row) => selectCustomer(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectCustomer(row)} />
     </div>
   );
 }

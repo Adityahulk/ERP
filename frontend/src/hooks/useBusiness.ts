@@ -40,10 +40,10 @@ export function useDeleteParty() {
   });
 }
 
-export function useSearchParties(q: string, partyType?: string) {
+export function useSearchParties(q: string) {
   return useQuery({
-    queryKey: ['parties', 'search', q, partyType],
-    queryFn: () => api.get('/parties/search', { params: { q, party_type: partyType } }).then(r => r.data),
+    queryKey: ['parties', 'search', q],
+    queryFn: () => api.get('/parties/search', { params: { q } }).then((r) => r.data),
     enabled: q.length >= 2,
   });
 }
