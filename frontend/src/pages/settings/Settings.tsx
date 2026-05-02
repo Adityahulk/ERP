@@ -208,9 +208,7 @@ export default function Settings() {
       pendingImportFile.current = file;
       const fd = new FormData();
       fd.append('file', file);
-      const res = await api.post('/items/bulk-import', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/items/bulk-import', fd);
       const d = res.data?.data ?? res.data;
       setImportPreview(d);
       if (!d.preview?.length && (d.errors?.length || 0) > 0) {
@@ -235,9 +233,7 @@ export default function Settings() {
       setImporting(true);
       const fd = new FormData();
       fd.append('file', file);
-      const res = await api.post('/items/bulk-import?action=confirm', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/items/bulk-import?action=confirm', fd);
       const d = res.data?.data ?? res.data;
       toast.success(`Import complete. Inserted ${d.inserted || 0} items`);
       setImportPreview(null);
@@ -256,9 +252,7 @@ export default function Settings() {
     try {
       const fd = new FormData();
       fd.append(kind, file);
-      await api.post(kind === 'logo' ? '/company/logo' : '/company/signature', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      await api.post(kind === 'logo' ? '/company/logo' : '/company/signature', fd);
       toast.success(kind === 'logo' ? 'Logo updated' : 'Signature / stamp updated');
       qc.invalidateQueries({ queryKey: ['company'] });
     } catch (e: any) {
@@ -512,9 +506,7 @@ export default function Settings() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await api.post('/reports/tally-import', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/reports/tally-import', fd);
       const d = res.data?.data ?? res.data;
       toast.success(`Imported from Tally: ${d.created_items || 0} items, ${d.created_parties || 0} parties, ${d.created_units || 0} units`);
       qc.invalidateQueries({ queryKey: ['items'] });

@@ -22,6 +22,15 @@ export function getApiBaseURL(): string {
 
 const apiBaseURL = getApiBaseURL();
 
+/** Clone FormData so a retried request can read file parts again after the first XHR consumed them. */
+function cloneFormData(fd: FormData): FormData {
+  const next = new FormData();
+  fd.forEach((value, key) => {
+    next.append(key, value);
+  });
+  return next;
+}
+
 /** One in-flight refresh so parallel 401s do not stampede /auth/refresh. */
 let refreshInFlight: Promise<{ accessToken: string; refreshToken: string }> | null = null;
 
@@ -57,6 +66,18 @@ api.interceptors.request.use((config) => {
   const token = localStorage.getItem('bizflow_access_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  // FormData: never send Content-Type manually (missing boundary breaks multer / proxies).
+  // Also clear the instance default `application/json` so the runtime sets multipart with boundary.
+  if (config.data instanceof FormData) {
+    const h = config.headers;
+    if (h && typeof (h as { delete?: (k: string) => void }).delete === 'function') {
+      (h as { delete: (k: string) => void }).delete('Content-Type');
+      (h as { delete: (k: string) => void }).delete('content-type');
+    } else if (h && typeof h === 'object') {
+      delete (h as Record<string, unknown>)['Content-Type'];
+      delete (h as Record<string, unknown>)['content-type'];
+    }
   }
   return config;
 });
@@ -102,6 +123,9 @@ api.interceptors.response.use(
         useAuthStore.getState().setTokens(tokens.accessToken, tokens.refreshToken);
 
         originalRequest.headers.Authorization = `Bearer ${tokens.accessToken}`;
+        if (originalRequest.data instanceof FormData) {
+          originalRequest.data = cloneFormData(originalRequest.data);
+        }
         return api(originalRequest);
       } catch (refreshError) {
         // Clear persisted auth too — otherwise /login redirects to /dashboard in a tight loop.

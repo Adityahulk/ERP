@@ -44,9 +44,7 @@ export function OcrUploadButton({
     try {
       const form = new FormData();
       form.append('file', file);
-      const { data: res } = await api.post('/ocr/extract', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const { data: res } = await api.post('/ocr/extract', form);
       toast.dismiss(toastId);
       if (res.data) {
         onExtracted(res.data as OcrExtractedData);

@@ -105,7 +105,7 @@ export default function EmployeeDetailPage() {
       fd.append('document', file);
       fd.append('document_type', docType);
       const path = effectiveUserId === 'me' ? '/employees/me/documents' : `/employees/${profile?.id || effectiveUserId}/documents`;
-      return api.post(path, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      return api.post(path, fd);
     },
     onSuccess: () => {
       toast.success('Document uploaded');

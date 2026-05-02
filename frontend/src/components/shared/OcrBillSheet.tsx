@@ -76,9 +76,7 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
     try {
       const form = new FormData();
       form.append('file', file);
-      const { data: res } = await api.post('/ocr/extract', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const { data: res } = await api.post('/ocr/extract', form);
       const data: OcrResult = res.data;
       setResult(data);
       // Pre-populate editable fields from OCR result

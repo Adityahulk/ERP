@@ -173,9 +173,7 @@ export default function ItemList() {
     formData.append('file', file);
     setImporting(true);
     try {
-      const response = await api.post('/items/bulk-import?action=confirm', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const response = await api.post('/items/bulk-import?action=confirm', formData);
       const inserted = Number(response.data?.data?.inserted || 0);
       const errors = Number(response.data?.data?.errors || 0);
       await Promise.all([

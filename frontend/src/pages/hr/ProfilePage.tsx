@@ -50,7 +50,7 @@ export default function ProfilePage() {
       const fd = new FormData();
       fd.append('document', file);
       fd.append('document_type', docType);
-      return api.post('/employees/me/documents', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      return api.post('/employees/me/documents', fd);
     },
     onSuccess: () => {
       toast.success('Document uploaded');
