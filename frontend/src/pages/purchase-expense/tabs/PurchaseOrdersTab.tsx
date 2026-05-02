@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Plus, ClipboardList } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
@@ -45,6 +46,7 @@ export default function PurchaseOrdersTab() {
   const [billNumber, setBillNumber] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [receivals, setReceivals] = useState<Record<string, number>>({});
+  const [receiveBankAccountId, setReceiveBankAccountId] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['purchase-orders'],
@@ -103,6 +105,7 @@ export default function PurchaseOrdersTab() {
       setGenerateBillFor(poDetail || po);
       setBillDate(new Date().toISOString().split('T')[0]);
       setBillNumber('');
+      setReceiveBankAccountId('');
     } catch {
       setGenerateBillFor(po);
     }
@@ -121,7 +124,12 @@ export default function PurchaseOrdersTab() {
     if (itemPayload.length === 0) { toast.error('Enter quantities for at least one item'); return; }
     generateBillMutation.mutate({
       poId: generateBillFor.id,
-      payload: { bill_number: billNumber.trim() || undefined, bill_date: billDate, items: itemPayload },
+      payload: {
+        bill_number: billNumber.trim() || undefined,
+        bill_date: billDate,
+        company_bank_account_id: receiveBankAccountId || undefined,
+        items: itemPayload,
+      },
     });
   };
 
@@ -288,6 +296,11 @@ export default function PurchaseOrdersTab() {
                 <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={billNumber} onChange={e => setBillNumber(e.target.value)} />
               </div>
             </div>
+            <BankAccountPicker
+              remountKey={generateBillFor?.id ?? 0}
+              value={receiveBankAccountId}
+              onChange={setReceiveBankAccountId}
+            />
             <div>
               <Label className="text-xs">Quantities Received</Label>
               <div className="mt-2 space-y-2 border rounded-lg p-3">

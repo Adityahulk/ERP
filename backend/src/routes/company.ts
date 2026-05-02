@@ -38,7 +38,7 @@ const deleteWorkspaceBody = z.object({
 router.get('/', companyCtrl.getCompany);
 router.get('/gstin/:gstin', companyCtrl.lookupGstin);
 router.get('/bank-accounts', companyCtrl.listBankAccounts);
-router.post('/bank-accounts', requireMinRole('company_admin'), companyCtrl.upsertBankAccount);
+router.post('/bank-accounts', requireMinRole('accountant'), companyCtrl.upsertBankAccount);
 router.patch('/bank-accounts/:id', requireMinRole('company_admin'), companyCtrl.upsertBankAccount);
 router.delete('/bank-accounts/:id', requireMinRole('company_admin'), companyCtrl.deleteBankAccount);
 router.patch('/', requireMinRole('company_admin'), companyCtrl.updateCompany);

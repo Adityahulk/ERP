@@ -115,8 +115,17 @@ export async function upsertBankAccount(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const d = req.body || {};
     const id = d.id || req.params.id || null;
-    if (!String(d.bank_name || '').trim()) return res.status(400).json(error('Bank name is required'));
-    if (!String(d.account_number || '').trim()) return res.status(400).json(error('Account number is required'));
+    const label = String(d.account_label || '').trim();
+    const bankNameIn = String(d.bank_name || '').trim();
+    const bankName = bankNameIn || label || (id ? '' : 'Bank account');
+    if (!id && !label && !bankNameIn) {
+      return res.status(400).json(error('Account label or bank name is required'));
+    }
+    if (id && !bankName) {
+      return res.status(400).json(error('Bank name or account label is required'));
+    }
+    const accountNumRaw = d.account_number != null ? String(d.account_number).trim() : '';
+    const accountNumber = accountNumRaw.length > 0 ? accountNumRaw : null;
 
     const row = await withTransaction(async (client) => {
       if (d.is_primary) {
@@ -134,9 +143,9 @@ export async function upsertBankAccount(req: Request, res: Response) {
            WHERE id = $9 AND company_id = $10 AND is_deleted = false
            RETURNING *`,
           [
-            d.account_label || null,
-            String(d.bank_name).trim(),
-            String(d.account_number).trim(),
+            label || null,
+            bankName,
+            accountNumber,
             d.ifsc ? String(d.ifsc).trim().toUpperCase() : null,
             d.branch || null,
             d.upi_id || null,
@@ -156,9 +165,9 @@ export async function upsertBankAccount(req: Request, res: Response) {
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [
           companyId,
-          d.account_label || null,
-          String(d.bank_name).trim(),
-          String(d.account_number).trim(),
+          label || null,
+          bankName,
+          accountNumber,
           d.ifsc ? String(d.ifsc).trim().toUpperCase() : null,
           d.branch || null,
           d.upi_id || null,

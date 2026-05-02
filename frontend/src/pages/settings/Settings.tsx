@@ -691,7 +691,7 @@ export default function Settings() {
                          <Input placeholder="Branch" value={bankForm.branch} onChange={(e) => setBankForm((s) => ({ ...s, branch: e.target.value }))} />
                          <Input placeholder="UPI ID" value={bankForm.upi_id} onChange={(e) => setBankForm((s) => ({ ...s, upi_id: e.target.value }))} />
                          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={bankForm.is_primary} onChange={(e) => setBankForm((s) => ({ ...s, is_primary: e.target.checked }))} />Primary</label>
-                         <Button type="button" onClick={() => saveBankAccount.mutate()} disabled={!bankForm.bank_name || !bankForm.account_number} loading={saveBankAccount.isPending} className="gap-1">
+                         <Button type="button" onClick={() => saveBankAccount.mutate()} disabled={!bankForm.bank_name.trim() && !bankForm.account_label.trim()} loading={saveBankAccount.isPending} className="gap-1">
                            <Plus className="h-4 w-4" /> Add bank
                          </Button>
                        </div>

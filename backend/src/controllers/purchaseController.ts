@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { resolveBankSnapshotsForInsert } from '../lib/bankAccountSnapshots';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
@@ -274,13 +275,17 @@ export async function receiveStock(req: Request, res: Response) {
 
       const invoiceTotals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
+      const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+
       // 2. Create Purchase Invoice
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
           company_id, godown_id, bill_number, bill_date, po_id, party_id,
           subtotal, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
-          status, created_by, pdf_template, document_theme
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13,$14,$15) RETURNING *`,
+          status, created_by, pdf_template, document_theme,
+          company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
+          bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
         [
           companyId, po.godown_id, d.bill_number, d.bill_date, po.id, po.party_id,
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
@@ -288,6 +293,13 @@ export async function receiveStock(req: Request, res: Response) {
           invoiceTotals.totalAmount, req.user!.id,
           ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
           ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          bankSnap.company_bank_account_id,
+          bankSnap.bank_label_snapshot,
+          bankSnap.bank_name_snapshot,
+          bankSnap.bank_account_number_snapshot,
+          bankSnap.bank_ifsc_snapshot,
+          bankSnap.bank_branch_snapshot,
+          bankSnap.upi_id_snapshot,
         ]
       );
       const invoice = invRes.rows[0];
@@ -450,18 +462,29 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       }));
       const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
+      const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
           company_id, godown_id, bill_number, bill_date, po_id, party_id,
           subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
-          paid_amount, payment_status, status, notes, created_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,'unpaid','received',$14,$15) RETURNING *`,
+          paid_amount, payment_status, status, notes, created_by,
+          company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
+          bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,'unpaid','received',$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
         [
           companyId, d.godown_id || null, billNumber, d.bill_date,
           d.po_id || null, d.party_id,
           totals.subtotal, 0, totals.totalTaxable,
           totals.totalCgst, totals.totalSgst, totals.totalIgst, totals.totalAmount,
           d.notes || null, req.user!.id,
+          bankSnap.company_bank_account_id,
+          bankSnap.bank_label_snapshot,
+          bankSnap.bank_name_snapshot,
+          bankSnap.bank_account_number_snapshot,
+          bankSnap.bank_ifsc_snapshot,
+          bankSnap.bank_branch_snapshot,
+          bankSnap.upi_id_snapshot,
         ],
       );
       const inv = invRes.rows[0];

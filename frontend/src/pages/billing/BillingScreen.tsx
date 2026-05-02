@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus } from 'lucide-react';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
+import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import { formatMoney } from '@/lib/formatters';
 
 interface BillItem {
@@ -37,6 +38,7 @@ export default function BillingScreen() {
   const [amountTendered, setAmountTendered] = useState<number | ''>('');
   const [quickAddItemOpen, setQuickAddItemOpen] = useState(false);
   const [quickAddItemDefaultName, setQuickAddItemDefaultName] = useState('');
+  const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   // Search Results
   const { data: searchResults, isFetching: isSearching } = useQuery({
@@ -167,6 +169,7 @@ export default function BillingScreen() {
         payment_mode: paymentMode,
       };
       if (customerInfo.id) payload.party_id = customerInfo.id;
+      if (companyBankAccountId) payload.company_bank_account_id = companyBankAccountId;
       return api.post('/invoices', payload);
     },
     onSuccess: async (res) => {
@@ -385,6 +388,10 @@ export default function BillingScreen() {
               <span className="text-4xl font-black tabular-nums text-primary tracking-tight">{formatMoney(grandTotal)}</span>
              </div>
           </div>
+        </Card>
+
+        <Card className="p-4 shadow-sm">
+          <BankAccountPicker value={companyBankAccountId} onChange={setCompanyBankAccountId} />
         </Card>
 
         {/* Payment & Checkout Action */}

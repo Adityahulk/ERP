@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
@@ -45,6 +46,7 @@ export default function PurchaseBillsTab() {
   const [isGst, setIsGst] = useState(true);
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['purchase-bills', search, statusFilter],
@@ -100,6 +102,7 @@ export default function PurchaseBillsTab() {
     setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]);
     setBillDate(new Date().toISOString().split('T')[0]); setBillNumber('');
     setGodownId(''); setNotes(''); setItems([]);
+    setCompanyBankAccountId('');
   };
 
   const handleCreate = () => {
@@ -112,6 +115,7 @@ export default function PurchaseBillsTab() {
       godown_id: godownId || undefined,
       is_gst_invoice: isGst,
       notes: notes.trim() || undefined,
+      company_bank_account_id: companyBankAccountId || undefined,
       items: items.map(it => ({
         item_id: it.item_id,
         item_name: it.name,
@@ -272,6 +276,13 @@ export default function PurchaseBillsTab() {
                   <input type="checkbox" checked={isGst} onChange={e => setIsGst(e.target.checked)} />
                   GST Invoice
                 </label>
+              </div>
+              <div className="col-span-2">
+                <BankAccountPicker
+                  remountKey={showForm ? 1 : 0}
+                  value={companyBankAccountId}
+                  onChange={setCompanyBankAccountId}
+                />
               </div>
             </div>
 

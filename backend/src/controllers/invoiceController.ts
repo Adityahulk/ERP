@@ -15,6 +15,11 @@ import {
 } from '../services/eInvoiceService';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
+import {
+  resolveBankSnapshotsForInsert,
+  resolveCompanyRowForInvoicePdf,
+  type Queryable,
+} from '../lib/bankAccountSnapshots';
 
 function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | 'partial' | 'paid' {
   if (paidAmount >= totalAmount) return 'paid';
@@ -252,6 +257,8 @@ export async function createInvoice(req: Request, res: Response) {
         : { rows: [{}] };
       const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
 
+      const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+
       const invRes = await client.query(
         `INSERT INTO invoices (
           company_id, invoice_number, invoice_type, party_id, godown_id,
@@ -260,10 +267,13 @@ export async function createInvoice(req: Request, res: Response) {
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, terms_and_conditions, created_by, pdf_template, document_theme
+          notes, terms_and_conditions, created_by, pdf_template, document_theme,
+          company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
+          bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
+          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,
+          $33,$34,$35,$36,$37,$38,$39
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, d.godown_id || req.user!.godown_id,
@@ -294,6 +304,13 @@ export async function createInvoice(req: Request, res: Response) {
           req.user!.id,
           ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
           ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          bankSnap.company_bank_account_id,
+          bankSnap.bank_label_snapshot,
+          bankSnap.bank_name_snapshot,
+          bankSnap.bank_account_number_snapshot,
+          bankSnap.bank_ifsc_snapshot,
+          bankSnap.bank_branch_snapshot,
+          bankSnap.upi_id_snapshot,
         ]
       );
 
@@ -534,7 +551,11 @@ export async function getInvoice(req: Request, res: Response) {
               c.name as company_name,
               c.gstin as company_gstin,
               c.registered_address as company_address,
-              c.bank_name, c.bank_account_number, c.bank_ifsc, c.upi_id,
+              COALESCE(i.bank_name_snapshot, c.bank_name) as bank_name,
+              COALESCE(i.bank_account_number_snapshot, c.bank_account_number) as bank_account_number,
+              COALESCE(i.bank_ifsc_snapshot, c.bank_ifsc) as bank_ifsc,
+              COALESCE(i.bank_branch_snapshot, c.bank_branch) as bank_branch,
+              COALESCE(i.upi_id_snapshot, c.upi_id) as upi_id,
               c.einvoice_enabled, c.einvoice_turnover_above_5cr
        FROM invoices i
        LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id AND p.is_deleted = false
@@ -736,16 +757,13 @@ export async function getInvoicePDF(req: Request, res: Response) {
        ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
       [req.user!.company_id],
     );
-    const companyForPdf = bankRes.rows[0]
-      ? {
-          ...companyRes.rows[0],
-          bank_name: bankRes.rows[0].bank_name,
-          bank_account_number: bankRes.rows[0].account_number,
-          bank_ifsc: bankRes.rows[0].ifsc,
-          bank_branch: bankRes.rows[0].branch,
-          upi_id: bankRes.rows[0].upi_id || companyRes.rows[0].upi_id,
-        }
-      : companyRes.rows[0];
+    const companyForPdf = await resolveCompanyRowForInvoicePdf(
+      query as unknown as Queryable,
+      req.user!.company_id,
+      companyRes.rows[0],
+      invRes.rows[0],
+      bankRes.rows[0] || null,
+    );
     const itemsRes = await query(
       `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
       [id, req.user!.company_id]
@@ -793,7 +811,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
        ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
       [companyId],
     );
-    const company = bankRes.rows[0]
+    let company = bankRes.rows[0]
       ? {
           ...companyRes.rows[0],
           bank_name: bankRes.rows[0].bank_name,
@@ -803,6 +821,26 @@ export async function previewInvoicePdf(req: Request, res: Response) {
           upi_id: bankRes.rows[0].upi_id || companyRes.rows[0].upi_id,
         }
       : companyRes.rows[0];
+
+    const pickId = d.company_bank_account_id;
+    if (pickId) {
+      const pickRes = await query(
+        `SELECT * FROM company_bank_accounts
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true`,
+        [pickId, companyId],
+      );
+      const b = pickRes.rows[0];
+      if (b) {
+        company = {
+          ...companyRes.rows[0],
+          bank_name: b.bank_name,
+          bank_account_number: b.account_number,
+          bank_ifsc: b.ifsc,
+          bank_branch: b.branch,
+          upi_id: b.upi_id || companyRes.rows[0].upi_id,
+        };
+      }
+    }
 
     let party: any = null;
     if (d.party_id) {

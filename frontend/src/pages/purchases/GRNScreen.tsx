@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScanLine } from 'lucide-react';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
+import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 
 export default function GRNScreen() {
   const { id } = useParams();
@@ -17,6 +18,7 @@ export default function GRNScreen() {
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [receivals, setReceivals] = useState<Record<string, number>>({});
   const [ocrOpen, setOcrOpen] = useState(false);
+  const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const { data: po, isLoading } = useQuery({
     queryKey: ['po', id],
@@ -54,6 +56,7 @@ export default function GRNScreen() {
       return api.post(`/purchases/orders/${id}/receive`, {
         bill_number: billNumber,
         bill_date: billDate,
+        company_bank_account_id: companyBankAccountId || undefined,
         items,
       });
     },
@@ -113,6 +116,8 @@ export default function GRNScreen() {
               </div>
             </div>
           </div>
+
+          <BankAccountPicker remountKey={id ?? 0} value={companyBankAccountId} onChange={setCompanyBankAccountId} />
 
           {/* Items */}
           <div className="space-y-4">

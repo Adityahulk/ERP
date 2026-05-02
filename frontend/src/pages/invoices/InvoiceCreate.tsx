@@ -12,6 +12,7 @@ import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/in
 import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
+import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -53,6 +54,7 @@ export default function InvoiceCreate() {
   const [quickAddItemDefaultName, setQuickAddItemDefaultName] = useState('');
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
+  const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   /** OCR confirmed from a customer PO / incoming bill → pre-fill invoice fields */
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
@@ -173,6 +175,7 @@ export default function InvoiceCreate() {
       is_interstate: isInterstate,
       notes: notes || undefined,
       amount_paid: amountPaid,
+      company_bank_account_id: companyBankAccountId || undefined,
       items: items.map((i) => ({
         item_id: i.item_id,
         description: i.name,
@@ -184,7 +187,7 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme],
+    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const handleSubmit = async () => {
@@ -202,6 +205,7 @@ export default function InvoiceCreate() {
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, notes,
         amount_paid: amountPaid,
+        company_bank_account_id: companyBankAccountId || undefined,
         items: items.map(i => ({
           item_id: i.item_id, description: i.name, hsn_code: i.hsn_code,
           quantity: i.quantity, unit_price: i.unit_price,
@@ -320,6 +324,7 @@ export default function InvoiceCreate() {
                 <option value="compact">Compact theme</option>
               </select>
             </div>
+            <BankAccountPicker value={companyBankAccountId} onChange={setCompanyBankAccountId} className="pt-2 border-t" />
           </CardContent>
         </Card>
       </div>
