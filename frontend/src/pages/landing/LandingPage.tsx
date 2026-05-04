@@ -244,6 +244,13 @@ export default function LandingPage() {
               Login
             </Link>
             <Link
+              to="/trial"
+              className="hidden sm:inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-amber-500/30"
+            >
+              <Zap className="w-4 h-4" />
+              Free Trial
+            </Link>
+            <Link
               to="/register"
               className="hidden sm:inline-flex items-center gap-2 bg-[#420662] hover:bg-[#2d0444] text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-[#420662]/30"
             >
@@ -289,11 +296,11 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
-                to="/register"
-                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#420662] to-indigo-600 hover:from-[#2d0444] hover:to-indigo-700 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-[#420662]/30 flex items-center justify-center gap-2 group"
+                to="/trial"
+                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-amber-500/30 flex items-center justify-center gap-2 group"
               >
-                <UserPlus className="w-5 h-5" />
-                Register Now — Free
+                <Zap className="w-5 h-5" />
+                Start 15-Day Free Trial
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
               <Link
@@ -304,9 +311,32 @@ export default function LandingPage() {
               </Link>
             </div>
             <p className="mt-4 text-sm text-slate-500">
-              No credit card required &bull; Free registration &bull; Activate after payment
+              No credit card required &bull; All features unlocked &bull; 15 days free &bull;{' '}
+              <Link to="/register" className="underline text-[#420662]">Buy a license</Link> to continue
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* ── Trial Strip ── */}
+      <section className="py-6 bg-gradient-to-r from-amber-50 to-orange-50 border-y border-amber-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shrink-0">
+              <Zap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="font-bold text-amber-900">Try BizFlow ERP free for 15 days</p>
+              <p className="text-sm text-amber-700">Full Diamond plan — all features unlocked. No credit card. No commitment.</p>
+            </div>
+          </div>
+          <Link
+            to="/trial"
+            className="shrink-0 inline-flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl transition-colors shadow-lg shadow-amber-500/30 text-sm"
+          >
+            Start Free Trial
+            <ArrowRight className="w-4 h-4" />
+          </Link>
         </div>
       </section>
 

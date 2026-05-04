@@ -24,11 +24,20 @@ const resetSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
+const trialSignupSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(200),
+  email: z.string().email('Valid email is required'),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(100),
+  business_name: z.string().min(2, 'Business name is required').max(300),
+  phone: z.string().max(20).optional(),
+});
+
 router.post('/login', validateBody(loginSchema), ctrl.login);
 router.post('/refresh', validateBody(refreshSchema), ctrl.refresh);
 router.post('/logout', verifyToken, ctrl.logout);
 router.get('/me', verifyToken, ctrl.getMe);
 router.post('/forgot-password', validateBody(forgotSchema), ctrl.forgotPassword);
 router.post('/reset-password', validateBody(resetSchema), ctrl.resetPassword);
+router.post('/trial-signup', validateBody(trialSignupSchema), ctrl.trialSignup);
 
 export default router;

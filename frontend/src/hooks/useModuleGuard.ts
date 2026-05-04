@@ -10,24 +10,31 @@ const TIER_FEATURES: Record<string, string[]> = {
   diamond: ['invoicing', 'inventory', 'purchases', 'parties', 'basic_reports', 'gst_filing', 'expenses', 'ocr', 'hr', 'manufacturing', 'job_work', 'wholesale'],
 };
 
-/**
- * Returns { allowed: boolean, tierName: string | null }
- * for a given feature key.
- *
- * If no license in store (demo / legacy company), always returns allowed: true.
- */
 export function useModuleGuard(featureKey: string): { allowed: boolean; tierName: string | null; tierDisplayName: string | null } {
   const { license } = useAuthStore();
 
-  if (!license || license.status !== 'active') {
+  // No license (legacy/unlicensed company) → unrestricted
+  if (!license) {
     return { allowed: true, tierName: null, tierDisplayName: null };
   }
 
-  const tierFeatures = TIER_FEATURES[license.tier_name] ?? [];
-  const allowed = tierFeatures.includes(featureKey);
+  // Trial: full Diamond access while not expired; blocked when expired
+  if (license.status === 'trial') {
+    const expired = (license.trial_days_remaining ?? 1) <= 0;
+    if (!expired) {
+      return { allowed: true, tierName: 'trial', tierDisplayName: 'Free Trial' };
+    }
+    return { allowed: false, tierName: 'trial', tierDisplayName: 'Free Trial' };
+  }
 
+  // Non-active paid license → block all gated modules
+  if (license.status !== 'active') {
+    return { allowed: false, tierName: license.tier_name, tierDisplayName: license.tier_display_name };
+  }
+
+  const tierFeatures = TIER_FEATURES[license.tier_name] ?? [];
   return {
-    allowed,
+    allowed: tierFeatures.includes(featureKey),
     tierName: license.tier_name,
     tierDisplayName: license.tier_display_name,
   };

@@ -21,13 +21,14 @@ export interface Company {
 
 export interface LicenseInfo {
   license_key: string;
-  status: string;
+  status: string; // 'active' | 'trial' | 'expired' | 'revoked' | 'pending'
   tier_name: string;
   tier_display_name: string;
   max_users: number;
   used_users: number;
   activated_at: string | null;
   expires_at: string | null;
+  trial_days_remaining: number | null;
 }
 
 interface AuthState {

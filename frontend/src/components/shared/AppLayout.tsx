@@ -2,6 +2,7 @@ import { useState, useEffect, Suspense, useRef } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
+import TrialBanner from '@/components/shared/TrialBanner';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
@@ -314,15 +315,19 @@ export default function AppLayout() {
         
         <NavigationList />
 
-        {/* License badge */}
+        {/* License / Trial badge */}
         {license && (
-          <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+          <div className={`mx-3 mb-2 px-3 py-2 rounded-lg border ${license.status === 'trial' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'}`}>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-violet-300 uppercase tracking-wider">
-                {license.tier_display_name} Plan
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${license.status === 'trial' ? 'text-amber-300' : 'text-violet-300'}`}>
+                {license.status === 'trial' ? 'Free Trial' : `${license.tier_display_name} Plan`}
               </span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${license.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
-                {license.status}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                license.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' :
+                license.status === 'trial' ? 'bg-amber-500/20 text-amber-300' :
+                'bg-red-500/20 text-red-300'
+              }`}>
+                {license.status === 'trial' ? `${license.trial_days_remaining ?? 0}d left` : license.status}
               </span>
             </div>
             <div className="mt-1.5">
@@ -332,7 +337,7 @@ export default function AppLayout() {
               </div>
               <div className="h-1 bg-white/10 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-violet-400 rounded-full"
+                  className={`h-full rounded-full ${license.status === 'trial' ? 'bg-amber-400' : 'bg-violet-400'}`}
                   style={{ width: `${Math.min((license.used_users / license.max_users) * 100, 100)}%` }}
                 />
               </div>
@@ -380,6 +385,9 @@ export default function AppLayout() {
 
       {/* MAIN CONTAINER */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* Trial period banner — sticks above the header */}
+        <TrialBanner />
+
         <header className="h-[56px] bg-white border-b flex items-center justify-between px-4 sticky top-0 z-10 shrink-0">
           <div className="flex items-center gap-3">
              <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
@@ -410,11 +418,40 @@ export default function AppLayout() {
         </header>
 
         <main className="flex-1 overflow-auto bg-[#F7F7F5] relative">
-          <RouteErrorBoundary>
-            <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>}>
-              <Outlet />
-            </Suspense>
-          </RouteErrorBoundary>
+          {license?.status === 'trial' && (license.trial_days_remaining ?? 1) <= 0 ? (
+            <div className="flex flex-col items-center justify-center min-h-full p-8 text-center">
+              <div className="w-20 h-20 rounded-2xl bg-red-100 flex items-center justify-center mb-6">
+                <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">Your free trial has ended</h2>
+              <p className="text-slate-500 max-w-md mb-8">
+                Your 15-day trial period is over. Purchase a license to continue using BizFlow ERP and keep access to all your data.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <a
+                  href="tel:+919876543210"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-semibold transition-colors"
+                >
+                  Call to Purchase — +91 98765 43210
+                </a>
+                <a
+                  href="mailto:sales@microtechnique.in"
+                  className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
+                >
+                  Email Sales
+                </a>
+              </div>
+              <p className="text-xs text-slate-400 mt-6">
+                Silver — ₹4,999/yr &nbsp;·&nbsp; Gold — ₹8,999/yr &nbsp;·&nbsp; Diamond — ₹14,999/yr
+              </p>
+            </div>
+          ) : (
+            <RouteErrorBoundary>
+              <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>}>
+                <Outlet />
+              </Suspense>
+            </RouteErrorBoundary>
+          )}
         </main>
       </div>
     </div>
