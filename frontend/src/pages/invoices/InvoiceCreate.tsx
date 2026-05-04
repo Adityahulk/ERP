@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useCreateInvoice, useCompany } from '@/hooks/useBusiness';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useCreateInvoice, useCompany, useInvoice, useUpdateInvoice } from '@/hooks/useBusiness';
 import { useGodowns } from '@/hooks/useStock';
 import { formatMoney } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
@@ -25,7 +25,13 @@ interface LineItem {
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
+  const { id: routeParamId } = useParams();
+  const { pathname } = useLocation();
+  const editInvoiceId = pathname.endsWith('/edit') && routeParamId ? routeParamId : undefined;
+
   const createMutation = useCreateInvoice();
+  const updateMutation = useUpdateInvoice();
+  const { data: existingInv, isLoading: editInvLoading, isError: editInvError } = useInvoice(editInvoiceId);
   const { data: company } = useCompany();
   const { data: godownData } = useGodowns();
   const godowns = godownData?.data || [];
@@ -55,6 +61,72 @@ export default function InvoiceCreate() {
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
+
+  const hydratedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!editInvoiceId) {
+      hydratedIdRef.current = null;
+      return;
+    }
+    if (!existingInv) return;
+    const inv = existingInv as Record<string, unknown>;
+    if (String(inv.id) !== editInvoiceId) return;
+    if (hydratedIdRef.current === editInvoiceId) return;
+
+    if (
+      inv.irn ||
+      Number(inv.paid_amount ?? inv.amount_paid ?? 0) > 0 ||
+      (Array.isArray(inv.payments) && inv.payments.length > 0)
+    ) {
+      toast.error('This invoice cannot be edited (payments on file or e-invoice IRN).');
+      navigate(`/sales/${editInvoiceId}`);
+      return;
+    }
+
+    const nonGst = inv.invoice_type === 'non_gst' || inv.is_gst_invoice === false;
+    setIsGstInvoice(!nonGst);
+    setPartyId(String(inv.party_id || ''));
+    setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
+    setPartyPhone(String(inv.party_phone || ''));
+    setGodownId(inv.godown_id ? String(inv.godown_id) : '');
+    const invDate = inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : '';
+    setInvoiceDate(invDate || new Date().toISOString().split('T')[0]);
+    setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
+    setIsInterstate(Boolean(inv.is_interstate));
+    setNotes(String(inv.notes || ''));
+    setAmountPaid(0);
+    const tpl = String(inv.pdf_template || 'standard');
+    setPdfTemplate((['standard', 'simple', 'performa'].includes(tpl) ? tpl : 'standard') as InvoicePdfTemplateId);
+    const th = String(inv.document_theme || 'classic');
+    setDocumentTheme((['classic', 'modern', 'compact'].includes(th) ? th : 'classic') as 'classic' | 'modern' | 'compact');
+    setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
+
+    const mappedItems: LineItem[] = ((inv.items as any[]) || []).map((it: any) => {
+      const qty = Number(it.quantity) || 1;
+      const up = Number(it.unit_price) || 0;
+      const base = qty * up;
+      const discAmt = Number(it.discount_amount || 0);
+      const discount_percent =
+        base > 0 ? Math.min(100, Math.round(((discAmt / base) * 100 + Number.EPSILON) * 100) / 100) : 0;
+      const taxable = Number(it.taxable_amount) || 0;
+      const cessAmt = Number(it.cess_amount || 0);
+      const cess_rate = taxable > 0 && cessAmt ? Math.round((cessAmt / taxable) * 10000) / 100 : 0;
+      return {
+        item_id: it.item_id ? String(it.item_id) : undefined,
+        name: String(it.item_name || ''),
+        hsn_code: it.hsn_code ? String(it.hsn_code) : '',
+        quantity: qty,
+        unit_price: up,
+        gst_rate: Number(it.gst_rate) || 0,
+        discount_percent,
+        cess_rate,
+      };
+    });
+    setItems(mappedItems);
+
+    hydratedIdRef.current = editInvoiceId;
+  }, [editInvoiceId, existingInv, navigate]);
 
   /** OCR confirmed from a customer PO / incoming bill → pre-fill invoice fields */
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
@@ -95,8 +167,15 @@ export default function InvoiceCreate() {
   };
 
   const selectParty = (p: any) => {
-    setPartyId(p.id);
-    setPartyName(p.name);
+    const rawId = p?.id;
+    const id =
+      rawId != null && rawId !== '' && String(rawId) !== 'undefined' ? String(rawId) : '';
+    if (!id) {
+      toast.error('Could not select party — invalid id. Try again or add the party under Parties.');
+      return;
+    }
+    setPartyId(id);
+    setPartyName(String(p.name ?? ''));
     setPartyPhone(p.phone || '');
     setPartySearch('');
     setPartyResults([]);
@@ -193,7 +272,46 @@ export default function InvoiceCreate() {
   const handleSubmit = async () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
-    if (amountPaid > grandTotal) { toast.error('Amount paid cannot exceed invoice total'); return; }
+    if (!editInvoiceId && amountPaid > grandTotal) { toast.error('Amount paid cannot exceed invoice total'); return; }
+
+    const itemPayload = items.map((i) => ({
+      item_id: i.item_id,
+      description: i.name,
+      name: i.name,
+      hsn_code: i.hsn_code,
+      quantity: i.quantity,
+      unit_price: i.unit_price,
+      gst_rate: isGstInvoice ? i.gst_rate : 0,
+      discount_percent: i.discount_percent,
+      cess_rate: isGstInvoice ? i.cess_rate : 0,
+    }));
+
+    if (editInvoiceId) {
+      try {
+        await updateMutation.mutateAsync({
+          id: editInvoiceId,
+          data: {
+            invoice_type: isGstInvoice ? 'sale' : 'non_gst',
+            is_gst_invoice: isGstInvoice,
+            pdf_template: pdfTemplate,
+            document_theme: documentTheme,
+            party_id: partyId,
+            godown_id: godownId || undefined,
+            invoice_date: invoiceDate,
+            due_date: dueDate || undefined,
+            is_interstate: isInterstate,
+            notes,
+            company_bank_account_id: companyBankAccountId || undefined,
+            items: itemPayload,
+          },
+        });
+        toast.success('Invoice updated');
+        navigate(`/sales/${editInvoiceId}`);
+      } catch (e: any) {
+        toast.error(e.response?.data?.error || 'Failed to update invoice');
+      }
+      return;
+    }
 
     try {
       const res = await createMutation.mutateAsync({
@@ -206,11 +324,7 @@ export default function InvoiceCreate() {
         is_interstate: isInterstate, notes,
         amount_paid: amountPaid,
         company_bank_account_id: companyBankAccountId || undefined,
-        items: items.map(i => ({
-          item_id: i.item_id, description: i.name, hsn_code: i.hsn_code,
-          quantity: i.quantity, unit_price: i.unit_price,
-          gst_rate: isGstInvoice ? i.gst_rate : 0, discount_percent: i.discount_percent, cess_rate: isGstInvoice ? i.cess_rate : 0,
-        })),
+        items: itemPayload,
       });
       const inv = (res as any)?.data ?? res;
       toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
@@ -221,14 +335,26 @@ export default function InvoiceCreate() {
     } catch (e: any) { toast.error(e.response?.data?.error || 'Failed to create invoice'); }
   };
 
+  if (editInvoiceId && editInvLoading) {
+    return <div className="flex justify-center p-16 text-muted-foreground">Loading invoice…</div>;
+  }
+  if (editInvoiceId && editInvError) {
+    return (
+      <div className="flex flex-col items-center gap-4 p-16 max-w-md mx-auto text-center">
+        <p className="text-muted-foreground">Could not load this invoice.</p>
+        <Button onClick={() => navigate('/sales')}>Back to sales</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/sales')}><ArrowLeft className="w-5 h-5" /></Button>
-          <div><h1 className="text-2xl font-bold">New Sale Invoice</h1></div>
+          <Button variant="ghost" size="icon" onClick={() => navigate(editInvoiceId ? `/sales/${editInvoiceId}` : '/sales')}><ArrowLeft className="w-5 h-5" /></Button>
+          <div><h1 className="text-2xl font-bold">{editInvoiceId ? 'Edit Sale Invoice' : 'New Sale Invoice'}</h1></div>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
+        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" disabled={!!editInvoiceId} onClick={() => setOcrOpen(true)}>
           <ScanLine className="w-4 h-4" />
           Scan party bill
         </Button>
@@ -439,11 +565,15 @@ export default function InvoiceCreate() {
             )}
             {totalCess > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cess</span><span className="tabular-nums">{formatMoney(totalCess)}</span></div>}
             <div className="flex justify-between border-t pt-2 text-lg font-bold"><span>Total</span><span className="tabular-nums">{formatMoney(grandTotal)}</span></div>
-            <div className="pt-2">
-              <Label>Amount Paid (₹)</Label>
-              <Input type="number" className="mt-1 tabular-nums" min={0} value={(amountPaid / 100).toFixed(2)} onChange={e => setAmountPaid(Math.round((parseFloat(e.target.value) || 0) * 100))} />
-            </div>
-            {balanceDue > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>Balance Due</span><span className="tabular-nums">{formatMoney(balanceDue)}</span></div>}
+            {!editInvoiceId && (
+              <>
+                <div className="pt-2">
+                  <Label>Amount Paid (₹)</Label>
+                  <Input type="number" className="mt-1 tabular-nums" min={0} value={(amountPaid / 100).toFixed(2)} onChange={e => setAmountPaid(Math.round((parseFloat(e.target.value) || 0) * 100))} />
+                </div>
+                {balanceDue > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>Balance Due</span><span className="tabular-nums">{formatMoney(balanceDue)}</span></div>}
+              </>
+            )}
 
             <div><Label>Notes</Label><textarea rows={2} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" value={notes} onChange={e => setNotes(e.target.value)} /></div>
           </div>
@@ -452,7 +582,7 @@ export default function InvoiceCreate() {
 
       {/* Actions */}
       <div className="flex gap-3 justify-end pb-8 flex-wrap">
-        <Button variant="outline" onClick={() => navigate('/sales')}>Cancel</Button>
+        <Button variant="outline" onClick={() => navigate(editInvoiceId ? `/sales/${editInvoiceId}` : '/sales')}>Cancel</Button>
         <Button
           variant="outline"
           disabled={!partyId || items.length === 0}
@@ -461,8 +591,12 @@ export default function InvoiceCreate() {
         >
           <Eye className="w-4 h-4" /> Live preview
         </Button>
-        <Button disabled={items.length === 0} loading={createMutation.isPending} onClick={handleSubmit}>
-          Create Invoice
+        <Button
+          disabled={!partyId || items.length === 0}
+          loading={createMutation.isPending || updateMutation.isPending}
+          onClick={handleSubmit}
+        >
+          {editInvoiceId ? 'Save changes' : 'Create Invoice'}
         </Button>
       </div>
 

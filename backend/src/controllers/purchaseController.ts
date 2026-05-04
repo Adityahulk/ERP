@@ -581,10 +581,233 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
 
 export async function getPurchaseInvoice(req: Request, res: Response) {
   try {
-     const result = await query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
-     const items = await query('SELECT * FROM purchase_invoice_items WHERE purchase_invoice_id = $1', [req.params.id]);
-     res.json(success({ ...result.rows[0], items: items.rows }));
-  } catch(err: any){ res.status(500).json(error(err.message)); }
+    const companyId = req.user!.company_id;
+    const result = await query(
+      'SELECT * FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+      [req.params.id, companyId],
+    );
+    if (!result.rows.length) return res.status(404).json(error('Not found'));
+    const items = await query('SELECT * FROM purchase_invoice_items WHERE purchase_invoice_id = $1', [req.params.id]);
+    res.json(success({ ...result.rows[0], items: items.rows }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+/** PATCH supplier bill (direct bills only, unpaid): reverses stock & party effect, replaces lines. */
+export async function updatePurchaseInvoice(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const d = req.body;
+    if (!d.party_id) return res.status(400).json(error('party_id is required'));
+    if (!d.bill_date) return res.status(400).json(error('bill_date is required'));
+    if (!Array.isArray(d.items) || d.items.length === 0) return res.status(400).json(error('items are required'));
+
+    const result = await withTransaction(async (client) => {
+      const piRes = await client.query(
+        `SELECT * FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!piRes.rows.length) throw new Error('Bill not found');
+      const pi = piRes.rows[0];
+      if (Number(pi.paid_amount || 0) > 0) throw new Error('Cannot edit a bill that has payments recorded');
+      if (pi.po_id) {
+        throw new Error('Cannot edit a bill created from a purchase order. Adjust stock on the order / GRN instead.');
+      }
+
+      const oldLines = await client.query(
+        'SELECT * FROM purchase_invoice_items WHERE purchase_invoice_id = $1 ORDER BY id',
+        [id],
+      );
+
+      await client.query(
+        `DELETE FROM party_ledger WHERE company_id = $1 AND reference_type = 'purchase_invoice' AND reference_id = $2`,
+        [companyId, id],
+      );
+
+      const oldTotal = Number(pi.total_amount || 0);
+      const oldParty = pi.party_id;
+      if (oldParty && oldTotal) {
+        await client.query(`UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3`, [
+          oldTotal,
+          oldParty,
+          companyId,
+        ]);
+      }
+
+      const oldGodown = pi.godown_id;
+      for (const line of oldLines.rows) {
+        if (!line.item_id || !oldGodown) continue;
+        const qty = Number(line.quantity) || 0;
+        if (qty <= 0) continue;
+        const stockRes = await client.query(
+          `SELECT quantity FROM item_stock WHERE company_id = $1 AND item_id = $2 AND godown_id = $3 FOR UPDATE`,
+          [companyId, line.item_id, oldGodown],
+        );
+        if (!stockRes.rows.length) throw new Error(`No stock row for "${line.item_name}" — cannot reverse this bill safely.`);
+        const q = Number(stockRes.rows[0].quantity || 0);
+        if (q < qty) {
+          throw new Error(
+            `Cannot edit: on-hand stock for "${line.item_name}" is ${q} but this bill added ${qty}. Sell or adjust stock first.`,
+          );
+        }
+        await client.query(
+          `UPDATE item_stock SET quantity = quantity - $1 WHERE company_id = $2 AND item_id = $3 AND godown_id = $4`,
+          [qty, companyId, line.item_id, oldGodown],
+        );
+      }
+
+      await client.query(`DELETE FROM purchase_invoice_items WHERE purchase_invoice_id = $1`, [id]);
+
+      const pRes = await client.query(
+        'SELECT state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+        [d.party_id, companyId],
+      );
+      if (!pRes.rows.length) throw new Error('Party not found');
+      const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+      const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const isGst = d.is_gst_invoice !== false;
+
+      const itemsForTotals = d.items.map((it: any) => ({
+        unit_price: Number(it.unit_price) || 0,
+        quantity: Number(it.quantity) || 0,
+        gst_rate: isGst ? Number(it.gst_rate) || 0 : 0,
+        discount_type: 'none' as const,
+        discount_value: 0,
+      }));
+      const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
+
+      const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+
+      const billNumber = (d.bill_number && String(d.bill_number).trim()) || pi.bill_number;
+
+      const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template;
+      const docTheme = ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme;
+
+      await client.query(
+        `UPDATE purchase_invoices SET
+          party_id = $1, godown_id = $2, bill_number = $3, bill_date = $4,
+          subtotal = $5, discount_amount = 0, taxable_amount = $6,
+          cgst_amount = $7, sgst_amount = $8, igst_amount = $9, total_amount = $10,
+          notes = $11, is_gst_invoice = $12,
+          company_bank_account_id = $13, bank_label_snapshot = $14, bank_name_snapshot = $15,
+          bank_account_number_snapshot = $16, bank_ifsc_snapshot = $17, bank_branch_snapshot = $18, upi_id_snapshot = $19,
+          pdf_template = $20, document_theme = $21,
+          updated_at = NOW()
+        WHERE id = $22 AND company_id = $23`,
+        [
+          d.party_id,
+          d.godown_id || null,
+          billNumber,
+          d.bill_date,
+          totals.subtotal,
+          totals.totalTaxable,
+          totals.totalCgst,
+          totals.totalSgst,
+          totals.totalIgst,
+          totals.totalAmount,
+          d.notes ?? pi.notes,
+          isGst,
+          bankSnap.company_bank_account_id,
+          bankSnap.bank_label_snapshot,
+          bankSnap.bank_name_snapshot,
+          bankSnap.bank_account_number_snapshot,
+          bankSnap.bank_ifsc_snapshot,
+          bankSnap.bank_branch_snapshot,
+          bankSnap.upi_id_snapshot,
+          pdfTpl,
+          docTheme,
+          id,
+          companyId,
+        ],
+      );
+
+      const godownId = d.godown_id || null;
+      for (const item of d.items) {
+        const lineTotals = calculateInvoiceTotals(
+          [
+            {
+              unit_price: Number(item.unit_price) || 0,
+              quantity: Number(item.quantity) || 0,
+              gst_rate: isGst ? Number(item.gst_rate) || 0 : 0,
+              discount_type: 'none' as const,
+              discount_value: 0,
+            },
+          ],
+          gstType,
+          'none',
+          0,
+        );
+        await client.query(
+          `INSERT INTO purchase_invoice_items (
+            purchase_invoice_id, item_id, item_name, hsn_code, unit, quantity, unit_price,
+            gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            id,
+            item.item_id || null,
+            item.item_name || item.name || 'Item',
+            item.hsn_code || null,
+            item.unit || 'PCS',
+            Number(item.quantity) || 0,
+            Number(item.unit_price) || 0,
+            isGst ? Number(item.gst_rate) || 0 : 0,
+            lineTotals.totalCgst,
+            lineTotals.totalSgst,
+            lineTotals.totalIgst,
+            lineTotals.totalAmount,
+          ],
+        );
+
+        if (item.item_id && godownId) {
+          await client.query(
+            `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (item_id, godown_id) DO UPDATE SET
+               quantity = item_stock.quantity + EXCLUDED.quantity,
+               avg_cost_price = CASE WHEN item_stock.quantity + EXCLUDED.quantity > 0
+                 THEN ROUND(((item_stock.quantity * item_stock.avg_cost_price) + (EXCLUDED.quantity * EXCLUDED.avg_cost_price)) / (item_stock.quantity + EXCLUDED.quantity))
+                 ELSE EXCLUDED.avg_cost_price END`,
+            [companyId, item.item_id, godownId, Number(item.quantity) || 0, Number(item.unit_price) || 0],
+          );
+        }
+      }
+
+      await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2 AND company_id = $3', [
+        totals.totalAmount,
+        d.party_id,
+        companyId,
+      ]);
+      const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
+      await client.query(
+        `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+         VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
+        [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, id, `Purchase Bill ${billNumber}`, req.user!.id],
+      );
+
+      const fresh = await client.query(`SELECT * FROM purchase_invoices WHERE id = $1 AND company_id = $2`, [id, companyId]);
+      return fresh.rows[0];
+    });
+
+    await logAction(
+      req.user!.id,
+      companyId,
+      'update',
+      'purchase_invoice',
+      id,
+      null,
+      { bill_number: result.bill_number },
+      req.ip,
+      req.get('User-Agent'),
+    );
+    res.json(success(result));
+  } catch (err: any) {
+    console.error('updatePurchaseInvoice error:', err.message);
+    const msg = err?.message || 'Failed to update bill';
+    const status = /not found|Cannot edit|No stock|Party not found|items are required/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
 }
 
 export async function payPurchaseInvoice(req: Request, res: Response) {

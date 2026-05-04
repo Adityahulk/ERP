@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
@@ -55,7 +56,23 @@ function emptyForm(defaultName: string): PartyForm {
   };
 }
 
+function extractPartyRow(resBody: unknown): Record<string, unknown> | null {
+  if (!resBody || typeof resBody !== 'object') return null;
+  const envelope = resBody as { data?: unknown; success?: boolean };
+  const inner = envelope.data;
+  const row =
+    inner && typeof inner === 'object' && inner !== null && 'id' in inner
+      ? (inner as Record<string, unknown>)
+      : 'id' in envelope
+        ? (envelope as Record<string, unknown>)
+        : null;
+  const id = row?.id;
+  if (id == null || id === '' || String(id) === 'undefined') return null;
+  return row;
+}
+
 export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCreated }: Props) {
+  const qc = useQueryClient();
   const [f, setF] = useState<PartyForm>(() => emptyForm(''));
   const [saving, setSaving] = useState(false);
   const u = <K extends keyof PartyForm>(k: K, v: PartyForm[K]) => setF((p) => ({ ...p, [k]: v }));
@@ -120,14 +137,15 @@ export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCre
 
     setSaving(true);
     try {
-      const { data: res } = await api.post('/parties', body);
-      const row = (res as { data?: Record<string, unknown> })?.data ?? res;
-      if (!row || typeof row !== 'object' || !('id' in row)) {
-        toast.error('Unexpected response from server');
+      const { data: resBody } = await api.post('/parties', body);
+      const row = extractPartyRow(resBody);
+      if (!row) {
+        toast.error('Unexpected response from server — party id missing. Try again or add the party under Parties.');
         return;
       }
       toast.success('Party saved — you can refine anything later under Parties');
-      onCreated(row as Record<string, unknown>);
+      await qc.invalidateQueries({ queryKey: ['parties'] });
+      onCreated(row);
       onOpenChange(false);
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };

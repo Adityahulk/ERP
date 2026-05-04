@@ -33,12 +33,13 @@ function StatusBadge({ status }: { status: string }) {
 export default function PartyDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { data: raw, isLoading, refetch } = useParty(id!);
+  const { data: raw, isLoading, refetch, isError } = useParty(id);
   const updateMutation = useUpdateParty();
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>({});
 
-  const party = (raw as any)?.data;
+  /** useParty returns the party payload (same unwrap as invoice detail), not the full { success, data } envelope */
+  const party = (raw as any)?.id != null ? (raw as any) : null;
 
   const openEdit = () => {
     if (!party) return;
@@ -94,6 +95,17 @@ export default function PartyDetail() {
     window.open(`https://wa.me/${digits}?text=${msg}`, '_blank', 'noopener,noreferrer');
   };
 
+  if (!id || id === 'undefined' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return (
+      <div className="p-8 text-center text-muted-foreground">
+        Invalid party link.{' '}
+        <button type="button" className="text-primary underline" onClick={() => navigate('/parties')}>
+          Go back
+        </button>
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-16">
@@ -102,11 +114,13 @@ export default function PartyDetail() {
     );
   }
 
-  if (!party) {
+  if (isError || !party) {
     return (
       <div className="p-8 text-center text-muted-foreground">
         Party not found.{' '}
-        <button className="text-primary underline" onClick={() => navigate('/parties')}>Go back</button>
+        <button type="button" className="text-primary underline" onClick={() => navigate('/parties')}>
+          Go back
+        </button>
       </div>
     );
   }

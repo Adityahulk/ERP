@@ -23,7 +23,7 @@ export default function InvoiceDetail() {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
-  const inv: any = data?.data;
+  const inv: any = data;
   if (!inv) return <div className="text-center py-20 text-muted-foreground">Invoice not found</div>;
 
   const statusColors: Record<string, any> = { paid: 'success', partial: 'warning', unpaid: 'destructive', cancelled: 'secondary' };

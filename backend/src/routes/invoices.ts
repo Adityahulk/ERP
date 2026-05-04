@@ -19,6 +19,7 @@ router.post('/:id/einvoice/cancel', requireMinRole('company_admin'), ctrl.cancel
 router.get('/:id/einvoice/pdf', ctrl.getEinvoicePdf);
 router.post('/:id/payment', ctrl.recordPayment);
 
+router.patch('/:id', requireMinRole('manager'), ctrl.updateInvoice);
 router.get('/:id', ctrl.getInvoice);
 router.patch('/:id/cancel', requireMinRole('manager'), ctrl.cancelInvoice);
 router.delete('/:id', requireMinRole('company_admin'), ctrl.deleteInvoice);

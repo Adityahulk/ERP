@@ -595,6 +595,311 @@ export async function getInvoice(req: Request, res: Response) {
   }
 }
 
+/** PATCH /api/invoices/:id — unpaid sales invoices only; reverses stock & party effect then re-applies. */
+export async function updateInvoice(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const d = req.body;
+    if (!Array.isArray(d.items) || d.items.length === 0) {
+      return res.status(400).json(error('At least one line item is required'));
+    }
+
+    const result = await withTransaction(async (client) => {
+      const invRes = await client.query(
+        `SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!invRes.rows.length) throw new Error('Invoice not found');
+      const oldInv = invRes.rows[0];
+
+      if (oldInv.status === 'cancelled') throw new Error('Cannot edit a cancelled invoice');
+      if (oldInv.irn) throw new Error('Cannot edit an invoice with an e-invoice IRN. Cancel the IRN first.');
+      if (oldInv.invoice_type === 'purchase') throw new Error('Purchase bills are edited under Purchases, not here.');
+      if (!['sale', 'tax_invoice'].includes(String(oldInv.invoice_type || ''))) {
+        throw new Error('This invoice type cannot be edited from the sales form.');
+      }
+
+      const allocRes = await client.query(
+        `SELECT 1 FROM payment_allocations pa
+         INNER JOIN payments p ON p.id = pa.payment_id
+         WHERE pa.invoice_id = $1 AND p.company_id = $2 AND p.is_deleted = false
+         LIMIT 1`,
+        [id, companyId],
+      );
+      if (allocRes.rows.length) throw new Error('Cannot edit an invoice that has payments recorded');
+      if (Number(oldInv.paid_amount || 0) > 0) throw new Error('Cannot edit an invoice with an amount paid');
+
+      await backupInvoiceSnapshot(client, companyId, id, 'before_update_invoice', req.user!.id);
+
+      const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
+      const mappedItems = d.items.map((it: any) =>
+        mapLineForGst({
+          ...it,
+          item_name: it.item_name || it.name,
+          gst_rate: isGstInvoice ? it.gst_rate : 0,
+          cess_rate: isGstInvoice ? it.cess_rate : 0,
+        }),
+      );
+
+      let isInterstate = d.is_interstate;
+      if (isInterstate === undefined && d.party_id) {
+        const pRes = await client.query(
+          'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+          [d.party_id, companyId],
+        );
+        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+        isInterstate = determineGSTType(cRes.rows[0]?.state_code, pRes.rows[0]?.billing_state_code) === 'inter';
+      }
+      isInterstate = Boolean(isInterstate);
+
+      const gstType = isInterstate ? 'inter' : 'intra';
+      const invDisc = Math.round(Number(d.discount_amount) || 0);
+      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
+
+      const itemsRes = await client.query(
+        `SELECT ii.*, it.name AS item_master_name, it.track_inventory
+         FROM invoice_items ii
+         LEFT JOIN items it ON it.id = ii.item_id
+         WHERE ii.invoice_id = $1 AND ii.company_id = $2
+         ORDER BY ii.sort_order, ii.id`,
+        [id, companyId],
+      );
+
+      const oldGodown = oldInv.godown_id;
+      if (oldGodown && oldInv.invoice_type !== 'purchase') {
+        for (const row of itemsRes.rows) {
+          if (!row.item_id || !row.track_inventory) continue;
+          const qty = Number(row.quantity) || 0;
+          await client.query(
+            `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+             VALUES ($1, $2, $3, $4, 0)
+             ON CONFLICT (item_id, godown_id) DO UPDATE SET
+               quantity = item_stock.quantity + EXCLUDED.quantity`,
+            [companyId, row.item_id, oldGodown, qty],
+          );
+          const balRes = await client.query(
+            `SELECT quantity FROM item_stock WHERE company_id = $1 AND item_id = $2 AND godown_id = $3`,
+            [companyId, row.item_id, oldGodown],
+          );
+          await client.query(
+            `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
+             VALUES ($1, $2, $3, 'sale_cancel', 'invoice', $4, $5, $6, $7, $8)`,
+            [
+              companyId,
+              row.item_id,
+              oldGodown,
+              id,
+              qty,
+              balRes.rows[0]?.quantity || qty,
+              `Edit invoice ${oldInv.invoice_number}: restore stock`,
+              req.user!.id,
+            ],
+          );
+        }
+      }
+
+      const oldTotal = Number(oldInv.total_amount || 0);
+      const oldPartyId = oldInv.party_id;
+      await client.query(
+        `DELETE FROM party_ledger WHERE company_id = $1 AND reference_id = $2 AND reference_type = 'invoice'`,
+        [companyId, id],
+      );
+      if (oldPartyId && oldTotal !== 0) {
+        await client.query(`UPDATE parties SET balance = balance - $1 WHERE id = $2 AND company_id = $3`, [
+          oldTotal,
+          oldPartyId,
+          companyId,
+        ]);
+      }
+
+      await client.query(`DELETE FROM invoice_items WHERE invoice_id = $1 AND company_id = $2`, [id, companyId]);
+
+      let partySnap: { name?: string; gstin?: string; bill?: string; ship?: string } = {};
+      if (d.party_id) {
+        const pr = await client.query(
+          `SELECT name, gstin, billing_address, shipping_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [d.party_id, companyId],
+        );
+        if (pr.rows[0]) {
+          partySnap = {
+            name: pr.rows[0].name,
+            gstin: pr.rows[0].gstin,
+            bill: pr.rows[0].billing_address,
+            ship: pr.rows[0].shipping_address,
+          };
+        }
+      }
+
+      const posRow = d.party_id
+        ? await client.query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
+        : { rows: [{}] };
+      const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
+
+      const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+
+      const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : oldInv.pdf_template;
+      const docTheme = ['classic', 'modern', 'compact'].includes(String(d.document_theme || ''))
+        ? d.document_theme
+        : oldInv.document_theme || 'classic';
+
+      await client.query(
+        `UPDATE invoices SET
+          party_id = $1, godown_id = $2, invoice_date = $3, due_date = $4, is_interstate = $5, place_of_supply = $6,
+          party_name_snapshot = $7, party_gstin_snapshot = $8, billing_address_snapshot = $9, shipping_address_snapshot = $10,
+          subtotal = $11, discount_amount = $12, taxable_amount = $13,
+          cgst_amount = $14, sgst_amount = $15, igst_amount = $16, cess_amount = $17, round_off = $18, total_amount = $19,
+          payment_status = 'unpaid', notes = $20, pdf_template = $21, document_theme = $22,
+          is_gst_invoice = $23,
+          company_bank_account_id = $24, bank_label_snapshot = $25, bank_name_snapshot = $26,
+          bank_account_number_snapshot = $27, bank_ifsc_snapshot = $28, bank_branch_snapshot = $29, upi_id_snapshot = $30,
+          updated_at = NOW()
+        WHERE id = $31 AND company_id = $32`,
+        [
+          d.party_id || null,
+          d.godown_id || req.user!.godown_id || null,
+          d.invoice_date || oldInv.invoice_date,
+          d.due_date ?? oldInv.due_date,
+          isInterstate,
+          placeOfSupply,
+          partySnap.name || null,
+          partySnap.gstin || null,
+          partySnap.bill || null,
+          partySnap.ship || null,
+          totalsInfo.subtotal,
+          totalsInfo.totalDiscount,
+          totalsInfo.totalTaxable,
+          totalsInfo.totalCgst,
+          totalsInfo.totalSgst,
+          totalsInfo.totalIgst,
+          totalsInfo.totalCess,
+          totalsInfo.roundOff,
+          totalsInfo.totalAmount,
+          d.notes ?? oldInv.notes,
+          pdfTpl,
+          docTheme,
+          isGstInvoice,
+          bankSnap.company_bank_account_id,
+          bankSnap.bank_label_snapshot,
+          bankSnap.bank_name_snapshot,
+          bankSnap.bank_account_number_snapshot,
+          bankSnap.bank_ifsc_snapshot,
+          bankSnap.bank_branch_snapshot,
+          bankSnap.upi_id_snapshot,
+          id,
+          companyId,
+        ],
+      );
+
+      const godownId = d.godown_id || req.user!.godown_id;
+      for (let i = 0; i < d.items.length; i++) {
+        const item = d.items[i];
+        const lineGst = mapLineForGst({
+          ...item,
+          item_name: item.item_name || item.name,
+          gst_rate: isGstInvoice ? item.gst_rate : 0,
+          cess_rate: isGstInvoice ? item.cess_rate : 0,
+        });
+        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
+        const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
+        const half = gstRt / 2;
+
+        await client.query(
+          `INSERT INTO invoice_items (
+            invoice_id, company_id, item_id, item_name, item_description, hsn_code, unit,
+            quantity, unit_price, discount_amount, taxable_amount,
+            gst_rate, cgst_rate, sgst_rate, igst_rate,
+            cgst_amount, sgst_amount, igst_amount, cess_amount,
+            total_amount, sort_order
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+          [
+            id,
+            companyId,
+            item.item_id || null,
+            item.item_name || item.name || 'Item',
+            item.description || item.item_description || null,
+            item.hsn_code || null,
+            item.unit || 'PCS',
+            item.quantity,
+            Math.round(Number(item.unit_price) || 0),
+            taxInfo.totalDiscountLineLevel,
+            taxInfo.totalTaxable,
+            gstRt,
+            isInterstate ? 0 : half,
+            isInterstate ? 0 : half,
+            isInterstate ? gstRt : 0,
+            taxInfo.totalCgst,
+            taxInfo.totalSgst,
+            taxInfo.totalIgst,
+            taxInfo.totalCess,
+            taxInfo.totalAmount,
+            i + 1,
+          ],
+        );
+
+        if (item.item_id && godownId) {
+          const itemRes = await client.query(
+            `SELECT name, track_inventory FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+            [item.item_id, companyId],
+          );
+          if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
+          if (itemRes.rows[0].track_inventory) {
+            const stockRes = await client.query(
+              `SELECT quantity, reserved_quantity FROM item_stock
+               WHERE item_id = $1 AND godown_id = $2 AND company_id = $3 FOR UPDATE`,
+              [item.item_id, godownId, companyId],
+            );
+            if (!stockRes.rows.length) throw new Error(`No stock row found for "${itemRes.rows[0].name}" in the selected godown`);
+            const qty = Number(item.quantity) || 0;
+            const available = Number(stockRes.rows[0].quantity || 0) - Number(stockRes.rows[0].reserved_quantity || 0);
+            if (qty <= 0) throw new Error(`Invalid quantity for "${itemRes.rows[0].name}"`);
+            if (available < qty) {
+              throw new Error(`Insufficient stock for "${itemRes.rows[0].name}". Available: ${available}, requested: ${qty}`);
+            }
+            await client.query(
+              `UPDATE item_stock SET quantity = quantity - $1::numeric WHERE item_id = $2 AND godown_id = $3 AND company_id = $4`,
+              [qty, item.item_id, godownId, companyId],
+            );
+            const balRes = await client.query(
+              'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
+              [item.item_id, godownId, companyId],
+            );
+            await client.query(
+              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, created_by)
+               VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7)`,
+              [companyId, item.item_id, godownId, id, -qty, balRes.rows[0]?.quantity || 0, req.user!.id],
+            );
+          }
+        }
+      }
+
+      if (d.party_id) {
+        await client.query('UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3', [
+          totalsInfo.totalAmount,
+          d.party_id,
+          companyId,
+        ]);
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES ($1, $2, $3, $4, (SELECT balance FROM parties WHERE id = $2), 'invoice', $5, $6, $7)`,
+          [companyId, d.party_id, 'debit', totalsInfo.totalAmount, id, oldInv.invoice_number, req.user!.id],
+        );
+      }
+
+      const fresh = await client.query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2`, [id, companyId]);
+      return fresh.rows[0];
+    });
+
+    await logAction(req.user!.id, companyId, 'update', 'invoice', id, { invoice_number: result.invoice_number }, { total: result.total_amount }, req.ip, req.get('User-Agent'));
+    res.json(success(result));
+  } catch (err: any) {
+    console.error('updateInvoice error:', err.message, err.detail, err.position);
+    const msg = err?.message || 'Failed to update invoice';
+    const status = /not found|Cannot edit|Insufficient|No stock row|Invalid quantity|At least one/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
+}
+
 export async function cancelInvoice(req: Request, res: Response) {
   try {
     const { id } = req.params;

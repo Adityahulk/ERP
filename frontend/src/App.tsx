@@ -255,6 +255,7 @@ export default function App() {
         {/* Keep detail + create pages accessible */}
         <Route path="/billing" element={<BillingScreen />} />
         <Route path="/sales/new" element={<InvoiceCreate />} />
+        <Route path="/sales/:id/edit" element={<InvoiceCreate />} />
         <Route path="/sales/:id" element={<InvoiceDetail />} />
         <Route path="/quotations/new" element={<QuotationForm />} />
         <Route path="/quotations/:id" element={<QuotationDetail />} />

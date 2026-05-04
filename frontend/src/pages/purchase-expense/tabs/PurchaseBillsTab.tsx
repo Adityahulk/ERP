@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus } from 'lucide-react';
+import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
@@ -30,6 +30,8 @@ export default function PurchaseBillsTab() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const billHydratedRef = useRef<string | null>(null);
   const [showPayDialog, setShowPayDialog] = useState<{ id: string; billNo: string; balance: number } | null>(null);
   const [payAmount, setPayAmount] = useState('');
   const [payMode, setPayMode] = useState('cash');
@@ -56,6 +58,16 @@ export default function PurchaseBillsTab() {
       }).then(r => r.data),
   });
 
+  const { data: editBillRes, isLoading: editBillLoading } = useQuery({
+    queryKey: ['purchase-bill', editingBillId],
+    queryFn: () =>
+      api.get(`/purchases/invoices/${editingBillId}`).then((r) => {
+        const body = r.data as { data?: unknown };
+        return body?.data ?? r.data;
+      }),
+    enabled: !!editingBillId,
+  });
+
   const bills = (data as any)?.data?.data || [];
   const meta = (data as any)?.meta || {};
   const stats = [
@@ -70,9 +82,25 @@ export default function PurchaseBillsTab() {
       toast.success('Purchase bill created');
       qc.invalidateQueries({ queryKey: ['purchase-bills'] });
       resetForm();
+      setEditingBillId(null);
+      billHydratedRef.current = null;
       setShowForm(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to create bill'),
+  });
+
+  const updateBillMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.patch(`/purchases/invoices/${id}`, payload),
+    onSuccess: () => {
+      toast.success('Purchase bill updated');
+      qc.invalidateQueries({ queryKey: ['purchase-bills'] });
+      qc.invalidateQueries({ queryKey: ['purchase-bill'] });
+      resetForm();
+      setEditingBillId(null);
+      billHydratedRef.current = null;
+      setShowForm(false);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to update bill'),
   });
 
   const payMutation = useMutation({
@@ -81,6 +109,7 @@ export default function PurchaseBillsTab() {
     onSuccess: () => {
       toast.success('Payment recorded');
       qc.invalidateQueries({ queryKey: ['purchase-bills'] });
+      qc.invalidateQueries({ queryKey: ['purchase-bill'] });
       setShowPayDialog(null);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Payment failed'),
@@ -95,7 +124,19 @@ export default function PurchaseBillsTab() {
     } catch { setPartyResults([]); }
   };
 
-  const selectSupplier = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
+  const selectSupplier = (p: any) => {
+    const rawId = p?.id;
+    const id =
+      rawId != null && rawId !== '' && String(rawId) !== 'undefined' ? String(rawId) : '';
+    if (!id) {
+      toast.error('Invalid party id from server.');
+      return;
+    }
+    setPartyId(id);
+    setPartyName(String(p.name ?? ''));
+    setPartySearch('');
+    setPartyResults([]);
+  };
   const clearSupplier = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
 
   const resetForm = () => {
@@ -103,29 +144,81 @@ export default function PurchaseBillsTab() {
     setBillDate(new Date().toISOString().split('T')[0]); setBillNumber('');
     setGodownId(''); setNotes(''); setItems([]);
     setCompanyBankAccountId('');
+    setEditingBillId(null);
+    billHydratedRef.current = null;
   };
 
-  const handleCreate = () => {
+  useEffect(() => {
+    if (!showForm || !editingBillId || !editBillRes) return;
+    if (billHydratedRef.current === editingBillId) return;
+    const b = editBillRes as Record<string, unknown>;
+    if (String(b.id) !== editingBillId) return;
+
+    setPartyId(String(b.party_id || ''));
+    setBillDate(b.bill_date ? String(b.bill_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
+    setBillNumber(String(b.bill_number || ''));
+    setGodownId(b.godown_id ? String(b.godown_id) : '');
+    setIsGst(b.is_gst_invoice !== false);
+    setNotes(String(b.notes || ''));
+    setCompanyBankAccountId(b.company_bank_account_id ? String(b.company_bank_account_id) : '');
+
+    const rows = (b.items as any[]) || [];
+    setItems(
+      rows.map((it: any) => ({
+        item_id: it.item_id ? String(it.item_id) : undefined,
+        name: String(it.item_name || ''),
+        hsn_code: it.hsn_code ? String(it.hsn_code) : '',
+        unit: it.unit ? String(it.unit) : 'PCS',
+        quantity: Number(it.quantity) || 0,
+        unit_price: Number(it.unit_price) || 0,
+        discount_amount: Number(it.discount_amount || 0),
+        gst_rate: Number(it.gst_rate) || 0,
+      })),
+    );
+
+    billHydratedRef.current = editingBillId;
+  }, [showForm, editingBillId, editBillRes]);
+
+  const openNewBill = () => {
+    resetForm();
+    setEditingBillId(null);
+    billHydratedRef.current = null;
+    setShowForm(true);
+  };
+
+  const openEditBill = (billId: string, partyDisplayName?: string) => {
+    resetForm();
+    setEditingBillId(billId);
+    setPartyName((partyDisplayName || '').trim());
+    billHydratedRef.current = null;
+    setShowForm(true);
+  };
+
+  const buildPayload = () => ({
+    party_id: partyId,
+    bill_date: billDate,
+    bill_number: billNumber.trim() || undefined,
+    godown_id: godownId || undefined,
+    is_gst_invoice: isGst,
+    notes: notes.trim() || undefined,
+    company_bank_account_id: companyBankAccountId || undefined,
+    items: items.map((it) => ({
+      item_id: it.item_id,
+      item_name: it.name,
+      hsn_code: it.hsn_code,
+      unit: it.unit,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      gst_rate: it.gst_rate,
+    })),
+  });
+
+  const handleSave = () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
-    createMutation.mutate({
-      party_id: partyId,
-      bill_date: billDate,
-      bill_number: billNumber.trim() || undefined,
-      godown_id: godownId || undefined,
-      is_gst_invoice: isGst,
-      notes: notes.trim() || undefined,
-      company_bank_account_id: companyBankAccountId || undefined,
-      items: items.map(it => ({
-        item_id: it.item_id,
-        item_name: it.name,
-        hsn_code: it.hsn_code,
-        unit: it.unit,
-        quantity: it.quantity,
-        unit_price: it.unit_price,
-        gst_rate: it.gst_rate,
-      })),
-    });
+    const payload = buildPayload();
+    if (editingBillId) updateBillMutation.mutate({ id: editingBillId, payload });
+    else createMutation.mutate(payload);
   };
 
   return (
@@ -160,7 +253,7 @@ export default function PurchaseBillsTab() {
           </button>
         ))}
         <div className="ml-auto">
-          <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
+          <Button size="sm" className="gap-1.5" onClick={openNewBill}>
             <Plus className="w-4 h-4" /> Add Purchase
           </Button>
         </div>
@@ -190,6 +283,8 @@ export default function PurchaseBillsTab() {
             )}
             {bills.map((b: any) => {
               const balance = (parseInt(b.total_amount)||0) - (parseInt(b.paid_amount)||0);
+              const paidAmt = parseInt(b.paid_amount) || 0;
+              const canEditBill = paidAmt === 0;
               return (
                 <tr key={b.id} className="border-b hover:bg-muted/20">
                   <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(b.bill_date)}</td>
@@ -203,7 +298,12 @@ export default function PurchaseBillsTab() {
                     {balance > 0 ? formatMoney(balance) : '✓ Paid'}
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-end gap-1 flex-wrap">
+                      {canEditBill && (
+                        <Button size="sm" variant="outline" className="h-7 text-xs px-2 gap-1" onClick={() => openEditBill(b.id, b.party_name)}>
+                          <Pencil className="w-3 h-3" /> Edit
+                        </Button>
+                      )}
                       {balance > 0 && (
                         <Button size="sm" variant="outline" className="h-7 text-xs px-2"
                           onClick={() => { setShowPayDialog({ id: b.id, billNo: b.bill_number, balance }); setPayAmount((balance / 100).toFixed(2)); }}>
@@ -220,11 +320,22 @@ export default function PurchaseBillsTab() {
       </div>
 
       {/* Create Bill Sheet */}
-      <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
+      <Sheet
+        open={showForm}
+        onOpenChange={(v) => {
+          if (!v) {
+            resetForm();
+            setShowForm(false);
+          } else setShowForm(true);
+        }}
+      >
         <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
           <SheetHeader className="mb-5">
-            <SheetTitle>Add Purchase Bill</SheetTitle>
+            <SheetTitle>{editingBillId ? 'Edit Purchase Bill' : 'Add Purchase Bill'}</SheetTitle>
           </SheetHeader>
+          {editingBillId && editBillLoading && (
+            <p className="text-sm text-muted-foreground mb-4">Loading bill…</p>
+          )}
           <div className="space-y-4">
             {/* Party */}
             <div className="grid grid-cols-2 gap-3">
@@ -232,7 +343,7 @@ export default function PurchaseBillsTab() {
                 <Label className="text-xs">Party *</Label>
                 {partyId ? (
                   <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
-                    <span className="font-medium text-sm">{partyName}</span>
+                    <span className="font-medium text-sm">{partyName || 'Selected party'}</span>
                     <button type="button" className="text-xs text-primary hover:underline" onClick={clearSupplier}>Change</button>
                   </div>
                 ) : (
@@ -309,8 +420,13 @@ export default function PurchaseBillsTab() {
 
             <div className="flex gap-3 pt-3 border-t">
               <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
-              <Button className="flex-1" loading={createMutation.isPending} onClick={handleCreate} disabled={!partyId || items.length === 0}>
-                Save Bill
+              <Button
+                className="flex-1"
+                loading={createMutation.isPending || updateBillMutation.isPending}
+                onClick={handleSave}
+                disabled={!partyId || items.length === 0 || (!!editingBillId && editBillLoading)}
+              >
+                {editingBillId ? 'Save changes' : 'Save Bill'}
               </Button>
             </div>
           </div>

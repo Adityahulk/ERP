@@ -8,11 +8,22 @@ export function useParties(filters: any) {
   });
 }
 
-export function useParty(id: string) {
+function unwrapApiData<T>(body: unknown): T {
+  if (body && typeof body === 'object' && 'data' in body && (body as { data: unknown }).data !== undefined) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+}
+
+export function useParty(id: string | undefined) {
+  const validId = id && id !== 'undefined' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   return useQuery({
     queryKey: ['parties', id],
-    queryFn: () => api.get(`/parties/${id}`).then(r => r.data),
-    enabled: !!id,
+    queryFn: async () => {
+      const r = await api.get(`/parties/${id}`);
+      return unwrapApiData(r.data);
+    },
+    enabled: !!validId,
   });
 }
 
@@ -55,11 +66,17 @@ export function useInvoices(filters: any) {
   });
 }
 
-export function useInvoice(id: string) {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function useInvoice(id: string | undefined) {
+  const valid = !!(id && id !== 'undefined' && UUID_RE.test(id));
   return useQuery({
-    queryKey: ['invoices', id],
-    queryFn: () => api.get(`/invoices/${id}`).then(r => r.data),
-    enabled: !!id,
+    queryKey: ['invoice', id],
+    queryFn: async () => {
+      const r = await api.get(`/invoices/${id}`);
+      return unwrapApiData(r.data);
+    },
+    enabled: valid,
   });
 }
 
@@ -76,11 +93,27 @@ export function useCreateInvoice() {
   });
 }
 
+export function useUpdateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) =>
+      api.patch(`/invoices/${id}`, data).then((r) => unwrapApiData(r.data)),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoice', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['parties'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
 export function useCancelInvoice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.patch(`/invoices/${id}/cancel`).then(r => r.data),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['invoice', id] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['parties'] });
       qc.invalidateQueries({ queryKey: ['stock'] });

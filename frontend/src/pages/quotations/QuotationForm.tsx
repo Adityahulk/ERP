@@ -75,8 +75,17 @@ export default function QuotationForm() {
   };
 
   const selectParty = (p: any) => {
-    setPartyId(p.id); setPartyName(p.name);
-    setPartySearch(''); setPartyResults([]);
+    const rawId = p?.id;
+    const id =
+      rawId != null && rawId !== '' && String(rawId) !== 'undefined' ? String(rawId) : '';
+    if (!id) {
+      toast.error('Could not select party — invalid id. Try again or add the party under Parties.');
+      return;
+    }
+    setPartyId(id);
+    setPartyName(String(p.name ?? ''));
+    setPartySearch('');
+    setPartyResults([]);
   };
 
   const clearParty = () => {

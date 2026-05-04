@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
-import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
-import { useCancelEinvoice, useCompany, useGenerateEinvoice } from '@/hooks/useBusiness';
+import { useCancelEinvoice, useCompany, useGenerateEinvoice, useInvoice } from '@/hooks/useBusiness';
+
+const ROLE_RANK: Record<string, number> = {
+  staff: 1,
+  cashier: 2,
+  manager: 3,
+  accountant: 4,
+  company_admin: 5,
+  super_admin: 6,
+};
 
 export default function InvoiceDetail() {
   const { id } = useParams();
@@ -30,13 +38,7 @@ export default function InvoiceDetail() {
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const { data: raw, isLoading, refetch } = useQuery({
-    queryKey: ['invoice', id],
-    queryFn: async () => {
-      const res = await api.get(`/invoices/${id}`);
-      return res.data?.data ?? res.data;
-    },
-  });
+  const { data: raw, isLoading, isError, refetch } = useInvoice(id);
 
   const inv: any = raw;
 
@@ -64,7 +66,15 @@ export default function InvoiceDetail() {
   }, [params, setSearchParams]);
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading invoice details...</div>;
-  if (!inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
+  if (isError || !inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
+
+  const userRank = ROLE_RANK[user?.role ?? ''] ?? 0;
+  const canEditInvoice =
+    userRank >= ROLE_RANK.manager &&
+    !inv.irn &&
+    inv.status !== 'cancelled' &&
+    Number(inv.paid_amount ?? inv.amount_paid ?? 0) === 0 &&
+    (!inv.payments || inv.payments.length === 0);
 
   const canGenEinv =
     (user?.role === 'company_admin' || user?.role === 'accountant' || user?.role === 'super_admin') &&
@@ -268,6 +278,11 @@ Thank you.
           </Badge>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {canEditInvoice && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/sales/${id}/edit`)}>
+              <Pencil className="h-4 w-4" /> Edit invoice
+            </Button>
+          )}
           <Button variant="default" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700" onClick={() => setPreviewOpen(true)}>
             <Eye className="h-4 w-4" /> Preview &amp; share
           </Button>
