@@ -218,8 +218,8 @@ export default function LandingPage() {
               M
             </div>
             <div className="leading-tight">
-              <p className="text-base font-semibold text-slate-900">Microtechnique</p>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-violet-700 font-semibold">IT</p>
+              <p className="text-base font-semibold text-slate-900">Microtechnique Accounts</p>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-violet-700 font-semibold">Business suite</p>
             </div>
           </div>
           <div className="hidden md:flex items-center gap-8">
@@ -326,7 +326,7 @@ export default function LandingPage() {
               <Zap className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="font-bold text-amber-900">Try BizFlow ERP free for 15 days</p>
+              <p className="font-bold text-amber-900">Try Microtechnique Accounts free for 15 days</p>
               <p className="text-sm text-amber-700">Full Diamond plan — all features unlocked. No credit card. No commitment.</p>
             </div>
           </div>
@@ -646,8 +646,8 @@ export default function LandingPage() {
                 M
               </div>
               <div className="leading-tight">
-                <p className="text-base font-semibold text-white">Microtechnique</p>
-                <p className="text-[10px] uppercase tracking-[0.18em] text-violet-300 font-semibold">IT</p>
+                <p className="text-base font-semibold text-white">Microtechnique Accounts</p>
+                <p className="text-[10px] uppercase tracking-[0.18em] text-violet-300 font-semibold">Business suite</p>
               </div>
             </div>
             <p className="mb-6 max-w-sm">
@@ -685,7 +685,7 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-10 pt-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm">
-          <p>&copy; {new Date().getFullYear()} Microtechnique IT. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} Microtechnique Accounts. All rights reserved.</p>
           <div className="flex gap-6">
             <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
             <a href="#" className="hover:text-white transition-colors">Terms of Service</a>

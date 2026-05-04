@@ -23,7 +23,7 @@ export default function TrialBanner() {
     : 'bg-violet-600/90 border-violet-400';
 
   const message = expired
-    ? 'Your free trial has ended. Upgrade to continue using BizFlow ERP.'
+    ? 'Your free trial has ended. Upgrade to continue using Microtechnique Accounts.'
     : `Your free trial ends in ${days} day${days === 1 ? '' : 's'}.`;
 
   return (

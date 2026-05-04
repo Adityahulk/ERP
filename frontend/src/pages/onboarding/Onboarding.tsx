@@ -37,7 +37,7 @@ export default function Onboarding() {
           leaves: quickSetup.leaves,
         },
       });
-      toast.success('All set! Welcome to Microtechnique IT.');
+      toast.success('All set! Welcome to Microtechnique Accounts.');
       window.location.href = '/dashboard';
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to finalize wizard.');
@@ -165,7 +165,7 @@ export default function Onboarding() {
                     <CheckCircle2 className="w-10 h-10 text-emerald-600" />
                  </div>
                  <h2 className="text-3xl font-bold text-slate-900 mb-2">You're Ready!</h2>
-                 <p className="text-slate-500 mb-8 max-w-sm mx-auto">Welcome to Microtechnique IT, {company.name}. The workspace is fully booted.</p>
+                 <p className="text-slate-500 mb-8 max-w-sm mx-auto">Welcome to Microtechnique Accounts, {company.name}. The workspace is fully booted.</p>
                  
                  <div className="grid gap-3 max-w-sm mx-auto">
                     <Button onClick={completeOnboarding} loading={loading} className="h-14 text-lg bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200">

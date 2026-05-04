@@ -141,7 +141,7 @@ export function InvoicePreviewWorkspace({
 
 Please find invoice ${shareContext.invoiceNumber} dated ${formatDate(shareContext.invoiceDate)} for ${formatMoney(shareContext.totalAmountPaise)}.
 Thank you.
-— ${companyName || 'Microtechnique IT'}`;
+— ${companyName || 'Microtechnique Accounts'}`;
   };
 
   const fetchCurrentPdfFile = async (): Promise<File> => {

@@ -23,7 +23,7 @@ function formatCredentialsBlock(opts: {
 }) {
   const planYears = opts.expiresDays >= 365 ? `${Math.round(opts.expiresDays / 365)} year(s)` : `${opts.expiresDays} days`;
   return `─────────────────────────
-BizFlow ERP — Access Credentials
+Microtechnique Accounts — Access Credentials
 Company: ${opts.companyName}
 Login URL: ${appLoginUrl()}
 Email: ${opts.adminEmail}

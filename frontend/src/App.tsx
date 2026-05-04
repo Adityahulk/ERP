@@ -12,6 +12,7 @@ import ModuleGate from '@/components/shared/ModuleGate';
 // Pages
 import ItemList from '@/pages/items/ItemList';
 import ItemDetail from '@/pages/items/ItemDetail';
+import BarcodeGeneratePage from '@/pages/barcode/BarcodeGeneratePage';
 import StockList from '@/pages/inventory/StockList';
 import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
@@ -114,8 +115,8 @@ function LoginPage() {
       </div>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-16 mx-auto mb-4 brightness-0 invert" />
-          <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique IT</h1>
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 mx-auto mb-4 brightness-0 invert" />
+          <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique Accounts</h1>
           <p className="text-purple-300 mt-1">Smart ERP for Indian Manufacturers</p>
         </div>
         {sessionMsg && (
@@ -228,6 +229,7 @@ export default function App() {
         {/* Items */}
         <Route path="/items" element={<ItemList />} />
         <Route path="/items/:id" element={<ItemDetail />} />
+        <Route path="/barcode/generate" element={<BarcodeGeneratePage />} />
 
         {/* Inventory */}
         <Route path="/inventory" element={<StockList />} />

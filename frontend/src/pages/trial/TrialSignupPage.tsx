@@ -69,7 +69,7 @@ export default function TrialSignupPage() {
 
   const copyCredentials = () => {
     if (!successData) return;
-    const text = `BizFlow ERP — Trial Access\nBusiness: ${successData.company_name}\nEmail: ${successData.email}\nPassword: ${form.password}\nTrial ends: ${new Date(successData.trial_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}\nLogin: ${window.location.origin}/login`;
+    const text = `Microtechnique Accounts — Trial Access\nBusiness: ${successData.company_name}\nEmail: ${successData.email}\nPassword: ${form.password}\nTrial ends: ${new Date(successData.trial_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}\nLogin: ${window.location.origin}/login`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -154,7 +154,7 @@ export default function TrialSignupPage() {
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-8">
-          <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-12 mx-auto mb-4 brightness-0 invert" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-12 mx-auto mb-4 brightness-0 invert" />
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/30 mb-3">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-amber-300 text-sm font-semibold">15-Day Free Trial</span>

@@ -102,11 +102,8 @@ export default function InvoiceList() {
              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
              <Input placeholder="Search invoice or party..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <Button onClick={() => navigate('/billing')} className="gap-2">
-            <Plus className="h-4 w-4" /> POS Billing
-          </Button>
-          <Button onClick={() => navigate('/sales/new')} variant="outline" className="gap-2">
-            <FileText className="h-4 w-4" /> Bulk Form
+          <Button onClick={() => navigate('/sales/new')} className="gap-2">
+            <Plus className="h-4 w-4" /> Add Sales
           </Button>
         </div>
       </div>

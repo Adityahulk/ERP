@@ -32,7 +32,7 @@ export default function SuperAdminLayout() {
           <div className="flex items-center gap-2">
             <img src="/logo-microtechnique.svg" alt="" className="h-9 w-auto brightness-0 invert opacity-90" />
           </div>
-          <p className="text-xs text-slate-500 mt-2 font-medium tracking-wide">BizFlow — Super Admin</p>
+          <p className="text-xs text-slate-500 mt-2 font-medium tracking-wide">Microtechnique Accounts — Super Admin</p>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {nav.map(({ to, end, icon: Icon, label }) => (

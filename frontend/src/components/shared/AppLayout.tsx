@@ -6,14 +6,17 @@ import TrialBanner from '@/components/shared/TrialBanner';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
-  Warehouse, BarChart3, Cloud, UserCheck,
+  Warehouse, BarChart3, Cloud, UserCheck, Barcode,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight
+  Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
 import { getInitials, cn } from '@/lib/utils';
 import api from '@/lib/api';
+
+const SIDEBAR_COLLAPSED_KEY = 'erp_sidebar_collapsed';
 
 const navGroups = [
   {
@@ -25,6 +28,12 @@ const navGroups = [
      items: [
         { to: '/items', icon: Package, label: 'Items & Materials' },
         { to: '/inventory', icon: Warehouse, label: 'Stock & Godowns' },
+     ]
+  },
+  {
+     label: 'BARCODE',
+     items: [
+        { to: '/barcode/generate', icon: Barcode, label: 'Generate Barcode' },
      ]
   },
   {
@@ -98,6 +107,29 @@ export default function AppLayout() {
     }).catch(() => { /* non-blocking — license info is supplemental */ });
   }, []);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') {
+        setSidebarCollapsed(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore quota / private mode */
+      }
+      return next;
+    });
+  };
   const [cmdOpen, setCmdOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
@@ -111,7 +143,7 @@ export default function AppLayout() {
   useEffect(() => {
     const seg = location.pathname.split('/').filter(Boolean)[0] || 'home';
     const label = seg.charAt(0).toUpperCase() + seg.slice(1).replace(/-/g, ' ');
-    document.title = `${label} — Microtechnique IT`;
+    document.title = `${label} — Microtechnique Accounts`;
   }, [location.pathname]);
 
   // Command palette toggle hook
@@ -160,24 +192,46 @@ export default function AppLayout() {
     };
   }, [searchQ, cmdOpen]);
 
-  const NavigationList = () => (
-     <div className="flex-1 overflow-y-auto py-4 custom-scrollbar">
+  const NavigationList = ({ collapsed = false }: { collapsed?: boolean }) => (
+     <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
         {navGroups.map((group, idx) => (
-           <div key={idx} className="mb-6 px-4">
-              <h3 className="text-[10px] font-bold text-white/40 tracking-widest uppercase mb-2 ml-2">{group.label}</h3>
+           <div
+             key={idx}
+             className={cn(
+               'mb-6',
+               collapsed ? 'px-2' : 'px-4',
+               collapsed && idx > 0 && 'pt-4 mt-1 border-t border-white/10',
+             )}
+           >
+              {!collapsed && (
+                <h3 className="text-[10px] font-bold text-white/40 tracking-widest uppercase mb-2 ml-2">{group.label}</h3>
+              )}
               <div className="space-y-1">
                  {group.items.map(item => {
                     const active = location.pathname.startsWith(item.to);
                     return (
-                       <Link key={item.to} to={item.to} onClick={() => setMobileOpen(false)}
-                          className={cn(
-                             "flex items-center gap-3 px-3 py-2 rounded-md transition-all duration-200",
-                             active ? "bg-white/15 text-white shadow-inner font-medium relative" : "text-white/70 hover:bg-white/10 hover:text-white"
-                          )}
+                       <Link
+                         key={item.to}
+                         to={item.to}
+                         onClick={() => setMobileOpen(false)}
+                         title={collapsed ? item.label : undefined}
+                         className={cn(
+                           'flex items-center gap-3 py-2 rounded-md transition-all duration-200 relative overflow-hidden',
+                           collapsed ? 'justify-center px-2' : 'px-3',
+                           active ? 'bg-white/15 text-white shadow-inner font-medium' : 'text-white/70 hover:bg-white/10 hover:text-white',
+                         )}
                        >
-                          {active && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-md"></div>}
-                          <item.icon className="w-[18px] h-[18px]" />
-                          <span className="text-sm">{item.label}</span>
+                          {active && (
+                            <span
+                              className={cn(
+                                'absolute top-1/2 -translate-y-1/2 w-1 rounded-r-md bg-white',
+                                collapsed ? 'left-1 h-6' : 'left-0 h-5',
+                              )}
+                              aria-hidden
+                            />
+                          )}
+                          <item.icon className={cn('w-[18px] h-[18px] shrink-0', collapsed && 'mx-auto')} />
+                          {!collapsed && <span className="text-sm truncate">{item.label}</span>}
                        </Link>
                     )
                  })}
@@ -299,66 +353,128 @@ export default function AppLayout() {
       )}
 
       {/* SIDEBAR (Desktop) */}
-      <aside className="hidden md:flex w-[220px] bg-[#1E1B4B] flex-col flex-shrink-0 shadow-xl z-20">
-        <div className="h-20 flex flex-col justify-center px-5 border-b border-white/10 shrink-0 select-none">
-           <div className="flex items-center gap-2">
-             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md">
+      <aside
+        id="app-sidebar"
+        className={cn(
+          'hidden md:flex flex-col flex-shrink-0 bg-[#1E1B4B] shadow-xl z-20 overflow-hidden border-r border-black/20 transition-[width] duration-200 ease-out',
+          sidebarCollapsed ? 'w-[72px]' : 'w-[228px]',
+        )}
+      >
+        <div
+          className={cn(
+            'h-20 flex flex-col justify-center border-b border-white/10 shrink-0 select-none',
+            sidebarCollapsed ? 'items-center px-2' : 'px-5',
+          )}
+        >
+           <div className={cn('flex items-center gap-2', sidebarCollapsed && 'flex-col gap-1')}>
+             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md shrink-0">
                M
              </div>
-             <div className="leading-tight min-w-0">
-               <p className="text-sm font-semibold text-white truncate">Microtechnique</p>
-               <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
-             </div>
+             {!sidebarCollapsed && (
+               <div className="leading-tight min-w-0">
+                 <p className="text-sm font-semibold text-white truncate">Microtechnique Accounts</p>
+                 <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
+               </div>
+             )}
            </div>
-           {user && <span className="mt-1 text-[10px] text-white/50 tracking-wider truncate uppercase">G{(user as any)?.godown_id || 1} • {user.role}</span>}
+           {!sidebarCollapsed && user && (
+             <span className="mt-1 text-[10px] text-white/50 tracking-wider truncate uppercase">
+               G{(user as any)?.godown_id || 1} • {user.role}
+             </span>
+           )}
         </div>
-        
-        <NavigationList />
+
+        <NavigationList collapsed={sidebarCollapsed} />
 
         {/* License / Trial badge */}
         {license && (
-          <div className={`mx-3 mb-2 px-3 py-2 rounded-lg border ${license.status === 'trial' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'}`}>
-            <div className="flex items-center justify-between">
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${license.status === 'trial' ? 'text-amber-300' : 'text-violet-300'}`}>
-                {license.status === 'trial' ? 'Free Trial' : `${license.tier_display_name} Plan`}
-              </span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                license.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' :
-                license.status === 'trial' ? 'bg-amber-500/20 text-amber-300' :
-                'bg-red-500/20 text-red-300'
-              }`}>
-                {license.status === 'trial' ? `${license.trial_days_remaining ?? 0}d left` : license.status}
-              </span>
-            </div>
-            <div className="mt-1.5">
-              <div className="flex justify-between text-[10px] text-white/40 mb-1">
-                <span>Users</span>
-                <span>{license.used_users}/{license.max_users}</span>
-              </div>
-              <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${license.status === 'trial' ? 'bg-amber-400' : 'bg-violet-400'}`}
-                  style={{ width: `${Math.min((license.used_users / license.max_users) * 100, 100)}%` }}
-                />
-              </div>
-            </div>
+          <div
+            title={
+              sidebarCollapsed
+                ? `${license.status === 'trial' ? 'Free trial' : license.tier_display_name} — ${license.used_users}/${license.max_users} users`
+                : undefined
+            }
+            className={cn(
+              'mb-2 rounded-lg border shrink-0',
+              sidebarCollapsed ? 'mx-2 px-2 py-2 flex flex-col items-center gap-1' : 'mx-3 px-3 py-2',
+              license.status === 'trial' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10',
+            )}
+          >
+            {!sidebarCollapsed ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${license.status === 'trial' ? 'text-amber-300' : 'text-violet-300'}`}>
+                    {license.status === 'trial' ? 'Free Trial' : `${license.tier_display_name} Plan`}
+                  </span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                      license.status === 'active'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : license.status === 'trial'
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-red-500/20 text-red-300'
+                    }`}
+                  >
+                    {license.status === 'trial' ? `${license.trial_days_remaining ?? 0}d left` : license.status}
+                  </span>
+                </div>
+                <div className="mt-1.5">
+                  <div className="flex justify-between text-[10px] text-white/40 mb-1">
+                    <span>Users</span>
+                    <span>
+                      {license.used_users}/{license.max_users}
+                    </span>
+                  </div>
+                  <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${license.status === 'trial' ? 'bg-amber-400' : 'bg-violet-400'}`}
+                      style={{ width: `${Math.min((license.used_users / license.max_users) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div
+                className={cn(
+                  'w-2.5 h-2.5 rounded-full',
+                  license.status === 'trial' ? 'bg-amber-400' : license.status === 'active' ? 'bg-emerald-400' : 'bg-red-400',
+                )}
+                aria-hidden
+              />
+            )}
           </div>
         )}
 
-        <div className="p-4 border-t border-white/10 flex items-center gap-3 shrink-0 bg-black/20">
+        <div
+          className={cn(
+            'border-t border-white/10 flex shrink-0 bg-black/20',
+            sidebarCollapsed ? 'flex-col items-center gap-2 py-3 px-2' : 'p-4 flex-row items-center gap-3',
+          )}
+        >
            <button
              type="button"
              onClick={() => navigate('/profile')}
              className="w-9 h-9 rounded-full bg-indigo-500 flex flex-shrink-0 items-center justify-center text-white font-bold shadow-md ring-2 ring-indigo-400 overflow-hidden"
              aria-label="Open profile"
+             title={sidebarCollapsed ? user?.name : undefined}
            >
              {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : getInitials(user?.name || '?')}
            </button>
-           <div className="flex-1 min-w-0">
-             <p className="text-sm font-medium text-white truncate">{user?.name}</p>
-             <p className="text-[10px] text-white/60 truncate">{user?.email}</p>
-           </div>
-           <Button variant="ghost" size="icon" className="text-white/60 hover:text-white" onClick={logout}><LogOut className="w-4 h-4"/></Button>
+           {!sidebarCollapsed && (
+             <div className="flex-1 min-w-0">
+               <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+               <p className="text-[10px] text-white/60 truncate">{user?.email}</p>
+             </div>
+           )}
+           <Button
+             variant="ghost"
+             size="icon"
+             className="text-white/60 hover:text-white shrink-0"
+             onClick={logout}
+             title="Log out"
+           >
+             <LogOut className="w-4 h-4" />
+           </Button>
         </div>
       </aside>
 
@@ -373,11 +489,11 @@ export default function AppLayout() {
                    M
                  </div>
                  <div className="leading-tight min-w-0">
-                   <p className="text-sm font-semibold text-white truncate">Microtechnique</p>
+                   <p className="text-sm font-semibold text-white truncate">Microtechnique Accounts</p>
                    <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
                  </div>
                </div>
-               <NavigationList />
+               <NavigationList collapsed={false} />
                <div className="p-4 bg-white/5"><Button className="w-full bg-red-500/20 text-red-100 hover:bg-red-500/40" onClick={logout}>Log Out</Button></div>
             </div>
          </div>
@@ -388,13 +504,24 @@ export default function AppLayout() {
         {/* Trial period banner — sticks above the header */}
         <TrialBanner />
 
-        <header className="h-[56px] bg-white border-b flex items-center justify-between px-4 sticky top-0 z-10 shrink-0">
-          <div className="flex items-center gap-3">
-             <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
-             
-             <div 
+        <header className="h-[56px] bg-white border-b flex items-center justify-between px-4 sm:px-5 sticky top-0 z-10 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+             <Button variant="ghost" size="icon" className="md:hidden shrink-0" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
+             <Button
+               type="button"
+               variant="ghost"
+               size="icon"
+               className="hidden md:flex shrink-0 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+               onClick={toggleSidebarCollapsed}
+               aria-expanded={!sidebarCollapsed}
+               aria-controls="app-sidebar"
+               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+             >
+               {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+             </Button>
+             <div
                 onClick={() => setCmdOpen(true)}
-                className="hidden md:flex ml-2 items-center text-sm text-slate-400 bg-slate-100 hover:bg-slate-200 transition-colors w-64 h-9 px-3 rounded-lg border border-slate-200 cursor-pointer shadow-sm"
+                className="hidden md:flex items-center text-sm text-slate-400 bg-slate-100 hover:bg-slate-200 transition-colors w-64 min-w-0 max-w-[min(16rem,100%)] h-9 px-3 rounded-lg border border-slate-200 cursor-pointer shadow-sm"
              >
                 <Search className="w-4 h-4 mr-2" /> Quick Search...
                 <kbd className="ml-auto flex items-center gap-1 font-mono text-[10px] bg-white px-1.5 py-0.5 rounded border">⌘ K</kbd>
@@ -417,7 +544,7 @@ export default function AppLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto bg-[#F7F7F5] relative">
+        <main className="flex-1 overflow-auto overflow-x-hidden bg-[#F7F7F5] relative px-4 sm:px-6 lg:px-8">
           {license?.status === 'trial' && (license.trial_days_remaining ?? 1) <= 0 ? (
             <div className="flex flex-col items-center justify-center min-h-full p-8 text-center">
               <div className="w-20 h-20 rounded-2xl bg-red-100 flex items-center justify-center mb-6">
@@ -425,7 +552,7 @@ export default function AppLayout() {
               </div>
               <h2 className="text-2xl font-bold text-slate-800 mb-2">Your free trial has ended</h2>
               <p className="text-slate-500 max-w-md mb-8">
-                Your 15-day trial period is over. Purchase a license to continue using BizFlow ERP and keep access to all your data.
+                Your 15-day trial period is over. Purchase a license to continue using Microtechnique Accounts and keep access to all your data.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <a
@@ -447,7 +574,7 @@ export default function AppLayout() {
             </div>
           ) : (
             <RouteErrorBoundary>
-              <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>}>
+              <Suspense fallback={<div className="px-6 py-12 text-center text-muted-foreground text-sm">Loading…</div>}>
                 <Outlet />
               </Suspense>
             </RouteErrorBoundary>

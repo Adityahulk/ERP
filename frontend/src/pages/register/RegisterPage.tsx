@@ -68,7 +68,7 @@ export default function RegisterPage() {
       {/* Left — benefits panel */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-center p-16 text-white">
         <div className="mb-8">
-          <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-12 brightness-0 invert mb-6" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-12 brightness-0 invert mb-6" />
           <h1 className="text-4xl font-bold leading-tight mb-4">
             Start your ERP journey today
           </h1>
@@ -110,7 +110,7 @@ export default function RegisterPage() {
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-md">
             <div className="text-center mb-8 lg:hidden">
-              <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-12 mx-auto mb-4 brightness-0 invert" />
+              <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-12 mx-auto mb-4 brightness-0 invert" />
             </div>
 
             <div className="mb-6">

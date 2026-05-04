@@ -1120,7 +1120,7 @@ export default function Settings() {
                      <h2 className="text-xl font-bold">Item & Vocabulary Schema</h2>
                      <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 text-sm">
                         <p className="font-semibold mb-1">Domain Translation Active</p>
-                        Microtechnique IT automatically translates UI text based on your domain setup.
+                        Microtechnique Accounts automatically translates UI text based on your domain setup.
                      </div>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
                         <div>

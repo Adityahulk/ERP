@@ -115,7 +115,7 @@ export default function LicenseDetailPage() {
             <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
           </Link>
-          <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-9 brightness-0 invert" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-9 brightness-0 invert" />
         </div>
       </div>
 

@@ -100,8 +100,8 @@ export default function RegisterDashboard() {
       <nav className="border-b border-white/10 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique IT" className="h-9 brightness-0 invert" />
-            <span className="text-white font-semibold hidden sm:block">Microtechnique IT</span>
+            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-9 brightness-0 invert" />
+            <span className="text-white font-semibold hidden sm:block">Microtechnique Accounts</span>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-slate-400 text-sm hidden sm:block">{registrant?.email}</span>
