@@ -9,7 +9,7 @@ import {
   Warehouse, BarChart3, Cloud, UserCheck, Barcode,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
   Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -17,6 +17,7 @@ import { getInitials, cn } from '@/lib/utils';
 import api from '@/lib/api';
 
 const SIDEBAR_COLLAPSED_KEY = 'erp_sidebar_collapsed';
+const NAV_GROUP_VISIBLE_COUNT = 2;
 
 const navGroups = [
   {
@@ -130,6 +131,8 @@ export default function AppLayout() {
       return next;
     });
   };
+  /** Sidebar nav: groups with more than NAV_GROUP_VISIBLE_COUNT links start collapsed until expanded (or active route is in overflow). */
+  const [navGroupExpanded, setNavGroupExpanded] = useState<Record<string, boolean>>({});
   const [cmdOpen, setCmdOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
@@ -194,7 +197,21 @@ export default function AppLayout() {
 
   const NavigationList = ({ collapsed = false }: { collapsed?: boolean }) => (
      <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
-        {navGroups.map((group, idx) => (
+        {navGroups.map((group, idx) => {
+           const groupKey = group.label;
+           const needsMoreToggle = group.items.length > NAV_GROUP_VISIBLE_COUNT;
+           const overflowHasActive =
+             needsMoreToggle &&
+             group.items.slice(NAV_GROUP_VISIBLE_COUNT).some((item) => location.pathname.startsWith(item.to));
+           const userExpanded = navGroupExpanded[groupKey] === true;
+           const showAllItems =
+             !needsMoreToggle || userExpanded || overflowHasActive;
+           const itemsToRender = showAllItems
+             ? group.items
+             : group.items.slice(0, NAV_GROUP_VISIBLE_COUNT);
+           const overflowCount = group.items.length - NAV_GROUP_VISIBLE_COUNT;
+
+           return (
            <div
              key={idx}
              className={cn(
@@ -207,7 +224,7 @@ export default function AppLayout() {
                 <h3 className="text-[10px] font-bold text-white/40 tracking-widest uppercase mb-2 ml-2">{group.label}</h3>
               )}
               <div className="space-y-1">
-                 {group.items.map(item => {
+                 {itemsToRender.map(item => {
                     const active = location.pathname.startsWith(item.to);
                     return (
                        <Link
@@ -233,11 +250,58 @@ export default function AppLayout() {
                           <item.icon className={cn('w-[18px] h-[18px] shrink-0', collapsed && 'mx-auto')} />
                           {!collapsed && <span className="text-sm truncate">{item.label}</span>}
                        </Link>
-                    )
+                    );
                  })}
+
+                 {needsMoreToggle && !showAllItems && (
+                   <button
+                     type="button"
+                     onClick={() =>
+                       setNavGroupExpanded((prev) => ({ ...prev, [groupKey]: true }))
+                     }
+                     className={cn(
+                       'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors relative overflow-hidden',
+                       'text-violet-200/90 hover:text-white hover:bg-white/10',
+                       collapsed ? 'justify-center px-2' : 'px-3',
+                     )}
+                     title={collapsed ? `${overflowCount} more in ${group.label}` : undefined}
+                     aria-expanded={false}
+                   >
+                     <ChevronDown className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
+                     {!collapsed && (
+                       <span className="text-xs font-medium truncate">
+                         {overflowCount} more in {group.label}
+                       </span>
+                     )}
+                   </button>
+                 )}
+
+                 {needsMoreToggle && showAllItems && !overflowHasActive && (
+                   <button
+                     type="button"
+                     onClick={() =>
+                       setNavGroupExpanded((prev) => {
+                         const next = { ...prev };
+                         delete next[groupKey];
+                         return next;
+                       })
+                     }
+                     className={cn(
+                       'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors',
+                       'text-violet-200/80 hover:text-white hover:bg-white/10',
+                       collapsed ? 'justify-center px-2' : 'px-3',
+                     )}
+                     title={collapsed ? 'Show fewer links' : undefined}
+                     aria-expanded
+                   >
+                     <ChevronUp className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
+                     {!collapsed && <span className="text-xs font-medium">Show less</span>}
+                   </button>
+                 )}
               </div>
            </div>
-        ))}
+           );
+        })}
      </div>
   );
 
