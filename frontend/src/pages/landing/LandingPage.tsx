@@ -213,15 +213,18 @@ export default function LandingPage() {
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shadow-sm">
+          <Link to="/" className="flex items-center gap-3 min-w-0 shrink">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shadow-sm shrink-0">
               M
             </div>
-            <div className="leading-tight">
-              <p className="text-base font-semibold text-slate-900">Microtechnique Accounts</p>
-              <p className="text-[10px] uppercase tracking-[0.18em] text-violet-700 font-semibold">Business suite</p>
+            <div className="leading-tight min-w-0 text-left">
+              <p className="text-[15px] font-semibold text-slate-900 leading-snug">
+                <span className="block">Microtechnique</span>
+                <span className="block">Accounts</span>
+              </p>
+              <p className="text-xs font-medium text-violet-700 mt-0.5 tracking-normal">Business suite</p>
             </div>
-          </div>
+          </Link>
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
               Features
@@ -641,13 +644,16 @@ export default function LandingPage() {
       <footer className="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black">
+            <div className="mb-6 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shrink-0">
                 M
               </div>
-              <div className="leading-tight">
-                <p className="text-base font-semibold text-white">Microtechnique Accounts</p>
-                <p className="text-[10px] uppercase tracking-[0.18em] text-violet-300 font-semibold">Business suite</p>
+              <div className="leading-tight min-w-0">
+                <p className="text-base font-semibold text-white leading-snug">
+                  <span className="block">Microtechnique</span>
+                  <span className="block">Accounts</span>
+                </p>
+                <p className="text-xs font-medium text-violet-300 mt-0.5 tracking-normal">Business suite</p>
               </div>
             </div>
             <p className="mb-6 max-w-sm">

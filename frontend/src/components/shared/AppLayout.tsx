@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense, useRef } from 'react';
+import { useState, useEffect, Suspense, useRef, type Dispatch, type SetStateAction } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
@@ -92,6 +92,130 @@ const navGroups = [
      items: [ { to: '/settings', icon: Settings, label: 'Settings' } ]
   }
 ];
+
+type SidebarNavProps = {
+  collapsed: boolean;
+  pathname: string;
+  navGroupExpanded: Record<string, boolean>;
+  setNavGroupExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
+  onNavLinkClick: () => void;
+};
+
+/** Module-level component so React keeps the same type between renders — preserves scroll in the nav list. */
+function SidebarNavigation({
+  collapsed,
+  pathname,
+  navGroupExpanded,
+  setNavGroupExpanded,
+  onNavLinkClick,
+}: SidebarNavProps) {
+  return (
+    <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
+      {navGroups.map((group, idx) => {
+        const groupKey = group.label;
+        const needsMoreToggle = group.items.length > NAV_GROUP_VISIBLE_COUNT;
+        const overflowHasActive =
+          needsMoreToggle &&
+          group.items.slice(NAV_GROUP_VISIBLE_COUNT).some((item) => pathname.startsWith(item.to));
+        const userExpanded = navGroupExpanded[groupKey] === true;
+        const showAllItems = !needsMoreToggle || userExpanded || overflowHasActive;
+        const itemsToRender = showAllItems ? group.items : group.items.slice(0, NAV_GROUP_VISIBLE_COUNT);
+        const overflowCount = group.items.length - NAV_GROUP_VISIBLE_COUNT;
+
+        return (
+          <div
+            key={idx}
+            className={cn(
+              'mb-6',
+              collapsed ? 'px-2' : 'px-4',
+              collapsed && idx > 0 && 'pt-4 mt-1 border-t border-white/10',
+            )}
+          >
+            {!collapsed && (
+              <h3 className="text-[10px] font-bold text-white/40 tracking-widest uppercase mb-2 ml-2">{group.label}</h3>
+            )}
+            <div className="space-y-1">
+              {itemsToRender.map((item) => {
+                const active = pathname.startsWith(item.to);
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={onNavLinkClick}
+                    title={collapsed ? item.label : undefined}
+                    className={cn(
+                      'flex items-center gap-3 py-2 rounded-md transition-all duration-200 relative overflow-hidden',
+                      collapsed ? 'justify-center px-2' : 'px-3',
+                      active
+                        ? 'bg-white/15 text-white shadow-inner font-medium'
+                        : 'text-white/70 hover:bg-white/10 hover:text-white',
+                    )}
+                  >
+                    {active && (
+                      <span
+                        className={cn(
+                          'absolute top-1/2 -translate-y-1/2 w-1 rounded-r-md bg-white',
+                          collapsed ? 'left-1 h-6' : 'left-0 h-5',
+                        )}
+                        aria-hidden
+                      />
+                    )}
+                    <item.icon className={cn('w-[18px] h-[18px] shrink-0', collapsed && 'mx-auto')} />
+                    {!collapsed && <span className="text-sm truncate">{item.label}</span>}
+                  </Link>
+                );
+              })}
+
+              {needsMoreToggle && !showAllItems && (
+                <button
+                  type="button"
+                  onClick={() => setNavGroupExpanded((prev) => ({ ...prev, [groupKey]: true }))}
+                  className={cn(
+                    'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors relative overflow-hidden',
+                    'text-violet-200/90 hover:text-white hover:bg-white/10',
+                    collapsed ? 'justify-center px-2' : 'px-3',
+                  )}
+                  title={collapsed ? `${overflowCount} more in ${group.label}` : undefined}
+                  aria-expanded={false}
+                >
+                  <ChevronDown className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
+                  {!collapsed && (
+                    <span className="text-xs font-medium truncate">
+                      {overflowCount} more in {group.label}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {needsMoreToggle && showAllItems && !overflowHasActive && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setNavGroupExpanded((prev) => {
+                      const next = { ...prev };
+                      delete next[groupKey];
+                      return next;
+                    })
+                  }
+                  className={cn(
+                    'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors',
+                    'text-violet-200/80 hover:text-white hover:bg-white/10',
+                    collapsed ? 'justify-center px-2' : 'px-3',
+                  )}
+                  title={collapsed ? 'Show fewer links' : undefined}
+                  aria-expanded
+                >
+                  <ChevronUp className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
+                  {!collapsed && <span className="text-xs font-medium">Show less</span>}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const { user, logout, license, setLicense } = useAuthStore();
@@ -194,116 +318,6 @@ export default function AppLayout() {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [searchQ, cmdOpen]);
-
-  const NavigationList = ({ collapsed = false }: { collapsed?: boolean }) => (
-     <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
-        {navGroups.map((group, idx) => {
-           const groupKey = group.label;
-           const needsMoreToggle = group.items.length > NAV_GROUP_VISIBLE_COUNT;
-           const overflowHasActive =
-             needsMoreToggle &&
-             group.items.slice(NAV_GROUP_VISIBLE_COUNT).some((item) => location.pathname.startsWith(item.to));
-           const userExpanded = navGroupExpanded[groupKey] === true;
-           const showAllItems =
-             !needsMoreToggle || userExpanded || overflowHasActive;
-           const itemsToRender = showAllItems
-             ? group.items
-             : group.items.slice(0, NAV_GROUP_VISIBLE_COUNT);
-           const overflowCount = group.items.length - NAV_GROUP_VISIBLE_COUNT;
-
-           return (
-           <div
-             key={idx}
-             className={cn(
-               'mb-6',
-               collapsed ? 'px-2' : 'px-4',
-               collapsed && idx > 0 && 'pt-4 mt-1 border-t border-white/10',
-             )}
-           >
-              {!collapsed && (
-                <h3 className="text-[10px] font-bold text-white/40 tracking-widest uppercase mb-2 ml-2">{group.label}</h3>
-              )}
-              <div className="space-y-1">
-                 {itemsToRender.map(item => {
-                    const active = location.pathname.startsWith(item.to);
-                    return (
-                       <Link
-                         key={item.to}
-                         to={item.to}
-                         onClick={() => setMobileOpen(false)}
-                         title={collapsed ? item.label : undefined}
-                         className={cn(
-                           'flex items-center gap-3 py-2 rounded-md transition-all duration-200 relative overflow-hidden',
-                           collapsed ? 'justify-center px-2' : 'px-3',
-                           active ? 'bg-white/15 text-white shadow-inner font-medium' : 'text-white/70 hover:bg-white/10 hover:text-white',
-                         )}
-                       >
-                          {active && (
-                            <span
-                              className={cn(
-                                'absolute top-1/2 -translate-y-1/2 w-1 rounded-r-md bg-white',
-                                collapsed ? 'left-1 h-6' : 'left-0 h-5',
-                              )}
-                              aria-hidden
-                            />
-                          )}
-                          <item.icon className={cn('w-[18px] h-[18px] shrink-0', collapsed && 'mx-auto')} />
-                          {!collapsed && <span className="text-sm truncate">{item.label}</span>}
-                       </Link>
-                    );
-                 })}
-
-                 {needsMoreToggle && !showAllItems && (
-                   <button
-                     type="button"
-                     onClick={() =>
-                       setNavGroupExpanded((prev) => ({ ...prev, [groupKey]: true }))
-                     }
-                     className={cn(
-                       'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors relative overflow-hidden',
-                       'text-violet-200/90 hover:text-white hover:bg-white/10',
-                       collapsed ? 'justify-center px-2' : 'px-3',
-                     )}
-                     title={collapsed ? `${overflowCount} more in ${group.label}` : undefined}
-                     aria-expanded={false}
-                   >
-                     <ChevronDown className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
-                     {!collapsed && (
-                       <span className="text-xs font-medium truncate">
-                         {overflowCount} more in {group.label}
-                       </span>
-                     )}
-                   </button>
-                 )}
-
-                 {needsMoreToggle && showAllItems && !overflowHasActive && (
-                   <button
-                     type="button"
-                     onClick={() =>
-                       setNavGroupExpanded((prev) => {
-                         const next = { ...prev };
-                         delete next[groupKey];
-                         return next;
-                       })
-                     }
-                     className={cn(
-                       'flex w-full items-center gap-2 py-2 rounded-md text-left transition-colors',
-                       'text-violet-200/80 hover:text-white hover:bg-white/10',
-                       collapsed ? 'justify-center px-2' : 'px-3',
-                     )}
-                     title={collapsed ? 'Show fewer links' : undefined}
-                     aria-expanded
-                   >
-                     <ChevronUp className="w-[18px] h-[18px] shrink-0 opacity-90" aria-hidden />
-                     {!collapsed && <span className="text-xs font-medium">Show less</span>}
-                   </button>
-                 )}
-              </div>
-           </div>
-           );
-        })}
-     </div>
-  );
 
   return (
     <div className="flex h-screen bg-[#F7F7F5]">
@@ -421,34 +435,43 @@ export default function AppLayout() {
         id="app-sidebar"
         className={cn(
           'hidden md:flex flex-col flex-shrink-0 bg-[#1E1B4B] shadow-xl z-20 overflow-hidden border-r border-black/20 transition-[width] duration-200 ease-out',
-          sidebarCollapsed ? 'w-[72px]' : 'w-[228px]',
+          sidebarCollapsed ? 'w-[72px]' : 'w-[248px]',
         )}
       >
         <div
           className={cn(
-            'h-20 flex flex-col justify-center border-b border-white/10 shrink-0 select-none',
-            sidebarCollapsed ? 'items-center px-2' : 'px-5',
+            'flex flex-col justify-center border-b border-white/10 shrink-0 select-none min-h-[4.5rem] py-3',
+            sidebarCollapsed ? 'items-center px-2' : 'px-4',
           )}
         >
-           <div className={cn('flex items-center gap-2', sidebarCollapsed && 'flex-col gap-1')}>
-             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md shrink-0">
+           <div className={cn('flex gap-2.5', sidebarCollapsed ? 'flex-col items-center gap-1' : 'items-start')}>
+             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md shrink-0 mt-0.5">
                M
              </div>
              {!sidebarCollapsed && (
-               <div className="leading-tight min-w-0">
-                 <p className="text-sm font-semibold text-white truncate">Microtechnique Accounts</p>
-                 <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
+               <div className="min-w-0 flex-1 leading-tight">
+                 <p className="text-[12px] font-semibold text-white">
+                   <span className="block">Microtechnique</span>
+                   <span className="block">Accounts</span>
+                 </p>
+                 <p className="text-[10px] text-violet-200/95 mt-0.5 tracking-normal">Business suite</p>
+                 {user && (
+                   <span className="mt-1.5 block text-[10px] text-white/50 tracking-wide uppercase truncate">
+                     G{(user as any)?.godown_id || 1} • {user.role}
+                   </span>
+                 )}
                </div>
              )}
            </div>
-           {!sidebarCollapsed && user && (
-             <span className="mt-1 text-[10px] text-white/50 tracking-wider truncate uppercase">
-               G{(user as any)?.godown_id || 1} • {user.role}
-             </span>
-           )}
         </div>
 
-        <NavigationList collapsed={sidebarCollapsed} />
+        <SidebarNavigation
+          collapsed={sidebarCollapsed}
+          pathname={location.pathname}
+          navGroupExpanded={navGroupExpanded}
+          setNavGroupExpanded={setNavGroupExpanded}
+          onNavLinkClick={() => setMobileOpen(false)}
+        />
 
         {/* License / Trial badge */}
         {license && (
@@ -548,16 +571,25 @@ export default function AppLayout() {
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
-               <div className="px-6 mb-4 flex items-center gap-2">
-                 <div className="w-8 h-8 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-sm font-black shadow-md">
+               <div className="px-6 mb-4 flex items-start gap-2.5">
+                 <div className="w-8 h-8 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-sm font-black shadow-md shrink-0 mt-0.5">
                    M
                  </div>
                  <div className="leading-tight min-w-0">
-                   <p className="text-sm font-semibold text-white truncate">Microtechnique Accounts</p>
-                   <p className="text-[10px] uppercase tracking-[0.15em] text-violet-200">IT</p>
+                   <p className="text-sm font-semibold text-white">
+                     <span className="block">Microtechnique</span>
+                     <span className="block">Accounts</span>
+                   </p>
+                   <p className="text-[10px] text-violet-200/95 mt-0.5 tracking-normal">Business suite</p>
                  </div>
                </div>
-               <NavigationList collapsed={false} />
+               <SidebarNavigation
+                 collapsed={false}
+                 pathname={location.pathname}
+                 navGroupExpanded={navGroupExpanded}
+                 setNavGroupExpanded={setNavGroupExpanded}
+                 onNavLinkClick={() => setMobileOpen(false)}
+               />
                <div className="p-4 bg-white/5"><Button className="w-full bg-red-500/20 text-red-100 hover:bg-red-500/40" onClick={logout}>Log Out</Button></div>
             </div>
          </div>

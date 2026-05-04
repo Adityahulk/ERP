@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Edit2, Trash2, Printer, Barcode, AlertTriangle, Loader2 } from 'lucide-react';
 import ItemForm from './ItemForm';
+import PrintLabels from '@/components/shared/PrintLabels';
 import { openItemBarcodeInNewTab } from '@/lib/itemBarcode';
 
 import toast from 'react-hot-toast';
@@ -20,6 +21,7 @@ export default function ItemDetail() {
   const deleteMutation = useDeleteItem();
   const [showEdit, setShowEdit] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [printLabelsOpen, setPrintLabelsOpen] = useState(false);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
@@ -59,7 +61,10 @@ export default function ItemDetail() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm"><Printer className="w-4 h-4 mr-1" />Print Label</Button>
+          <Button variant="outline" size="sm" type="button" onClick={() => setPrintLabelsOpen(true)}>
+            <Printer className="w-4 h-4 mr-1" />
+            Print Label
+          </Button>
           <Button variant="outline" size="sm" onClick={() => id && openItemBarcodeInNewTab(id)}><Barcode className="w-4 h-4 mr-1" />Barcode</Button>
           <Button variant="outline" size="sm" onClick={() => setShowEdit(true)}><Edit2 className="w-4 h-4 mr-1" />Edit</Button>
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
@@ -197,6 +202,20 @@ export default function ItemDetail() {
       </Tabs>
 
       <ItemForm open={showEdit} onOpenChange={setShowEdit} item={item} />
+
+      {printLabelsOpen && id && (
+        <PrintLabels
+          selectedItems={[
+            {
+              item_id: id,
+              sku: item.sku || '',
+              name: item.name,
+              quantity: 1,
+            },
+          ]}
+          onClose={() => setPrintLabelsOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         open={deleteOpen}

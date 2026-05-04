@@ -4,7 +4,7 @@ import { useAuthStore } from '@/store/authStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { formatMoney } from '@/lib/formatters';
-import { IndianRupee, AlertTriangle, ArrowRight, Package, Factory, Truck, Wrench } from 'lucide-react';
+import { IndianRupee, AlertTriangle, ArrowRight, Package, Truck, Wrench } from 'lucide-react';
 import { Link, Navigate } from 'react-router-dom';
 
 const BRAND_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
@@ -28,7 +28,6 @@ export default function Dashboard() {
      queryFn: async () => (await api.get('/reports/dashboard')).data?.data
   });
 
-  // Manufacturing-specific queries
   const { data: wsStats } = useQuery({
     queryKey: ['dashboard-ws-stats'],
     queryFn: () => api.get('/wholesale', { params: { page: 1, limit: 1 } }).then(r => r.data?.meta),
@@ -37,11 +36,6 @@ export default function Dashboard() {
   const { data: jwOverdue } = useQuery({
     queryKey: ['dashboard-jw-overdue'],
     queryFn: () => api.get('/job-work/overdue').then(r => r.data?.data ?? []),
-  });
-
-  const { data: recentProduction } = useQuery({
-    queryKey: ['dashboard-production'],
-    queryFn: () => api.get('/bom/production-logs', { params: { page: 1, limit: 5 } }).then(r => r.data?.data?.data ?? []),
   });
 
   const todaySales = rawData?.today?.sales?.total || 0;
@@ -83,7 +77,7 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* ROW 1: Manufacturing Stats */}
+      {/* ROW 1: Key metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
          <Card className="hover:shadow-md transition-shadow">
             <CardContent className="p-5 flex items-center justify-between">
@@ -176,38 +170,13 @@ export default function Dashboard() {
          </Card>
       </div>
 
-      {/* ROW 3: Manufacturing Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-         {/* Recent Production */}
-         <Card>
-            <CardHeader className="pb-2 flex flex-row items-center justify-between">
-               <CardTitle className="text-base font-semibold flex items-center gap-2"><Factory className="w-4 h-4 text-indigo-600" /> Recent Production</CardTitle>
-               <Link to="/production" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
-            </CardHeader>
-            <CardContent>
-               <div className="space-y-2">
-                  {recentProduction?.map((log: any) => (
-                     <div key={log.id} className="flex justify-between items-center p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors">
-                        <div>
-                           <p className="font-medium text-sm">{log.finished_item_name}</p>
-                           <p className="text-xs text-slate-500">{log.production_number} • {new Date(log.production_date).toLocaleDateString('en-IN')}</p>
-                        </div>
-                        <div className="text-right">
-                           <p className="font-bold text-sm">{log.quantity_produced} units</p>
-                           <p className="text-[10px] text-slate-500">{formatMoney(log.total_cost)}</p>
-                        </div>
-                     </div>
-                  ))}
-                  {(!recentProduction || recentProduction.length === 0) && <p className="text-sm text-slate-400 py-4 text-center">No production yet. Create a BOM to start.</p>}
-               </div>
-            </CardContent>
-         </Card>
-
+      {/* ROW 3: Recent activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
          {/* Recent Invoices */}
          <Card>
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
                <CardTitle className="text-base font-semibold">Recent Invoices</CardTitle>
-               <Link to="/sales" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
+               <Link to="/sales-hub/invoices" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
             </CardHeader>
             <CardContent>
                <div className="space-y-2">
