@@ -56,7 +56,6 @@ export default function InvoiceList() {
     paid: 'bg-emerald-100 text-emerald-700',
     partial: 'bg-amber-100 text-amber-700',
     unpaid: 'bg-red-100 text-red-700',
-    draft: 'bg-slate-100 text-slate-700',
     cancelled: 'bg-slate-200 text-slate-500 line-through',
   };
 
@@ -88,7 +87,7 @@ export default function InvoiceList() {
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <div className="flex bg-muted p-1 rounded-lg overflow-x-auto">
-          {['all', 'draft', 'unpaid', 'partial', 'paid', 'overdue', 'cancelled'].map(t => (
+          {['all', 'unpaid', 'partial', 'paid', 'overdue', 'cancelled'].map(t => (
             <button
               key={t}
               className={`px-4 py-1.5 rounded-md text-sm font-medium capitalize whitespace-nowrap transition-all ${tab === t ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
@@ -148,7 +147,7 @@ export default function InvoiceList() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <Badge variant="secondary" className={`capitalize ${statusColors[displayStatus] || ''}`}>{displayStatus.replace('_', ' ')}</Badge>
+                      <Badge variant="secondary" className={`capitalize ${statusColors[displayStatus] || 'bg-muted text-muted-foreground'}`}>{displayStatus.replace('_', ' ')}</Badge>
                     </td>
                     <td className="py-3 px-4 text-right z-10">
                       <div className="flex justify-end gap-2">
