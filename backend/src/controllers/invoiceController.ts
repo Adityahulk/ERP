@@ -11,6 +11,8 @@ import {
   generateIRN,
   generateEinvoiceQR,
   cancelIRN,
+  generateEwayBill as generateEwayBillViaService,
+  cancelEwayBill as cancelEwayBillViaService,
   type EinvoiceItemRow,
 } from '../services/eInvoiceService';
 import { redis } from '../config/redis';
@@ -1322,8 +1324,8 @@ export async function generateEinvoice(req: Request, res: Response) {
     );
     if (!comp.rows.length) return res.status(400).json(error('Company not found'));
     const company = comp.rows[0];
-    if (!company.einvoice_enabled || !company.einvoice_turnover_above_5cr) {
-      return res.status(400).json(error('Enable e-invoice and turnover flag in company settings first'));
+    if (!company.einvoice_enabled) {
+      return res.status(400).json(error('Enable e-invoice in company settings first'));
     }
 
     const invRes = await query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`, [id, companyId]);
@@ -1396,6 +1398,119 @@ export async function cancelEinvoice(req: Request, res: Response) {
     res.json(success({ cancelled: true }));
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function generateEwayBill(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const {
+      transporter_id,
+      transporter_name,
+      transport_mode,
+      distance_km,
+      trans_doc_no,
+      trans_doc_dt,
+      vehicle_no,
+      vehicle_type,
+    } = req.body || {};
+
+    if (!transporter_id || String(transporter_id).trim().length !== 15) {
+      return res.status(400).json(error('transporter_id must be a 15-character transporter GSTIN / TRANSIN'));
+    }
+    if (!vehicle_no || String(vehicle_no).trim().length < 4) {
+      return res.status(400).json(error('vehicle_no is required (minimum 4 characters)'));
+    }
+
+    const invRes = await query(
+      `SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const inv = invRes.rows[0];
+    if (!inv.irn) return res.status(400).json(error('Generate IRN before generating E-Way Bill'));
+    if (inv.einvoice_status !== 'generated') return res.status(400).json(error('E-invoice must be in generated state'));
+    if (inv.eway_bill_no && inv.eway_bill_status !== 'cancelled') {
+      return res.status(400).json(error('E-Way Bill already generated for this invoice'));
+    }
+
+    const compRes = await query(`SELECT gstin FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
+    if (!compRes.rows.length) return res.status(400).json(error('Company not found'));
+    const sellerGstin = String(compRes.rows[0].gstin || '').trim().toUpperCase();
+    if (sellerGstin.length !== 15) return res.status(400).json(error('Company GSTIN is required to generate E-Way Bill'));
+
+    const out = await generateEwayBillViaService({
+      sellerGstin,
+      irn: inv.irn,
+      transporter_id: String(transporter_id).trim(),
+      transporter_name: transporter_name ? String(transporter_name) : undefined,
+      transport_mode: transport_mode ? String(transport_mode) : undefined,
+      distance_km: Number(distance_km || 0),
+      trans_doc_no: trans_doc_no ? String(trans_doc_no) : undefined,
+      trans_doc_dt: trans_doc_dt ? String(trans_doc_dt) : undefined,
+      vehicle_no: String(vehicle_no),
+      vehicle_type: String(vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
+    });
+
+    await query(
+      `UPDATE invoices
+       SET eway_bill_no = $1,
+           eway_bill_date = $2,
+           eway_bill_valid_upto = $3,
+           eway_bill_status = 'generated',
+           updated_at = now()
+       WHERE id = $4 AND company_id = $5`,
+      [out.ewb_no, out.ewb_date, out.valid_upto, id, companyId],
+    );
+
+    res.json(success(out));
+  } catch (err: any) {
+    console.error('generateEwayBill error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function cancelEwayBill(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const reason_code = Number(req.body?.reason_code) || 4;
+    const reason_description = String(req.body?.reason_description || 'Cancelled');
+
+    const invRes = await query(
+      `SELECT eway_bill_no, eway_bill_status FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const inv = invRes.rows[0];
+    if (!inv.eway_bill_no) return res.status(400).json(error('No E-Way Bill to cancel'));
+    if (inv.eway_bill_status === 'cancelled') return res.status(400).json(error('E-Way Bill already cancelled'));
+
+    const compRes = await query(`SELECT gstin FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
+    if (!compRes.rows.length) return res.status(400).json(error('Company not found'));
+    const sellerGstin = String(compRes.rows[0].gstin || '').trim().toUpperCase();
+    if (sellerGstin.length !== 15) return res.status(400).json(error('Company GSTIN is required to cancel E-Way Bill'));
+
+    const out = await cancelEwayBillViaService({
+      sellerGstin,
+      ewb_no: String(inv.eway_bill_no),
+      reason_code,
+      reason_description,
+    });
+
+    await query(
+      `UPDATE invoices
+       SET eway_bill_status = 'cancelled',
+           updated_at = now()
+       WHERE id = $1 AND company_id = $2`,
+      [id, companyId],
+    );
+
+    res.json(success(out));
+  } catch (err: any) {
+    console.error('cancelEwayBill error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));
   }
 }

@@ -17,6 +17,8 @@ router.post('/:id/whatsapp', ctrl.sendWhatsApp);
 router.post('/:id/einvoice/generate', requireMinRole('accountant'), ctrl.generateEinvoice);
 router.post('/:id/einvoice/cancel', requireMinRole('company_admin'), ctrl.cancelEinvoice);
 router.get('/:id/einvoice/pdf', ctrl.getEinvoicePdf);
+router.post('/:id/ewaybill/generate', requireMinRole('accountant'), ctrl.generateEwayBill);
+router.post('/:id/ewaybill/cancel', requireMinRole('company_admin'), ctrl.cancelEwayBill);
 router.post('/:id/payment', ctrl.recordPayment);
 
 router.patch('/:id', requireMinRole('manager'), ctrl.updateInvoice);

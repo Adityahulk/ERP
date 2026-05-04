@@ -913,7 +913,7 @@ export default function Settings() {
                            <Switch checked={einvEnabled} onCheckedChange={setEinvEnabled} />
                         </div>
                         <div className="flex items-center justify-between gap-4 max-w-md">
-                           <span className="text-sm">Turnover above ₹5 Cr (mandatory threshold)</span>
+                           <span className="text-sm">Turnover above ₹5 Cr (statutory / reporting flag)</span>
                            <Switch checked={einvTurnover} onCheckedChange={setEinvTurnover} />
                         </div>
                         <div className="flex items-center justify-between gap-4 max-w-md">

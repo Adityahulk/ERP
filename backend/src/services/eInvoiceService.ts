@@ -5,6 +5,14 @@ import QRCode from 'qrcode';
 import { env } from '../config/env';
 import { decryptSecret } from '../lib/credentialsCrypto';
 import { logger } from '../config/logger';
+import {
+  cancelTaxProEwayBill,
+  cancelTaxProIRN,
+  generateTaxProEwayBill,
+  generateTaxProIRN,
+  isTaxProEinvoiceEnabled,
+  isTaxProEwayEnabled,
+} from './taxProService';
 
 export type NicSupTyp = 'B2B' | 'B2C' | 'SEZWP' | 'SEZWOP' | 'EXPWP' | 'EXPWOP';
 export type NicDocTyp = 'INV' | 'CRN' | 'DBN';
@@ -217,10 +225,14 @@ export async function generateIRN(
     throw new Error('EINVOICE_GSP_URL or EINVOICE_SANDBOX_URL must be set for sandbox/production modes');
   }
 
-  const tryTaxPro = Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
-  if (tryTaxPro) {
-    const taxpro = await generateIRNViaTaxPro(payload);
-    if (taxpro) return taxpro;
+  const sellerGstin = String((payload as any)?.SellerDtls?.Gstin || '').trim().toUpperCase();
+  const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
+  if (tryTaxPro && sellerGstin) {
+    try {
+      return await generateTaxProIRN(payload, sellerGstin);
+    } catch (e: any) {
+      logger.warn('TaxPro IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
+    }
   }
 
   try {
@@ -363,10 +375,15 @@ export async function cancelIRN(
   if (!baseUrl) throw new Error('E-invoice base URL not configured');
 
   const body = { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) };
-  const tryTaxPro = Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
-  if (tryTaxPro) {
-    const ok = await cancelIRNViaTaxPro(irn, reasonCode, reasonDescription);
-    if (ok) return { cancelled: true };
+  const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
+  const sellerGstin = String((company as any)?.gstin || '').trim().toUpperCase();
+  if (tryTaxPro && sellerGstin) {
+    try {
+      const out = await cancelTaxProIRN(irn, reasonCode, reasonDescription, sellerGstin);
+      if (out.cancelled) return { cancelled: true };
+    } catch (e: any) {
+      logger.warn('TaxPro cancel IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
+    }
   }
 
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/CancelEInvoice`, {
@@ -445,4 +462,34 @@ export async function generateEinvoiceQR(
   const absPath = path.join(uploadsDir, fileName);
   await QRCode.toFile(absPath, qrPayload, { type: 'png', width: 256, margin: 1 });
   return `/uploads/einvoice-qr/${fileName}`;
+}
+
+export async function generateEwayBill(params: {
+  sellerGstin: string;
+  irn: string;
+  transporter_id: string;
+  transporter_name?: string;
+  transport_mode?: string;
+  distance_km?: number;
+  trans_doc_no?: string;
+  trans_doc_dt?: string;
+  vehicle_no: string;
+  vehicle_type?: 'R' | 'O';
+}): Promise<{ ewb_no: string; ewb_date: string; valid_upto: string }> {
+  if (!isTaxProEwayEnabled()) {
+    throw new Error('TaxPro E-Way Bill is not configured. Set TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EWB_USER_NAME, TAXPRO_EWB_PASSWORD');
+  }
+  return generateTaxProEwayBill(params);
+}
+
+export async function cancelEwayBill(params: {
+  sellerGstin: string;
+  ewb_no: string;
+  reason_code: number;
+  reason_description: string;
+}): Promise<{ cancelled: boolean; cancel_date: string }> {
+  if (!isTaxProEwayEnabled()) {
+    throw new Error('TaxPro E-Way Bill is not configured. Set TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EWB_USER_NAME, TAXPRO_EWB_PASSWORD');
+  }
+  return cancelTaxProEwayBill(params);
 }

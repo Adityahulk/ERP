@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil } from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
-import { useCancelEinvoice, useCompany, useGenerateEinvoice, useInvoice } from '@/hooks/useBusiness';
+import {
+  useCancelEinvoice,
+  useCancelEwayBill,
+  useCompany,
+  useGenerateEinvoice,
+  useGenerateEwayBill,
+  useInvoice,
+} from '@/hooks/useBusiness';
 
 const ROLE_RANK: Record<string, number> = {
   staff: 1,
@@ -28,6 +38,8 @@ export default function InvoiceDetail() {
   const { data: company } = useCompany();
   const genEinv = useGenerateEinvoice();
   const cancelEinv = useCancelEinvoice();
+  const genEwb = useGenerateEwayBill();
+  const cancelEwb = useCancelEwayBill();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('2');
   const [cancelNote, setCancelNote] = useState('');
@@ -37,6 +49,20 @@ export default function InvoiceDetail() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [ewbOpen, setEwbOpen] = useState(false);
+  const [ewbCancelOpen, setEwbCancelOpen] = useState(false);
+  const [ewbForm, setEwbForm] = useState({
+    transporter_id: '',
+    transporter_name: '',
+    vehicle_no: '',
+    vehicle_type: 'R' as 'R' | 'O',
+    transport_mode: '1',
+    distance_km: '',
+    trans_doc_no: '',
+    trans_doc_dt: '',
+  });
+  const [ewbCancelReason, setEwbCancelReason] = useState('2');
+  const [ewbCancelNote, setEwbCancelNote] = useState('');
 
   const { data: raw, isLoading, isError, refetch } = useInvoice(id);
 
@@ -88,10 +114,11 @@ export default function InvoiceDetail() {
     ? 'Only managers and above can edit invoices.'
     : '';
 
-  const canGenEinv =
-    (user?.role === 'company_admin' || user?.role === 'accountant' || user?.role === 'super_admin') &&
-    company?.einvoice_enabled &&
-    company?.einvoice_turnover_above_5cr;
+  const canGenEinvRole =
+    user?.role === 'company_admin' || user?.role === 'accountant' || user?.role === 'super_admin';
+  const canGenEinv = canGenEinvRole && !!company?.einvoice_enabled;
+  const canGenEwb = canGenEinvRole;
+  const canCancelEwb = user?.role === 'company_admin' || user?.role === 'super_admin';
 
   const einvStatus = inv.einvoice_status || 'not_applicable';
   const einvLabel =
@@ -138,6 +165,60 @@ export default function InvoiceDetail() {
       toast.error(e.response?.data?.error || e.message || 'Failed', { id: t });
     }
   };
+
+  const handleSubmitEwb = async () => {
+    const tid = ewbForm.transporter_id.trim().toUpperCase();
+    const vn = ewbForm.vehicle_no.trim().toUpperCase();
+    if (tid.length !== 15) {
+      toast.error('Transporter ID must be exactly 15 characters (GSTIN / TRANSIN)');
+      return;
+    }
+    if (vn.length < 4) {
+      toast.error('Vehicle number must be at least 4 characters');
+      return;
+    }
+    const t = toast.loading('Generating E-Way Bill…');
+    try {
+      await genEwb.mutateAsync({
+        id: id!,
+        data: {
+          transporter_id: tid,
+          transporter_name: ewbForm.transporter_name.trim() || undefined,
+          vehicle_no: vn,
+          vehicle_type: ewbForm.vehicle_type,
+          transport_mode: ewbForm.transport_mode,
+          distance_km: ewbForm.distance_km === '' ? 0 : Number(ewbForm.distance_km),
+          trans_doc_no: ewbForm.trans_doc_no.trim() || undefined,
+          trans_doc_dt: ewbForm.trans_doc_dt.trim() || undefined,
+        },
+      });
+      toast.success('E-Way Bill generated', { id: t });
+      setEwbOpen(false);
+      refetch();
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message || 'Failed', { id: t });
+    }
+  };
+
+  const handleCancelEwb = async () => {
+    const t = toast.loading('Cancelling E-Way Bill…');
+    try {
+      await cancelEwb.mutateAsync({
+        id: id!,
+        reason_code: parseInt(ewbCancelReason, 10),
+        reason_description: ewbCancelNote.trim() || 'Cancelled',
+      });
+      toast.success('E-Way Bill cancelled', { id: t });
+      setEwbCancelOpen(false);
+      refetch();
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message || 'Failed', { id: t });
+    }
+  };
+
+  const ewbStatus = inv.eway_bill_status as string | undefined;
+  const hasActiveEwb = !!inv.eway_bill_no && ewbStatus !== 'cancelled';
+  const ewbWasCancelled = !!inv.eway_bill_no && ewbStatus === 'cancelled';
 
   const printReceipt = async () => {
     const w = localStorage.getItem('bizflow_printer_type');
@@ -467,9 +548,19 @@ Thank you.
               ) : (
                 <div className="text-center space-y-4">
                   {!canGenEinv ? (
-                    <p className="text-sm text-muted-foreground">
-                      e-Invoice is disabled or turnover flag is off in company settings.
-                    </p>
+                    <div className="text-sm text-muted-foreground space-y-2 text-left">
+                      {!company?.einvoice_enabled ? (
+                        <p>
+                          Turn on e-Invoice in{' '}
+                          <Link to="/settings" className="text-primary font-medium underline underline-offset-2">
+                            Company settings
+                          </Link>
+                          .
+                        </p>
+                      ) : !canGenEinvRole ? (
+                        <p>Only accountant, company admin, or super admin can generate IRN.</p>
+                      ) : null}
+                    </div>
                   ) : (
                     <>
                       <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
@@ -478,6 +569,71 @@ Thank you.
                         Generate IRN
                       </Button>
                     </>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3 border-b">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Truck className="h-4 w-4" /> E-Way Bill
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">Status</span>
+                <Badge
+                  variant="outline"
+                  className={`capitalize ${
+                    hasActiveEwb
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : ewbWasCancelled
+                        ? 'bg-red-100 text-red-800 border-red-200'
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  {hasActiveEwb ? 'Generated' : ewbWasCancelled ? 'Cancelled' : 'Not generated'}
+                </Badge>
+              </div>
+              {hasActiveEwb && (
+                <div className="space-y-2 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">E-Way Bill No.</p>
+                    <p className="font-mono font-medium">{inv.eway_bill_no}</p>
+                  </div>
+                  {inv.eway_bill_date && <p className="text-xs">Date: {formatDate(inv.eway_bill_date)}</p>}
+                  {inv.eway_bill_valid_upto && (
+                    <p className="text-xs text-muted-foreground">Valid up to: {formatDate(inv.eway_bill_valid_upto)}</p>
+                  )}
+                  {canCancelEwb && (
+                    <Button variant="destructive" size="sm" className="w-full mt-2" onClick={() => setEwbCancelOpen(true)}>
+                      <Ban className="h-4 w-4 mr-2" /> Cancel E-Way Bill
+                    </Button>
+                  )}
+                </div>
+              )}
+              {!hasActiveEwb && (
+                <div className="text-center space-y-3">
+                  {ewbWasCancelled && (
+                    <p className="text-xs text-muted-foreground text-left">
+                      Previous E-Way Bill was cancelled. You can generate a new one with updated transport details.
+                    </p>
+                  )}
+                  {!inv.irn || einvStatus !== 'generated' ? (
+                    <p className="text-sm text-muted-foreground text-left">
+                      Generate a valid IRN first; E-Way Bill is created against the e-invoice.
+                    </p>
+                  ) : !canGenEwb ? (
+                    <p className="text-sm text-muted-foreground text-left">
+                      Only accountant, company admin, or super admin can generate E-Way Bill.
+                    </p>
+                  ) : (
+                    <Button className="w-full" variant="secondary" onClick={() => setEwbOpen(true)}>
+                      <Truck className="h-4 w-4 mr-2" />
+                      Generate E-Way Bill
+                    </Button>
                   )}
                 </div>
               )}
@@ -545,6 +701,149 @@ Thank you.
           </Card>
         </div>
       </div>
+
+      <Sheet open={ewbOpen} onOpenChange={setEwbOpen}>
+        <SheetContent className="overflow-y-auto sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Generate E-Way Bill</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6 space-y-4 text-sm">
+            <p className="text-muted-foreground text-xs">
+              Transporter ID is the 15-character GSTIN or TRANSIN. Vehicle number must be at least 4 characters (as per NIC
+              rules).
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="ewb-transporter-id">Transporter ID (15 chars)</Label>
+              <Input
+                id="ewb-transporter-id"
+                className="font-mono uppercase"
+                maxLength={15}
+                value={ewbForm.transporter_id}
+                onChange={(e) => setEwbForm((f) => ({ ...f, transporter_id: e.target.value }))}
+                placeholder="15-char GSTIN / TRANSIN"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ewb-vehicle">Vehicle number</Label>
+              <Input
+                id="ewb-vehicle"
+                className="font-mono uppercase"
+                value={ewbForm.vehicle_no}
+                onChange={(e) => setEwbForm((f) => ({ ...f, vehicle_no: e.target.value }))}
+                placeholder="e.g. TS09AB1234"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ewb-transporter-name">Transporter name (optional)</Label>
+              <Input
+                id="ewb-transporter-name"
+                value={ewbForm.transporter_name}
+                onChange={(e) => setEwbForm((f) => ({ ...f, transporter_name: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="ewb-mode">Transport mode</Label>
+                <select
+                  id="ewb-mode"
+                  className="w-full h-10 rounded-md border bg-background px-2"
+                  value={ewbForm.transport_mode}
+                  onChange={(e) => setEwbForm((f) => ({ ...f, transport_mode: e.target.value }))}
+                >
+                  <option value="1">Road (1)</option>
+                  <option value="2">Rail (2)</option>
+                  <option value="3">Air (3)</option>
+                  <option value="4">Ship (4)</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ewb-distance">Distance (km)</Label>
+                <Input
+                  id="ewb-distance"
+                  type="number"
+                  min={0}
+                  value={ewbForm.distance_km}
+                  onChange={(e) => setEwbForm((f) => ({ ...f, distance_km: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Vehicle type</Label>
+              <select
+                className="w-full h-10 rounded-md border bg-background px-2"
+                value={ewbForm.vehicle_type}
+                onChange={(e) => setEwbForm((f) => ({ ...f, vehicle_type: e.target.value as 'R' | 'O' }))}
+              >
+                <option value="R">Regular (R)</option>
+                <option value="O">ODC / Over dimensional (O)</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="ewb-doc-no">Trans doc no (optional)</Label>
+                <Input
+                  id="ewb-doc-no"
+                  value={ewbForm.trans_doc_no}
+                  onChange={(e) => setEwbForm((f) => ({ ...f, trans_doc_no: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ewb-doc-dt">Trans doc date (optional)</Label>
+                <Input
+                  id="ewb-doc-dt"
+                  type="date"
+                  value={ewbForm.trans_doc_dt}
+                  onChange={(e) => setEwbForm((f) => ({ ...f, trans_doc_dt: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setEwbOpen(false)}>
+                Close
+              </Button>
+              <Button className="flex-1" loading={genEwb.isPending} onClick={handleSubmitEwb}>
+                Submit
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={ewbCancelOpen} onOpenChange={setEwbCancelOpen}>
+        <SheetContent className="sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle>Cancel E-Way Bill</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6 space-y-3 text-sm">
+            <label className="block text-muted-foreground">Reason</label>
+            <select
+              className="w-full h-9 rounded-md border bg-background px-2"
+              value={ewbCancelReason}
+              onChange={(e) => setEwbCancelReason(e.target.value)}
+            >
+              <option value="1">Duplicate</option>
+              <option value="2">Data entry mistake</option>
+              <option value="3">Order cancelled</option>
+              <option value="4">Other</option>
+            </select>
+            <textarea
+              className="w-full min-h-[60px] rounded-md border bg-background p-2"
+              placeholder="Description"
+              value={ewbCancelNote}
+              onChange={(e) => setEwbCancelNote(e.target.value)}
+            />
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setEwbCancelOpen(false)}>
+                Close
+              </Button>
+              <Button variant="destructive" className="flex-1" loading={cancelEwb.isPending} onClick={handleCancelEwb}>
+                Confirm cancel
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <InvoicePreviewWorkspace
         open={previewOpen}

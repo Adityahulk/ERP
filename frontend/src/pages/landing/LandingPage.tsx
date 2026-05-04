@@ -437,7 +437,7 @@ export default function LandingPage() {
               full data isolation — your business data stays yours.
             </p>
             <div className="flex items-center justify-center gap-4 mt-6 text-sm text-purple-300">
-              <a href="tel:+919876543210" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="tel:+919390754255" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Phone className="w-4 h-4" />
                 +91-9876543210
               </a>
@@ -676,12 +676,22 @@ export default function LandingPage() {
             <h4 className="text-white font-bold mb-6">Contact Info</h4>
             <ul className="space-y-3">
               <li className="flex items-start gap-2">
-                <Phone className="w-5 h-5 mt-0.5 text-[#420662]" />
-                <span>+91 93907 54255</span>
+                <Phone className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
+                <a
+                  href="tel:+919390754255"
+                  className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
+                >
+                  +91 93907 54255
+                </a>
               </li>
               <li className="flex items-start gap-2">
-                <Mail className="w-5 h-5 mt-0.5 text-[#420662]" />
-                <span>sales@microtechnique.in</span>
+                <Mail className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
+                <a
+                  href="mailto:sales@microtechnique.in"
+                  className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
+                >
+                  sales@microtechnique.in
+                </a>
               </li>
             </ul>
           </div>

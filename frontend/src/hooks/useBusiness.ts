@@ -219,3 +219,30 @@ export function useCancelEinvoice() {
     },
   });
 }
+
+export function useGenerateEwayBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      api.post(`/invoices/${id}/ewaybill/generate`, data).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoice', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
+}
+
+export function useCancelEwayBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { id: string; reason_code: number; reason_description: string }) =>
+      api.post(`/invoices/${args.id}/ewaybill/cancel`, {
+        reason_code: args.reason_code,
+        reason_description: args.reason_description,
+      }).then((r) => r.data),
+    onSuccess: (_, args) => {
+      qc.invalidateQueries({ queryKey: ['invoice', args.id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
+}
