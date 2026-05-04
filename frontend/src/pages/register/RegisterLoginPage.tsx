@@ -40,7 +40,7 @@ export default function RegisterLoginPage() {
 
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-14 mx-auto mb-4 brightness-0 invert" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-20 mx-auto mb-4 drop-shadow-lg" />
           <h1 className="text-2xl font-bold text-white">Registrant Sign In</h1>
           <p className="text-purple-300 mt-1">Access your license dashboard</p>
         </div>

@@ -445,9 +445,7 @@ export default function AppLayout() {
           )}
         >
            <div className={cn('flex gap-2.5', sidebarCollapsed ? 'flex-col items-center gap-1' : 'items-start')}>
-             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-xs font-black shadow-md shrink-0 mt-0.5">
-               M
-             </div>
+             <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-9 h-9 shrink-0 drop-shadow mt-0.5" />
              {!sidebarCollapsed && (
                <div className="min-w-0 flex-1 leading-tight">
                  <p className="text-[12px] font-semibold text-white">
@@ -572,9 +570,7 @@ export default function AppLayout() {
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
                <div className="px-6 mb-4 flex items-start gap-2.5">
-                 <div className="w-8 h-8 rounded-md bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-sm font-black shadow-md shrink-0 mt-0.5">
-                   M
-                 </div>
+                 <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-10 h-10 shrink-0 drop-shadow mt-0.5" />
                  <div className="leading-tight min-w-0">
                    <p className="text-sm font-semibold text-white">
                      <span className="block">Microtechnique</span>

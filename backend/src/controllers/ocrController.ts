@@ -158,11 +158,12 @@ export async function extractOcrData(req: Request, res: Response) {
     const ext = path.extname(file.originalname).toLowerCase();
 
     if (ext === '.pdf') {
-      // pdf-parse — works on digital (searchable) PDFs instantly
+      // pdf-parse v2 exports a class, not a callable function
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const pdfParse = require('pdf-parse');
+      const { PDFParse } = require('pdf-parse');
       const buffer = await fs.readFile(file.path);
-      const parsed = await pdfParse(buffer);
+      const parser = new PDFParse({});
+      const parsed = await parser.parse(buffer);
       text = parsed.text ?? '';
     } else {
       // Image → Tesseract OCR

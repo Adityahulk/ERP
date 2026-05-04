@@ -18,10 +18,14 @@ router.post('/bulk', async (req: Request, res: Response) => {
      // Optimization: Batch select target items instead of looping
      // Since this is a simple implementation, fetching individually or via IN
      const ids = items.map((i:any) => i.item_id);
-     const itemDetails = await query(
-       `SELECT id, name, sku, hsn_code, selling_price, tax_rate as gst_rate FROM items WHERE id = ANY($1::uuid[]) AND company_id = $2`,
-       [ids, companyId],
-     );
+     const [itemDetails, companyRes] = await Promise.all([
+       query(
+         `SELECT id, name, sku, hsn_code, selling_price, tax_rate as gst_rate FROM items WHERE id = ANY($1::uuid[]) AND company_id = $2`,
+         [ids, companyId],
+       ),
+       query(`SELECT name FROM companies WHERE id = $1`, [companyId]),
+     ]);
+     const companyName = companyRes.rows[0]?.name || 'My Company';
 
      for (const reqItem of items) {
         const dbMeta = itemDetails.rows.find(
@@ -29,7 +33,7 @@ router.post('/bulk', async (req: Request, res: Response) => {
         );
         if (dbMeta) {
            for (let i = 0; i < reqItem.quantity; i++) {
-              printQueue.push({ ...dbMeta, company_name: "MY ENTERPRISE" }); // Inject Company Context
+              printQueue.push({ ...dbMeta, company_name: companyName });
            }
         }
      }

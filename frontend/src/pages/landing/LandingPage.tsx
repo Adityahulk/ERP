@@ -214,9 +214,7 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-3 min-w-0 shrink">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shadow-sm shrink-0">
-              M
-            </div>
+            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow" />
             <div className="leading-tight min-w-0 text-left">
               <p className="text-[15px] font-semibold text-slate-900 leading-snug">
                 <span className="block">Microtechnique</span>
@@ -645,9 +643,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
             <div className="mb-6 flex items-start gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center text-white text-lg font-black shrink-0">
-                M
-              </div>
+              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow brightness-0 invert" />
               <div className="leading-tight min-w-0">
                 <p className="text-base font-semibold text-white leading-snug">
                   <span className="block">Microtechnique</span>

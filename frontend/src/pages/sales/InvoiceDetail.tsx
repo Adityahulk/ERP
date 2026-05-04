@@ -69,12 +69,24 @@ export default function InvoiceDetail() {
   if (isError || !inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
 
   const userRank = ROLE_RANK[user?.role ?? ''] ?? 0;
+  const hasPaidAmount = Number(inv.paid_amount ?? inv.amount_paid ?? 0) > 0;
+  const hasPayments = Array.isArray(inv.payments) && inv.payments.length > 0;
   const canEditInvoice =
     userRank >= ROLE_RANK.manager &&
     !inv.irn &&
     inv.status !== 'cancelled' &&
-    Number(inv.paid_amount ?? inv.amount_paid ?? 0) === 0 &&
-    (!inv.payments || inv.payments.length === 0);
+    !hasPaidAmount &&
+    !hasPayments;
+
+  const editBlockReason = inv.irn
+    ? 'E-Invoice IRN is generated — cancel the IRN first to edit.'
+    : inv.status === 'cancelled'
+    ? 'Cancelled invoices cannot be edited.'
+    : hasPaidAmount || hasPayments
+    ? 'Invoice has payments recorded. Reverse all payments to enable editing.'
+    : userRank < ROLE_RANK.manager
+    ? 'Only managers and above can edit invoices.'
+    : '';
 
   const canGenEinv =
     (user?.role === 'company_admin' || user?.role === 'accountant' || user?.role === 'super_admin') &&
@@ -278,9 +290,17 @@ Thank you.
           </Badge>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {canEditInvoice && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/sales/${id}/edit`)}>
-              <Pencil className="h-4 w-4" /> Edit invoice
+          {userRank >= ROLE_RANK.manager && inv.status !== 'cancelled' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={!canEditInvoice}
+              title={editBlockReason || 'Edit this invoice'}
+              onClick={() => canEditInvoice && navigate(`/sales/${id}/edit`)}
+            >
+              <Pencil className="h-4 w-4" /> Edit
+              {!canEditInvoice && ' (locked)'}
             </Button>
           )}
           <Button variant="default" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700" onClick={() => setPreviewOpen(true)}>

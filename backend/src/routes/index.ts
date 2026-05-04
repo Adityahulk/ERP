@@ -36,6 +36,7 @@ import superAdminRoutes from './superAdmin';
 
 import { verifyToken } from '../middleware/auth';
 import { moduleGuard } from '../middleware/moduleGuard';
+import { getDashboard } from '../controllers/reportController';
 
 const router = Router();
 
@@ -65,6 +66,9 @@ router.use('/notifications', notificationRoutes);
 router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
+
+// Dashboard is always accessible — no module guard (it's the ERP home screen)
+router.get('/reports/dashboard', verifyToken, getDashboard);
 
 // Tier-gated modules — verify JWT before moduleGuard (guard needs req.user)
 router.use('/reports', verifyToken, moduleGuard('reports'), reportRoutes);

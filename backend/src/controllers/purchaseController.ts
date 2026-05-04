@@ -277,6 +277,18 @@ export async function receiveStock(req: Request, res: Response) {
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
+      // Auto-generate bill number if not supplied by user
+      let grnBillNumber = d.bill_number?.trim() || null;
+      if (!grnBillNumber) {
+        const cntRes = await client.query(
+          `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
+          [companyId],
+        );
+        const seq = parseInt(cntRes.rows[0].count) + 1;
+        const yr = new Date().getFullYear().toString().slice(-2);
+        grnBillNumber = `BILL/${yr}/${String(seq).padStart(4, '0')}`;
+      }
+
       // 2. Create Purchase Invoice
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
@@ -287,7 +299,7 @@ export async function receiveStock(req: Request, res: Response) {
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
         [
-          companyId, po.godown_id, d.bill_number, d.bill_date, po.id, po.party_id,
+          companyId, po.godown_id, grnBillNumber, d.bill_date, po.id, po.party_id,
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
           invoiceTotals.totalAmount, req.user!.id,
@@ -811,12 +823,29 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 }
 
 export async function payPurchaseInvoice(req: Request, res: Response) {
-  // Simple increment. The robust /api/payments method will handle allocation natively.
   try {
     const { id } = req.params;
     const { amount } = req.body;
-    await query('UPDATE purchase_invoices SET paid_amount = paid_amount + $1 WHERE id = $2', [amount, id]);
-    res.json(success({ message: 'Marked paid locally' }));
+    const companyId = req.user!.company_id;
+
+    const billRes = await query(
+      'SELECT total_amount, paid_amount FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+      [id, companyId]
+    );
+    if (!billRes.rows.length) return res.status(404).json(error('Bill not found'));
+
+    const bill = billRes.rows[0];
+    const newPaid = Number(bill.paid_amount || 0) + Number(amount);
+    const total = Number(bill.total_amount || 0);
+    const paymentStatus =
+      newPaid <= 0 ? 'unpaid' :
+      newPaid >= total ? 'paid' : 'partial';
+
+    await query(
+      'UPDATE purchase_invoices SET paid_amount = $1, payment_status = $2 WHERE id = $3',
+      [newPaid, paymentStatus, id]
+    );
+    res.json(success({ message: 'Payment recorded', payment_status: paymentStatus }));
   } catch(err:any){ res.status(500).json(error(err.message)); }
 }
 
