@@ -32,10 +32,11 @@ export function useModuleGuard(featureKey: string): { allowed: boolean; tierName
     return { allowed: false, tierName: license.tier_name, tierDisplayName: license.tier_display_name };
   }
 
-  const tierFeatures = TIER_FEATURES[license.tier_name] ?? [];
+  const tierKey = (license.tier_name || '').toLowerCase().trim();
+  const tierFeatures = TIER_FEATURES[tierKey] ?? [];
   return {
     allowed: tierFeatures.includes(featureKey),
-    tierName: license.tier_name,
+    tierName: tierKey || license.tier_name,
     tierDisplayName: license.tier_display_name,
   };
 }

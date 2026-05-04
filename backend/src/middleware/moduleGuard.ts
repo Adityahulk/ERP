@@ -27,7 +27,7 @@ const MODULE_FEATURE_MAP: Record<string, string> = {
  * Results are cached in Redis for 5 minutes to avoid repeated DB hits.
  */
 async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>> {
-  const cacheKey = `tier_features:${companyId}`;
+  const cacheKey = `tier_features:v2:${companyId}`;
   const cached = await redis.get(cacheKey);
 
   if (cached) {
@@ -37,7 +37,11 @@ async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>
   const result = await query(
     `SELECT ltf.feature_key
      FROM companies c
-     JOIN licenses lic ON lic.id = c.license_id AND lic.is_deleted = false AND lic.status = 'active'
+     JOIN licenses lic ON lic.id = c.license_id AND lic.is_deleted = false
+       AND (
+         (lic.status = 'active' AND (lic.expires_at IS NULL OR lic.expires_at > NOW()))
+         OR (lic.status = 'trial' AND (lic.expires_at IS NULL OR lic.expires_at > NOW()))
+       )
      JOIN license_tier_features ltf ON ltf.tier_id = lic.tier_id AND ltf.is_included = true
      WHERE c.id = $1 AND c.is_deleted = false AND c.is_active = true`,
     [companyId]
@@ -56,6 +60,7 @@ async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>
  */
 export async function clearTierFeaturesCache(companyId: string): Promise<void> {
   await redis.del(`tier_features:${companyId}`);
+  await redis.del(`tier_features:v2:${companyId}`);
 }
 
 /**
