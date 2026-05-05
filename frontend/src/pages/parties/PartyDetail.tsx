@@ -50,11 +50,11 @@ export default function PartyDetail() {
       gstin: party.gstin || '',
       pan: party.pan || '',
       billing_address: party.billing_address || '',
-      city: party.billing_city || '',
-      state: party.billing_state || '',
-      pincode: party.billing_pincode || '',
-      credit_limit: party.credit_limit ? party.credit_limit / 100 : '',
-      credit_days: party.credit_days || 30,
+      city: party.billing_city || party.city || '',
+      state: party.billing_state || party.state || '',
+      pincode: party.billing_pincode || party.pincode || '',
+      credit_limit: party.credit_limit || '',
+      credit_days: party.credit_days || party.payment_terms || 30,
     });
     setEditOpen(true);
   };
@@ -73,7 +73,7 @@ export default function PartyDetail() {
     }
     try {
       const payload: any = { ...form, gstin: g.length === 15 ? g : null };
-      if (payload.credit_limit !== '') payload.credit_limit = Math.round(parseFloat(payload.credit_limit) * 100);
+      if (payload.credit_limit !== '') payload.credit_limit = Math.round(parseFloat(payload.credit_limit));
       await updateMutation.mutateAsync({ id: id!, data: payload });
       toast.success('Party updated');
       setEditOpen(false);
@@ -185,8 +185,8 @@ export default function PartyDetail() {
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {party.billing_city && `${party.billing_city}`}
-              {party.billing_state && `, ${party.billing_state}`}
+              {(party.billing_city || party.city) && `${party.billing_city || party.city}`}
+              {(party.billing_state || party.state) && `, ${party.billing_state || party.state}`}
             </p>
           </div>
         </div>
@@ -254,9 +254,9 @@ export default function PartyDetail() {
                 <MapPin className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                 <span>
                   {party.billing_address}
-                  {party.billing_city && <>, {party.billing_city}</>}
-                  {party.billing_state && <>, {party.billing_state}</>}
-                  {party.billing_pincode && <> - {party.billing_pincode}</>}
+                  {(party.billing_city || party.city) && <>, {party.billing_city || party.city}</>}
+                  {(party.billing_state || party.state) && <>, {party.billing_state || party.state}</>}
+                  {(party.billing_pincode || party.pincode) && <> - {party.billing_pincode || party.pincode}</>}
                 </span>
               </div>
             )}

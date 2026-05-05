@@ -124,10 +124,20 @@ export async function createParty(req: Request, res: Response) {
     const result = await query(
       `INSERT INTO parties (
         company_id, name, party_type, phone, email, gstin, pan,
-        billing_address, shipping_address, city, state, pincode, state_code,
-        credit_limit, payment_terms, opening_balance, balance,
+        billing_address, shipping_address,
+        billing_city, billing_state, billing_pincode, billing_state_code,
+        city, state, pincode, state_code,
+        credit_limit, credit_days, payment_terms,
+        opening_balance, balance,
         contact_person, notes, custom_fields
-      ) VALUES ($1,$2,'party',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18) RETURNING *`,
+      ) VALUES (
+        $1, $2, 'party', $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12,
+        $9, $10, $11, $12,
+        $13, $14, $14,
+        $15, $15,
+        $16, $17, $18
+      ) RETURNING *`,
       [
         companyId,
         d.name,
@@ -137,12 +147,12 @@ export async function createParty(req: Request, res: Response) {
         d.pan || null,
         d.billing_address || null,
         d.shipping_address || null,
-        d.city || null,
-        d.state || null,
-        d.pincode || null,
-        d.state_code || null,
+        d.city || d.billing_city || null,
+        d.state || d.billing_state || null,
+        d.pincode || d.billing_pincode || null,
+        d.state_code || d.billing_state_code || null,
         d.credit_limit || 0,
-        d.payment_terms || 30,
+        d.payment_terms || d.credit_days || 30,
         opening,
         d.contact_person || null,
         d.notes || null,
@@ -190,8 +200,8 @@ export async function updateParty(req: Request, res: Response) {
 
     const fields = [
       'name','phone','email','gstin','pan',
-      'billing_address','shipping_address','city','state','pincode','state_code',
-      'credit_limit','payment_terms','contact_person','notes','is_active','custom_fields',
+      'billing_address','shipping_address',
+      'credit_limit','contact_person','notes','is_active','custom_fields',
     ];
     const updates: string[] = []; const values: any[] = []; let idx = 1;
     for (const f of fields) {
@@ -199,6 +209,33 @@ export async function updateParty(req: Request, res: Response) {
         updates.push(`${f} = $${idx++}`);
         values.push(f === 'custom_fields' ? JSON.stringify(req.body[f]) : req.body[f]);
       }
+    }
+
+    // Sync city/state/pincode to both billing_* and legacy columns
+    const cityVal = req.body.city ?? req.body.billing_city;
+    if (cityVal !== undefined) {
+      updates.push(`billing_city = $${idx}`, `city = $${idx++}`);
+      values.push(cityVal);
+    }
+    const stateVal = req.body.state ?? req.body.billing_state;
+    if (stateVal !== undefined) {
+      updates.push(`billing_state = $${idx}`, `state = $${idx++}`);
+      values.push(stateVal);
+    }
+    const pincodeVal = req.body.pincode ?? req.body.billing_pincode;
+    if (pincodeVal !== undefined) {
+      updates.push(`billing_pincode = $${idx}`, `pincode = $${idx++}`);
+      values.push(pincodeVal);
+    }
+    const stateCodeVal = req.body.state_code ?? req.body.billing_state_code;
+    if (stateCodeVal !== undefined) {
+      updates.push(`billing_state_code = $${idx}`, `state_code = $${idx++}`);
+      values.push(stateCodeVal);
+    }
+    const termsVal = req.body.payment_terms ?? req.body.credit_days;
+    if (termsVal !== undefined) {
+      updates.push(`credit_days = $${idx}`, `payment_terms = $${idx++}`);
+      values.push(termsVal);
     }
     if (!updates.length) return res.status(400).json(error('No fields to update'));
 
