@@ -59,7 +59,7 @@ export interface EinvoiceInvoice {
   id: string;
   company_id: string;
   invoice_number: string;
-  invoice_date: string;
+  invoice_date: string | Date;
   is_interstate: boolean;
   place_of_supply?: string | null;
   subtotal: number;
@@ -88,9 +88,25 @@ export function mapUnitToUqc(unit: string | null | undefined): string {
   return UQC_MAP[k] || unit.trim().slice(0, 3).toUpperCase() || 'PCS';
 }
 
-function formatNicDate(d: string): string {
-  const [y, m, day] = d.split('T')[0].split('-');
-  return `${day}/${m}/${y}`;
+function formatNicDate(d: string | Date | null | undefined): string {
+  if (!d) {
+    const now = new Date();
+    return `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  }
+  if (d instanceof Date) {
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  }
+  const iso = String(d).split('T')[0];
+  const parts = iso.split('-');
+  if (parts.length === 3) {
+    const [y, m, day] = parts;
+    return `${day.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+  const dt = new Date(d);
+  if (!isNaN(dt.getTime())) {
+    return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+  }
+  return String(d);
 }
 
 function paiseToRupeesStr(paise: number): string {
