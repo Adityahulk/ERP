@@ -15,7 +15,9 @@ export function getApiBaseURL(): string {
   }
   if (import.meta.env.DEV) {
     const port = (import.meta.env.VITE_BACKEND_PORT as string | undefined) ?? '5001';
-    return `http://127.0.0.1:${port}/api`;
+    const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '127.0.0.1';
+    const apiHost = host === 'localhost' ? '127.0.0.1' : host;
+    return `http://${apiHost}:${port}/api`;
   }
   return '/api';
 }
