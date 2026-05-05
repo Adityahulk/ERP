@@ -19,10 +19,12 @@ router.post('/bulk', async (req: Request, res: Response) => {
      // Since this is a simple implementation, fetching individually or via IN
      const ids = items.map((i:any) => i.item_id);
      const [itemDetails, companyRes] = await Promise.all([
-       query(
-         `SELECT id, name, sku, hsn_code, selling_price, tax_rate as gst_rate FROM items WHERE id = ANY($1::uuid[]) AND company_id = $2`,
-         [ids, companyId],
-       ),
+      query(
+        `SELECT id, name, sku, hsn_code, selling_price, gst_rate
+         FROM items
+         WHERE id = ANY($1::uuid[]) AND company_id = $2`,
+        [ids, companyId],
+      ),
        query(`SELECT name FROM companies WHERE id = $1`, [companyId]),
      ]);
      const companyName = companyRes.rows[0]?.name || 'My Company';
@@ -45,7 +47,10 @@ router.post('/bulk', async (req: Request, res: Response) => {
      res.setHeader('Content-Type', 'application/pdf');
      res.setHeader('Content-Disposition', `attachment; filename=labels-${Date.now()}.pdf`);
      res.status(200).send(pdfBuffer);
-   } catch(err:any){ res.status(500).json({ success: false, error: err.message }); }
+  } catch (err: any) {
+    console.error('labels route error:', err.message, err.detail, err.position);
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate labels' });
+  }
 });
 
 export default router;

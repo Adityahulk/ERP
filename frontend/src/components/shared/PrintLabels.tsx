@@ -37,9 +37,24 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
        toast.success("Labels Generated! Please open the PDF and print.");
        setLoading(false);
        onClose();
-     } catch (e:any) {
-       setLoading(false);
-       toast.error("Failed to generate labels.");
+    } catch (e: any) {
+      setLoading(false);
+      let msg = 'Failed to generate labels.';
+      const data = e?.response?.data;
+      if (data instanceof Blob) {
+        try {
+          const txt = await data.text();
+          const parsed = JSON.parse(txt);
+          msg = parsed?.error || msg;
+        } catch {
+          // keep default message
+        }
+      } else if (data?.error) {
+        msg = data.error;
+      } else if (e?.message) {
+        msg = e.message;
+      }
+      toast.error(msg);
      }
   };
 
