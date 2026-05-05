@@ -102,6 +102,8 @@ export interface Item {
   image_url?: string;
   custom_fields?: Record<string, any>;
   opening_stock?: number;
+  opening_stock_value?: number;
+  stock?: ItemStock[];
   created_at?: string;
 }
 

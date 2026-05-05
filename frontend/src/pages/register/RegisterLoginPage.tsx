@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
@@ -7,6 +7,7 @@ import { useRegistrantStore } from '@/store/registrantStore';
 
 export default function RegisterLoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useRegistrantStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,7 +21,8 @@ export default function RegisterLoginPage() {
       if (res.success) {
         login(res.data.registrant, res.data.token);
         toast.success(`Welcome back, ${res.data.registrant.name}!`);
-        navigate('/register/dashboard');
+        const next = new URLSearchParams(location.search).get('next');
+        navigate(next && next.startsWith('/register') ? next : '/register/dashboard', { replace: true });
       }
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Login failed');
@@ -87,9 +89,9 @@ export default function RegisterLoginPage() {
             </Link>
           </p>
           <p className="text-xs text-slate-500">
-            Have ERP credentials?{' '}
+            Have login credentials?{' '}
             <Link to="/login" className="text-purple-400 hover:text-purple-300">
-              Go to ERP login
+              Go to login
             </Link>
           </p>
         </div>

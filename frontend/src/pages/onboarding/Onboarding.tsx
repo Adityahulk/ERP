@@ -126,7 +126,7 @@ export default function Onboarding() {
            {step === 3 && (
               <div className="p-8 animate-in slide-in-from-right-4 duration-300">
                  <h2 className="text-2xl font-bold text-slate-900 mb-1 flex items-center gap-2"><Zap className="text-indigo-500" /> Quick Defaults</h2>
-                 <p className="text-slate-500 text-sm mb-6">We can automatically pre-wire core ERP structures for you.</p>
+                 <p className="text-slate-500 text-sm mb-6">We can automatically pre-wire core business structures for you.</p>
                  
                  <div className="space-y-3">
                     <label className="flex items-start gap-3 p-4 border rounded-lg hover:bg-slate-50 cursor-pointer transition">

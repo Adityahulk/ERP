@@ -20,6 +20,11 @@ export function formatCurrency(amount: number): string {
     return formatMoney(amount); 
 }
 
+export function parseRupeeInput(value: number | string | null | undefined): number {
+    const n = typeof value === 'string' ? parseFloat(value.replace(/,/g, '').trim()) : Number(value ?? 0);
+    return Number.isFinite(n) ? n : 0;
+}
+
 export function formatCurrencyCompact(amountPaise: number): string {
     const amount = amountPaise / 100;
     const abs = Math.abs(amount);

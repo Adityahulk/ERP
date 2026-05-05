@@ -14,7 +14,7 @@ const createSchema = z.object({
   amount: z.number().int().positive('Amount must be positive'),
   /** When true, `amount` is total paid in paise (GST-inclusive). When false, `amount` is taxable value in paise (GST extra). */
   amount_includes_gst: z.boolean().optional(),
-  gst_rate: z.union([z.literal(0), z.literal(5), z.literal(12), z.literal(18), z.literal(28)]).optional(),
+  gst_rate: z.number().int().min(0).max(40).optional(),
   payment_mode: z.enum(['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'other']).default('cash'),
   reference_number: z.string().optional(),
   vendor_name: z.string().optional(),

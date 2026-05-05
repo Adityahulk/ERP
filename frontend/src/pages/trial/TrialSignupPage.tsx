@@ -213,7 +213,7 @@ export default function TrialSignupPage() {
                 type="tel"
                 value={form.phone}
                 onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                placeholder="9876543210"
+                placeholder="6355997080"
                 className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/30 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
               />
             </div>

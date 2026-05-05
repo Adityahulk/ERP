@@ -49,7 +49,7 @@ export async function updateCompany(req: Request, res: Response) {
       'gstin_address', 'gstin_last_fetched_at', 'gstin_lookup_payload',
       'terms_and_conditions', 'invoice_notes', 'onboarding_completed',
       'einvoice_enabled', 'einvoice_turnover_above_5cr', 'einvoice_sandbox',
-      'einvoice_gsp_username', 'document_primary_color', 'receipt_footer_message', 'invoice_pdf_template',
+      'einvoice_gsp_username', 'document_primary_color', 'document_theme', 'receipt_footer_message', 'invoice_pdf_template',
     ];
 
     const updates: string[] = [];

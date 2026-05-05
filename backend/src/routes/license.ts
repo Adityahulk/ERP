@@ -37,7 +37,7 @@ router.post('/request', verifyRegistrantToken, validateBody(requestSchema), requ
 router.get('/', verifyRegistrantToken, getMyLicenses);
 router.get('/:id', verifyRegistrantToken, getLicenseDetail);
 
-// Super-admin routes (ERP user JWT)
+// Super-admin routes (application user JWT)
 router.get('/admin/all', verifyToken, requireRole('super_admin'), adminListLicenses);
 router.post('/admin/:id/activate', verifyToken, requireRole('super_admin'), validateBody(activateSchema), activateLicense);
 router.put('/admin/:id/revoke', verifyToken, requireRole('super_admin'), revokeLicense);

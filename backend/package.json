@@ -1,7 +1,7 @@
 {
   "name": "bizflow-backend",
   "version": "1.0.0",
-  "description": "BizFlow ERP — Backend API",
+  "description": "BizFlow Accounts — Backend API",
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon",

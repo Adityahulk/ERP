@@ -117,7 +117,7 @@ function LoginPage() {
         <div className="text-center mb-8">
           <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 mx-auto mb-4 drop-shadow-lg" />
           <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique Accounts</h1>
-          <p className="text-purple-300 mt-1">Smart ERP for Indian Manufacturers</p>
+          <p className="text-purple-300 mt-1">Smart application for Indian Manufacturers</p>
         </div>
         {sessionMsg && (
           <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-sm text-center">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCreateItem, useUpdateItem, useItemCategories, useItemUnits } from '@/hooks/useItems';
+import { useCreateItem, useUpdateItem, useItemCategories, useItemUnits, useCreateItemCategory, useCreateItemUnit } from '@/hooks/useItems';
+import { useGodowns } from '@/hooks/useStock';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -8,6 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import api from '@/lib/api';
+import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
+import { GST_RATE_OPTIONS, gstRateLabel } from '@/lib/gstRates';
 
 
 import { Plus, X, Sparkles } from 'lucide-react';
@@ -21,7 +24,6 @@ interface Props {
   item: Item | null;
 }
 
-const GST_RATES = [0, 5, 12, 18, 28];
 const ITEM_TYPES = [
   { value: 'finished_good', label: 'Finished Good' },
   { value: 'raw_material', label: 'Raw Material' },
@@ -35,10 +37,14 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
   const isEdit = !!item;
   const createMutation = useCreateItem();
   const updateMutation = useUpdateItem();
+  const createCategory = useCreateItemCategory();
+  const createUnit = useCreateItemUnit();
   const { data: catData } = useItemCategories();
   const { data: unitData } = useItemUnits();
+  const { data: godownData } = useGodowns();
   const categories = catData?.data?.flat || [];
   const units = unitData?.data || [];
+  const godowns = godownData?.data || [];
 
   const [form, setForm] = useState<any>({});
   const [customFields, setCustomFields] = useState<Array<{ key: string; value: string }>>([]);
@@ -46,6 +52,11 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
   const [newFieldValue, setNewFieldValue] = useState('');
   const [showWholesalePricing, setShowWholesalePricing] = useState(false);
   const [wholesaleTiers, setWholesaleTiers] = useState<Array<{ tier_name: string; min_quantity: number; price: number }>>([]);
+  const [showCategoryAdd, setShowCategoryAdd] = useState(false);
+  const [showUnitAdd, setShowUnitAdd] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newUnitName, setNewUnitName] = useState('');
+  const [newUnitAbbr, setNewUnitAbbr] = useState('');
 
   const { data: existingWholesaleTiers } = useQuery({
     queryKey: ['item-wholesale-tiers', item?.id],
@@ -61,19 +72,22 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
   useEffect(() => {
     if (item) {
       setForm({
-        name: item.name, description: item.description, sku: item.sku,
+        name: item.name, description: item.description, sku: item.sku, barcode: item.barcode,
         hsn_code: item.hsn_code, category_id: item.category_id, brand: item.brand,
         unit_id: item.unit_id, item_type: item.item_type,
         track_inventory: item.track_inventory, is_serialized: item.is_serialized,
         purchase_price: (item.purchase_price || 0) / 100, selling_price: (item.selling_price || 0) / 100,
         gst_rate: item.gst_rate, tax_preference: item.tax_preference,
-        opening_stock: item.opening_stock || 0, reorder_point: item.reorder_point || 0,
+        opening_stock: item.opening_stock || 0,
+        opening_stock_value: item.opening_stock_value ? paiseToRupees(item.opening_stock_value).toFixed(2) : '',
+        godown_id: item.stock?.[0]?.godown_id || '',
+        reorder_point: item.reorder_point || 0,
       });
       const cf = item.custom_fields ? Object.entries(item.custom_fields).map(([k, v]) => ({ key: k, value: String(v) })) : [];
       setCustomFields(cf);
       setShowWholesalePricing(false);
     } else {
-      setForm({ name: '', item_type: 'product', gst_rate: 18, tax_preference: 'taxable', track_inventory: true, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, reorder_point: 0 });
+      setForm({ name: '', item_type: 'product', gst_rate: 18, tax_preference: 'taxable', track_inventory: true, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
       setCustomFields([]);
       setShowWholesalePricing(false);
       setWholesaleTiers([]);
@@ -87,7 +101,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
       existingWholesaleTiers.map((t: any) => ({
         tier_name: t.tier_name || '',
         min_quantity: Number(t.min_quantity || 1),
-        price: Number(t.price || 0),
+        price: paiseToRupees(Number(t.price || 0)),
       }))
     );
   }, [existingWholesaleTiers, open]);
@@ -104,7 +118,10 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
       ...form,
       purchase_price: Math.round((form.purchase_price || 0) * 100),
       selling_price: Math.round((form.selling_price || 0) * 100),
+      opening_stock_value: form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
     };
+    if (data.opening_stock_value === undefined) delete data.opening_stock_value;
+    if (!data.godown_id) delete data.godown_id;
 
     if (customFields.length) {
       data.custom_fields = {};
@@ -122,7 +139,9 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
         toast.success('Item created');
       }
 
-      const validWholesaleTiers = wholesaleTiers.filter((t) => t.min_quantity > 0 && t.price >= 0);
+      const validWholesaleTiers = wholesaleTiers
+        .filter((t) => t.min_quantity > 0 && t.price >= 0)
+        .map((t) => ({ ...t, price: rupeesToPaise(t.price) }));
       if (itemId && validWholesaleTiers.length > 0) {
         await saveWholesaleTiers.mutateAsync({
           item_id: itemId,
@@ -138,6 +157,37 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
     if (!newFieldKey.trim()) return;
     setCustomFields([...customFields, { key: newFieldKey, value: newFieldValue }]);
     setNewFieldKey(''); setNewFieldValue('');
+  };
+
+  const saveQuickCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return toast.error('Category name is required');
+    try {
+      const res = await createCategory.mutateAsync({ name });
+      const row = (res as any)?.data || res;
+      if (row?.id) update('category_id', row.id);
+      setNewCategoryName('');
+      setShowCategoryAdd(false);
+      toast.success('Category added');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to add category');
+    }
+  };
+
+  const saveQuickUnit = async () => {
+    const name = newUnitName.trim();
+    if (!name) return toast.error('Unit name is required');
+    try {
+      const res = await createUnit.mutateAsync({ name, abbreviation: newUnitAbbr.trim() || undefined });
+      const row = (res as any)?.data || res;
+      if (row?.id) update('unit_id', row.id);
+      setNewUnitName('');
+      setNewUnitAbbr('');
+      setShowUnitAdd(false);
+      toast.success('Unit added');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to add unit');
+    }
   };
 
   const isBusy = createMutation.isPending || updateMutation.isPending || saveWholesaleTiers.isPending;
@@ -199,7 +249,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
               <Label htmlFor="name">Product Name *</Label>
               <Input id="name" className="mt-1 text-base font-medium" placeholder="e.g. Basmati Rice 5kg" value={form.name || ''} onChange={e => update('name', e.target.value)} autoFocus />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <Label>SKU / Item Code</Label>
                 <div className="flex gap-1 mt-1">
@@ -207,23 +257,49 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                   <Button variant="outline" size="icon" title="Auto-generate" onClick={() => update('sku', `SKU-${Date.now().toString(36).toUpperCase()}`)}><Sparkles className="w-3.5 h-3.5" /></Button>
                 </div>
               </div>
+              <div><Label>Barcode</Label><Input className="mt-1 font-mono text-sm" value={form.barcode || ''} onChange={e => update('barcode', e.target.value)} /></div>
               <div><Label>Brand</Label><Input className="mt-1" value={form.brand || ''} onChange={e => update('brand', e.target.value)} /></div>
             </div>
             <div><Label>Description</Label><textarea rows={3} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none focus:ring-1 focus:ring-ring" value={form.description || ''} onChange={e => update('description', e.target.value)} /></div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Category</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Category</Label>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setShowCategoryAdd((v) => !v)}>
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Quick Add
+                  </Button>
+                </div>
                 <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.category_id || ''} onChange={e => update('category_id', e.target.value || null)}>
-                  <option value="">— Select —</option>
+                  <option value="">- Select -</option>
                   {categories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
+                {showCategoryAdd && (
+                  <div className="mt-2 flex gap-2">
+                    <Input placeholder="New category" value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} />
+                    <Button type="button" size="sm" loading={createCategory.isPending} onClick={saveQuickCategory}>Save</Button>
+                  </div>
+                )}
               </div>
               <div>
-                <Label>Unit</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Unit</Label>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setShowUnitAdd((v) => !v)}>
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Quick Add
+                  </Button>
+                </div>
                 <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.unit_id || ''} onChange={e => update('unit_id', e.target.value || null)}>
-                  <option value="">— Select —</option>
+                  <option value="">- Select -</option>
                   {units.map((u: any) => <option key={u.id} value={u.id}>{u.name} ({u.abbreviation})</option>)}
                 </select>
+                {showUnitAdd && (
+                  <div className="mt-2 grid grid-cols-[minmax(0,1fr)_90px_auto] gap-2">
+                    <Input placeholder="New unit" value={newUnitName} onChange={(e) => setNewUnitName(e.target.value)} />
+                    <Input placeholder="Abbr" value={newUnitAbbr} onChange={(e) => setNewUnitAbbr(e.target.value)} />
+                    <Button type="button" size="sm" loading={createUnit.isPending} onClick={saveQuickUnit}>Save</Button>
+                  </div>
+                )}
               </div>
             </div>
             <div>
@@ -254,11 +330,10 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
             </div>
             <div>
               <Label>GST Rate</Label>
-              <div className="flex gap-2 mt-2">
-                {GST_RATES.map(rate => (
-                  <button key={rate} onClick={() => update('gst_rate', rate)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${form.gst_rate === rate ? 'bg-primary text-primary-foreground shadow-md scale-105' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>{rate}%</button>
-                ))}
-              </div>
+              <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.gst_rate ?? 18} onChange={e => update('gst_rate', parseInt(e.target.value, 10))}>
+                {GST_RATE_OPTIONS.map((rate) => <option key={rate} value={rate}>{gstRateLabel(rate)}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">CGST and SGST apply for local sales; IGST applies for interstate sales.</p>
             </div>
             <div>
               <Label>Tax Preference</Label>
@@ -276,7 +351,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                   const nextShow = !showWholesalePricing;
                   setShowWholesalePricing(nextShow);
                   if (nextShow && wholesaleTiers.length === 0) {
-                    setWholesaleTiers([{ tier_name: '', min_quantity: 10, price: Math.round((form.selling_price || 0) * 100) }]);
+                    setWholesaleTiers([{ tier_name: '', min_quantity: 10, price: Number(form.selling_price || 0) }]);
                   }
                 }}
               >
@@ -312,14 +387,14 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                         />
                       </div>
                       <div className="col-span-4">
-                        <Label className="text-xs">Price (paise)</Label>
+                        <Label className="text-xs">Price (₹)</Label>
                         <Input
                           type="number"
                           min={0}
                           value={tier.price}
                           onChange={(e) => {
                             const next = [...wholesaleTiers];
-                            next[idx] = { ...next[idx], price: parseInt(e.target.value) || 0 };
+                            next[idx] = { ...next[idx], price: parseFloat(e.target.value) || 0 };
                             setWholesaleTiers(next);
                           }}
                         />
@@ -343,7 +418,7 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                     onClick={() =>
                       setWholesaleTiers((prev) => [
                         ...prev,
-                        { tier_name: '', min_quantity: 10, price: Math.round((form.selling_price || 0) * 100) },
+                        { tier_name: '', min_quantity: 10, price: Number(form.selling_price || 0) },
                       ])
                     }
                   >
@@ -374,6 +449,19 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
                     <div className="grid grid-cols-2 gap-4">
                       <div><Label>Opening Stock</Label><Input type="number" className="mt-1 tabular-nums" min={0} value={form.opening_stock || ''} onChange={e => update('opening_stock', parseInt(e.target.value) || 0)} /></div>
                       <div><Label>Reorder Alert Point</Label><Input type="number" className="mt-1 tabular-nums" min={0} value={form.reorder_point || ''} onChange={e => update('reorder_point', parseInt(e.target.value) || 0)} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Opening Stock Value (₹)</Label>
+                        <Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.opening_stock_value || ''} onChange={e => update('opening_stock_value', e.target.value)} />
+                      </div>
+                      <div>
+                        <Label>Opening Stock Godown</Label>
+                        <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.godown_id || ''} onChange={e => update('godown_id', e.target.value)}>
+                          <option value="">Default / existing godown</option>
+                          {godowns.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </div>
                     </div>
                   </>
                 )}

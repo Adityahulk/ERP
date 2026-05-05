@@ -25,7 +25,7 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
   const activeItems = mode === 'label_printer'
     ? items.filter(i => i.print_qty > 0).slice(0, 1)
     : items.filter(i => i.print_qty > 0);
-  const totalLabels = items.reduce((acc, i) => acc + i.print_qty, 0);
+  const totalLabels = activeItems.reduce((acc, i) => acc + i.print_qty, 0);
   const pageInfo = mode === 'general_printer'
     ? `${generalPreset} labels per A4 page`
     : labelPreset === 'single'
@@ -120,19 +120,22 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
              <p className="text-xs text-slate-500 -mt-3">{pageInfo}{mode === 'label_printer' ? ' • only one item can be printed at a time' : ''}</p>
 
              <div className="max-h-64 overflow-y-auto space-y-2 border rounded-md p-2">
-                {items.map((item, idx) => (
+                 {items.map((item, idx) => {
+                   const disabledByMode = mode === 'label_printer' && activeItems[0]?.item_id !== item.item_id;
+                   return (
                    <div key={idx} className="flex justify-between items-center p-2 hover:bg-slate-50 rounded">
                       <div>
-                         <p className="font-medium text-sm text-slate-800 line-clamp-1">{item.name}</p>
+                         <p className={`font-medium text-sm line-clamp-1 ${disabledByMode ? 'text-slate-400' : 'text-slate-800'}`}>{item.name}</p>
                          <p className="text-xs text-slate-500">{item.sku}</p>
                       </div>
                       <div className="flex items-center gap-3">
-                         <button onClick={() => { const cp = [...items]; cp[idx].print_qty = Math.max(0, cp[idx].print_qty - 1); setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200"><Minus className="w-4 h-4"/></button>
+                         <button disabled={disabledByMode} onClick={() => { const cp = [...items]; cp[idx].print_qty = Math.max(0, cp[idx].print_qty - 1); setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Minus className="w-4 h-4"/></button>
                          <span className="w-8 text-center text-sm font-semibold">{item.print_qty}</span>
-                         <button onClick={() => { const cp = [...items]; cp[idx].print_qty += 1; setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200"><Plus className="w-4 h-4"/></button>
+                         <button disabled={disabledByMode} onClick={() => { const cp = [...items]; cp[idx].print_qty += 1; setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Plus className="w-4 h-4"/></button>
                       </div>
-                   </div>
-                ))}
+                    </div>
+                   );
+                 })}
              </div>
 
              <div className="flex justify-between items-center pt-2">

@@ -6,7 +6,7 @@ export default function BarcodeGeneratePage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Generate Barcode</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Select an item, preview the barcode, generate a PNG, or open the item for print detail.
+          Select items, preview a barcode, and generate A4 or thermal label printer PDFs.
         </p>
       </div>
       <BarcodeGeneratorPanel />

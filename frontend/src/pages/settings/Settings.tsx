@@ -38,6 +38,9 @@ export default function Settings() {
   const [upiId, setUpiId] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceTerms, setInvoiceTerms] = useState('');
+  const [invoiceTemplate, setInvoiceTemplate] = useState('standard');
+  const [documentTheme, setDocumentTheme] = useState('classic');
+  const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
   const [itemTerminologyPlural, setItemTerminologyPlural] = useState('Items');
   const [defaultGstRate, setDefaultGstRate] = useState('18');
@@ -224,7 +227,7 @@ export default function Settings() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'bizflow_item_import_template.xlsx';
+      a.download = 'microtechnique_item_import_template.xlsx';
       a.click();
       window.URL.revokeObjectURL(url);
       toast.success('Template downloaded', { id: t });
@@ -372,6 +375,9 @@ export default function Settings() {
     setUpiId(company.upi_id || '');
     setInvoicePrefix(company.invoice_prefix || 'INV');
     setInvoiceTerms(company.terms_and_conditions || '');
+    setInvoiceTemplate(company.invoice_pdf_template || 'standard');
+    setDocumentTheme(company.document_theme || 'classic');
+    setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
     setItemTerminologySingular(company.item_terminology || 'Item');
     setItemTerminologyPlural(company.item_terminology_plural || 'Items');
     setDefaultGstRate(String(company.default_gst_rate ?? 18));
@@ -441,6 +447,9 @@ export default function Settings() {
       await updateCompany.mutateAsync({
         invoice_prefix: invoicePrefix.trim() || 'INV',
         terms_and_conditions: invoiceTerms.trim() || null,
+        invoice_pdf_template: invoiceTemplate,
+        document_theme: documentTheme,
+        document_primary_color: documentPrimaryColor || '#4F46E5',
       });
       toast.success('Invoice preferences saved');
     } catch (e: any) {
@@ -1091,6 +1100,31 @@ export default function Settings() {
                         <div>
                            <label className="text-sm font-medium text-slate-700">Default Terms & Conditions</label>
                           <textarea className="w-full mt-1 border rounded-md p-3 h-32 text-sm" value={invoiceTerms} onChange={(e) => setInvoiceTerms(e.target.value)} />
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl">
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Default PDF template</label>
+                              <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={invoiceTemplate} onChange={(e) => setInvoiceTemplate(e.target.value)}>
+                                 <option value="standard">Standard GST</option>
+                                 <option value="simple">Simple</option>
+                                 <option value="performa">Proforma</option>
+                              </select>
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Document theme</label>
+                              <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value)}>
+                                 <option value="classic">Classic</option>
+                                 <option value="modern">Modern</option>
+                                 <option value="compact">Compact</option>
+                              </select>
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Brand color</label>
+                              <div className="mt-1 flex gap-2">
+                                 <input type="color" className="h-10 w-12 rounded border bg-white p-1" value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} />
+                                 <Input value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} className="font-mono" />
+                              </div>
+                           </div>
                         </div>
                         <div className="border-t pt-6 space-y-3 max-w-md">
                            <h3 className="font-semibold">Printer</h3>

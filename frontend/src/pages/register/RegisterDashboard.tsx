@@ -122,7 +122,7 @@ export default function RegisterDashboard() {
           <h1 className="text-3xl font-bold text-white">
             Welcome back, {registrant?.name?.split(' ')[0]}
           </h1>
-          <p className="text-slate-400 mt-1">Manage your ERP licenses and subscriptions</p>
+          <p className="text-slate-400 mt-1">Manage your licenses and subscriptions</p>
         </div>
 
         {/* Stats row */}
@@ -161,14 +161,14 @@ export default function RegisterDashboard() {
             </div>
             <div className="flex flex-col sm:flex-row gap-2 text-sm">
               <a
-                href="tel:+919390754255"
+                href="tel:+916355997080"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Phone className="w-4 h-4" />
-                +91-9390754255
+                +91 6355 997 080
               </a>
               <a
-                href="mailto:sales@microtechnique.in"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Mail className="w-4 h-4" />
@@ -200,7 +200,7 @@ export default function RegisterDashboard() {
             <ShieldCheck className="w-16 h-16 text-purple-400 mx-auto mb-4 opacity-50" />
             <h3 className="text-white text-xl font-semibold mb-2">No licenses yet</h3>
             <p className="text-slate-400 mb-6">
-              Purchase a license to get ERP access for you and your team.
+              Purchase a license to get software access for you and your team.
             </p>
             <Link
               to="/register/licenses"

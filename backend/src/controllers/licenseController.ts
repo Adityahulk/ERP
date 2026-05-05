@@ -4,8 +4,8 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
-const CONTACT_PHONE = '+91-9876543210';
-const CONTACT_EMAIL = 'sales@microtechnique.in';
+const CONTACT_PHONE = '+91 6355 997 080';
+const CONTACT_EMAIL = 'support@microtechnique.in';
 
 // ── GET /api/licenses/tiers ───────────────────────────────────
 // Public — returns all active tiers with features

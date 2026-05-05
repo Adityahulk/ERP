@@ -9,8 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Loader2, Sparkles } from 'lucide-react';
-
-const GST_OPTIONS = [0, 5, 12, 18, 28] as const;
+import { GST_RATE_OPTIONS, gstRateLabel } from '@/lib/gstRates';
 
 const ITEM_TYPES = [
   { value: 'product', label: 'Product' },
@@ -51,6 +50,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
 
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [brand, setBrand] = useState('');
   const [description, setDescription] = useState('');
   const [hsnCode, setHsnCode] = useState('');
@@ -80,6 +80,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     if (!open) return;
     setName(defaultName.trim());
     setSku('');
+    setBarcode('');
     setBrand('');
     setDescription('');
     setHsnCode('');
@@ -155,6 +156,8 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
 
     const s = sku.trim();
     if (s) body.sku = s;
+    const bc = barcode.trim();
+    if (bc) body.barcode = bc;
     const b = brand.trim();
     if (b) body.brand = b;
     const desc = description.trim();
@@ -249,7 +252,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   disabled={createItem.isPending}
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <Label>SKU / code</Label>
                   <div className="flex gap-1 mt-1">
@@ -265,6 +268,10 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                       <Sparkles className="w-3.5 h-3.5" />
                     </Button>
                   </div>
+                </div>
+                <div>
+                  <Label>Barcode</Label>
+                  <Input className="mt-1 font-mono text-sm" value={barcode} onChange={(e) => setBarcode(e.target.value)} disabled={createItem.isPending} />
                 </div>
                 <div>
                   <Label>Brand</Label>
@@ -374,12 +381,13 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   onChange={(e) => setGstRate(parseInt(e.target.value, 10))}
                   disabled={createItem.isPending}
                 >
-                  {GST_OPTIONS.map((g) => (
+                  {GST_RATE_OPTIONS.map((g) => (
                     <option key={g} value={g}>
-                      {g}%
+                      {gstRateLabel(g)}
                     </option>
                   ))}
                 </select>
+                <p className="text-xs text-muted-foreground mt-1">CGST/SGST are used for local sales; IGST is used for interstate sales.</p>
               </div>
               <div>
                 <Label>Tax preference</Label>

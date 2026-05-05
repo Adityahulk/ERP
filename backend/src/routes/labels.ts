@@ -30,6 +30,9 @@ router.post('/bulk', async (req: Request, res: Response) => {
      if (mode === 'label_printer' && labelsPerPageNum && ![1, 2].includes(labelsPerPageNum)) {
        return res.status(400).json({ success: false, error: 'Label printer supports only 1 or 2 labels per page' });
      }
+     if (mode === 'label_printer' && items.filter((i: any) => Number(i?.quantity || 0) > 0).length > 1) {
+       return res.status(400).json({ success: false, error: 'Label printer supports one item at a time' });
+     }
 
      const printQueue = [];
      
@@ -39,7 +42,7 @@ router.post('/bulk', async (req: Request, res: Response) => {
      if (!ids.length) return res.status(400).json({ success: false, error: 'Missing item ids in payload' });
      const [itemDetails, companyRes] = await Promise.all([
       query(
-        `SELECT id, name, sku, hsn_code, selling_price, gst_rate
+        `SELECT id, name, COALESCE(barcode, sku) AS sku, hsn_code, selling_price, gst_rate
          FROM items
          WHERE id = ANY($1::uuid[]) AND company_id = $2`,
         [ids, companyId],

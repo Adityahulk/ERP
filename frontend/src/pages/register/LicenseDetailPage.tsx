@@ -219,7 +219,7 @@ export default function LicenseDetailPage() {
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
                 <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <Users className="w-4 h-4 text-purple-400" />
-                  ERP Users ({users.length})
+                  Users ({users.length})
                 </h2>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -275,16 +275,16 @@ export default function LicenseDetailPage() {
                 Contact our support team for any questions about your license.
               </p>
               <a
-                href="tel:+919876543210"
+                href="tel:+916355997080"
                 className="flex items-center gap-2 text-purple-300 hover:text-purple-200 text-sm transition-colors mb-2"
               >
-                <span>📞 +91-9876543210</span>
+                <span>📞 +91 6355 997 080</span>
               </a>
               <a
-                href="mailto:sales@microtechnique.in"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 text-purple-300 hover:text-purple-200 text-sm transition-colors"
               >
-                <span>✉️ sales@microtechnique.in</span>
+                <span>✉️ support@microtechnique.in</span>
               </a>
             </div>
           </div>

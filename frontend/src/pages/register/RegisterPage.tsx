@@ -70,7 +70,7 @@ export default function RegisterPage() {
         <div className="mb-8">
           <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 drop-shadow-lg mb-6" />
           <h1 className="text-4xl font-bold leading-tight mb-4">
-            Start your ERP journey today
+            Start your business software journey today
           </h1>
           <p className="text-purple-300 text-lg">
             Join hundreds of Indian businesses managing their operations smarter.
@@ -149,7 +149,7 @@ export default function RegisterPage() {
                   type="tel"
                   value={form.phone}
                   onChange={(e) => update('phone', e.target.value)}
-                  placeholder="+91 98765 43210"
+                  placeholder="+91 6355 997 080"
                   className="w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
                 />
               </div>
@@ -205,9 +205,9 @@ export default function RegisterPage() {
             </p>
 
             <p className="text-center text-xs text-slate-500 mt-4">
-              Have ERP login credentials?{' '}
+              Have login credentials?{' '}
               <Link to="/login" className="text-purple-400 hover:text-purple-300">
-                Go to ERP login
+                Go to login
               </Link>
             </p>
           </div>

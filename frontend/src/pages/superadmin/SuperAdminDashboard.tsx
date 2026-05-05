@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { fetchSuperAdminStats } from '@/lib/superAdminApi';
 import ActivateLicenseModal from '@/components/superadmin/ActivateLicenseModal';
 
-const SUPPORT_PHONE = '+91-9876543210';
+const SUPPORT_PHONE = '+91 6355 997 080';
 
 function appLoginUrl(): string {
   const u = import.meta.env.VITE_APP_URL;

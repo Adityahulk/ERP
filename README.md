@@ -1,4 +1,4 @@
-# BizFlow — Smart ERP for Indian Businesses
+# BizFlow — Smart Accounts for Indian Businesses
 
 A comprehensive business management platform built for Indian MSMEs — traders, retailers, manufacturers, distributors, and service businesses. Direct competitor to Vyapar.
 

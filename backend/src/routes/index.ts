@@ -67,7 +67,7 @@ router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
 
-// Dashboard is always accessible — no module guard (it's the ERP home screen)
+// Dashboard is always accessible — no module guard (it's the home screen)
 router.get('/reports/dashboard', verifyToken, getDashboard);
 
 // Tier-gated modules — verify JWT before moduleGuard (guard needs req.user)
@@ -87,7 +87,7 @@ router.get('/', (_req, res) => {
   res.json({
     name: 'BizFlow API',
     version: '2.0.0',
-    description: 'Indian Manufacturing Business ERP API',
+    description: 'Indian Manufacturing Business API',
     modules: {
       active: [
         'auth', 'company', 'godowns', 'users',

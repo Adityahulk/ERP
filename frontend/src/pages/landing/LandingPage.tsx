@@ -32,7 +32,7 @@ const TIERS = [
     price: '₹4,999',
     period: '/year',
     maxUsers: 4,
-    description: 'Perfect for small businesses. Core ERP features to get started.',
+    description: 'Perfect for small businesses. Core business features to get started.',
     gradient: 'from-slate-500 to-slate-400',
     textColor: 'text-slate-200',
     included: [
@@ -59,7 +59,7 @@ const TIERS = [
     price: '₹8,999',
     period: '/year',
     maxUsers: 5,
-    description: 'Grow confidently. Full ERP with GST filing and expense management.',
+    description: 'Grow confidently. Full application with GST filing and expense management.',
     gradient: 'from-yellow-500 to-amber-400',
     textColor: 'text-yellow-900',
     badge: 'Most Popular',
@@ -263,7 +263,7 @@ export default function LandingPage() {
               className="bg-white border border-slate-200 hover:border-[#420662] text-slate-700 hover:text-[#420662] px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 active:scale-95"
             >
               <Phone className="w-4 h-4" />
-              {showPhone ? '+91 93907 54255' : 'Contact Us'}
+              {showPhone ? '+91 6355 997 080' : 'Contact Us'}
             </button>
           </div>
         </div>
@@ -281,7 +281,7 @@ export default function LandingPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#420662] opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#420662]" />
               </span>
-              India's All-in-One Business ERP
+              India's All-in-One Business Accounts
             </div>
             <h1 className="text-4xl md:text-6xl font-extrabold text-slate-900 tracking-tight leading-tight mb-6">
               Run Your Entire Business —{' '}
@@ -372,7 +372,7 @@ export default function LandingPage() {
               Built for Every Kind of Business
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              Whether you sell products, offer services, or do both — this ERP
+              Whether you sell products, offer services, or do both — this software
               adapts to the way you work.
             </p>
           </div>
@@ -437,14 +437,14 @@ export default function LandingPage() {
               full data isolation — your business data stays yours.
             </p>
             <div className="flex items-center justify-center gap-4 mt-6 text-sm text-purple-300">
-              <a href="tel:+919390754255" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="tel:+916355997080" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Phone className="w-4 h-4" />
-                +91-9876543210
+                +91 6355 997 080
               </a>
               <span className="text-white/20">|</span>
-              <a href="mailto:sales@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="mailto:support@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Mail className="w-4 h-4" />
-                sales@microtechnique.in
+                support@microtechnique.in
               </a>
             </div>
           </div>
@@ -632,7 +632,7 @@ export default function LandingPage() {
               className="px-10 py-5 bg-transparent border-2 border-white/30 hover:border-white text-white rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3"
             >
               <Phone className="w-5 h-5" />
-              {showPhone ? '+91 93907 54255' : 'Contact Sales'}
+              {showPhone ? '+91 6355 997 080' : 'Contact Sales'}
             </button>
           </div>
         </div>
@@ -653,7 +653,7 @@ export default function LandingPage() {
               </div>
             </div>
             <p className="mb-6 max-w-sm">
-              India's all-in-one ERP for retail, wholesale, service, and
+              India's all-in-one business software for retail, wholesale, service, and
               manufacturing businesses. Simplify operations and scale faster.
             </p>
             <div className="flex gap-4">
@@ -669,7 +669,7 @@ export default function LandingPage() {
               <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
               <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
               <li><Link to="/register" className="hover:text-white transition-colors">Register</Link></li>
-              <li><Link to="/login" className="hover:text-white transition-colors">Login to ERP</Link></li>
+              <li><Link to="/login" className="hover:text-white transition-colors">Login</Link></li>
             </ul>
           </div>
           <div>
@@ -678,19 +678,19 @@ export default function LandingPage() {
               <li className="flex items-start gap-2">
                 <Phone className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
                 <a
-                  href="tel:+919390754255"
+                  href="tel:+916355997080"
                   className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
                 >
-                  +91 93907 54255
+                  +91 6355 997 080
                 </a>
               </li>
               <li className="flex items-start gap-2">
                 <Mail className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
                 <a
-                  href="mailto:sales@microtechnique.in"
+                  href="mailto:support@microtechnique.in"
                   className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
                 >
-                  sales@microtechnique.in
+                  support@microtechnique.in
                 </a>
               </li>
             </ul>

@@ -13,6 +13,7 @@ import { Fragment, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/lib/formatters';
+import { GST_RATE_OPTIONS } from '@/lib/gstRates';
 import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
 import api from '@/lib/api';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
@@ -46,7 +47,7 @@ interface Props {
   showCess?: boolean;
 }
 
-const GST_OPTIONS = [0, 5, 12, 18, 28];
+const GST_OPTIONS = GST_RATE_OPTIONS;
 
 function calcLine(item: VyaparLineItem, isGst: boolean) {
   const gross = item.quantity * item.unit_price;

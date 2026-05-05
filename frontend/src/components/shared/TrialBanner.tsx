@@ -34,7 +34,7 @@ export default function TrialBanner() {
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <a
-          href="tel:+919876543210"
+          href="tel:+916355997080"
           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 font-semibold text-xs transition-colors"
         >
           Upgrade Now

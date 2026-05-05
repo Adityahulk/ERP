@@ -49,7 +49,7 @@ export async function register(req: Request, res: Response) {
 }
 
 // ── POST /api/register/login ──────────────────────────────────
-// Public — registrant login (separate from ERP user login)
+// Public — registrant login (separate from application user login)
 export async function registrantLogin(req: Request, res: Response) {
   try {
     const { email, password } = req.body;

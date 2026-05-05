@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
--- BizFlow ERP — Trial System
+-- BizFlow Accounts — Trial System
 -- Migration: 012_trial_system.sql
 -- Adds 'trial' as a valid license status so that self-serve
 -- trial signups are tracked the same way as paid licenses.

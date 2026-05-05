@@ -30,14 +30,14 @@ export default function ModuleGate({ featureKey, featureLabel, children }: Modul
       </p>
       <div className="flex flex-col sm:flex-row gap-3">
         <a
-          href="tel:+919876543210"
+          href="tel:+916355997080"
           className="inline-flex items-center gap-2 px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-semibold transition-colors"
         >
           Call to Upgrade
           <ArrowUpRight className="w-4 h-4" />
         </a>
         <a
-          href="mailto:sales@microtechnique.in"
+          href="mailto:support@microtechnique.in"
           className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
         >
           Email Sales

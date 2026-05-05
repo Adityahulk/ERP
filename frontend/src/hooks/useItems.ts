@@ -29,7 +29,11 @@ export function useUpdateItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => api.patch(`/items/${id}`, data).then(r => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['items'] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['items'] });
+      qc.invalidateQueries({ queryKey: ['items', vars.id] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
+    },
   });
 }
 

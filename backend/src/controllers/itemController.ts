@@ -8,6 +8,8 @@ import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
 
+const VALID_GST_RATES = new Set([0, 1, 3, 5, 6, 12, 18, 28, 40]);
+
 async function applyOpeningStock(
   client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
   args: {
@@ -50,6 +52,92 @@ async function applyOpeningStock(
       args.createdBy,
     ],
   );
+}
+
+async function adjustOpeningStock(
+  client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
+  args: {
+    companyId: string;
+    itemId: string;
+    godownId: string;
+    delta: number;
+    unitCost: number;
+    createdBy: string;
+    notes?: string;
+  }
+) {
+  const delta = Math.trunc(Number(args.delta || 0));
+  if (delta === 0) return;
+  const unitCost = Number(args.unitCost || 0);
+
+  const stockRes = await client.query(
+    `SELECT quantity FROM item_stock
+     WHERE company_id = $1 AND item_id = $2 AND godown_id = $3
+     FOR UPDATE`,
+    [args.companyId, args.itemId, args.godownId],
+  );
+  const currentQty = Number(stockRes.rows[0]?.quantity || 0);
+  if (currentQty + delta < 0) {
+    throw new Error('Opening stock change would make godown stock negative');
+  }
+
+  const upd = await client.query(
+    `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (item_id, godown_id) DO UPDATE
+       SET quantity = item_stock.quantity + EXCLUDED.quantity,
+           avg_cost_price = CASE
+             WHEN EXCLUDED.avg_cost_price > 0 THEN EXCLUDED.avg_cost_price
+             ELSE item_stock.avg_cost_price
+           END,
+           updated_at = NOW()
+     RETURNING quantity`,
+    [args.companyId, args.itemId, args.godownId, delta, unitCost],
+  );
+
+  await client.query(
+    `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, quantity, unit_cost, balance_after, notes, created_by)
+     VALUES ($1, $2, $3, 'opening_stock', $4, $5, $6, $7, $8)`,
+    [
+      args.companyId,
+      args.itemId,
+      args.godownId,
+      delta,
+      unitCost,
+      Number(upd.rows[0]?.quantity || currentQty + delta),
+      args.notes || 'Opening stock adjustment',
+      args.createdBy,
+    ],
+  );
+}
+
+async function resolveOpeningStockGodown(
+  client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
+  companyId: string,
+  itemId: string,
+  requestedGodownId?: string | null,
+  fallbackGodownId?: string | null,
+) {
+  if (requestedGodownId) return requestedGodownId;
+  if (fallbackGodownId) return fallbackGodownId;
+
+  const movementRes = await client.query(
+    `SELECT godown_id FROM stock_movements
+     WHERE company_id = $1 AND item_id = $2 AND movement_type = 'opening_stock' AND godown_id IS NOT NULL
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [companyId, itemId],
+  );
+  if (movementRes.rows[0]?.godown_id) return movementRes.rows[0].godown_id;
+
+  const stockRes = await client.query(
+    `SELECT godown_id FROM item_stock
+     WHERE company_id = $1 AND item_id = $2
+     ORDER BY quantity DESC, updated_at DESC
+     LIMIT 1`,
+    [companyId, itemId],
+  );
+  return stockRes.rows[0]?.godown_id || null;
 }
 
 async function getItemActivity(companyId: string, itemId: string) {
@@ -304,6 +392,12 @@ export async function createItem(req: Request, res: Response) {
       );
       if (dup.rows.length) return res.status(400).json(error('An item with this SKU already exists'));
     }
+    if (data.barcode) {
+      const dup = await query(
+        'SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false', [companyId, data.barcode]
+      );
+      if (dup.rows.length) return res.status(400).json(error('An item with this barcode already exists'));
+    }
 
     // Auto-calculate tax rates
     const gstRate = data.gst_rate ?? 18;
@@ -312,7 +406,7 @@ export async function createItem(req: Request, res: Response) {
     const result = await withTransaction(async (client) => {
       const itemRes = await client.query(
         `INSERT INTO items (
-          company_id, name, description, sku, hsn_code, category_id, brand, unit_id,
+          company_id, name, description, sku, barcode, hsn_code, category_id, brand, unit_id,
           secondary_unit_id, unit_conversion_factor,
           item_type, track_inventory, is_serialized,
           purchase_price, selling_price,
@@ -320,10 +414,10 @@ export async function createItem(req: Request, res: Response) {
           opening_stock, opening_stock_value, opening_stock_date,
           reorder_point, max_stock_level, image_url, custom_fields
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
         ) RETURNING *`,
         [
-          companyId, data.name, data.description, data.sku, data.hsn_code,
+          companyId, data.name, data.description, data.sku, data.barcode || null, data.hsn_code,
           data.category_id, data.brand, data.unit_id,
           data.secondary_unit_id, data.unit_conversion_factor,
           data.item_type || 'product',
@@ -531,6 +625,10 @@ export async function updateItem(req: Request, res: Response) {
       const dup = await query('SELECT id FROM items WHERE company_id = $1 AND sku = $2 AND is_deleted = false AND id != $3', [companyId, data.sku, id]);
       if (dup.rows.length) return res.status(400).json(error('An item with this SKU already exists'));
     }
+    if (data.barcode && data.barcode !== old.barcode) {
+      const dup = await query('SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false AND id != $3', [companyId, data.barcode, id]);
+      if (dup.rows.length) return res.status(400).json(error('An item with this barcode already exists'));
+    }
 
     // If gst_rate changed, recalculate
     if (data.gst_rate !== undefined) {
@@ -539,33 +637,69 @@ export async function updateItem(req: Request, res: Response) {
       data.igst_rate = data.gst_rate;
     }
 
-    const fields = [
-      'name','description','sku','hsn_code','category_id','brand','unit_id',
-      'secondary_unit_id','unit_conversion_factor',
-      'item_type','track_inventory','is_serialized',
-      'purchase_price','selling_price',
-      'tax_preference','gst_rate','cgst_rate','sgst_rate','igst_rate','cess_rate',
-      'reorder_point','max_stock_level','image_url','is_active','custom_fields',
-    ];
-    const updates: string[] = []; const values: any[] = []; let idx = 1;
-    for (const f of fields) {
-      if (data[f] !== undefined) {
-        updates.push(`${f} = $${idx++}`);
-        values.push(f === 'custom_fields' ? JSON.stringify(data[f]) : data[f]);
+    const result = await withTransaction(async (client) => {
+      const fields = [
+        'name','description','sku','barcode','hsn_code','category_id','brand','unit_id',
+        'secondary_unit_id','unit_conversion_factor',
+        'item_type','track_inventory','is_serialized',
+        'purchase_price','selling_price',
+        'tax_preference','gst_rate','cgst_rate','sgst_rate','igst_rate','cess_rate',
+        'opening_stock','opening_stock_value','opening_stock_date',
+        'reorder_point','max_stock_level','image_url','is_active','custom_fields',
+      ];
+      const updates: string[] = []; const values: any[] = []; let idx = 1;
+      for (const f of fields) {
+        if (data[f] !== undefined) {
+          updates.push(`${f} = $${idx++}`);
+          values.push(f === 'custom_fields' ? JSON.stringify(data[f]) : data[f]);
+        }
       }
-    }
-    if (!updates.length) return res.status(400).json(error('No fields to update'));
+      if (!updates.length) throw new Error('No fields to update');
 
-    values.push(id, companyId);
-    const result = await query(
-      `UPDATE items SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING *`, values
-    );
+      if (data.opening_stock !== undefined) {
+        const trackInventory = data.track_inventory !== undefined ? data.track_inventory !== false : old.track_inventory !== false;
+        const nextOpening = Math.trunc(Number(data.opening_stock || 0));
+        const prevOpening = Math.trunc(Number(old.opening_stock || 0));
+        const delta = nextOpening - prevOpening;
+        if (delta !== 0) {
+          if (!trackInventory) {
+            throw new Error('Enable inventory tracking before changing opening stock');
+          }
+          const godownId = await resolveOpeningStockGodown(
+            client,
+            companyId,
+            id,
+            data.godown_id,
+            req.user!.godown_id,
+          );
+          if (!godownId) throw new Error('Select a godown before changing opening stock');
+          const openingValue = Number(data.opening_stock_value ?? old.opening_stock_value ?? 0);
+          const unitCost = nextOpening > 0 && openingValue > 0 ? openingValue / nextOpening : Number(data.purchase_price ?? old.purchase_price ?? 0);
+          await adjustOpeningStock(client, {
+            companyId,
+            itemId: id,
+            godownId,
+            delta,
+            unitCost,
+            createdBy: req.user!.id,
+            notes: 'Opening stock updated from item master',
+          });
+        }
+      }
 
-    await logAction(req.user!.id, companyId, 'update', 'item', id, old, result.rows[0], req.ip);
-    res.json(success(result.rows[0]));
+      values.push(id, companyId);
+      const upd = await client.query(
+        `UPDATE items SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING *`, values
+      );
+      return upd.rows[0];
+    });
+
+    await logAction(req.user!.id, companyId, 'update', 'item', id, old, result, req.ip);
+    res.json(success(result));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    const status = /No fields|Opening stock|Select a godown|Enable inventory/i.test(err.message) ? 400 : 500;
+    res.status(status).json(error(err.message));
   }
 }
 
@@ -630,17 +764,20 @@ export async function bulkImport(req: Request, res: Response) {
     // Map headers and validate
     const preview: any[] = [];
     const errors: any[] = [];
+    const seenSkus = new Set<string>();
+    const seenBarcodes = new Set<string>();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const item: any = {
         name: row['Name'] || row['name'] || '',
         sku: row['SKU'] || row['sku'] || null,
+        barcode: row['Barcode'] || row['barcode'] || row['EAN'] || row['ean'] || null,
         hsn_code: row['HSN Code'] || row['hsn_code'] || null,
         brand: row['Brand'] || row['brand'] || null,
         item_type: row['Item Type'] || row['item_type'] || 'product',
-        selling_price: parseInt(row['Selling Price'] || row['selling_price'] || 0) * 100,
-        purchase_price: parseInt(row['Purchase Price'] || row['purchase_price'] || 0) * 100,
+        selling_price: Math.round(Number(row['Selling Price'] || row['selling_price'] || 0) * 100),
+        purchase_price: Math.round(Number(row['Purchase Price'] || row['purchase_price'] || 0) * 100),
         gst_rate: parseInt(row['GST Rate'] || row['gst_rate'] || 18),
         opening_stock: parseInt(row['Opening Stock'] || row['opening_stock'] || 0),
         reorder_point: parseInt(row['Reorder Point'] || row['reorder_point'] || 0),
@@ -648,8 +785,22 @@ export async function bulkImport(req: Request, res: Response) {
 
       const rowErrors: string[] = [];
       if (!item.name) rowErrors.push('Name is required');
-      if (![0,5,12,18,28].includes(item.gst_rate)) rowErrors.push('Invalid GST rate');
+      if (!VALID_GST_RATES.has(item.gst_rate)) rowErrors.push('Invalid GST rate');
       if (item.selling_price < 0) rowErrors.push('Selling price cannot be negative');
+      const skuKey = String(item.sku || '').trim();
+      const barcodeKey = String(item.barcode || '').trim();
+      if (skuKey) {
+        if (seenSkus.has(skuKey)) rowErrors.push('Duplicate SKU in import file');
+        seenSkus.add(skuKey);
+        const dupSku = await query('SELECT id FROM items WHERE company_id = $1 AND sku = $2 AND is_deleted = false LIMIT 1', [companyId, skuKey]);
+        if (dupSku.rows.length) rowErrors.push('SKU already exists');
+      }
+      if (barcodeKey) {
+        if (seenBarcodes.has(barcodeKey)) rowErrors.push('Duplicate barcode in import file');
+        seenBarcodes.add(barcodeKey);
+        const dupBarcode = await query('SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false LIMIT 1', [companyId, barcodeKey]);
+        if (dupBarcode.rows.length) rowErrors.push('Barcode already exists');
+      }
 
       if (rowErrors.length) {
         errors.push({ row: i + 2, errors: rowErrors, data: item });
@@ -675,14 +826,15 @@ export async function bulkImport(req: Request, res: Response) {
           const d = p.data;
           const halfRate = d.gst_rate / 2;
           const itemIns = await client.query(
-            `INSERT INTO items (company_id, name, sku, hsn_code, brand, item_type, purchase_price, selling_price,
+            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, brand, item_type, purchase_price, selling_price,
               gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
              RETURNING id`,
             [
               companyId,
               d.name,
               d.sku,
+              d.barcode,
               d.hsn_code,
               d.brand,
               d.item_type,
@@ -726,11 +878,11 @@ export async function bulkImport(req: Request, res: Response) {
 export async function importTemplate(_req: Request, res: Response) {
   try {
     const headers = [
-      'Name', 'SKU', 'HSN Code', 'Brand', 'Item Type',
+      'Name', 'SKU', 'Barcode', 'HSN Code', 'Brand', 'Item Type',
       'Selling Price', 'Purchase Price', 'GST Rate', 'Opening Stock', 'Reorder Point',
     ];
     const example = [
-      'Basmati Rice 5kg', 'RICE-5KG', '1006', 'India Gate', 'product',
+      'Basmati Rice 5kg', 'RICE-5KG', '8901234567890', '1006', 'India Gate', 'product',
       450, 350, 5, 100, 20,
     ];
 
@@ -740,7 +892,7 @@ export async function importTemplate(_req: Request, res: Response) {
 
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=bizflow_item_import_template.xlsx');
+    res.setHeader('Content-Disposition', 'attachment; filename=microtechnique_item_import_template.xlsx');
     res.send(buffer);
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useCreateInvoice, useCompany, useInvoice, useUpdateInvoice } from '@/hooks/useBusiness';
 import { useGodowns } from '@/hooks/useStock';
 import { formatMoney, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
+import { GST_RATE_OPTIONS } from '@/lib/gstRates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -526,8 +527,8 @@ export default function InvoiceCreate() {
                         <td className="p-2"><Input type="number" className="w-28 text-right h-7 tabular-nums" min={0} value={paiseToRupees(item.unit_price).toFixed(2)} onChange={e => updateLine(idx, 'unit_price', rupeesToPaise(e.target.value))} /></td>
                         <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={0} max={100} value={item.discount_percent} onChange={e => updateLine(idx, 'discount_percent', parseFloat(e.target.value) || 0)} /></td>
                         <td className="p-2">
-                          <select className="w-16 h-7 rounded border bg-transparent text-xs" value={item.gst_rate} onChange={e => updateLine(idx, 'gst_rate', parseInt(e.target.value))}>
-                            <option value={0}>0%</option><option value={5}>5%</option><option value={12}>12%</option><option value={18}>18%</option><option value={28}>28%</option>
+                          <select className="w-20 h-7 rounded border bg-transparent text-xs" value={item.gst_rate} onChange={e => updateLine(idx, 'gst_rate', parseInt(e.target.value, 10))}>
+                            {GST_RATE_OPTIONS.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
                           </select>
                         </td>
                         <td className="p-2 text-right tabular-nums font-medium">{formatMoney(c.total)}</td>

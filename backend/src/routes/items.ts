@@ -11,6 +11,7 @@ router.use(verifyToken);
 const createSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   sku: z.string().optional(),
+  barcode: z.string().optional(),
   description: z.string().optional(),
   hsn_code: z.string().optional(),
   category_id: z.string().uuid().nullable().optional(),
@@ -23,7 +24,7 @@ const createSchema = z.object({
   is_serialized: z.boolean().default(false),
   purchase_price: z.number().int().min(0).optional(),
   selling_price: z.number().int().min(0).optional(),
-  gst_rate: z.union([z.literal(0),z.literal(5),z.literal(12),z.literal(18),z.literal(28)]).default(18),
+  gst_rate: z.number().int().min(0).max(40).default(18),
   tax_preference: z.enum(['taxable','exempt','nil_rated','non_gst']).default('taxable'),
   cess_rate: z.number().min(0).optional(),
   opening_stock: z.number().int().min(0).optional(),

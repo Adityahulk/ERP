@@ -392,7 +392,7 @@ export async function trialSignup(req: Request, res: Response) {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    // Ensure the email isn't already an ERP user
+    // Ensure the email isn't already an application user
     const existing = await query(
       `SELECT id FROM users WHERE email = $1 AND is_deleted = false LIMIT 1`,
       [cleanEmail]
@@ -456,7 +456,7 @@ export async function trialSignup(req: Request, res: Response) {
         [company.id, license.id]
       );
 
-      // 5. Create ERP user (company_admin, same credentials)
+      // 5. Create application user (company_admin, same credentials)
       const userRes = await client.query(
         `INSERT INTO users (company_id, name, email, password_hash, role, is_active)
          VALUES ($1, $2, $3, $4, 'company_admin', true)

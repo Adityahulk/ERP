@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
--- BizFlow ERP — Licensing System
+-- BizFlow Accounts — Licensing System
 -- Migration: 010_licensing_system.sql
 -- Adds: registrants, license_tiers, licenses tables
 -- Registrants are external license buyers, separate from internal users.
@@ -10,7 +10,7 @@
 -- ─────────────────────────────────────────────────────────────
 -- 1. REGISTRANTS
 -- People who sign up on the public website to buy licenses.
--- They are NOT internal ERP users — kept in a separate table.
+-- They are NOT internal application users — kept in a separate table.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE registrants (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,7 +38,7 @@ CREATE TRIGGER registrants_updated_at
 -- ─────────────────────────────────────────────────────────────
 -- 2. LICENSE TIERS
 -- Defines Silver / Gold / Diamond plans.
--- max_users: how many ERP user seats this tier allows.
+-- max_users: how many application user seats this tier allows.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE license_tiers (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,8 +132,8 @@ ALTER TABLE users
 -- 7. SEED: License Tiers
 -- ─────────────────────────────────────────────────────────────
 INSERT INTO license_tiers (name, display_name, max_users, price_inr, description, sort_order) VALUES
-  ('silver',  'Silver',  4, 4999,  'Perfect for small businesses. 4 user seats with core ERP features — invoicing, inventory, purchases, and parties.', 1),
-  ('gold',    'Gold',    5, 8999,  'Grow confidently. 5 user seats with full ERP including reports, GST filing, and expense management.', 2),
+  ('silver',  'Silver',  4, 4999,  'Perfect for small businesses. 4 user seats with core business features — invoicing, inventory, purchases, and parties.', 1),
+  ('gold',    'Gold',    5, 8999,  'Grow confidently. 5 user seats with full business suite including reports, GST filing, and expense management.', 2),
   ('diamond', 'Diamond', 7, 14999, 'Enterprise-grade. 7 user seats with every module — HR, manufacturing, job work, OCR scanning, and priority support.', 3)
 ON CONFLICT DO NOTHING;
 

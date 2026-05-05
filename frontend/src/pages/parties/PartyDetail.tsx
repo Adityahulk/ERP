@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { isValidUuid, useParty, useUpdateParty } from '@/hooks/useBusiness';
-import { formatMoney, formatDate } from '@/lib/formatters';
+import { formatMoney, formatDate, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,7 +53,7 @@ export default function PartyDetail() {
       city: party.billing_city || party.city || '',
       state: party.billing_state || party.state || '',
       pincode: party.billing_pincode || party.pincode || '',
-      credit_limit: party.credit_limit || '',
+      credit_limit: party.credit_limit ? paiseToRupees(party.credit_limit).toFixed(2) : '',
       credit_days: party.credit_days || party.payment_terms || 30,
     });
     setEditOpen(true);
@@ -73,7 +73,7 @@ export default function PartyDetail() {
     }
     try {
       const payload: any = { ...form, gstin: g.length === 15 ? g : null };
-      if (payload.credit_limit !== '') payload.credit_limit = Math.round(parseFloat(payload.credit_limit));
+      if (payload.credit_limit !== '') payload.credit_limit = rupeesToPaise(payload.credit_limit);
       await updateMutation.mutateAsync({ id: id!, data: payload });
       toast.success('Party updated');
       setEditOpen(false);
@@ -435,7 +435,7 @@ export default function PartyDetail() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Credit Limit (₹)</Label>
-                <Input className="mt-1" type="number" min={0} value={form.credit_limit || ''} onChange={(e) => setForm((p: any) => ({ ...p, credit_limit: e.target.value }))} />
+                <Input className="mt-1" type="number" min={0} step={0.01} value={form.credit_limit || ''} onChange={(e) => setForm((p: any) => ({ ...p, credit_limit: e.target.value }))} />
               </div>
               <div>
                 <Label>Payment Terms (days)</Label>

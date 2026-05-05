@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParties, useCreateParty, useDeleteParty } from '@/hooks/useBusiness';
-import { formatMoney } from '@/lib/formatters';
+import { formatMoney, rupeesToPaise } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -46,6 +46,12 @@ export default function PartyList() {
       const payload: Record<string, unknown> = { ...form, name: form.name.trim() };
       if (g.length === 15) payload.gstin = g;
       else delete payload.gstin;
+      if (form.credit_limit !== undefined && form.credit_limit !== '') {
+        payload.credit_limit = rupeesToPaise(form.credit_limit);
+      }
+      if (form.opening_balance !== undefined && form.opening_balance !== '') {
+        payload.opening_balance = rupeesToPaise(form.opening_balance);
+      }
       await createMutation.mutateAsync(payload);
       toast.success('Party created');
       setShowForm(false);
@@ -270,7 +276,7 @@ export default function PartyList() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Credit limit (₹)</Label>
-                <Input className="mt-1" type="number" min={0} value={form.credit_limit || ''} onChange={(e) => u('credit_limit', parseInt(e.target.value) || 0)} />
+                <Input className="mt-1" type="number" min={0} step={0.01} value={form.credit_limit || ''} onChange={(e) => u('credit_limit', e.target.value)} />
               </div>
               <div>
                 <Label>Payment terms (days)</Label>
@@ -280,7 +286,7 @@ export default function PartyList() {
             <div>
               <Label>Opening balance (₹)</Label>
               <span className="text-muted-foreground text-[10px] ml-1">(+ve = receivable, −ve = payable)</span>
-              <Input className="mt-1" type="number" value={form.opening_balance || ''} onChange={(e) => u('opening_balance', parseInt(e.target.value) || 0)} />
+              <Input className="mt-1" type="number" step={0.01} value={form.opening_balance || ''} onChange={(e) => u('opening_balance', e.target.value)} />
             </div>
             <div className="flex gap-3 mt-6 pt-4 border-t">
               <Button variant="outline" className="flex-1" onClick={() => setShowForm(false)}>

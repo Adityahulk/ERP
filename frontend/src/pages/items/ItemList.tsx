@@ -22,8 +22,10 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowRight,
+  Barcode,
   Download,
   Edit2,
+  FileSpreadsheet,
   Package,
   Plus,
   Search,
@@ -68,6 +70,9 @@ export default function ItemList() {
   const [unitName, setUnitName] = useState('');
   const [unitAbbreviation, setUnitAbbreviation] = useState('');
   const [importing, setImporting] = useState(false);
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const [barcodeLines, setBarcodeLines] = useState('');
+  const [barcodeImporting, setBarcodeImporting] = useState(false);
 
   const isServiceTab = activeTab === 'services';
   const itemFilters = useMemo(() => {
@@ -147,7 +152,7 @@ export default function ItemList() {
     }
   };
 
-  const handleImportClick = () => fileInputRef.current?.click();
+  const handleImportClick = () => setShowImportPanel(true);
 
   const downloadTemplate = async () => {
     try {
@@ -155,11 +160,42 @@ export default function ItemList() {
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'bizflow_item_import_template.xlsx';
+      a.download = 'microtechnique_item_import_template.xlsx';
       a.click();
       URL.revokeObjectURL(url);
     } catch {
       toast.error('Could not download template. Please try again.');
+    }
+  };
+
+  const importBarcodeItems = async () => {
+    const codes = Array.from(new Set(barcodeLines.split(/\r?\n|,/).map((line) => line.trim()).filter(Boolean)));
+    if (!codes.length) return toast.error('Enter at least one barcode');
+    setBarcodeImporting(true);
+    let inserted = 0;
+    let rejected = 0;
+    try {
+      for (const code of codes) {
+        try {
+          await api.post('/items', {
+            name: code,
+            sku: code,
+            barcode: code,
+            item_type: 'product',
+            track_inventory: true,
+            gst_rate: 18,
+            tax_preference: 'taxable',
+          });
+          inserted++;
+        } catch {
+          rejected++;
+        }
+      }
+      await qc.invalidateQueries({ queryKey: ['items'] });
+      setBarcodeLines('');
+      toast.success(`Imported ${inserted} barcode ${inserted === 1 ? 'item' : 'items'}${rejected ? `, ${rejected} skipped` : ''}`);
+    } finally {
+      setBarcodeImporting(false);
     }
   };
 
@@ -232,7 +268,7 @@ export default function ItemList() {
           </Button>
           <Button variant="outline" size="sm" loading={importing} onClick={handleImportClick}>
             <Upload className="w-4 h-4 mr-1" />
-            Import
+            Import Items
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate('/inventory/adjust')}>
             <Warehouse className="w-4 h-4 mr-1" />
@@ -624,6 +660,56 @@ export default function ItemList() {
       </Tabs>
 
       <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} />
+      {showImportPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <Card className="w-full max-w-2xl bg-background shadow-xl">
+            <CardContent className="p-5 space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold">Import Items</h2>
+                  <p className="text-sm text-muted-foreground">Create items from an Excel/CSV sheet or paste scanned barcode values.</p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setShowImportPanel(false)}>Close</Button>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div className="flex items-center gap-2 font-medium">
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Excel / CSV
+                  </div>
+                  <p className="text-sm text-muted-foreground">Download the template, fill item details, then upload it here.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                      <Download className="w-4 h-4 mr-1" />
+                      Template
+                    </Button>
+                    <Button size="sm" loading={importing} onClick={() => fileInputRef.current?.click()}>
+                      <Upload className="w-4 h-4 mr-1" />
+                      Upload File
+                    </Button>
+                  </div>
+                </div>
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div className="flex items-center gap-2 font-medium">
+                    <Barcode className="h-4 w-4" />
+                    Barcodes
+                  </div>
+                  <p className="text-sm text-muted-foreground">Paste one barcode per line. Item name, SKU, and barcode will be set to that value.</p>
+                  <textarea
+                    className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-mono"
+                    value={barcodeLines}
+                    onChange={(e) => setBarcodeLines(e.target.value)}
+                    placeholder={'8901234567890\nITEM-CODE-002'}
+                  />
+                  <Button size="sm" loading={barcodeImporting} onClick={importBarcodeItems}>
+                    Import Barcodes
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
