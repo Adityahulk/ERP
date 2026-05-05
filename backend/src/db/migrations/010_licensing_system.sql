@@ -132,9 +132,9 @@ ALTER TABLE users
 -- 7. SEED: License Tiers
 -- ─────────────────────────────────────────────────────────────
 INSERT INTO license_tiers (name, display_name, max_users, price_inr, description, sort_order) VALUES
-  ('silver',  'Silver',  4, 4999,  'Perfect for small businesses. 4 user seats with core business features — invoicing, inventory, purchases, and parties.', 1),
-  ('gold',    'Gold',    5, 8999,  'Grow confidently. 5 user seats with full business suite including reports, GST filing, and expense management.', 2),
-  ('diamond', 'Diamond', 7, 14999, 'Enterprise-grade. 7 user seats with every module — HR, manufacturing, job work, OCR scanning, and priority support.', 3)
+  ('silver',  'Silver',  4, 9999,  'Perfect for small businesses. 4 user seats with core business features — invoicing, inventory, purchases, and parties.', 1),
+  ('gold',    'Gold',    5, 18999, 'Grow confidently. 5 user seats with full business suite including reports, GST filing, and expense management.', 2),
+  ('diamond', 'Diamond', 7, 30999, 'Enterprise-grade. 7 user seats with every module — HR, manufacturing, job work, OCR scanning, and priority support.', 3)
 ON CONFLICT DO NOTHING;
 
 
