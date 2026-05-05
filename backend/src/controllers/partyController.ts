@@ -75,7 +75,7 @@ export async function getParty(req: Request, res: Response) {
 
     // Recent payments
     const paymentRes = await query(
-      `SELECT id, payment_number, payment_date, amount, payment_mode, status
+      `SELECT id, payment_number, payment_date, amount, payment_mode, 'posted'::varchar as status
        FROM payments WHERE party_id = $1 AND company_id = $2 AND is_deleted = false
        ORDER BY payment_date DESC LIMIT 10`,
       [id, companyId]
