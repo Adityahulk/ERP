@@ -4,6 +4,18 @@ export function formatMoney(amountPaise: number | undefined): string {
     return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+export function rupeesToPaise(value: number | string | null | undefined): number {
+    const n = typeof value === 'string' ? parseFloat(value.replace(/,/g, '')) : Number(value ?? 0);
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 100);
+}
+
+export function paiseToRupees(amountPaise: number | null | undefined): number {
+    const n = Number(amountPaise ?? 0);
+    if (!Number.isFinite(n)) return 0;
+    return n / 100;
+}
+
 export function formatCurrency(amount: number): string {
     return formatMoney(amount); 
 }

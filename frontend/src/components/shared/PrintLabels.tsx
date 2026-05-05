@@ -12,17 +12,34 @@ interface PrintLabelsProps {
 
 export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps) {
   const [items, setItems] = useState(selectedItems.map(i => ({ ...i, print_qty: i.quantity || 1 })));
-  const [size, setSize] = useState<'58x40' | '100x50' | 'a4'>('58x40');
+  const [mode, setMode] = useState<'general_printer' | 'label_printer'>('general_printer');
+  const [generalPreset, setGeneralPreset] = useState<'24' | '40' | '65'>('24');
+  const [labelPreset, setLabelPreset] = useState<'single' | 'double'>('single');
   const [loading, setLoading] = useState(false);
 
+  const size: '58x40' | '100x50' | 'a4' = mode === 'general_printer'
+    ? 'a4'
+    : labelPreset === 'single'
+      ? '100x50'
+      : '58x40';
+  const activeItems = mode === 'label_printer'
+    ? items.filter(i => i.print_qty > 0).slice(0, 1)
+    : items.filter(i => i.print_qty > 0);
   const totalLabels = items.reduce((acc, i) => acc + i.print_qty, 0);
+  const pageInfo = mode === 'general_printer'
+    ? `${generalPreset} labels per A4 page`
+    : labelPreset === 'single'
+      ? '1 label per page'
+      : '2 labels per page';
 
   const handlePrint = async () => {
      try {
        setLoading(true);
        const payload = {
-          size,
-          items: items.filter(i => i.print_qty > 0).map(i => ({ item_id: i.item_id, sku: i.sku, quantity: i.print_qty }))
+         mode,
+         size,
+         labels_per_page: mode === 'general_printer' ? Number(generalPreset) : labelPreset === 'single' ? 1 : 2,
+         items: activeItems.map(i => ({ item_id: i.item_id, sku: i.sku, quantity: i.print_qty }))
        };
        const res = await api.post('/labels/bulk', payload, { responseType: 'blob' });
        
@@ -34,7 +51,7 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
        link.click();
        link.remove();
        
-       toast.success("Labels Generated! Please open the PDF and print.");
+       toast.success(`Labels generated (${pageInfo}). Please open the PDF and print.`);
        setLoading(false);
        onClose();
     } catch (e: any) {
@@ -66,17 +83,41 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
              <Button variant="ghost" size="icon" onClick={onClose}><X className="w-5 h-5"/></Button>
           </div>
           <CardContent className="p-6 space-y-6">
-             <div className="flex gap-4 mb-4 border-b pb-4">
-                <button onClick={() => setSize('58x40')} className={`flex-1 p-3 border rounded-lg text-center ${size === '58x40' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
-                   58×40mm <span className="block text-xs font-normal mt-1 opacity-70">Retail Standard Shelf Label</span>
+             <div className="grid sm:grid-cols-2 gap-3">
+                <button onClick={() => setMode('general_printer')} className={`p-3 border rounded-lg text-left ${mode === 'general_printer' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                  General Printer
+                  <span className="block text-xs font-normal mt-1 opacity-70">A4 sheets (24 / 40 / 65 labels)</span>
                 </button>
-                <button onClick={() => setSize('100x50')} className={`flex-1 p-3 border rounded-lg text-center ${size === '100x50' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
-                   100×50mm <span className="block text-xs font-normal mt-1 opacity-70">Large Info Label</span>
-                </button>
-                <button onClick={() => setSize('a4')} className={`flex-1 p-3 border rounded-lg text-center ${size === 'a4' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
-                   A4 Sheet <span className="block text-xs font-normal mt-1 opacity-70">Grid stickers (32/page)</span>
+                <button onClick={() => setMode('label_printer')} className={`p-3 border rounded-lg text-left ${mode === 'label_printer' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                  Label Printer
+                  <span className="block text-xs font-normal mt-1 opacity-70">Thermal label roll (1-up / 2-up)</span>
                 </button>
              </div>
+             <div className="flex gap-4 mb-4 border-b pb-4">
+               {mode === 'general_printer' ? (
+                 <>
+                   <button onClick={() => setGeneralPreset('24')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '24' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     24 / page <span className="block text-xs font-normal mt-1 opacity-70">Larger A4 label</span>
+                   </button>
+                   <button onClick={() => setGeneralPreset('40')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '40' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     40 / page <span className="block text-xs font-normal mt-1 opacity-70">Medium A4 label</span>
+                   </button>
+                   <button onClick={() => setGeneralPreset('65')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '65' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     65 / page <span className="block text-xs font-normal mt-1 opacity-70">Small A4 label</span>
+                   </button>
+                 </>
+               ) : (
+                 <>
+                   <button onClick={() => setLabelPreset('single')} className={`flex-1 p-3 border rounded-lg text-center ${labelPreset === 'single' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     1 / page <span className="block text-xs font-normal mt-1 opacity-70">100×50 mm</span>
+                   </button>
+                   <button onClick={() => setLabelPreset('double')} className={`flex-1 p-3 border rounded-lg text-center ${labelPreset === 'double' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     2 / page <span className="block text-xs font-normal mt-1 opacity-70">58×40 mm</span>
+                   </button>
+                 </>
+               )}
+             </div>
+             <p className="text-xs text-slate-500 -mt-3">{pageInfo}{mode === 'label_printer' ? ' • only one item can be printed at a time' : ''}</p>
 
              <div className="max-h-64 overflow-y-auto space-y-2 border rounded-md p-2">
                 {items.map((item, idx) => (
@@ -98,7 +139,7 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
                 <span className="text-slate-500">Total Labels: <b className="text-slate-900 text-lg">{totalLabels}</b></span>
                 <div className="flex gap-2">
                    <Button variant="outline" onClick={onClose}>Cancel</Button>
-                   <Button onClick={handlePrint} disabled={totalLabels === 0 || loading} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
+                   <Button onClick={handlePrint} disabled={activeItems.length === 0 || loading} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
                       {loading ? <span className="animate-pulse">Generating...</span> : <><FileText className="w-4 h-4"/> Generate PDF</>}
                    </Button>
                 </div>

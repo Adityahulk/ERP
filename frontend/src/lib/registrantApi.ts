@@ -21,8 +21,10 @@ registrantApi.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem(REGISTRANT_TOKEN_KEY);
-      // Redirect to registrant login
-      window.location.href = '/register/login';
+      if (window.location.pathname !== '/register/login') {
+        const next = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/register/login?next=${next}`;
+      }
     }
     return Promise.reject(err);
   }

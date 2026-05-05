@@ -161,11 +161,11 @@ export default function RegisterDashboard() {
             </div>
             <div className="flex flex-col sm:flex-row gap-2 text-sm">
               <a
-                href="tel:+919876543210"
+                href="tel:+919390754255"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Phone className="w-4 h-4" />
-                +91-9876543210
+                +91-9390754255
               </a>
               <a
                 href="mailto:sales@microtechnique.in"

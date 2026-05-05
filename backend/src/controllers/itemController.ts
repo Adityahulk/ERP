@@ -8,6 +8,50 @@ import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
 
+async function applyOpeningStock(
+  client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
+  args: {
+    companyId: string;
+    itemId: string;
+    godownId: string;
+    quantity: number;
+    unitCost: number;
+    createdBy: string;
+    notes?: string;
+  }
+) {
+  const qty = Number(args.quantity || 0);
+  if (qty <= 0) return;
+  const unitCost = Number(args.unitCost || 0);
+
+  await client.query(
+    `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (item_id, godown_id) DO UPDATE
+       SET quantity = item_stock.quantity + EXCLUDED.quantity`,
+    [args.companyId, args.itemId, args.godownId, qty, unitCost],
+  );
+
+  const balRes = await client.query(
+    `SELECT quantity FROM item_stock WHERE company_id = $1 AND item_id = $2 AND godown_id = $3`,
+    [args.companyId, args.itemId, args.godownId],
+  );
+  await client.query(
+    `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, quantity, unit_cost, balance_after, notes, created_by)
+     VALUES ($1, $2, $3, 'opening_stock', $4, $5, $6, $7, $8)`,
+    [
+      args.companyId,
+      args.itemId,
+      args.godownId,
+      qty,
+      unitCost,
+      Number(balRes.rows[0]?.quantity || qty),
+      args.notes || 'Opening stock',
+      args.createdBy,
+    ],
+  );
+}
+
 async function getItemActivity(companyId: string, itemId: string) {
   const timelineRes = await query(
     `WITH sales AS (
@@ -300,20 +344,21 @@ export async function createItem(req: Request, res: Response) {
       // Create initial stock if opening_stock > 0
       if ((data.opening_stock || 0) > 0 && data.track_inventory !== false) {
         const godownId = data.godown_id || req.user!.godown_id;
-        if (godownId) {
-          await client.query(
-            `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (item_id, godown_id) DO UPDATE SET quantity = item_stock.quantity + $4`,
-            [companyId, item.id, godownId, data.opening_stock, data.purchase_price || 0]
-          );
-
-          await client.query(
-            `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, quantity, unit_cost, balance_after, notes, created_by)
-             VALUES ($1, $2, $3, 'opening_stock', $4, $5, $4, 'Opening stock', $6)`,
-            [companyId, item.id, godownId, data.opening_stock, data.purchase_price || 0, req.user!.id]
-          );
+        if (!godownId) {
+          throw new Error('Select a godown before setting opening stock');
         }
+        const qty = Number(data.opening_stock || 0);
+        const openingValue = Number(data.opening_stock_value || 0);
+        const unitCost = qty > 0 && openingValue > 0 ? openingValue / qty : Number(data.purchase_price || 0);
+        await applyOpeningStock(client, {
+          companyId,
+          itemId: item.id,
+          godownId,
+          quantity: qty,
+          unitCost,
+          createdBy: req.user!.id,
+          notes: 'Opening stock',
+        });
       }
 
       return item;
@@ -618,30 +663,55 @@ export async function bulkImport(req: Request, res: Response) {
 
     // If action=confirm, insert the valid rows
     if (req.query.action === 'confirm') {
-      let inserted = 0;
-      for (const p of preview) {
-        const d = p.data;
-        const halfRate = d.gst_rate / 2;
-        // Use distinct params for every column — $9 gst_rate(integer) vs igst_rate(numeric)
-        // must NOT share a placeholder or PostgreSQL raises "inconsistent types" error.
-        await query(
-          `INSERT INTO items (company_id, name, sku, hsn_code, brand, item_type, purchase_price, selling_price,
-            gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-          [
-            companyId, d.name, d.sku, d.hsn_code, d.brand, d.item_type,
-            d.purchase_price, d.selling_price,
-            d.gst_rate,   // $9  → gst_rate integer
-            halfRate,     // $10 → cgst_rate numeric(5,2)
-            halfRate,     // $11 → sgst_rate numeric(5,2)
-            d.gst_rate,   // $12 → igst_rate numeric(5,2)  (separate param from $9)
-            d.opening_stock,                          // $13
-            d.opening_stock * d.purchase_price,       // $14
-            d.reorder_point,                          // $15
-          ]
-        );
-        inserted++;
+      const importGodownId = String(req.body?.godown_id || req.user!.godown_id || '').trim();
+      const hasOpeningRows = preview.some((p) => Number(p.data.opening_stock || 0) > 0);
+      if (hasOpeningRows && !importGodownId) {
+        return res.status(400).json(error('Pick a godown before importing rows with opening stock'));
       }
+
+      let inserted = 0;
+      await withTransaction(async (client) => {
+        for (const p of preview) {
+          const d = p.data;
+          const halfRate = d.gst_rate / 2;
+          const itemIns = await client.query(
+            `INSERT INTO items (company_id, name, sku, hsn_code, brand, item_type, purchase_price, selling_price,
+              gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             RETURNING id`,
+            [
+              companyId,
+              d.name,
+              d.sku,
+              d.hsn_code,
+              d.brand,
+              d.item_type,
+              d.purchase_price,
+              d.selling_price,
+              d.gst_rate,
+              halfRate,
+              halfRate,
+              d.gst_rate,
+              d.opening_stock,
+              d.opening_stock * d.purchase_price,
+              d.reorder_point,
+            ]
+          );
+          const openingQty = Number(d.opening_stock || 0);
+          if (openingQty > 0) {
+            await applyOpeningStock(client, {
+              companyId,
+              itemId: itemIns.rows[0].id,
+              godownId: importGodownId,
+              quantity: openingQty,
+              unitCost: Number(d.purchase_price || 0),
+              createdBy: req.user!.id,
+              notes: 'Opening stock (bulk import)',
+            });
+          }
+          inserted++;
+        }
+      });
       return res.json(success({ inserted, errors: errors.length }));
     }
 

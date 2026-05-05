@@ -30,6 +30,32 @@ function replaceAll(tpl: string, vars: Record<string, string>): string {
   return out;
 }
 
+function resolveAssetUrl(src?: string): string {
+  const raw = String(src || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('http') || raw.startsWith('data:') || raw.startsWith('file://')) return raw;
+  if (raw.startsWith('/uploads')) return `${env.FRONTEND_URL}${raw}`;
+  return `${env.FRONTEND_URL}/${raw.replace(/^\/+/, '')}`;
+}
+
+function themeStyle(theme: string): string {
+  if (theme === 'modern') {
+    return `<style>
+      body{font-family:Inter,Segoe UI,Arial,sans-serif}
+      .inv-card,.panel,.box{border-radius:12px}
+      table th{background:#eef2ff}
+    </style>`;
+  }
+  if (theme === 'compact') {
+    return `<style>
+      body{font-size:12px}
+      table th,table td{padding:4px 6px}
+      .section,.inv-card,.panel{margin-bottom:6px}
+    </style>`;
+  }
+  return '';
+}
+
 async function launchBrowser() {
   return puppeteer.launch({
     headless: true,
@@ -112,6 +138,7 @@ export async function generateInvoicePDF(
 
   let tpl = readTpl(tplName);
   const color = company.document_primary_color || '#4F46E5';
+  const docTheme = String(invoice.document_theme || company.document_theme || 'classic');
   const itemRows =
     kind === 'simple' ? itemRowsSimple(items) : kind === 'performa' ? itemRowsPerforma(items) : itemRowsStandard(items);
 
@@ -148,8 +175,7 @@ export async function generateInvoicePDF(
     COMPANY_CITY_STATE_PIN: escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', ')),
     COMPANY_GSTIN: escapeHtml(company.gstin || ''),
     COMPANY_PHONE: escapeHtml(company.phone || ''),
-    LOGO_BLOCK: company.logo_url
-      ? `<img src="${escapeHtml(company.logo_url.startsWith('http') ? company.logo_url : `${env.FRONTEND_URL}${company.logo_url}`)}" style="max-height:56px"/>` : '',
+    LOGO_BLOCK: company.logo_url ? `<img src="${escapeHtml(resolveAssetUrl(company.logo_url))}" style="max-height:56px"/>` : '',
     INVOICE_NUMBER: escapeHtml(invoice.invoice_number),
     INVOICE_DATE: escapeHtml(String(invoice.invoice_date)),
     DUE_DATE: invoice.due_date ? escapeHtml(String(invoice.due_date)) : '—',
@@ -174,11 +200,15 @@ export async function generateInvoicePDF(
     EINVOICE_BLOCK: einvBlock,
     TERMS: escapeHtml((company.terms_and_conditions || '').split('\n').slice(0, 3).join(' ')),
     SIGNATURE_BLOCK: company.signature_url
-      ? `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><img src="${escapeHtml(company.signature_url)}" style="max-height:48px"/><p>Authorised Signatory</p></div>`
+      ? `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><img src="${escapeHtml(resolveAssetUrl(company.signature_url))}" style="max-height:48px"/><p>Authorised Signatory</p></div>`
       : `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><p>Authorised Signatory</p></div>`,
   };
 
   tpl = replaceAll(tpl, vars);
+  const extraThemeStyle = themeStyle(docTheme);
+  if (extraThemeStyle) {
+    tpl = tpl.replace('</head>', `${extraThemeStyle}</head>`);
+  }
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(tpl, { waitUntil: 'networkidle0' });

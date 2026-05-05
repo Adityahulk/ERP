@@ -4,6 +4,8 @@ import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // ── GET /api/parties ──────────────────────────────────────────
 export async function listParties(req: Request, res: Response) {
   try {
@@ -56,6 +58,7 @@ export async function getParty(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const companyId = req.user!.company_id;
+    if (!UUID_RE.test(id)) return res.status(400).json(error('Invalid party id'));
 
     const partyRes = await query(
       'SELECT * FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false', [id, companyId]

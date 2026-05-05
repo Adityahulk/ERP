@@ -15,8 +15,14 @@ function unwrapApiData<T>(body: unknown): T {
   return body as T;
 }
 
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isValidUuid(id: string | undefined): id is string {
+  return !!(id && id !== 'undefined' && UUID_RE.test(id));
+}
+
 export function useParty(id: string | undefined) {
-  const validId = id && id !== 'undefined' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const validId = isValidUuid(id);
   return useQuery({
     queryKey: ['parties', id],
     queryFn: async () => {
@@ -66,10 +72,8 @@ export function useInvoices(filters: any) {
   });
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export function useInvoice(id: string | undefined) {
-  const valid = !!(id && id !== 'undefined' && UUID_RE.test(id));
+  const valid = isValidUuid(id);
   return useQuery({
     queryKey: ['invoice', id],
     queryFn: async () => {

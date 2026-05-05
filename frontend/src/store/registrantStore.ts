@@ -25,8 +25,8 @@ export const useRegistrantStore = create<RegistrantState>()(
   persist(
     (set) => ({
       registrant: null,
-      token: null,
-      isAuthenticated: false,
+      token: localStorage.getItem(TOKEN_KEY),
+      isAuthenticated: !!localStorage.getItem(TOKEN_KEY),
 
       login: (registrant, token) => {
         localStorage.setItem(TOKEN_KEY, token);
@@ -47,6 +47,7 @@ export const useRegistrantStore = create<RegistrantState>()(
       name: 'bizflow-registrant',
       partialize: (state) => ({
         registrant: state.registrant,
+        token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
     }

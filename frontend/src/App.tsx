@@ -195,8 +195,9 @@ function OnboardingEntry() {
 
 // ── Registrant Protected Route ────────────────────────────────
 function RegistrantRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useRegistrantStore();
-  return isAuthenticated ? <>{children}</> : <Navigate to="/register/login" replace />;
+  const { isAuthenticated, token } = useRegistrantStore();
+  const hasToken = !!(token || localStorage.getItem('bizflow_registrant_token'));
+  return isAuthenticated && hasToken ? <>{children}</> : <Navigate to="/register/login" replace />;
 }
 
 // ── App ───────────────────────────────────────────────────────

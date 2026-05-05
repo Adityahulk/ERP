@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { useParty, useUpdateParty } from '@/hooks/useBusiness';
+import { isValidUuid, useParty, useUpdateParty } from '@/hooks/useBusiness';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,7 +33,7 @@ function StatusBadge({ status }: { status: string }) {
 export default function PartyDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { data: raw, isLoading, refetch, isError } = useParty(id);
+  const { data: raw, isLoading, refetch, isError, error: queryError } = useParty(id);
   const updateMutation = useUpdateParty();
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>({});
@@ -95,7 +95,7 @@ export default function PartyDetail() {
     window.open(`https://wa.me/${digits}?text=${msg}`, '_blank', 'noopener,noreferrer');
   };
 
-  if (!id || id === 'undefined' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  if (!isValidUuid(id)) {
     return (
       <div className="p-8 text-center text-muted-foreground">
         Invalid party link.{' '}
@@ -115,9 +115,11 @@ export default function PartyDetail() {
   }
 
   if (isError || !party) {
+    const status = (queryError as any)?.response?.status;
+    const msg = status === 404 ? 'Party not found.' : 'Could not load party right now.';
     return (
       <div className="p-8 text-center text-muted-foreground">
-        Party not found.{' '}
+        {msg}{' '}
         <button type="button" className="text-primary underline" onClick={() => navigate('/parties')}>
           Go back
         </button>

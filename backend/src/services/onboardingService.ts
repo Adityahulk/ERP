@@ -151,6 +151,11 @@ export async function seedSampleItemsIfEmpty(companyId: string, godownId: string
          VALUES ($1, $2, $3, $4, $5)`,
         [companyId, itemId, godownId, s.stock, s.buy],
       );
+      await query(
+        `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, quantity, unit_cost, balance_after, notes)
+         VALUES ($1, $2, $3, 'opening_stock', $4, $5, $4, 'Opening stock (onboarding seed)')`,
+        [companyId, itemId, godownId, s.stock, s.buy],
+      );
     }
     n++;
   }

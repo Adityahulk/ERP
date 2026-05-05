@@ -68,7 +68,9 @@ function extractPartyRow(resBody: unknown): Record<string, unknown> | null {
         : null;
   const id = row?.id;
   if (id == null || id === '' || String(id) === 'undefined') return null;
-  return row;
+  const normalizedId = String(id).trim();
+  if (!normalizedId) return null;
+  return { ...row, id: normalizedId };
 }
 
 export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCreated }: Props) {

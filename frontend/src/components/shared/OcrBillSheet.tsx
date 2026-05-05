@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { ScanLine, Upload, Loader2, CheckCircle2, AlertCircle, FileText, Image as ImageIcon } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 
 export interface OcrResult {
   invoice_number: string | null;
@@ -86,7 +87,7 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
         party_name: data.party_name ?? '',
         supplier_gstin: data.supplier_gstin ?? '',
         total_amount_rupees: data.total_amount_paise != null
-          ? (data.total_amount_paise / 100).toFixed(2)
+          ? paiseToRupees(data.total_amount_paise).toFixed(2)
           : '',
       });
     } catch (err: any) {
@@ -113,7 +114,7 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
   const handleConfirm = () => {
     if (!result) return;
     const totalPaise = fields.total_amount_rupees
-      ? Math.round(parseFloat(fields.total_amount_rupees) * 100)
+      ? rupeesToPaise(fields.total_amount_rupees)
       : result.total_amount_paise;
 
     onConfirm({
