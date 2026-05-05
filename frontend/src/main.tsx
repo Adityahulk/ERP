@@ -1,11 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import App from './App';
 import { useAuthStore } from './store/authStore';
 import './index.css';
+import toast from 'react-hot-toast';
 
 // After persist rehydrates: if shell says logged-in but tokens are gone, clear store (avoids redirect loops).
 useAuthStore.persist.onFinishHydration(() => {
@@ -16,10 +17,25 @@ useAuthStore.persist.onFinishHydration(() => {
 });
 
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error: unknown) => {
+      const err = error as { code?: string; message?: string; response?: { data?: { error?: string; message?: string } } };
+      const message =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.code === 'ECONNABORTED' ? 'The server is taking too long to respond. Please try again.' : err.message) ||
+        'Could not load data from the server.';
+      toast.error(message);
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000, // 5 minutes
-      retry: 1,
+      retry: (failureCount, error: unknown) => {
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (status === 401 || status === 403 || status === 404) return false;
+        return failureCount < 1;
+      },
       refetchOnWindowFocus: false,
     },
     mutations: {

@@ -56,6 +56,7 @@ async function refreshTokens(): Promise<{ accessToken: string; refreshToken: str
 
 const api = axios.create({
   baseURL: apiBaseURL,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },

@@ -89,7 +89,7 @@ export default function ItemList() {
     return filters;
   }, [activeTab, isServiceTab, search, stockFilter]);
 
-  const { data: itemsRes, isLoading } = useItems(itemFilters);
+  const { data: itemsRes, isLoading, isError, refetch } = useItems(itemFilters);
   const { data: categoriesRes } = useItemCategories();
   const { data: unitsRes } = useItemUnits();
   const { data: godownsRes } = useGodowns();
@@ -333,7 +333,15 @@ export default function ItemList() {
 
                 <div className="max-h-[70vh] overflow-y-auto rounded-lg border">
                   {isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading items...</div>}
-                  {!isLoading && visibleItems.length === 0 && (
+                  {!isLoading && isError && (
+                    <div className="p-8 text-center text-sm text-destructive space-y-3">
+                      <p>Could not load items from the server.</p>
+                      <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
+                        Retry
+                      </Button>
+                    </div>
+                  )}
+                  {!isLoading && !isError && visibleItems.length === 0 && (
                     <div className="p-8 text-center text-sm text-muted-foreground">No products found for these filters.</div>
                   )}
                   {visibleItems.map((item) => (

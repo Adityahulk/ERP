@@ -15,7 +15,7 @@ import PrintLabels from '@/components/shared/PrintLabels';
  */
 export function BarcodeGeneratorPanel() {
   const navigate = useNavigate();
-  const { data: itemsRes, isLoading } = useItems({ page: 1, limit: 500 });
+  const { data: itemsRes, isLoading, isError, refetch } = useItems({ page: 1, limit: 500 });
   const items: Item[] = itemsRes?.data?.data || [];
 
   const [selectedItemId, setSelectedItemId] = useState('');
@@ -108,6 +108,13 @@ export function BarcodeGeneratorPanel() {
           <div className="rounded-lg border max-h-[65vh] overflow-y-auto">
             {isLoading ? (
               <p className="p-4 text-sm text-muted-foreground">Loading items…</p>
+            ) : isError ? (
+              <div className="p-4 space-y-3">
+                <p className="text-sm text-destructive">Could not load items. Check that the server is running and try again.</p>
+                <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
+                  Retry
+                </Button>
+              </div>
             ) : items.length === 0 ? (
               <p className="p-4 text-sm text-muted-foreground">No items yet. Add items under Items & Materials.</p>
             ) : (
