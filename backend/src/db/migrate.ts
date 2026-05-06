@@ -9,6 +9,16 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://bizflow:bizflow_dev@localhost:5432/bizflow',
 });
 
+const LEGACY_MIGRATION_ALIASES: Record<string, string[]> = {
+  '003b_expense_gst_breakdown.sql': ['003_expense_gst_breakdown.sql'],
+  '011_trial_system.sql': ['012_trial_system.sql'],
+};
+
+function parseMigrationVersion(file: string): string {
+  const match = file.match(/^([0-9]+[a-z]?)(?=_)/i);
+  return match?.[1] || file;
+}
+
 async function migrate(): Promise<void> {
   console.log('🔄 Starting database migration...\n');
 
@@ -33,6 +43,18 @@ async function migrate(): Promise<void> {
     .filter(f => f.endsWith('.sql'))
     .sort();
 
+  const seenVersions = new Map<string, string>();
+  for (const file of files) {
+    const version = parseMigrationVersion(file);
+    const prior = seenVersions.get(version);
+    if (prior) {
+      console.error(`❌ Duplicate migration version "${version}" detected: ${prior} and ${file}`);
+      console.error('Rename one of them before running migrations.');
+      process.exit(1);
+    }
+    seenVersions.set(version, file);
+  }
+
   if (files.length === 0) {
     console.log('ℹ️  No migration files found.');
     await pool.end();
@@ -43,14 +65,21 @@ async function migrate(): Promise<void> {
   let skipped = 0;
 
   for (const file of files) {
+    const namesToCheck = [file, ...(LEGACY_MIGRATION_ALIASES[file] || [])];
+
     // Check if already applied
     const { rows } = await pool.query(
-      'SELECT 1 FROM _migrations WHERE name = $1',
-      [file]
+      'SELECT name FROM _migrations WHERE name = ANY($1::text[]) LIMIT 1',
+      [namesToCheck]
     );
 
     if (rows.length > 0) {
-      console.log(`  ⏭  ${file} (already applied)`);
+      const matchedName = rows[0].name;
+      console.log(
+        matchedName === file
+          ? `  ⏭  ${file} (already applied)`
+          : `  ⏭  ${file} (already applied as legacy name ${matchedName})`
+      );
       skipped++;
       continue;
     }
