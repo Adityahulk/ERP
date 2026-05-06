@@ -6,6 +6,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, 
 import { formatMoney } from '@/lib/formatters';
 import { IndianRupee, AlertTriangle, ArrowRight, Package, Truck, Wrench } from 'lucide-react';
 import { Link, Navigate } from 'react-router-dom';
+import { normalizeRole } from '@/lib/roles';
 
 const BRAND_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
@@ -19,8 +20,8 @@ function getGreeting() {
 export default function Dashboard() {
   const { user } = useAuthStore();
   
-  if (user?.role === 'staff' || user?.role === 'cashier') {
-      return <Navigate to="/billing" replace />;
+  if (normalizeRole(user?.role) === 'staff') {
+      return <Navigate to="/attendance" replace />;
   }
 
   const { data: rawData } = useQuery({

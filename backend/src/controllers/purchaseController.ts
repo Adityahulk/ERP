@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
-import { resolveBankSnapshotsForInsert } from '../lib/bankAccountSnapshots';
+import { generateInvoicePDF } from '../services/pdfService';
+import { resolveBankSnapshotsForInsert, resolveCompanyRowForInvoicePdf, type Queryable } from '../lib/bankAccountSnapshots';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
@@ -304,7 +305,7 @@ export async function receiveStock(req: Request, res: Response) {
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
           invoiceTotals.totalAmount, req.user!.id,
           ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
-          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -695,7 +696,7 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
       const billNumber = (d.bill_number && String(d.bill_number).trim()) || pi.bill_number;
 
       const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template;
-      const docTheme = ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme;
+      const docTheme = ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme;
 
       await client.query(
         `UPDATE purchase_invoices SET
@@ -850,5 +851,74 @@ export async function payPurchaseInvoice(req: Request, res: Response) {
 }
 
 export async function getPurchaseInvoicePDF(req: Request, res: Response) {
-  res.send(Buffer.from('PDF Mock Built'));
+  try {
+    const { id } = req.params;
+    const invRes = await query(
+      `SELECT * FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, req.user!.company_id],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Purchase bill not found'));
+
+    const companyRes = await query('SELECT * FROM companies WHERE id = $1', [req.user!.company_id]);
+    const bankRes = await query(
+      `SELECT * FROM company_bank_accounts
+       WHERE company_id = $1 AND is_deleted = false AND is_active = true
+       ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
+      [req.user!.company_id],
+    );
+    const companyForPdf = await resolveCompanyRowForInvoicePdf(
+      query as unknown as Queryable,
+      req.user!.company_id,
+      companyRes.rows[0],
+      invRes.rows[0],
+      bankRes.rows[0] || null,
+    );
+
+    const partyRes = invRes.rows[0].party_id
+      ? await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2`, [invRes.rows[0].party_id, req.user!.company_id])
+      : { rows: [null] };
+    const itemsRes = await query(
+      `SELECT
+         purchase_invoice_id as invoice_id,
+         item_id,
+         item_name,
+         hsn_code,
+         unit,
+         quantity,
+         unit_price,
+         discount_amount,
+         taxable_amount,
+         gst_rate,
+         cgst_amount,
+         sgst_amount,
+         igst_amount,
+         total_amount
+       FROM purchase_invoice_items
+       WHERE purchase_invoice_id = $1
+       ORDER BY sort_order, id`,
+      [id],
+    );
+
+    const invoiceLike = {
+      ...invRes.rows[0],
+      invoice_number: invRes.rows[0].bill_number || `PB-${String(id).slice(0, 8)}`,
+      invoice_date: invRes.rows[0].bill_date,
+      due_date: invRes.rows[0].due_date || null,
+      party_name_snapshot: invRes.rows[0].party_name_snapshot,
+      party_gstin_snapshot: partyRes.rows[0]?.gstin || null,
+      billing_address_snapshot: partyRes.rows[0]?.billing_address || null,
+      shipping_address_snapshot: partyRes.rows[0]?.shipping_address || null,
+    };
+
+    const pdfBuffer = await generateInvoicePDF(invoiceLike, companyForPdf, partyRes.rows[0], itemsRes.rows, {
+      templateOverride: invRes.rows[0].pdf_template || undefined,
+    });
+    const inline = String(req.query.inline || '') === '1';
+    const filename = `${invoiceLike.invoice_number}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
 }

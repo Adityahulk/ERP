@@ -13,13 +13,13 @@ const createSchema = z.object({
   email: z.string().email().optional(),
   phone: z.string().optional(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  role: z.enum(['company_admin','accountant','manager','cashier','staff']).default('staff'),
+  role: z.enum(['admin', 'manager', 'staff']).default('staff'),
 });
 
 router.get('/', requireMinRole('manager'), ctrl.listUsers);
-router.post('/', requireMinRole('company_admin'), validateBody(createSchema), ctrl.createUser);
-router.post('/sync-employee-profiles', requireMinRole('company_admin'), ctrl.syncEmployeeProfiles);
-router.patch('/:id', requireMinRole('company_admin'), ctrl.updateUser);
-router.delete('/:id', requireMinRole('company_admin'), ctrl.deleteUser);
+router.post('/', requireMinRole('admin'), validateBody(createSchema), ctrl.createUser);
+router.post('/sync-employee-profiles', requireMinRole('admin'), ctrl.syncEmployeeProfiles);
+router.patch('/:id', requireMinRole('admin'), ctrl.updateUser);
+router.delete('/:id', requireMinRole('admin'), ctrl.deleteUser);
 
 export default router;

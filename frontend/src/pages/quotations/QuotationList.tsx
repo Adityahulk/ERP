@@ -4,7 +4,7 @@ import api from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, Send, FileCheck, Eye } from 'lucide-react';
+import { Plus, Loader2, Send, FileCheck, Eye, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function QuotationList() {
@@ -39,6 +39,36 @@ export default function QuotationList() {
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Convert failed'),
   });
+
+  const openPreview = async (id: string) => {
+    const t = toast.loading('Opening preview…');
+    try {
+      const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success('Preview opened', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Preview failed', { id: t });
+    }
+  };
+
+  const downloadPdf = async (id: string, number: string) => {
+    const t = toast.loading('Preparing PDF…');
+    try {
+      const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${number}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Download failed', { id: t });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -95,9 +125,13 @@ export default function QuotationList() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right space-x-1">
-                      <Button variant="ghost" size="sm" className="h-8" onClick={() => navigate(`/quotations/${q.id}`)}>
+                      <Button variant="ghost" size="sm" className="h-8" onClick={() => openPreview(q.id)}>
                         <Eye className="w-3.5 h-3.5 mr-1" />
-                        View
+                        Preview
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-8" onClick={() => downloadPdf(q.id, q.quotation_number)}>
+                        <Download className="w-3.5 h-3.5 mr-1" />
+                        PDF
                       </Button>
                       {q.status === 'draft' && (
                         <Button

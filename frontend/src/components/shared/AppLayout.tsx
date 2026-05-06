@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
 import { getInitials, cn } from '@/lib/utils';
 import api from '@/lib/api';
+import { normalizeRole } from '@/lib/roles';
 
 const SIDEBAR_COLLAPSED_KEY = 'erp_sidebar_collapsed';
 const NAV_GROUP_VISIBLE_COUNT = 2;
@@ -96,6 +97,7 @@ const navGroups = [
 type SidebarNavProps = {
   collapsed: boolean;
   pathname: string;
+  groups: typeof navGroups;
   navGroupExpanded: Record<string, boolean>;
   setNavGroupExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
   onNavLinkClick: () => void;
@@ -105,13 +107,14 @@ type SidebarNavProps = {
 function SidebarNavigation({
   collapsed,
   pathname,
+  groups,
   navGroupExpanded,
   setNavGroupExpanded,
   onNavLinkClick,
 }: SidebarNavProps) {
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
-      {navGroups.map((group, idx) => {
+      {groups.map((group, idx) => {
         const groupKey = group.label;
         const needsMoreToggle = group.items.length > NAV_GROUP_VISIBLE_COUNT;
         const overflowHasActive =
@@ -221,6 +224,13 @@ export default function AppLayout() {
   const { user, logout, license, setLicense } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
+  const actualRole = normalizeRole(user?.role);
+  const visibleNavGroups = navGroups.filter((group) => {
+    if (actualRole === 'super_admin') return true;
+    if (actualRole === 'staff') return group.label === 'PEOPLE';
+    if (actualRole === 'manager') return group.label !== 'SYSTEM' && group.label !== 'COMPLIANCE';
+    return true;
+  });
 
   // Fetch license info from /auth/me once on mount and populate store
   useEffect(() => {
@@ -466,6 +476,7 @@ export default function AppLayout() {
         <SidebarNavigation
           collapsed={sidebarCollapsed}
           pathname={location.pathname}
+          groups={visibleNavGroups}
           navGroupExpanded={navGroupExpanded}
           setNavGroupExpanded={setNavGroupExpanded}
           onNavLinkClick={() => setMobileOpen(false)}
@@ -582,6 +593,7 @@ export default function AppLayout() {
                <SidebarNavigation
                  collapsed={false}
                  pathname={location.pathname}
+                 groups={visibleNavGroups}
                  navGroupExpanded={navGroupExpanded}
                  setNavGroupExpanded={setNavGroupExpanded}
                  onNavLinkClick={() => setMobileOpen(false)}
@@ -654,7 +666,7 @@ export default function AppLayout() {
                   Call to Purchase — +91 6355 997 080
                 </a>
                 <a
-                  href="mailto:support@microtechnique.in"
+                  href="mailto:support@microtechniqueit.com"
                   className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
                 >
                   Email Sales

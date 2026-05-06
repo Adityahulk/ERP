@@ -39,20 +39,16 @@ function resolveAssetUrl(src?: string): string {
 }
 
 function themeStyle(theme: string): string {
-  if (theme === 'modern') {
-    return `<style>
-      body{font-family:Inter,Segoe UI,Arial,sans-serif}
-      .inv-card,.panel,.box{border-radius:12px}
-      table th{background:#eef2ff}
-    </style>`;
-  }
-  if (theme === 'compact') {
-    return `<style>
-      body{font-size:12px}
-      table th,table td{padding:4px 6px}
-      .section,.inv-card,.panel{margin-bottom:6px}
-    </style>`;
-  }
+  if (theme === 'modern') return `<style>body{font-family:Inter,Segoe UI,Arial,sans-serif}.inv-card,.panel,.box{border-radius:12px}table th{background:#eef2ff}</style>`;
+  if (theme === 'compact') return `<style>body{font-size:12px}table th,table td{padding:4px 6px}.section,.inv-card,.panel{margin-bottom:6px}</style>`;
+  if (theme === 'executive') return `<style>body{font-family:Georgia,"Times New Roman",serif}.hdr{border-bottom:4px solid {{PRIMARY_COLOR}}!important;background:#fff!important;color:#111!important}.box{border-color:#d4d4d8}table.items th{background:#18181b!important}.foot{font-style:italic}</style>`;
+  if (theme === 'sunrise') return `<style>body{font-family:Segoe UI,Arial,sans-serif;background:#fffdf8}.hdr{background:linear-gradient(135deg,{{PRIMARY_COLOR}},#f97316)!important}.box{background:#fff7ed}table.items th{background:#fb923c!important}</style>`;
+  if (theme === 'forest') return `<style>body{font-family:Segoe UI,Arial,sans-serif;background:#fbfefb}.hdr{background:linear-gradient(135deg,{{PRIMARY_COLOR}},#15803d)!important}.box{background:#f0fdf4;border-color:#bbf7d0}table.items th{background:#166534!important}</style>`;
+  if (theme === 'midnight') return `<style>body{font-family:Segoe UI,Arial,sans-serif;background:#f8fafc}.hdr{background:linear-gradient(135deg,#0f172a,{{PRIMARY_COLOR}})!important}.box{border-color:#cbd5e1}table.items th{background:#1e293b!important}</style>`;
+  if (theme === 'royal') return `<style>body{font-family:"Trebuchet MS",Verdana,sans-serif}.hdr{background:linear-gradient(135deg,{{PRIMARY_COLOR}},#7c3aed)!important}.box{background:#faf5ff;border-color:#ddd6fe}table.items th{background:#6d28d9!important}</style>`;
+  if (theme === 'slate') return `<style>body{font-family:Segoe UI,Arial,sans-serif}.hdr{background:#334155!important}.box{background:#f8fafc;border-color:#cbd5e1}table.items th{background:#475569!important}</style>`;
+  if (theme === 'retail') return `<style>body{font-family:Arial,Helvetica,sans-serif}.hdr{background:#111827!important}.box{border-width:2px}table.items th{background:#2563eb!important}.tot table{width:320px}.foot{text-transform:uppercase;letter-spacing:.04em}</style>`;
+  if (theme === 'minimal') return `<style>body{font-family:Arial,Helvetica,sans-serif;padding:10px}.hdr{background:#fff!important;color:#111!important;border:1px solid #e5e7eb;border-radius:0!important}table.items th{background:#f3f4f6!important;color:#111!important}.box,.einv{border-radius:0}.sign{text-align:left}</style>`;
   return '';
 }
 
@@ -207,7 +203,7 @@ export async function generateInvoicePDF(
   tpl = replaceAll(tpl, vars);
   const extraThemeStyle = themeStyle(docTheme);
   if (extraThemeStyle) {
-    tpl = tpl.replace('</head>', `${extraThemeStyle}</head>`);
+    tpl = tpl.replace('</head>', `${replaceAll(extraThemeStyle, { PRIMARY_COLOR: color })}</head>`);
   }
   const browser = await launchBrowser();
   const page = await browser.newPage();
@@ -378,23 +374,38 @@ export async function generateQuotationPDF(
     )
     .join('');
 
-  const html = `<!doctype html><html><head><meta charset="utf-8" />
+  const primaryColor = String(company.document_primary_color || '#4F46E5');
+  const theme = String(quotation.document_theme || company.document_theme || 'classic');
+  const logoBlock = company.logo_url
+    ? `<img src="${escapeHtml(resolveAssetUrl(company.logo_url))}" style="max-height:56px;display:block;margin-bottom:8px" />`
+    : '';
+  const signatureBlock = company.signature_url
+    ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(company.name || '')}</b></p><img src="${escapeHtml(resolveAssetUrl(company.signature_url))}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
+    : `<div style="text-align:right;margin-top:26px"><p>For <b>${escapeHtml(company.name || '')}</b></p><p>Authorised Signatory</p></div>`;
+
+  let html = `<!doctype html><html><head><meta charset="utf-8" />
   <style>
     body{font-family:Arial,sans-serif;color:#111;padding:16px}
     .row{display:flex;justify-content:space-between;align-items:flex-start}
     .muted{color:#666;font-size:12px}
     h1{font-size:20px;margin:0}
+    .header{background:${escapeHtml(primaryColor)};color:#fff;padding:16px 18px;border-radius:8px}
+    .header .muted{color:rgba(255,255,255,.82)}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+    .box{border:1px solid #ddd;padding:10px;border-radius:8px}
     table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px}
     th,td{border:1px solid #ddd;padding:6px}
-    th{background:#f7f7f7}.right{text-align:right}.mono{font-family:monospace}
+    th{background:${escapeHtml(primaryColor)};color:#fff}.right{text-align:right}.mono{font-family:monospace}
     .totals{margin-top:12px;display:flex;justify-content:flex-end}
     .totals table{width:320px}
   </style></head><body>
-    <div class="row">
+    <div class="row header">
       <div>
+        ${logoBlock}
         <h1>Quotation</h1>
         <p class="muted">${escapeHtml(company.name || '')}</p>
         <p class="muted">${escapeHtml(company.registered_address || '')}</p>
+        <p class="muted">GSTIN ${escapeHtml(company.gstin || '—')} · ${escapeHtml(company.phone || company.email || '—')}</p>
       </div>
       <div style="text-align:right">
         <p><b>Quote No:</b> ${escapeHtml(quotation.quotation_number || '')}</p>
@@ -402,10 +413,22 @@ export async function generateQuotationPDF(
         <p><b>Valid Until:</b> ${escapeHtml(String(quotation.valid_until || '—'))}</p>
       </div>
     </div>
-    <hr />
-    <p><b>Customer:</b> ${escapeHtml(quotation.party_name_override || party?.name || 'Customer')}</p>
-    <p class="muted">${escapeHtml(quotation.party_email_override || party?.email || '')} ${escapeHtml(quotation.party_phone_override || party?.phone || '')}</p>
-    <p class="muted">${escapeHtml(buyerAddr)}</p>
+    <div class="grid2">
+      <div class="box">
+        <b>Seller</b>
+        <p style="margin:6px 0 0">${escapeHtml(company.name || '')}</p>
+        <p class="muted" style="margin:4px 0">${escapeHtml(company.registered_address || '')}</p>
+        <p class="muted" style="margin:4px 0">${escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', '))}</p>
+        <p class="muted" style="margin:4px 0">GSTIN: ${escapeHtml(company.gstin || '—')}</p>
+      </div>
+      <div class="box">
+        <b>Buyer</b>
+        <p style="margin:6px 0 0">${escapeHtml(quotation.party_name_override || party?.name || 'Customer')}</p>
+        <p class="muted" style="margin:4px 0">${escapeHtml(quotation.party_email_override || party?.email || '')} ${escapeHtml(quotation.party_phone_override || party?.phone || '')}</p>
+        <p class="muted" style="margin:4px 0">${escapeHtml(buyerAddr || '—')}</p>
+        <p class="muted" style="margin:4px 0">GSTIN: ${escapeHtml(party?.gstin || '—')}</p>
+      </div>
+    </div>
     <table>
       <thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Disc</th><th>GST</th><th>Total</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -423,7 +446,13 @@ export async function generateQuotationPDF(
     </div>
     <p><b>Customer notes:</b> ${escapeHtml(quotation.customer_notes || '—')}</p>
     <p><b>Terms:</b> ${escapeHtml(quotation.terms_and_conditions || company.terms_and_conditions || '—')}</p>
+    ${signatureBlock}
   </body></html>`;
+
+  const extraThemeStyle = themeStyle(theme);
+  if (extraThemeStyle) {
+    html = html.replace('</head>', `${replaceAll(extraThemeStyle, { PRIMARY_COLOR: primaryColor })}</head>`);
+  }
 
   const browser = await launchBrowser();
   const page = await browser.newPage();

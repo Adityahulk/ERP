@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil } from 'lucide-react';
+import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil, Eye, Download } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
@@ -221,6 +221,36 @@ export default function PurchaseBillsTab() {
     else createMutation.mutate(payload);
   };
 
+  const previewBill = async (id: string) => {
+    const t = toast.loading('Opening preview…');
+    try {
+      const res = await api.get(`/purchases/invoices/${id}/pdf`, { params: { inline: 1 }, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success('Preview opened', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Preview failed', { id: t });
+    }
+  };
+
+  const downloadBillPdf = async (id: string, billNumber?: string) => {
+    const t = toast.loading('Preparing PDF…');
+    try {
+      const res = await api.get(`/purchases/invoices/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${billNumber || 'purchase-bill'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Download failed', { id: t });
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* Stats */}
@@ -299,6 +329,12 @@ export default function PurchaseBillsTab() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-1 flex-wrap">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => previewBill(b.id)} title="Preview bill">
+                        <Eye className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => downloadBillPdf(b.id, b.bill_number)} title="Download PDF">
+                        <Download className="w-3.5 h-3.5" />
+                      </Button>
                       {canEditBill && (
                         <Button size="sm" variant="outline" className="h-7 text-xs px-2 gap-1" onClick={() => openEditBill(b.id, b.party_name)}>
                           <Pencil className="w-3 h-3" /> Edit

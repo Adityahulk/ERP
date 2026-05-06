@@ -4,6 +4,7 @@ import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
+import { normalizeRole } from '../lib/roles';
 
 // ── GET /api/users ────────────────────────────────────────────
 export async function listUsers(req: Request, res: Response) {
@@ -43,7 +44,8 @@ export async function listUsers(req: Request, res: Response) {
 export async function createUser(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
-    const { name, email, phone, password, role } = req.body;
+    const { name, email, phone, password } = req.body;
+    const role = normalizeRole(req.body.role);
 
     // Check duplicate email within company
     if (email) {
@@ -57,14 +59,14 @@ export async function createUser(req: Request, res: Response) {
     const result = await query(
       `INSERT INTO users (company_id, name, email, phone, password_hash, role)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, name, email, phone, role, is_active, created_at`,
-      [companyId, name, email?.toLowerCase(), phone, hash, role || 'staff']
+      [companyId, name, email?.toLowerCase(), phone, hash, role]
     );
 
     const newUser = result.rows[0];
 
     // Auto-create an employee profile for every non-admin user so HR attendance
     // and leave tracking work immediately — no manual HR setup required.
-    const nonAdminRoles = ['staff', 'cashier', 'manager', 'accountant', 'warehouse', 'sales', 'purchase'];
+    const nonAdminRoles = ['staff', 'manager'];
     if (nonAdminRoles.includes(newUser.role)) {
       const countRes = await query(
         'SELECT COUNT(*) FROM employee_profiles WHERE company_id = $1', [companyId]
@@ -96,9 +98,13 @@ export async function updateUser(req: Request, res: Response) {
     );
     if (!existing.rows.length) return res.status(404).json(error('User not found'));
 
-    const fields = ['name','email','phone','role','is_active','avatar_url'];
+    const fields = ['name','email','phone','is_active','avatar_url'];
     const updates: string[] = []; const values: any[] = []; let idx = 1;
     for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = $${idx++}`); values.push(req.body[f]); } }
+    if (req.body.role !== undefined) {
+      updates.push(`role = $${idx++}`);
+      values.push(normalizeRole(req.body.role));
+    }
 
     if (req.body.password) {
       updates.push(`password_hash = $${idx++}`);
@@ -124,7 +130,7 @@ export async function updateUser(req: Request, res: Response) {
 export async function syncEmployeeProfiles(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
-    const nonAdminRoles = ['staff', 'cashier', 'manager', 'accountant', 'warehouse', 'sales', 'purchase'];
+    const nonAdminRoles = ['staff', 'manager'];
 
     const usersRes = await query(
       `SELECT u.id, u.role

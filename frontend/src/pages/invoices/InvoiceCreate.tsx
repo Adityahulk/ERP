@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine, PackagePlus } from 'lucide-react';
-import { InvoicePreviewWorkspace, readSkipInvoicePreview } from '@/components/invoices/InvoicePreviewWorkspace';
+import { DOCUMENT_THEME_OPTIONS, InvoicePreviewWorkspace, readSkipInvoicePreview, type DocumentThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
@@ -48,7 +48,7 @@ export default function InvoiceCreate() {
   const [isInterstate, setIsInterstate] = useState(false);
   const [isGstInvoice, setIsGstInvoice] = useState(true);
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
-  const [documentTheme, setDocumentTheme] = useState<'classic' | 'modern' | 'compact'>('classic');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
   const [notes, setNotes] = useState('');
   const [amountPaid, setAmountPaid] = useState(0);
   const [items, setItems] = useState<LineItem[]>([]);
@@ -100,7 +100,7 @@ export default function InvoiceCreate() {
     const tpl = String(inv.pdf_template || 'standard');
     setPdfTemplate((['standard', 'simple', 'performa'].includes(tpl) ? tpl : 'standard') as InvoicePdfTemplateId);
     const th = String(inv.document_theme || 'classic');
-    setDocumentTheme((['classic', 'modern', 'compact'].includes(th) ? th : 'classic') as 'classic' | 'modern' | 'compact');
+    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'classic') as DocumentThemeId);
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
 
     const mappedItems: LineItem[] = ((inv.items as any[]) || []).map((it: any) => {
@@ -445,10 +445,8 @@ export default function InvoiceCreate() {
               <select className="w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={pdfTemplate} onChange={e => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
                 {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
-              <select className="col-span-2 w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={documentTheme} onChange={e => setDocumentTheme(e.target.value as typeof documentTheme)}>
-                <option value="classic">Classic theme</option>
-                <option value="modern">Modern theme</option>
-                <option value="compact">Compact theme</option>
+              <select className="col-span-2 w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={documentTheme} onChange={e => setDocumentTheme(e.target.value as DocumentThemeId)}>
+                {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
               </select>
             </div>
             <BankAccountPicker value={companyBankAccountId} onChange={setCompanyBankAccountId} className="pt-2 border-t" />

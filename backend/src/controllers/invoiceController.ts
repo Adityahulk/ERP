@@ -23,6 +23,12 @@ import {
   type Queryable,
 } from '../lib/bankAccountSnapshots';
 
+const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa'] as const;
+const ALLOWED_DOCUMENT_THEMES = [
+  'classic', 'modern', 'compact', 'executive', 'sunrise',
+  'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal',
+] as const;
+
 function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | 'partial' | 'paid' {
   if (paidAmount >= totalAmount) return 'paid';
   if (paidAmount > 0) return 'partial';
@@ -304,8 +310,8 @@ export async function createInvoice(req: Request, res: Response) {
           d.notes || null,
           d.terms_and_conditions || null,
           req.user!.id,
-          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
-          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : null,
+          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'classic',
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -740,8 +746,8 @@ export async function updateInvoice(req: Request, res: Response) {
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
-      const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : oldInv.pdf_template;
-      const docTheme = ['classic', 'modern', 'compact'].includes(String(d.document_theme || ''))
+      const pdfTpl = ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : oldInv.pdf_template;
+      const docTheme = ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any)
         ? d.document_theme
         : oldInv.document_theme || 'classic';
 
@@ -1080,8 +1086,10 @@ export async function getInvoicePDF(req: Request, res: Response) {
       : { rows: [null] };
 
     const tpl = String(req.query.template || '');
-    const allowed = ['standard', 'simple', 'performa'] as const;
-    const templateOverride = (allowed as readonly string[]).includes(tpl) ? tpl : invRes.rows[0].pdf_template || undefined;
+    const templateOverride = (ALLOWED_PDF_TEMPLATES as readonly string[]).includes(tpl) ? tpl : invRes.rows[0].pdf_template || undefined;
+    if ((ALLOWED_DOCUMENT_THEMES as readonly string[]).includes(String(req.query.theme || ''))) {
+      invRes.rows[0].document_theme = String(req.query.theme);
+    }
 
     const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyForPdf, partyRes.rows[0], itemsRes.rows, {
       ...(templateOverride ? { templateOverride } : {}),
@@ -1104,7 +1112,8 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const d = req.body || {};
     const templateRaw = String(d.template || 'standard');
-    const template = ['standard', 'simple', 'performa'].includes(templateRaw) ? templateRaw : 'standard';
+    const template = ALLOWED_PDF_TEMPLATES.includes(templateRaw as any) ? templateRaw : 'standard';
+    const theme = ALLOWED_DOCUMENT_THEMES.includes(String(d.theme || '') as any) ? String(d.theme) : 'classic';
 
     if (!Array.isArray(d.items) || d.items.length === 0) {
       return res.status(400).json(error('At least one line item is required'));
@@ -1224,6 +1233,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       total_amount: totals.totalAmount,
       irn: null,
       qr_code_url: null,
+      document_theme: theme,
     };
 
     const pdfBuffer = await generateInvoicePDF(invoice, company, party, pdfRows, { templateOverride: template });

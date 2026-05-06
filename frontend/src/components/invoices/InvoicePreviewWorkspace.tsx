@@ -14,6 +14,20 @@ export const INVOICE_PDF_TEMPLATES = [
 ] as const;
 
 export type InvoicePdfTemplateId = (typeof INVOICE_PDF_TEMPLATES)[number]['id'];
+export const DOCUMENT_THEME_OPTIONS = [
+  { id: 'classic', label: 'Classic' },
+  { id: 'modern', label: 'Modern' },
+  { id: 'compact', label: 'Compact' },
+  { id: 'executive', label: 'Executive' },
+  { id: 'sunrise', label: 'Sunrise' },
+  { id: 'forest', label: 'Forest' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'royal', label: 'Royal' },
+  { id: 'slate', label: 'Slate' },
+  { id: 'retail', label: 'Retail' },
+  { id: 'minimal', label: 'Minimal' },
+] as const;
+export type DocumentThemeId = (typeof DOCUMENT_THEME_OPTIONS)[number]['id'];
 
 type TemplateRow = (typeof INVOICE_PDF_TEMPLATES)[number];
 
@@ -75,6 +89,7 @@ export function InvoicePreviewWorkspace({
   companyName,
 }: Props) {
   const [template, setTemplate] = useState<InvoicePdfTemplateId>('standard');
+  const [theme, setTheme] = useState<DocumentThemeId>('classic');
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [skipNext, setSkipNext] = useState(() => readSkipInvoicePreview());
@@ -100,12 +115,12 @@ export function InvoicePreviewWorkspace({
       let blob: Blob;
       if (mode === 'saved' && invoiceId) {
         const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-          params: { template, inline: 1 },
+          params: { template, theme, inline: 1 },
           responseType: 'blob',
         });
         blob = res.data as Blob;
       } else if (mode === 'draft' && draftPayload) {
-        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template }, { responseType: 'blob' });
+        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme }, { responseType: 'blob' });
         blob = res.data as Blob;
       } else {
         return;
@@ -119,7 +134,7 @@ export function InvoicePreviewWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [open, mode, invoiceId, draftPayload, template, revoke]);
+  }, [open, mode, invoiceId, draftPayload, template, theme, revoke]);
 
   useEffect(() => {
     if (!open) return;
@@ -148,12 +163,12 @@ Thank you.
     let blob: Blob;
     if (mode === 'saved' && invoiceId) {
       const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-        params: { template, inline: 1 },
+        params: { template, theme, inline: 1 },
         responseType: 'blob',
       });
       blob = res.data as Blob;
     } else if (mode === 'draft' && draftPayload) {
-      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template }, { responseType: 'blob' });
+      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme }, { responseType: 'blob' });
       blob = res.data as Blob;
     } else {
       throw new Error('Nothing to share');
@@ -299,6 +314,24 @@ Thank you.
                 </ul>
               </div>
             ))}
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase px-2 mb-1">Document Theme</p>
+              <ul className="space-y-0.5">
+                {DOCUMENT_THEME_OPTIONS.map((opt) => (
+                  <li key={opt.id}>
+                    <button
+                      type="button"
+                      onClick={() => setTheme(opt.id)}
+                      className={`w-full text-left rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                        theme === opt.id ? 'bg-slate-900 text-white shadow' : 'text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      <span className="font-medium">{opt.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
           <div className="p-2 border-t border-slate-200 text-[11px] text-slate-500 leading-snug flex gap-2 bg-amber-50/80">
             <span aria-hidden>💡</span>
@@ -329,6 +362,20 @@ Thank you.
                 onClick={() => setTemplate(opt.id)}
                 className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
                   template === opt.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="lg:hidden border-b border-slate-100 bg-white px-3 py-2 flex gap-1 overflow-x-auto">
+            {DOCUMENT_THEME_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setTheme(opt.id)}
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
+                  theme === opt.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
                 }`}
               >
                 {opt.label}

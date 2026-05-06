@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, FileText, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye } from 'lucide-react';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,17 +41,39 @@ export default function QuotationDetail() {
   const quote = data as any;
   const items = quote?.items || [];
 
-  const printPdf = async () => {
+  const previewPdf = async () => {
     if (!id) return;
     setPdfLoading(true);
-    const t = toast.loading('Opening PDF…');
+    const t = toast.loading('Opening preview…');
     try {
       const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       window.open(url, '_blank');
-      toast.success('PDF opened in a new tab', { id: t });
+      toast.success('Preview opened', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Could not open PDF', { id: t });
+      toast.error(e.response?.data?.error || 'Could not open preview', { id: t });
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const downloadPdf = async () => {
+    if (!id) return;
+    setPdfLoading(true);
+    const t = toast.loading('Preparing PDF…');
+    try {
+      const res = await api.get(`/print/quotation/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${quote?.quotation_number || 'quotation'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not download PDF', { id: t });
     } finally {
       setPdfLoading(false);
     }
@@ -112,9 +134,13 @@ export default function QuotationDetail() {
           <span className={`px-3 py-1 rounded-full text-xs font-semibold capitalize ${STATUS_STYLES[quote.status || 'draft'] || 'bg-slate-100 text-slate-600'}`}>
             {quote.status || 'draft'}
           </span>
-          <Button variant="outline" size="sm" onClick={printPdf} loading={pdfLoading} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={previewPdf} loading={pdfLoading} className="gap-1.5">
+            <Eye className="w-4 h-4" />
+            Preview
+          </Button>
+          <Button variant="outline" size="sm" onClick={downloadPdf} loading={pdfLoading} className="gap-1.5">
             <Download className="w-4 h-4" />
-            Print / PDF
+            Download PDF
           </Button>
           {alreadyConverted && quote.converted_to_invoice_id && (
             <Button size="sm" variant="outline" className="gap-1.5 text-violet-600 border-violet-200" onClick={() => navigate(`/sales/${quote.converted_to_invoice_id}`)}>

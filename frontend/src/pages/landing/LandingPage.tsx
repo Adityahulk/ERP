@@ -442,9 +442,9 @@ export default function LandingPage() {
                 +91 6355 997 080
               </a>
               <span className="text-white/20">|</span>
-              <a href="mailto:support@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="mailto:support@microtechniqueit.com" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Mail className="w-4 h-4" />
-                support@microtechnique.in
+                support@microtechniqueit.com
               </a>
             </div>
           </div>
@@ -687,17 +687,17 @@ export default function LandingPage() {
               <li className="flex items-start gap-2">
                 <Mail className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
                 <a
-                  href="mailto:support@microtechnique.in"
+                  href="mailto:support@microtechniqueit.com"
                   className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
                 >
-                  support@microtechnique.in
+                  support@microtechniqueit.com
                 </a>
               </li>
             </ul>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-10 pt-8 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm">
-          <p>&copy; {new Date().getFullYear()} Microtechnique Accounts. All rights reserved.</p>
+          <p>&copy; 2020 Microtechnique Accounts. All rights reserved.</p>
           <div className="flex gap-6">
             <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
             <a href="#" className="hover:text-white transition-colors">Terms of Service</a>

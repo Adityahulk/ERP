@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatMoney } from '@/lib/formatters';
 import toast from 'react-hot-toast';
+import { normalizeRole } from '@/lib/roles';
 
 const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
 const fileUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase()}${url || ''}`);
@@ -29,7 +30,7 @@ export default function ProfilePage() {
   const [docType, setDocType] = useState('ID Proof');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [adjustment, setAdjustment] = useState({ adjustment_type: 'bonus', title: '', amount: '', notes: '' });
-  const canPayroll = ['accountant', 'company_admin', 'super_admin'].includes(user?.role || '');
+  const canPayroll = ['admin', 'super_admin'].includes(normalizeRole(user?.role));
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['employee-profile', 'me'],

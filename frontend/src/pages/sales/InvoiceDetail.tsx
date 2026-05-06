@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
+import { normalizeRole } from '@/lib/roles';
 import {
   useCancelEinvoice,
   useCancelEwayBill,
@@ -23,11 +24,9 @@ import {
 
 const ROLE_RANK: Record<string, number> = {
   staff: 1,
-  cashier: 2,
-  manager: 3,
-  accountant: 4,
-  company_admin: 5,
-  super_admin: 6,
+  manager: 2,
+  admin: 3,
+  super_admin: 4,
 };
 
 export default function InvoiceDetail() {
@@ -94,7 +93,8 @@ export default function InvoiceDetail() {
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading invoice details...</div>;
   if (isError || !inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
 
-  const userRank = ROLE_RANK[user?.role ?? ''] ?? 0;
+  const normalizedRole = normalizeRole(user?.role);
+  const userRank = ROLE_RANK[normalizedRole] ?? 0;
   const hasPaidAmount = Number(inv.paid_amount ?? inv.amount_paid ?? 0) > 0;
   const hasPayments = Array.isArray(inv.payments) && inv.payments.length > 0;
   const canEditInvoice =
@@ -114,11 +114,10 @@ export default function InvoiceDetail() {
     ? 'Only managers and above can edit invoices.'
     : '';
 
-  const canGenEinvRole =
-    user?.role === 'company_admin' || user?.role === 'accountant' || user?.role === 'super_admin';
+  const canGenEinvRole = normalizedRole === 'admin' || normalizedRole === 'super_admin';
   const canGenEinv = canGenEinvRole && !!company?.einvoice_enabled;
   const canGenEwb = canGenEinvRole;
-  const canCancelEwb = user?.role === 'company_admin' || user?.role === 'super_admin';
+  const canCancelEwb = normalizedRole === 'admin' || normalizedRole === 'super_admin';
 
   const einvStatus = inv.einvoice_status || 'not_applicable';
   const einvLabel =
@@ -539,7 +538,7 @@ Thank you.
                       <img src={inv.qr_code_url} alt="e-invoice QR" className="w-40 h-40 border rounded" />
                     </div>
                   )}
-                  {(user?.role === 'company_admin' || user?.role === 'super_admin') && einvStatus === 'generated' && (
+                  {(normalizedRole === 'admin' || normalizedRole === 'super_admin') && einvStatus === 'generated' && (
                     <Button variant="destructive" size="sm" className="w-full" onClick={() => setCancelOpen(true)}>
                       <Ban className="h-4 w-4 mr-2" /> Cancel IRN
                     </Button>

@@ -15,16 +15,16 @@ import {
   ShieldCheck, AlertCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { normalizeRole } from '@/lib/roles';
 
 const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
 const fileUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase()}${url || ''}`);
 
 const ROLE_COLORS: Record<string, string> = {
   super_admin: 'bg-purple-100 text-purple-700',
-  company_admin: 'bg-indigo-100 text-indigo-700',
+  admin: 'bg-indigo-100 text-indigo-700',
   manager: 'bg-blue-100 text-blue-700',
-  accountant: 'bg-emerald-100 text-emerald-700',
-  employee: 'bg-slate-100 text-slate-600',
+  staff: 'bg-slate-100 text-slate-600',
 };
 
 function InfoRow({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
@@ -64,9 +64,10 @@ export default function EmployeeDetailPage() {
   const { user: me } = useAuthStore();
   const qc = useQueryClient();
 
-  const isAdmin = ['company_admin', 'super_admin'].includes(me?.role || '');
-  const canManage = ['manager', 'accountant', 'company_admin', 'super_admin'].includes(me?.role || '');
-  const canPayroll = ['accountant', 'company_admin', 'super_admin'].includes(me?.role || '');
+  const actualRole = normalizeRole(me?.role);
+  const isAdmin = ['admin', 'super_admin'].includes(actualRole);
+  const canManage = ['manager', 'admin', 'super_admin'].includes(actualRole);
+  const canPayroll = ['admin', 'super_admin'].includes(actualRole);
   const isSelf = !userId || userId === me?.id || userId === 'me';
   const canEdit = isAdmin || isSelf;
 
@@ -180,7 +181,7 @@ export default function EmployeeDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-xl font-bold">{profile.name}</h2>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${ROLE_COLORS[profile.role] || 'bg-slate-100 text-slate-600'}`}>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${ROLE_COLORS[normalizeRole(profile.role)] || 'bg-slate-100 text-slate-600'}`}>
                 {profile.role?.replace('_', ' ')}
               </span>
               {profile.is_active === false && (

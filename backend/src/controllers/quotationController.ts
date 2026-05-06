@@ -5,6 +5,12 @@ import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { redis } from '../config/redis';
 import { determineGSTType } from '../services/gstService';
 
+const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa'] as const;
+const ALLOWED_DOCUMENT_THEMES = [
+  'classic', 'modern', 'compact', 'executive', 'sunrise',
+  'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal',
+] as const;
+
 function trimOrNull(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -178,8 +184,8 @@ export async function createQuotation(req: Request, res: Response) {
           trimOrNull(d.terms_and_conditions),
           req.user!.id,
           isGstQuote,
-          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
-          ['classic', 'modern', 'compact'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : null,
+          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'classic',
         ]
       );
       const quotation = qRes.rows[0];
@@ -371,8 +377,8 @@ export async function convertToInvoice(req: Request, res: Response) {
 
       const pdfTpl = String(q.pdf_template || '');
       const themeRaw = String(q.document_theme || '');
-      const pdfTemplate = ['standard', 'simple', 'performa'].includes(pdfTpl) ? q.pdf_template : null;
-      const documentTheme = ['classic', 'modern', 'compact'].includes(themeRaw) ? themeRaw : 'classic';
+      const pdfTemplate = ALLOWED_PDF_TEMPLATES.includes(pdfTpl as any) ? q.pdf_template : null;
+      const documentTheme = ALLOWED_DOCUMENT_THEMES.includes(themeRaw as any) ? themeRaw : 'classic';
 
       const invRes = await client.query(
         `INSERT INTO invoices (

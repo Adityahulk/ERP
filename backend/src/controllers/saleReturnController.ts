@@ -86,7 +86,7 @@ export async function createSaleReturn(req: Request, res: Response) {
           [totalAmount, d.party_id],
         );
         await client.query(
-          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, notes)
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration)
            SELECT $1, $2, 'credit', $3, balance, 'credit_note', $4, 'Sale return / credit note'
            FROM parties WHERE id = $2`,
           [companyId, d.party_id, totalAmount, returnId],

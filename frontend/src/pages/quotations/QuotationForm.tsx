@@ -10,7 +10,7 @@ import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
 import { ArrowLeft, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
-import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
+import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, type DocumentThemeId, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 
 export default function QuotationForm() {
@@ -45,7 +45,7 @@ export default function QuotationForm() {
   const [isGstQuote, setIsGstQuote] = useState(true);
   const [isInterstate, setIsInterstate] = useState(false);
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
-  const [documentTheme, setDocumentTheme] = useState<'classic' | 'modern' | 'compact'>('classic');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
   const [customerNotes, setCustomerNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
@@ -283,10 +283,8 @@ export default function QuotationForm() {
               </div>
               <div>
                 <Label className="text-xs">Theme</Label>
-                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value as typeof documentTheme)}>
-                  <option value="classic">Classic</option>
-                  <option value="modern">Modern</option>
-                  <option value="compact">Compact</option>
+                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value as DocumentThemeId)}>
+                  {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
                 </select>
               </div>
             </div>

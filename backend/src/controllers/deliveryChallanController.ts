@@ -224,7 +224,7 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
           [totalAmount, challan.party_id],
         );
         await client.query(
-          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, notes)
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration)
            SELECT $1, $2, 'debit', $3, balance, 'invoice', $4, 'Converted from challan ' || $5
            FROM parties WHERE id = $2`,
           [companyId, challan.party_id, totalAmount, invoiceId, challan.challan_number],

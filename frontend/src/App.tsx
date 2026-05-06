@@ -55,6 +55,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+import { canAccessRole, normalizeRole, type NormalizedRole } from '@/lib/roles';
 
 function LoginPage() {
   const { login } = useAuthStore();
@@ -193,6 +194,14 @@ function OnboardingEntry() {
   return <Onboarding />;
 }
 
+function RoleGate({ allowed, children }: { allowed: NormalizedRole[]; children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  const actualRole = normalizeRole(user?.role);
+  if (actualRole === 'super_admin') return <>{children}</>;
+  if (canAccessRole(user?.role, allowed)) return <>{children}</>;
+  return <Navigate to={actualRole === 'staff' ? '/attendance' : '/dashboard'} replace />;
+}
+
 // ── Registrant Protected Route ────────────────────────────────
 function RegistrantRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, token } = useRegistrantStore();
@@ -228,22 +237,22 @@ export default function App() {
 
       <Route element={<ProtectedRoute><TenantGate><AppLayout /></TenantGate></ProtectedRoute>}>
         {/* Items */}
-        <Route path="/items" element={<ItemList />} />
-        <Route path="/items/:id" element={<ItemDetail />} />
-        <Route path="/barcode/generate" element={<BarcodeGeneratePage />} />
+        <Route path="/items" element={<RoleGate allowed={['admin', 'manager']}><ItemList /></RoleGate>} />
+        <Route path="/items/:id" element={<RoleGate allowed={['admin', 'manager']}><ItemDetail /></RoleGate>} />
+        <Route path="/barcode/generate" element={<RoleGate allowed={['admin', 'manager']}><BarcodeGeneratePage /></RoleGate>} />
 
         {/* Inventory */}
-        <Route path="/inventory" element={<StockList />} />
-        <Route path="/inventory/transfer" element={<StockTransfer />} />
-        <Route path="/inventory/adjust" element={<StockAdjustment />} />
+        <Route path="/inventory" element={<RoleGate allowed={['admin', 'manager']}><StockList /></RoleGate>} />
+        <Route path="/inventory/transfer" element={<RoleGate allowed={['admin', 'manager']}><StockTransfer /></RoleGate>} />
+        <Route path="/inventory/adjust" element={<RoleGate allowed={['admin', 'manager']}><StockAdjustment /></RoleGate>} />
 
 
         {/* Parties */}
-        <Route path="/parties" element={<PartyList />} />
-        <Route path="/parties/:id" element={<PartyDetail />} />
+        <Route path="/parties" element={<RoleGate allowed={['admin', 'manager']}><PartyList /></RoleGate>} />
+        <Route path="/parties/:id" element={<RoleGate allowed={['admin', 'manager']}><PartyDetail /></RoleGate>} />
 
         {/* Dashboard Core */}
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard" element={<RoleGate allowed={['admin', 'manager']}><Dashboard /></RoleGate>} />
 
         {/* Sales Hub */}
         <Route path="/sales-hub" element={<Navigate to="/sales-hub/invoices" replace />} />
@@ -254,12 +263,12 @@ export default function App() {
         <Route path="/quotations" element={<Navigate to="/sales-hub/quotations" replace />} />
 
         {/* Keep detail + create pages accessible */}
-        <Route path="/billing" element={<BillingScreen />} />
-        <Route path="/sales/new" element={<InvoiceCreate />} />
-        <Route path="/sales/:id/edit" element={<InvoiceCreate />} />
-        <Route path="/sales/:id" element={<InvoiceDetail />} />
-        <Route path="/quotations/new" element={<QuotationForm />} />
-        <Route path="/quotations/:id" element={<QuotationDetail />} />
+        <Route path="/billing" element={<RoleGate allowed={['admin', 'manager']}><BillingScreen /></RoleGate>} />
+        <Route path="/sales/new" element={<RoleGate allowed={['admin', 'manager']}><InvoiceCreate /></RoleGate>} />
+        <Route path="/sales/:id/edit" element={<RoleGate allowed={['admin', 'manager']}><InvoiceCreate /></RoleGate>} />
+        <Route path="/sales/:id" element={<RoleGate allowed={['admin', 'manager']}><InvoiceDetail /></RoleGate>} />
+        <Route path="/quotations/new" element={<RoleGate allowed={['admin', 'manager']}><QuotationForm /></RoleGate>} />
+        <Route path="/quotations/:id" element={<RoleGate allowed={['admin', 'manager']}><QuotationDetail /></RoleGate>} />
 
         {/* Purchase & Expense Hub */}
         <Route path="/purchase-expense" element={<Navigate to="/purchase-expense/bills" replace />} />
@@ -268,25 +277,25 @@ export default function App() {
         {/* Legacy redirects */}
         <Route path="/purchases" element={<Navigate to="/purchase-expense/orders" replace />} />
         <Route path="/purchases/new" element={<Navigate to="/purchase-expense/orders" replace />} />
-        <Route path="/purchases/:id/receive" element={<GRNScreen />} />
+        <Route path="/purchases/:id/receive" element={<RoleGate allowed={['admin', 'manager']}><GRNScreen /></RoleGate>} />
         <Route path="/expenses" element={<Navigate to="/purchase-expense/expenses" replace />} />
         {/* Reports & Accounting */}
-        <Route path="/reports" element={<ModuleGate featureKey="basic_reports" featureLabel="Business Reports"><ReportsHome /></ModuleGate>} />
-        <Route path="/gst-filing" element={<ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><GSTDashboard /></ModuleGate>} />
+        <Route path="/reports" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="basic_reports" featureLabel="Business Reports"><ReportsHome /></ModuleGate></RoleGate>} />
+        <Route path="/gst-filing" element={<RoleGate allowed={['admin']}><ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><GSTDashboard /></ModuleGate></RoleGate>} />
 
         {/* HR & Attendance */}
         <Route path="/attendance" element={<ModuleGate featureKey="hr" featureLabel="HR & Attendance"><AttendancePage /></ModuleGate>} />
         <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/hr/employees" element={<ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeListPage /></ModuleGate>} />
-        <Route path="/hr/employees/:userId" element={<ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeDetailPage /></ModuleGate>} />
+        <Route path="/hr/employees" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeListPage /></ModuleGate></RoleGate>} />
+        <Route path="/hr/employees/:userId" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="hr" featureLabel="HR & Employees"><EmployeeDetailPage /></ModuleGate></RoleGate>} />
 
         {/* Job Work */}
-        <Route path="/job-work" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanList /></ModuleGate>} />
-        <Route path="/job-work/new" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanForm /></ModuleGate>} />
-        <Route path="/job-work/:id" element={<ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanDetail /></ModuleGate>} />
+        <Route path="/job-work" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanList /></ModuleGate></RoleGate>} />
+        <Route path="/job-work/new" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanForm /></ModuleGate></RoleGate>} />
+        <Route path="/job-work/:id" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="job_work" featureLabel="Job Work Challans"><JobWorkChallanDetail /></ModuleGate></RoleGate>} />
 
         {/* Global Config */}
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={<RoleGate allowed={['admin']}><Settings /></RoleGate>} />
 
       </Route>
 

@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
+import { isAdminRole } from '../lib/roles';
 
 function canPunch(role: string): boolean {
-  return role !== 'company_admin' && role !== 'super_admin';
+  return !isAdminRole(role);
 }
 
 export async function clockIn(req: Request, res: Response) {
@@ -83,7 +84,7 @@ export async function getCompanyToday(req: Request, res: Response) {
        WHERE u.company_id = $1
          AND u.is_deleted = false
          AND u.is_active = true
-         AND u.role NOT IN ('company_admin', 'super_admin')
+         AND u.role NOT IN ('admin', 'super_admin')
        ORDER BY u.name ASC`,
       [req.user!.company_id]
     );

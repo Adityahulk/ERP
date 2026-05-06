@@ -1,4 +1,4 @@
-# ERP Robustness Smoke Checklist
+# Accounts Robustness Smoke Checklist
 
 Use this checklist before each production deploy and after hotfixes touching sales, purchases, parties, stock, labeling, registration, or invoice PDFs.
 

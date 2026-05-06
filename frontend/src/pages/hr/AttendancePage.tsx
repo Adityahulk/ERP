@@ -8,14 +8,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Clock, LogIn, LogOut, FileText, CheckCircle2, User } from 'lucide-react';
+import { normalizeRole } from '@/lib/roles';
 
 export default function AttendancePage() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const role = user?.role || '';
-  const canManage = ['manager', 'accountant', 'company_admin', 'super_admin'].includes(role);
-  const isAdmin = role === 'company_admin' || role === 'super_admin';
+  const role = normalizeRole(user?.role);
+  const canManage = ['manager', 'admin', 'super_admin'].includes(role);
+  const isAdmin = role === 'admin' || role === 'super_admin';
   const canPunch = !isAdmin;
   const [tab, setTab] = useState(canManage ? 'team_today' : 'my_attendance');
 

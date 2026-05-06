@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck } from 'lucide-react';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 
 export default function InvoiceList() {
   const navigate = useNavigate();
@@ -17,6 +18,8 @@ export default function InvoiceList() {
   const [search, setSearch] = useState('');
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [irnLoadingId, setIrnLoadingId] = useState<string | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState<any | null>(null);
+  const [menuInvoiceId, setMenuInvoiceId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['salesInvoices', tab, search],
@@ -188,45 +191,13 @@ export default function InvoiceList() {
                         </Badge>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex justify-end items-center gap-1">
+                        <div className="relative flex justify-end items-center gap-1">
                           <Button
                             variant="ghost" size="icon"
-                            onClick={() => navigate(`/sales/${inv.id}`)}
-                            title="View invoice"
+                            onClick={() => setPreviewInvoice(inv)}
+                            title="Preview invoice"
                           >
                             <Eye className="h-4 w-4" />
-                          </Button>
-
-                          <Button
-                            variant="ghost" size="icon"
-                            disabled={!canEdit}
-                            onClick={() => canEdit && navigate(`/sales/${inv.id}/edit`)}
-                            title={canEdit ? 'Edit invoice' : inv.irn ? 'IRN generated — cannot edit' : hasPaid ? 'Has payments — cannot edit' : 'Cannot edit'}
-                            className={canEdit ? '' : 'opacity-30 cursor-not-allowed'}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-
-                          <Button
-                            variant="ghost" size="icon"
-                            disabled={!canIRN || irnLoadingId === inv.id}
-                            onClick={() => canIRN && generateIRN(inv.id)}
-                            title={canIRN ? 'Generate IRN e-invoice' : inv.irn ? `IRN: ${inv.irn.slice(0, 8)}…` : 'Cannot generate IRN'}
-                            className={canIRN ? 'text-emerald-600 hover:text-emerald-700' : 'opacity-30 cursor-not-allowed'}
-                          >
-                            {irnLoadingId === inv.id
-                              ? <Loader2 className="h-4 w-4 animate-spin" />
-                              : <FileCheck className="h-4 w-4" />}
-                          </Button>
-
-                          <Button
-                            variant="ghost" size="icon"
-                            disabled={!canEWB}
-                            onClick={() => canEWB && navigate(`/sales/${inv.id}?tab=ewb`)}
-                            title={canEWB ? 'Generate E-Way Bill' : inv.ewb_no ? `EWB: ${inv.ewb_no}` : 'Need IRN first for E-Way Bill'}
-                            className={canEWB ? 'text-blue-600 hover:text-blue-700' : 'opacity-30 cursor-not-allowed'}
-                          >
-                            <Truck className="h-4 w-4" />
                           </Button>
 
                           <Button
@@ -239,6 +210,32 @@ export default function InvoiceList() {
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Download className="h-4 w-4" />}
                           </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setMenuInvoiceId((current) => (current === inv.id ? null : inv.id))}
+                            title="More actions"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+
+                          {menuInvoiceId === inv.id && (
+                            <div className="absolute right-0 top-9 z-20 w-52 rounded-lg border bg-white p-1.5 shadow-xl">
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/${inv.id}`); }}>
+                                <Eye className="h-4 w-4" /> View / edit
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEdit} onClick={() => { setMenuInvoiceId(null); if (canEdit) navigate(`/sales/${inv.id}/edit`); }}>
+                                <Pencil className="h-4 w-4" /> Edit invoice
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canIRN || irnLoadingId === inv.id} onClick={() => { setMenuInvoiceId(null); if (canIRN) generateIRN(inv.id); }}>
+                                <FileCheck className="h-4 w-4" /> Generate e-Invoice
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEWB} onClick={() => { setMenuInvoiceId(null); if (canEWB) navigate(`/sales/${inv.id}?tab=ewb`); }}>
+                                <Truck className="h-4 w-4" /> Generate E-Way Bill
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -249,6 +246,21 @@ export default function InvoiceList() {
           </table>
         </div>
       </Card>
+
+      <InvoicePreviewWorkspace
+        open={!!previewInvoice}
+        onClose={() => setPreviewInvoice(null)}
+        mode="saved"
+        invoiceId={previewInvoice?.id}
+        invoiceIdForPrint={previewInvoice?.id}
+        shareContext={{
+          invoiceNumber: previewInvoice?.invoice_number || 'Invoice',
+          invoiceDate: previewInvoice?.invoice_date || new Date().toISOString(),
+          totalAmountPaise: Number(previewInvoice?.total_amount || 0),
+          partyName: previewInvoice?.party_name || 'Customer',
+        }}
+        partyPhone={previewInvoice?.party_phone || ''}
+      />
     </div>
   );
 }

@@ -10,12 +10,14 @@ import toast from 'react-hot-toast';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
+import { normalizeRole, roleLabel } from '@/lib/roles';
+import { DOCUMENT_THEME_OPTIONS } from '@/components/invoices/InvoicePreviewWorkspace';
 
 export default function Settings() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const isAdmin = user?.role === 'super_admin' || user?.role === 'company_admin';
+  const isAdmin = ['admin', 'super_admin'].includes(normalizeRole(user?.role));
   const { data: company, isLoading: companyLoading } = useCompany();
   const updateCompany = useUpdateCompany();
 
@@ -956,7 +958,9 @@ export default function Settings() {
                            <Input placeholder="Email" value={newUser.email} onChange={(e) => setNewUser((s) => ({ ...s, email: e.target.value }))} />
                            <Input placeholder="Phone" value={newUser.phone} onChange={(e) => setNewUser((s) => ({ ...s, phone: e.target.value }))} />
                            <select className="h-10 rounded-md border bg-white px-3 text-sm" value={newUser.role} onChange={(e) => setNewUser((s) => ({ ...s, role: e.target.value }))}>
-                              <option value="staff">staff</option><option value="cashier">cashier</option><option value="manager">manager</option><option value="accountant">accountant</option><option value="company_admin">company_admin</option>
+                              <option value="staff">Staff</option>
+                              <option value="manager">Cashier / Manager</option>
+                              <option value="admin">Admin</option>
                            </select>
                            <Input type="password" placeholder="Password" value={newUser.password} onChange={(e) => setNewUser((s) => ({ ...s, password: e.target.value }))} />
                            <div className="md:col-span-5 flex gap-2">
@@ -983,7 +987,7 @@ export default function Settings() {
                               {users.map((u: any) => (
                                 <tr key={u.id} className="hover:bg-slate-50/50">
                                   <td className="px-4 py-3"><p className="font-semibold text-slate-900">{u.name}</p><p className="text-xs text-slate-500">{u.email || '—'}</p></td>
-                                  <td className="px-4 py-3"><span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-xs font-bold uppercase">{u.role}</span></td>
+                                  <td className="px-4 py-3"><span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-xs font-bold uppercase">{roleLabel(u.role)}</span></td>
                                   <td className="px-4 py-3">{u.godown_name || '—'}</td>
                                   <td className="px-4 py-3"><span className={`font-medium text-xs ${u.is_active ? 'text-emerald-600' : 'text-slate-500'}`}>{u.is_active ? 'Active' : 'Inactive'}</span></td>
                                   <td className="px-4 py-3 text-right space-x-2">
@@ -1015,7 +1019,9 @@ export default function Settings() {
                          <Input placeholder="Email" value={editUserForm.email} onChange={(e) => setEditUserForm((s) => ({ ...s, email: e.target.value }))} />
                          <Input placeholder="Phone" value={editUserForm.phone} onChange={(e) => setEditUserForm((s) => ({ ...s, phone: e.target.value }))} />
                          <select className="h-10 rounded-md border bg-white px-3 text-sm" value={editUserForm.role} onChange={(e) => setEditUserForm((s) => ({ ...s, role: e.target.value }))}>
-                           <option value="staff">staff</option><option value="cashier">cashier</option><option value="manager">manager</option><option value="accountant">accountant</option><option value="company_admin">company_admin</option>
+                           <option value="staff">Staff</option>
+                           <option value="manager">Cashier / Manager</option>
+                           <option value="admin">Admin</option>
                          </select>
                          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={editUserForm.is_active} onChange={(e) => setEditUserForm((s) => ({ ...s, is_active: e.target.checked }))} />Active</label>
                          <div className="md:col-span-5 flex gap-2">
@@ -1113,9 +1119,7 @@ export default function Settings() {
                            <div>
                               <label className="text-sm font-medium text-slate-700">Document theme</label>
                               <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value)}>
-                                 <option value="classic">Classic</option>
-                                 <option value="modern">Modern</option>
-                                 <option value="compact">Compact</option>
+                                {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
                               </select>
                            </div>
                            <div>

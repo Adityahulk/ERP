@@ -1,13 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { query } from '../config/db';
+import { normalizeRole, roleLevel } from '../lib/roles';
 
 export const ROLE_HIERARCHY: Record<string, number> = {
-  staff: 1,
-  cashier: 2,
-  manager: 3,
-  accountant: 4,
-  company_admin: 5,
-  super_admin: 6,
+  staff: 10,
+  manager: 20,
+  admin: 30,
+  super_admin: 99,
 };
 
 /**
@@ -20,8 +19,9 @@ export function requireRole(...allowedRoles: string[]) {
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
-    if (req.user.role === 'super_admin') { next(); return; }
-    if (allowedRoles.includes(req.user.role)) { next(); return; }
+    const actualRole = normalizeRole(req.user.role);
+    if (actualRole === 'super_admin') { next(); return; }
+    if (allowedRoles.map(normalizeRole).includes(actualRole)) { next(); return; }
     res.status(403).json({ success: false, error: 'Insufficient permissions', required: allowedRoles });
   };
 }
@@ -36,8 +36,8 @@ export function requireMinRole(minRole: string) {
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
-    const userLevel = ROLE_HIERARCHY[req.user.role] ?? 0;
-    const requiredLevel = ROLE_HIERARCHY[minRole] ?? 999;
+    const userLevel = roleLevel(req.user.role);
+    const requiredLevel = ROLE_HIERARCHY[normalizeRole(minRole)] ?? 999;
     if (userLevel >= requiredLevel) { next(); return; }
     res.status(403).json({ success: false, error: 'Insufficient permissions', minimumRole: minRole });
   };
@@ -64,7 +64,7 @@ export function requireOwnership(tableName: string, paramName: string = 'id') {
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
-    if (req.user.role === 'super_admin') {
+    if (normalizeRole(req.user.role) === 'super_admin') {
       next();
       return;
     }

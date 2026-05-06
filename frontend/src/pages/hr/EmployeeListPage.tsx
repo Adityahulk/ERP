@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Search, Users, UserPlus } from 'lucide-react';
+import { normalizeRole, roleLabel } from '@/lib/roles';
 
 const ROLE_COLORS: Record<string, string> = {
   super_admin: 'bg-purple-100 text-purple-700',
-  company_admin: 'bg-indigo-100 text-indigo-700',
+  admin: 'bg-indigo-100 text-indigo-700',
   manager: 'bg-blue-100 text-blue-700',
-  accountant: 'bg-emerald-100 text-emerald-700',
-  employee: 'bg-slate-100 text-slate-600',
+  staff: 'bg-slate-100 text-slate-600',
 };
 
 export default function EmployeeListPage() {
@@ -21,8 +21,9 @@ export default function EmployeeListPage() {
   const { user: me } = useAuthStore();
   const [search, setSearch] = useState('');
 
-  const isAdmin = ['company_admin', 'super_admin'].includes(me?.role || '');
-  const canManage = ['manager', 'accountant', 'company_admin', 'super_admin'].includes(me?.role || '');
+  const actualRole = normalizeRole(me?.role);
+  const isAdmin = ['admin', 'super_admin'].includes(actualRole);
+  const canManage = ['manager', 'admin', 'super_admin'].includes(actualRole);
 
   if (!canManage) {
     navigate(`/hr/employees/${me?.id}`, { replace: true });
@@ -93,8 +94,8 @@ export default function EmployeeListPage() {
                   <p className="font-semibold text-sm truncate group-hover:text-primary transition-colors">{emp.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{emp.designation || emp.email}</p>
                   <div className="flex items-center gap-2 mt-1.5">
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full capitalize ${ROLE_COLORS[emp.role] || 'bg-slate-100 text-slate-600'}`}>
-                      {emp.role?.replace('_', ' ')}
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full capitalize ${ROLE_COLORS[normalizeRole(emp.role)] || 'bg-slate-100 text-slate-600'}`}>
+                      {roleLabel(emp.role)}
                     </span>
                     {emp.user_active === false && (
                       <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Inactive</span>
