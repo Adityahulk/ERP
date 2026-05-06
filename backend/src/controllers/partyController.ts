@@ -6,6 +6,22 @@ import { logAction } from '../lib/auditLog';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function blankToNull(v: unknown): unknown {
+  return typeof v === 'string' && v.trim() === '' ? null : v;
+}
+
+function moneyInt(v: unknown, fallback = 0): number {
+  if (v === '' || v == null) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : fallback;
+}
+
+function dayInt(v: unknown, fallback = 30): number {
+  if (v === '' || v == null) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
+}
+
 // ── GET /api/parties ──────────────────────────────────────────
 export async function listParties(req: Request, res: Response) {
   try {
@@ -123,7 +139,7 @@ export async function createParty(req: Request, res: Response) {
       if (dup.rows.length) return res.status(400).json(error('A party with this phone number already exists'));
     }
 
-    const opening = d.opening_balance || 0;
+    const opening = moneyInt(d.opening_balance, 0);
     const result = await query(
       `INSERT INTO parties (
         company_id, name, party_type, phone, email, gstin, pan,
@@ -144,32 +160,32 @@ export async function createParty(req: Request, res: Response) {
       [
         companyId,
         d.name,
-        d.phone || null,
-        d.email || null,
+        blankToNull(d.phone),
+        blankToNull(d.email),
         gstin,
-        d.pan || null,
-        d.billing_address || null,
-        d.shipping_address || null,
-        d.city || d.billing_city || null,
-        d.state || d.billing_state || null,
-        d.pincode || d.billing_pincode || null,
-        d.state_code || d.billing_state_code || null,
-        d.credit_limit || 0,
-        d.payment_terms || d.credit_days || 30,
+        blankToNull(d.pan),
+        blankToNull(d.billing_address),
+        blankToNull(d.shipping_address),
+        blankToNull(d.city || d.billing_city),
+        blankToNull(d.state || d.billing_state),
+        blankToNull(d.pincode || d.billing_pincode),
+        blankToNull(d.state_code || d.billing_state_code),
+        moneyInt(d.credit_limit, 0),
+        dayInt(d.payment_terms ?? d.credit_days, 30),
         opening,
-        d.contact_person || null,
-        d.notes || null,
+        blankToNull(d.contact_person),
+        blankToNull(d.notes),
         d.custom_fields ? JSON.stringify(d.custom_fields) : '{}',
       ]
     );
 
     // If opening balance, create ledger entry
-    if (d.opening_balance && d.opening_balance !== 0) {
-      const type = d.opening_balance > 0 ? 'debit' : 'credit';
+    if (opening !== 0) {
+      const type = opening > 0 ? 'debit' : 'credit';
       await query(
         `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, narration, created_by)
          VALUES ($1, $2, $3, $4, $4, 'Opening Balance', $5)`,
-        [companyId, result.rows[0].id, type, Math.abs(d.opening_balance), req.user!.id]
+        [companyId, result.rows[0].id, type, Math.abs(opening), req.user!.id]
       );
     }
 
@@ -207,10 +223,17 @@ export async function updateParty(req: Request, res: Response) {
       'credit_limit','contact_person','notes','is_active','custom_fields',
     ];
     const updates: string[] = []; const values: any[] = []; let idx = 1;
+    const numericFields = new Set(['credit_limit']);
     for (const f of fields) {
       if (req.body[f] !== undefined) {
         updates.push(`${f} = $${idx++}`);
-        values.push(f === 'custom_fields' ? JSON.stringify(req.body[f]) : req.body[f]);
+        values.push(
+          f === 'custom_fields'
+            ? JSON.stringify(req.body[f])
+            : numericFields.has(f)
+              ? moneyInt(req.body[f], 0)
+              : blankToNull(req.body[f]),
+        );
       }
     }
 
@@ -218,27 +241,27 @@ export async function updateParty(req: Request, res: Response) {
     const cityVal = req.body.city ?? req.body.billing_city;
     if (cityVal !== undefined) {
       updates.push(`billing_city = $${idx}`, `city = $${idx++}`);
-      values.push(cityVal);
+      values.push(blankToNull(cityVal));
     }
     const stateVal = req.body.state ?? req.body.billing_state;
     if (stateVal !== undefined) {
       updates.push(`billing_state = $${idx}`, `state = $${idx++}`);
-      values.push(stateVal);
+      values.push(blankToNull(stateVal));
     }
     const pincodeVal = req.body.pincode ?? req.body.billing_pincode;
     if (pincodeVal !== undefined) {
       updates.push(`billing_pincode = $${idx}`, `pincode = $${idx++}`);
-      values.push(pincodeVal);
+      values.push(blankToNull(pincodeVal));
     }
     const stateCodeVal = req.body.state_code ?? req.body.billing_state_code;
     if (stateCodeVal !== undefined) {
       updates.push(`billing_state_code = $${idx}`, `state_code = $${idx++}`);
-      values.push(stateCodeVal);
+      values.push(blankToNull(stateCodeVal));
     }
     const termsVal = req.body.payment_terms ?? req.body.credit_days;
     if (termsVal !== undefined) {
       updates.push(`credit_days = $${idx}`, `payment_terms = $${idx++}`);
-      values.push(termsVal);
+      values.push(dayInt(termsVal, existing.rows[0].credit_days || 30));
     }
     if (!updates.length) return res.status(400).json(error('No fields to update'));
 

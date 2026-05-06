@@ -1,13 +1,36 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
+import { normalizeRole } from '../lib/roles';
 
 function canManageLeaves(role: string): boolean {
-  return ['manager', 'accountant', 'company_admin', 'super_admin'].includes(role);
+  return ['manager', 'admin', 'super_admin'].includes(normalizeRole(role));
+}
+
+async function seedDefaultLeaveTypes(companyId: string) {
+  const count = await query('SELECT COUNT(*)::int AS n FROM leave_types WHERE company_id = $1', [companyId]);
+  if ((count.rows[0]?.n || 0) > 0) return;
+  const rows = [
+    ['Casual Leave', 'CL', 12, true, false, 0],
+    ['Sick Leave', 'SL', 6, true, false, 0],
+    ['Earned Leave', 'EL', 15, true, true, 30],
+    ['Leave Without Pay', 'LWP', 0, false, false, 0],
+    ['Maternity Leave', 'ML', 182, true, false, 0],
+    ['Paternity Leave', 'PL', 7, true, false, 0],
+  ];
+  for (const [name, code, days, paid, carry, maxCarry] of rows) {
+    await query(
+      `INSERT INTO leave_types (company_id, name, code, days_per_year, is_paid, carry_forward, max_carry_forward, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+       ON CONFLICT DO NOTHING`,
+      [companyId, name, code, days, paid, carry, maxCarry],
+    );
+  }
 }
 
 export async function listLeaveTypes(req: Request, res: Response) {
   try {
+    await seedDefaultLeaveTypes(req.user!.company_id);
     const result = await query(
       `SELECT id, name, code, days_per_year, is_paid
        FROM leave_types
@@ -29,6 +52,7 @@ export async function getBalance(req: Request, res: Response) {
      }
      const { year } = req.query;
      const targetYear = year || new Date().getFullYear();
+     await seedDefaultLeaveTypes(req.user!.company_id);
      
      // Get leave types
      const typesDesc = await query('SELECT * FROM leave_types WHERE company_id = $1', [req.user!.company_id]);

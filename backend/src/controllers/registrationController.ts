@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { generateRegistrantToken } from '../middleware/registrantAuth';
+import { createAuthSessionForUser } from './authController';
 
 // ── POST /api/register ────────────────────────────────────────
 // Public — create a registrant account
@@ -44,6 +45,9 @@ export async function register(req: Request, res: Response) {
 
     res.status(201).json(success({ registrant, token }));
   } catch (err: any) {
+    if (err?.status) {
+      return res.status(err.status).json(error(err.message));
+    }
     res.status(500).json(error(err.message));
   }
 }
@@ -125,13 +129,105 @@ export async function getRegistrantMe(req: Request, res: Response) {
        JOIN license_tiers lt ON lt.id = l.tier_id
        LEFT JOIN companies c ON c.id = l.company_id
        WHERE l.registrant_id = $1 AND l.is_deleted = false
-       ORDER BY l.created_at DESC`,
+       ORDER BY COALESCE(l.activated_at, l.requested_at, l.created_at) DESC, l.created_at DESC`,
       [registrantId]
     );
 
     res.json(success({
       registrant: registrantResult.rows[0],
       licenses: licensesResult.rows,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/register/licenses/:id/launch ───────────────────
+// Authenticated registrant — launch an owned company directly
+export async function launchOwnedCompany(req: Request, res: Response) {
+  try {
+    const registrantId = req.registrant!.id;
+    const { id } = req.params;
+
+    const licenseResult = await query(
+      `SELECT l.id, l.status, l.company_id, c.name AS company_name, r.email AS registrant_email
+       FROM licenses l
+       JOIN registrants r ON r.id = l.registrant_id AND r.is_deleted = false
+       LEFT JOIN companies c ON c.id = l.company_id AND c.is_deleted = false
+       WHERE l.id = $1 AND l.registrant_id = $2 AND l.is_deleted = false
+       LIMIT 1`,
+      [id, registrantId]
+    );
+
+    if (!licenseResult.rows.length) {
+      return res.status(404).json(error('License not found'));
+    }
+
+    const license = licenseResult.rows[0];
+    if (!license.company_id) {
+      return res.status(400).json(error('This license is not linked to a company yet.'));
+    }
+    if (!['active', 'trial'].includes(String(license.status))) {
+      return res.status(400).json(error(`This company cannot be opened while the license is ${license.status}.`));
+    }
+
+    const usersResult = await query(
+      `SELECT u.id
+       FROM users u
+       WHERE u.company_id = $1
+         AND u.is_deleted = false
+         AND u.is_active = true
+       ORDER BY
+         CASE WHEN lower(u.email) = lower($2) THEN 0 ELSE 1 END,
+         CASE
+           WHEN u.role IN ('company_admin', 'admin') THEN 0
+           WHEN u.role IN ('manager', 'accountant', 'cashier') THEN 1
+           ELSE 2
+         END,
+         u.created_at ASC
+       LIMIT 1`,
+      [license.company_id, license.registrant_email]
+    );
+
+    if (!usersResult.rows.length) {
+      return res.status(404).json(error('No active company user found for this license.'));
+    }
+
+    const userId = usersResult.rows[0].id;
+
+    const userSessionResult = await query(
+      `SELECT u.*,
+              c.name as company_name, c.gstin as company_gstin, c.logo_url as company_logo,
+              c.item_terminology, c.item_terminology_plural, c.onboarding_completed,
+              c.plan_type, c.is_active as company_is_active,
+              COALESCE(ep.godown_id, dg.id) as resolved_godown_id
+       FROM users u
+       LEFT JOIN companies c ON c.id = u.company_id AND c.is_deleted = false
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+       LEFT JOIN godowns dg ON dg.company_id = u.company_id AND dg.is_default = true AND dg.is_deleted = false
+       WHERE u.id = $1 AND u.is_deleted = false
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!userSessionResult.rows.length) {
+      return res.status(404).json(error('Company user not found'));
+    }
+
+    const session = await createAuthSessionForUser(userSessionResult.rows[0], {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      action: 'registrant_launch_company',
+    });
+
+    res.json(success({
+      ...session,
+      source_license: {
+        id: license.id,
+        company_id: license.company_id,
+        company_name: license.company_name,
+        status: license.status,
+      },
     }));
   } catch (err: any) {
     res.status(500).json(error(err.message));

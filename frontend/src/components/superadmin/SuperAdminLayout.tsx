@@ -30,7 +30,7 @@ export default function SuperAdminLayout() {
       <aside className="w-64 shrink-0 bg-slate-900 text-slate-200 flex flex-col border-r border-slate-800">
         <div className="p-6 border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <img src="/logo-microtechnique.svg" alt="" className="h-10 w-auto drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="" className="h-14 w-auto drop-shadow" />
           </div>
           <p className="text-xs text-slate-500 mt-2 font-medium tracking-wide">Microtechnique Accounts — Super Admin</p>
         </div>

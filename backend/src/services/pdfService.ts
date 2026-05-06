@@ -117,6 +117,24 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function companyAddress(company: any): string {
+  const line1 = company.registered_address || company.gstin_address || company.address || '';
+  const line2 = [company.city, company.state, company.pincode].filter(Boolean).join(', ');
+  return [line1, line2].filter(Boolean).join(', ');
+}
+
+function bankBlock(company: any): string {
+  const rows = [
+    ['Bank', company.bank_name],
+    ['A/C No.', company.bank_account_number],
+    ['IFSC', company.bank_ifsc],
+    ['Branch', company.bank_branch],
+    ['UPI', company.upi_id],
+  ].filter(([, v]) => v);
+  if (!rows.length) return '<span class="muted">Bank details not configured</span>';
+  return rows.map(([label, value]) => `<div><b>${escapeHtml(String(label))}:</b> ${escapeHtml(String(value))}</div>`).join('');
+}
+
 export async function generateInvoicePDF(
   invoice: any,
   company: any,
@@ -163,11 +181,12 @@ export async function generateInvoicePDF(
   const buyerAddr = party
     ? [party.billing_address, party.billing_city, party.billing_state, party.billing_pincode].filter(Boolean).join(', ')
     : invoice.billing_address_snapshot || '';
+  const sellerAddress = companyAddress(company);
 
   const vars: Record<string, string> = {
     PRIMARY_COLOR: color,
     COMPANY_NAME: escapeHtml(company.name || ''),
-    COMPANY_ADDRESS: escapeHtml(company.registered_address || ''),
+    COMPANY_ADDRESS: escapeHtml(sellerAddress),
     COMPANY_CITY_STATE_PIN: escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', ')),
     COMPANY_GSTIN: escapeHtml(company.gstin || ''),
     COMPANY_PHONE: escapeHtml(company.phone || ''),
@@ -189,9 +208,8 @@ export async function generateInvoicePDF(
     ROUND_OFF: fmtPaise(invoice.round_off || 0),
     GRAND_TOTAL: fmtPaise(invoice.total_amount),
     AMOUNT_WORDS: escapeHtml(amountToWordsINR(Math.round(invoice.total_amount / 100))),
-    BANK_LINES: escapeHtml(
-      [company.bank_name, company.bank_account_number, company.bank_ifsc, company.bank_branch].filter(Boolean).join(' | '),
-    ),
+    BANK_LINES: escapeHtml([company.bank_name, company.bank_account_number, company.bank_ifsc, company.bank_branch].filter(Boolean).join(' | ')),
+    BANK_BLOCK: bankBlock(company),
     UPI_QR_IMG: upiQr ? `<img src="${upiQr}" style="width:120px;height:120px" alt="UPI"/>` : '',
     EINVOICE_BLOCK: einvBlock,
     TERMS: escapeHtml((company.terms_and_conditions || '').split('\n').slice(0, 3).join(' ')),

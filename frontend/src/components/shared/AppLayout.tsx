@@ -14,11 +14,22 @@ import {
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
 import { getInitials, cn } from '@/lib/utils';
-import api from '@/lib/api';
+import axios from 'axios';
+import api, { getApiBaseURL } from '@/lib/api';
+import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 import { normalizeRole } from '@/lib/roles';
+import toast from 'react-hot-toast';
 
 const SIDEBAR_COLLAPSED_KEY = 'erp_sidebar_collapsed';
 const NAV_GROUP_VISIBLE_COUNT = 2;
+
+type OwnedCompanyLicense = {
+  id: string;
+  company_id: string | null;
+  company_name: string | null;
+  tier_display_name: string;
+  status: 'pending' | 'active' | 'trial' | 'expired' | 'revoked';
+};
 
 const navGroups = [
   {
@@ -243,6 +254,10 @@ export default function AppLayout() {
   }, []);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [ownedCompanies, setOwnedCompanies] = useState<OwnedCompanyLicense[]>([]);
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
+  const [switchingLicenseId, setSwitchingLicenseId] = useState<string | null>(null);
+  const companyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -254,6 +269,46 @@ export default function AppLayout() {
     }
   }, []);
 
+  useEffect(() => {
+    const registrantToken = localStorage.getItem('bizflow_registrant_token');
+    if (!registrantToken) {
+      setOwnedCompanies([]);
+      return;
+    }
+
+    let active = true;
+    axios.get(`${getApiBaseURL()}/register/me`, {
+      headers: {
+        Authorization: `Bearer ${registrantToken}`,
+      },
+    })
+      .then((res) => {
+        if (!active) return;
+        const licenses = Array.isArray(res.data?.data?.licenses) ? res.data.data.licenses : [];
+        setOwnedCompanies(
+          licenses.filter((entry: OwnedCompanyLicense) => entry.company_id && (entry.status === 'active' || entry.status === 'trial'))
+        );
+      })
+      .catch(() => {
+        if (active) setOwnedCompanies([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!companyMenuOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (companyMenuRef.current && !companyMenuRef.current.contains(event.target as Node)) {
+        setCompanyMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [companyMenuOpen]);
+
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
@@ -264,6 +319,20 @@ export default function AppLayout() {
       }
       return next;
     });
+  };
+
+  const currentOwnedCompany = ownedCompanies.find((entry) => entry.company_id === user?.companyId);
+
+  const handleCompanySwitch = async (licenseId: string) => {
+    try {
+      setSwitchingLicenseId(licenseId);
+      setCompanyMenuOpen(false);
+      await launchRegistrantCompany(licenseId);
+      window.location.assign('/dashboard');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Unable to switch company');
+      setSwitchingLicenseId(null);
+    }
   };
   /** Sidebar nav: groups with more than NAV_GROUP_VISIBLE_COUNT links start collapsed until expanded (or active route is in overflow). */
   const [navGroupExpanded, setNavGroupExpanded] = useState<Record<string, boolean>>({});
@@ -455,18 +524,65 @@ export default function AppLayout() {
           )}
         >
            <div className={cn('flex gap-2.5', sidebarCollapsed ? 'flex-col items-center gap-1' : 'items-start')}>
-             <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-9 h-9 shrink-0 drop-shadow mt-0.5" />
+             <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow" />
              {!sidebarCollapsed && (
                <div className="min-w-0 flex-1 leading-tight">
                  <p className="text-[12px] font-semibold text-white">
                    <span className="block">Microtechnique</span>
                    <span className="block">Accounts</span>
                  </p>
-                 <p className="text-[10px] text-violet-200/95 mt-0.5 tracking-normal">Business suite</p>
+                 <p className="text-[11px] text-violet-200/95 mt-1 truncate">
+                   {currentOwnedCompany?.company_name || user?.companyId ? 'Current company' : 'Workspace'}
+                 </p>
+                 {currentOwnedCompany?.company_name && (
+                   <p className="text-[11px] text-white/85 truncate mt-0.5">{currentOwnedCompany.company_name}</p>
+                 )}
                  {user && (
                    <span className="mt-1.5 block text-[10px] text-white/50 tracking-wide uppercase truncate">
                      G{(user as any)?.godown_id || 1} • {user.role}
                    </span>
+                 )}
+                 {ownedCompanies.length > 1 && (
+                   <div ref={companyMenuRef} className="relative mt-2">
+                     <button
+                       type="button"
+                       onClick={() => setCompanyMenuOpen((open) => !open)}
+                       className="flex w-full items-center justify-between rounded-md border border-white/10 bg-white/5 px-2.5 py-2 text-left text-[11px] text-white/90 hover:bg-white/10 transition-colors"
+                     >
+                       <span className="truncate">
+                         {switchingLicenseId ? 'Switching company…' : `${ownedCompanies.length} companies`}
+                       </span>
+                       <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', companyMenuOpen && 'rotate-180')} />
+                     </button>
+                     {companyMenuOpen && (
+                       <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 rounded-lg border border-white/10 bg-[#24195a] p-1.5 shadow-2xl backdrop-blur-xl">
+                         {ownedCompanies.map((entry) => {
+                           const isCurrent = entry.company_id === user?.companyId;
+                           return (
+                             <button
+                               key={entry.id}
+                               type="button"
+                               onClick={() => !isCurrent && handleCompanySwitch(entry.id)}
+                               disabled={switchingLicenseId === entry.id || isCurrent}
+                               className={cn(
+                                 'flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-colors',
+                                 isCurrent ? 'bg-white/10 text-white' : 'text-white/80 hover:bg-white/10 hover:text-white',
+                                 switchingLicenseId === entry.id && 'opacity-60 cursor-not-allowed'
+                               )}
+                             >
+                               <span className="min-w-0">
+                                 <span className="block truncate text-[11px] font-medium">{entry.company_name}</span>
+                                 <span className="block truncate text-[10px] text-white/45">{entry.tier_display_name}</span>
+                               </span>
+                               <span className="shrink-0 text-[10px] uppercase tracking-wide text-violet-200/80">
+                                 {isCurrent ? 'Current' : 'Open'}
+                               </span>
+                             </button>
+                           );
+                         })}
+                       </div>
+                     )}
+                   </div>
                  )}
                </div>
              )}
@@ -581,13 +697,15 @@ export default function AppLayout() {
             <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
                <div className="px-6 mb-4 flex items-start gap-2.5">
-                 <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-10 h-10 shrink-0 drop-shadow mt-0.5" />
-                 <div className="leading-tight min-w-0">
-                   <p className="text-sm font-semibold text-white">
-                     <span className="block">Microtechnique</span>
-                     <span className="block">Accounts</span>
-                   </p>
-                   <p className="text-[10px] text-violet-200/95 mt-0.5 tracking-normal">Business suite</p>
+                 <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow" />
+               <div className="leading-tight min-w-0">
+                 <p className="text-sm font-semibold text-white">
+                   <span className="block">Microtechnique</span>
+                   <span className="block">Accounts</span>
+                  </p>
+                   {currentOwnedCompany?.company_name && (
+                     <p className="text-[11px] text-violet-200/95 mt-1 truncate">{currentOwnedCompany.company_name}</p>
+                   )}
                  </div>
                </div>
                <SidebarNavigation
@@ -666,14 +784,14 @@ export default function AppLayout() {
                   Call to Purchase — +91 6355 997 080
                 </a>
                 <a
-                  href="mailto:support@microtechniqueit.com"
+                  href="mailto:support@microtechnique.in"
                   className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
                 >
                   Email Sales
                 </a>
               </div>
               <p className="text-xs text-slate-400 mt-6">
-                Silver — ₹4,999/yr &nbsp;·&nbsp; Gold — ₹8,999/yr &nbsp;·&nbsp; Diamond — ₹14,999/yr
+                Silver — ₹9,999/yr &nbsp;·&nbsp; Gold — ₹18,999/yr &nbsp;·&nbsp; Diamond — ₹30,999/yr
               </p>
             </div>
           ) : (

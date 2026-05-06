@@ -7,5 +7,6 @@ router.use(verifyToken);
 
 router.get('/', ctrl.listSaleReturns);
 router.post('/', ctrl.createSaleReturn);
+router.put('/:id', ctrl.updateSaleReturn);
 
 export default router;

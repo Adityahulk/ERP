@@ -3,25 +3,69 @@
 <head>
   <meta charset="utf-8"/>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; color: #111; font-size: 13px; }
-    h1 { color: {{PRIMARY_COLOR}}; margin: 0 0 8px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background: {{PRIMARY_COLOR}}; color: #fff; }
+    @page { size: A4; margin: 14mm; }
+    body { font-family: Arial, sans-serif; color: #171717; font-size: 12px; margin: 0; }
+    .top { display: flex; justify-content: space-between; gap: 18px; border-bottom: 3px solid {{PRIMARY_COLOR}}; padding-bottom: 12px; }
+    .logo img { max-height: 58px; max-width: 120px; object-fit: contain; }
+    h1 { margin: 0; color: {{PRIMARY_COLOR}}; font-size: 30px; }
+    .muted { color: #666; }
+    .section { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #666; font-weight: 700; margin-bottom: 5px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    th { text-align: left; border-bottom: 2px solid {{PRIMARY_COLOR}}; padding: 8px 6px; color: {{PRIMARY_COLOR}}; }
+    td { border-bottom: 1px solid #e5e7eb; padding: 8px 6px; }
     .right { text-align: right; }
-    .tot { margin-top: 16px; text-align: right; font-size: 15px; font-weight: bold; }
+    .summary { margin-left: auto; margin-top: 16px; width: 310px; }
+    .summary div { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee; }
+    .grand { font-size: 18px; font-weight: 800; color: {{PRIMARY_COLOR}}; }
+    .bank { margin-top: 16px; border: 1px solid #ddd; padding: 10px; border-radius: 4px; line-height: 1.55; }
+    .sign { margin-top: 26px; text-align: right; }
   </style>
 </head>
 <body>
-  <h1>Invoice</h1>
-  <p><b>{{COMPANY_NAME}}</b><br/>{{COMPANY_ADDRESS}}<br/>{{COMPANY_CITY_STATE_PIN}}</p>
-  <p>Invoice <b>{{INVOICE_NUMBER}}</b> &nbsp; Date: {{INVOICE_DATE}}</p>
-  <p>Bill to: <b>{{BUYER_NAME}}</b><br/>{{BUYER_ADDRESS}}</p>
+  <div class="top">
+    <div>
+      <div class="logo">{{LOGO_BLOCK}}</div>
+      <h2 style="margin:6px 0 2px">{{COMPANY_NAME}}</h2>
+      <div class="muted">{{COMPANY_ADDRESS}}</div>
+      <div>GSTIN: {{COMPANY_GSTIN}} | Phone: {{COMPANY_PHONE}}</div>
+    </div>
+    <div style="text-align:right">
+      <h1>Invoice</h1>
+      <div>No. <b>{{INVOICE_NUMBER}}</b></div>
+      <div>Date: {{INVOICE_DATE}}</div>
+      <div>Due: {{DUE_DATE}}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div>
+      <div class="label">Seller</div>
+      <b>{{COMPANY_NAME}}</b>
+      <div>{{COMPANY_ADDRESS}}</div>
+      <div>GSTIN: {{COMPANY_GSTIN}}</div>
+    </div>
+    <div>
+      <div class="label">Buyer</div>
+      <b>{{BUYER_NAME}}</b>
+      <div>{{BUYER_ADDRESS}}</div>
+      <div>GSTIN: {{BUYER_GSTIN}}</div>
+    </div>
+  </div>
+
   <table>
     <thead><tr><th>#</th><th>Item</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
     <tbody>{{ITEM_ROWS}}</tbody>
   </table>
-  <div class="tot">Total: ₹{{GRAND_TOTAL}} ({{AMOUNT_WORDS}})</div>
-  <p style="margin-top:24px;font-size:11px;color:#666">{{TERMS}}</p>
+
+  <div class="summary">
+    <div><span>Subtotal</span><span>₹{{SUBTOTAL}}</span></div>
+    <div><span>Tax</span><span>₹{{CGST}} / ₹{{SGST}} / ₹{{IGST}}</span></div>
+    <div class="grand"><span>Total</span><span>₹{{GRAND_TOTAL}}</span></div>
+  </div>
+  <p><b>Amount in words:</b> {{AMOUNT_WORDS}}</p>
+  <div class="bank"><div class="label">Company Bank Details</div>{{BANK_BLOCK}}</div>
+  {{SIGNATURE_BLOCK}}
+  <p class="muted" style="margin-top:18px;font-size:11px">{{TERMS}}</p>
 </body>
 </html>

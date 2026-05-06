@@ -7,6 +7,7 @@ import {
   getRegistrantMe,
   registrantForgotPassword,
   registrantResetPassword,
+  launchOwnedCompany,
 } from '../controllers/registrationController';
 import { z } from 'zod';
 
@@ -41,5 +42,6 @@ router.post('/reset-password', validateBody(resetSchema), registrantResetPasswor
 
 // Authenticated registrant routes
 router.get('/me', verifyRegistrantToken, getRegistrantMe);
+router.post('/licenses/:id/launch', verifyRegistrantToken, launchOwnedCompany);
 
 export default router;

@@ -90,7 +90,7 @@ export default function EmployeeDetailPage() {
 
   const saveProfileMut = useMutation({
     mutationFn: (data: any) => {
-      const patchPath = effectiveUserId === 'me' ? '/employees/me' : `/employees/${profile?.id || effectiveUserId}`;
+      const patchPath = effectiveUserId === 'me' ? '/employees/me' : `/employees/${effectiveUserId}`;
       return api.patch(patchPath, data);
     },
     onSuccess: () => {
@@ -105,7 +105,7 @@ export default function EmployeeDetailPage() {
       const fd = new FormData();
       fd.append('document', file);
       fd.append('document_type', docType);
-      const path = effectiveUserId === 'me' ? '/employees/me/documents' : `/employees/${profile?.id || effectiveUserId}/documents`;
+      const path = effectiveUserId === 'me' ? '/employees/me/documents' : `/employees/${effectiveUserId}/documents`;
       return api.post(path, fd);
     },
     onSuccess: () => {
@@ -116,7 +116,7 @@ export default function EmployeeDetailPage() {
   });
 
   const addAdjustmentMut = useMutation({
-    mutationFn: () => api.post(`/employees/${profile?.id || effectiveUserId}/salary-adjustments`, {
+    mutationFn: () => api.post(`/employees/${effectiveUserId}/salary-adjustments`, {
       ...adjustment,
       salary_month: `${month}-01`,
       amount: Math.round((Number(adjustment.amount) || 0) * 100),
@@ -131,7 +131,7 @@ export default function EmployeeDetailPage() {
 
   const salarySlipMut = useMutation({
     mutationFn: () =>
-      api.post(`/employees/${profile?.id || effectiveUserId}/salary-slips`, { salary_month: `${month}-01` })
+      api.post(`/employees/${effectiveUserId}/salary-slips`, { salary_month: `${month}-01` })
         .then((r) => r.data?.data ?? r.data),
     onSuccess: (slip: any) => toast.success(`Slip generated: net ${formatMoney(slip.net_salary || 0)}`),
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),

@@ -94,6 +94,11 @@ export function InvoicePreviewWorkspace({
   const [loading, setLoading] = useState(false);
   const [skipNext, setSkipNext] = useState(() => readSkipInvoicePreview());
   const [waSending, setWaSending] = useState(false);
+  const [sharePhone, setSharePhone] = useState(partyPhone || '');
+
+  useEffect(() => {
+    setSharePhone(partyPhone || '');
+  }, [partyPhone, open]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, TemplateRow[]>();
@@ -178,9 +183,9 @@ Thank you.
   };
 
   const openWhatsApp = async (target: 'web' | 'app') => {
-    const phone = normalizePhone(partyPhone);
+    const phone = normalizePhone(sharePhone);
     if (!phone) {
-      toast.error('Add a mobile number on the party to share on WhatsApp.');
+      toast.error('Enter a mobile number to share on WhatsApp.');
       return;
     }
     const text = buildWaMessage();
@@ -271,7 +276,7 @@ Thank you.
   };
 
   const openSms = () => {
-    const phone = normalizePhone(partyPhone);
+    const phone = normalizePhone(sharePhone);
     const body = encodeURIComponent(buildWaMessage());
     const href = phone ? `sms:${phone}?&body=${body}` : `sms:?&body=${body}`;
     window.location.href = href;
@@ -401,6 +406,12 @@ Thank you.
             <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
               <p className="text-xs font-medium text-emerald-900 mb-2">WhatsApp</p>
               <p className="text-[11px] text-emerald-800/90 mb-2">Send this layout as PDF to your customer.</p>
+              <input
+                value={sharePhone}
+                onChange={(e) => setSharePhone(e.target.value)}
+                placeholder="Mobile number"
+                className="mb-2 h-9 w-full rounded-md border border-emerald-200 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-emerald-300"
+              />
               <div className="flex flex-col gap-1.5">
                 <Button size="sm" className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={() => openWhatsApp('web')} loading={waSending}>
                   <Send className="h-3.5 w-3.5 mr-1.5" /> WhatsApp Web

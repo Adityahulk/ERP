@@ -11,6 +11,107 @@ import {
   JwtPayload,
 } from '../middleware/auth';
 
+type AuthenticatedUserRow = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  avatar_url: string | null;
+  is_active: boolean;
+  company_id: string | null;
+  company_name: string | null;
+  company_gstin: string | null;
+  company_logo: string | null;
+  item_terminology: string | null;
+  item_terminology_plural: string | null;
+  onboarding_completed: boolean | null;
+  plan_type: string | null;
+  company_is_active: boolean | null;
+  resolved_godown_id: string | null;
+};
+
+function sessionAccessError(message: string, status = 403) {
+  return Object.assign(new Error(message), { status });
+}
+
+export async function createAuthSessionForUser(
+  user: AuthenticatedUserRow,
+  meta?: { ip?: string; userAgent?: string; action?: string }
+) {
+  if (user.is_active === false) {
+    throw sessionAccessError('Your account has been deactivated. Contact admin.');
+  }
+
+  if (user.role !== 'super_admin' && user.company_id != null && user.company_is_active === false) {
+    throw sessionAccessError('Your company license has been deactivated. Please contact support.');
+  }
+
+  const versionResult = await query(
+    `UPDATE users SET session_version = session_version + 1, last_login_at = NOW()
+     WHERE id = $1
+     RETURNING session_version`,
+    [user.id]
+  );
+  const newSessionVersion = versionResult.rows[0].session_version;
+
+  await cacheSessionVersion(user.id, newSessionVersion);
+
+  const tokenPayload: JwtPayload = {
+    id: user.id,
+    company_id: user.role === 'super_admin' ? '' : user.company_id || '',
+    role: user.role,
+    godown_id: user.role === 'super_admin' ? null : user.resolved_godown_id || null,
+    email: user.email,
+    session_version: newSessionVersion,
+  };
+
+  const accessToken = generateAccessToken(tokenPayload);
+  const refreshToken = generateRefreshToken(tokenPayload);
+
+  await storeRefreshToken(user.id, refreshToken);
+
+  await logAction(
+    user.id,
+    user.company_id ?? null,
+    meta?.action || 'login',
+    'user',
+    user.id,
+    null,
+    null,
+    meta?.ip,
+    meta?.userAgent
+  );
+
+  const companyPayload =
+    user.role === 'super_admin' || user.company_id == null
+      ? null
+      : {
+          id: user.company_id,
+          name: user.company_name,
+          gstin: user.company_gstin,
+          logo_url: user.company_logo,
+          item_terminology: user.item_terminology,
+          item_terminology_plural: user.item_terminology_plural,
+          onboarding_completed: user.onboarding_completed,
+          plan_type: user.plan_type,
+        };
+
+  return {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      avatar_url: user.avatar_url,
+    },
+    company: companyPayload,
+    accessToken,
+    refreshToken,
+  };
+}
+
 // ── POST /api/auth/login ──────────────────────────────────────
 export async function login(req: Request, res: Response) {
   try {
@@ -52,72 +153,17 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json(error('Invalid email or password'));
     }
 
-    if (user.is_active === false) {
-      return res.status(403).json(error('Your account has been deactivated. Contact admin.'));
-    }
+    const session = await createAuthSessionForUser(user, {
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      action: 'login',
+    });
 
-    if (user.role !== 'super_admin' && user.company_id != null && user.company_is_active === false) {
-      return res.status(403).json(error('Your company license has been deactivated. Please contact support.'));
-    }
-
-    // Increment session_version — this kicks out any previously logged-in device
-    const versionResult = await query(
-      `UPDATE users SET session_version = session_version + 1, last_login_at = NOW()
-       WHERE id = $1
-       RETURNING session_version`,
-      [user.id]
-    );
-    const newSessionVersion = versionResult.rows[0].session_version;
-
-    // Cache the new session version in Redis for fast single-device checks
-    await cacheSessionVersion(user.id, newSessionVersion);
-
-    const tokenPayload: JwtPayload = {
-      id: user.id,
-      company_id: user.role === 'super_admin' ? '' : user.company_id,
-      role: user.role,
-      godown_id: user.role === 'super_admin' ? null : user.resolved_godown_id || null,
-      email: user.email,
-      session_version: newSessionVersion,
-    };
-
-    const accessToken = generateAccessToken(tokenPayload);
-    const refreshToken = generateRefreshToken(tokenPayload);
-
-    // Store refresh token in Redis (replaces any existing — old device refresh fails)
-    await storeRefreshToken(user.id, refreshToken);
-
-    // Audit
-    await logAction(user.id, user.company_id ?? null, 'login', 'user', user.id, null, null, req.ip, req.get('User-Agent'));
-
-    const companyPayload =
-      user.role === 'super_admin' || user.company_id == null
-        ? null
-        : {
-            id: user.company_id,
-            name: user.company_name,
-            gstin: user.company_gstin,
-            logo_url: user.company_logo,
-            item_terminology: user.item_terminology,
-            item_terminology_plural: user.item_terminology_plural,
-            onboarding_completed: user.onboarding_completed,
-            plan_type: user.plan_type,
-          };
-
-    res.json(success({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        avatar_url: user.avatar_url,
-      },
-      company: companyPayload,
-      accessToken,
-      refreshToken,
-    }));
+    res.json(success(session));
   } catch (err: any) {
+    if (err?.status) {
+      return res.status(err.status).json(error(err.message));
+    }
     res.status(500).json(error(err.message));
   }
 }

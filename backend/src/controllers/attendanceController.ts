@@ -62,9 +62,11 @@ export async function getGodownToday(req: Request, res: Response) {
   try {
       const { godownId } = req.params;
       const result = await query(
-         `SELECT a.*, u.name as user_name 
-          FROM attendance a JOIN users u ON a.user_id = u.id
-          WHERE a.company_id = $1 AND a.date = CURRENT_DATE AND u.godown_id = $2`,
+         `SELECT a.*, u.name as user_name
+          FROM attendance a
+          JOIN users u ON a.user_id = u.id
+          LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.company_id = u.company_id AND ep.is_deleted = false
+          WHERE a.company_id = $1 AND a.date = CURRENT_DATE AND COALESCE(a.godown_id, ep.godown_id) = $2`,
          [req.user!.company_id, godownId]
       );
       res.json(success(result.rows));
@@ -76,15 +78,19 @@ export async function getCompanyToday(req: Request, res: Response) {
     const result = await query(
       `SELECT a.*, u.name as user_name, u.role as user_role, g.name as godown_name
        FROM users u
+       LEFT JOIN employee_profiles ep
+         ON ep.user_id = u.id
+        AND ep.company_id = u.company_id
+        AND ep.is_deleted = false
        LEFT JOIN attendance a
          ON a.user_id = u.id
         AND a.company_id = u.company_id
         AND a.date = CURRENT_DATE
-       LEFT JOIN godowns g ON g.id = COALESCE(a.godown_id, u.godown_id)
+       LEFT JOIN godowns g ON g.id = COALESCE(a.godown_id, ep.godown_id)
        WHERE u.company_id = $1
          AND u.is_deleted = false
          AND u.is_active = true
-         AND u.role NOT IN ('admin', 'super_admin')
+         AND u.role NOT IN ('admin', 'company_admin', 'accountant', 'super_admin')
        ORDER BY u.name ASC`,
       [req.user!.company_id]
     );

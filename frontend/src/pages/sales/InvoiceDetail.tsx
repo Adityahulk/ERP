@@ -44,6 +44,7 @@ export default function InvoiceDetail() {
   const [cancelNote, setCancelNote] = useState('');
   const [waPickerOpen, setWaPickerOpen] = useState(false);
   const [waSending, setWaSending] = useState(false);
+  const [sharePhone, setSharePhone] = useState('');
   const [printLoading, setPrintLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
@@ -60,12 +61,17 @@ export default function InvoiceDetail() {
     trans_doc_no: '',
     trans_doc_dt: '',
   });
+
   const [ewbCancelReason, setEwbCancelReason] = useState('2');
   const [ewbCancelNote, setEwbCancelNote] = useState('');
 
   const { data: raw, isLoading, isError, refetch } = useInvoice(id);
 
   const inv: any = raw;
+
+  useEffect(() => {
+    setSharePhone(inv?.party_phone || '');
+  }, [inv?.party_phone]);
 
   useEffect(() => {
     if (inv?.invoice_number) {
@@ -302,9 +308,9 @@ Thank you.
   };
 
   const openWhatsApp = async (target: 'web' | 'app') => {
-    const phone = normalizePhone(inv.party_phone);
+    const phone = normalizePhone(sharePhone);
     if (!phone) {
-      toast.error('Customer phone number missing on this invoice');
+      toast.error('Enter a mobile number to share this invoice.');
       return;
     }
 
@@ -355,6 +361,18 @@ Thank you.
     } finally {
       setWaSending(false);
     }
+  };
+
+  const openEmailShare = () => {
+    const subject = encodeURIComponent(`Invoice ${inv.invoice_number}`);
+    const body = encodeURIComponent(buildWaMessage());
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  };
+
+  const openSmsShare = () => {
+    const phone = normalizePhone(sharePhone);
+    const body = encodeURIComponent(buildWaMessage());
+    window.location.href = phone ? `sms:${phone}?&body=${body}` : `sms:?&body=${body}`;
   };
 
   return (
@@ -410,12 +428,23 @@ Thank you.
       {waPickerOpen && (
         <Card className="border-emerald-200">
           <CardContent className="p-4 flex flex-wrap items-center gap-3">
-            <p className="text-sm text-muted-foreground mr-2">Send via:</p>
+            <Input
+              value={sharePhone}
+              onChange={(e) => setSharePhone(e.target.value)}
+              placeholder="Mobile number"
+              className="h-9 w-full sm:w-56"
+            />
             <Button size="sm" onClick={() => openWhatsApp('web')} loading={waSending}>
               WhatsApp Web
             </Button>
             <Button size="sm" variant="outline" onClick={() => openWhatsApp('app')} loading={waSending}>
               WhatsApp App
+            </Button>
+            <Button size="sm" variant="outline" onClick={openEmailShare}>
+              Email
+            </Button>
+            <Button size="sm" variant="outline" onClick={openSmsShare}>
+              SMS
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setWaPickerOpen(false)} disabled={waSending}>
               Cancel

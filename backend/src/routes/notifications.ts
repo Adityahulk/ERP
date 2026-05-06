@@ -26,9 +26,9 @@ router.post('/send-invoice/:invoiceId', async (req: Request, res: Response) => {
     if (!invQuery.rows.length) return res.status(404).json(error('Invoice not found'));
     const inv = invQuery.rows[0];
 
-    const phone = String(inv.party_phone || '').replace(/\s+/g, '');
+    const phone = String(req.body?.phone || inv.party_phone || '').replace(/\s+/g, '');
     if (!phone) {
-      return res.status(400).json(error('Party has no phone number. Add a mobile number to the customer record.'));
+      return res.status(400).json(error('Enter a mobile number to share this invoice.'));
     }
 
     const invDate =

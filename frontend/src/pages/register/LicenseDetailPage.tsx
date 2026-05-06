@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, CheckCircle2, XCircle, Users, Building2,
-  Calendar, Key, Clock, AlertCircle, Shield,
+  Calendar, Key, Clock, AlertCircle, Shield, Rocket, Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
 import { useRegistrantStore } from '@/store/registrantStore';
+import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 
 interface LicenseDetail {
   id: string;
@@ -40,6 +41,7 @@ interface EmpUser {
 const STATUS_ICON: Record<string, any> = {
   pending: Clock,
   active: CheckCircle2,
+  trial: Rocket,
   expired: AlertCircle,
   revoked: XCircle,
 };
@@ -47,6 +49,7 @@ const STATUS_ICON: Record<string, any> = {
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-amber-400',
   active: 'text-emerald-400',
+  trial: 'text-violet-300',
   expired: 'text-slate-400',
   revoked: 'text-red-400',
 };
@@ -72,6 +75,7 @@ export default function LicenseDetailPage() {
   const [license, setLicense] = useState<LicenseDetail | null>(null);
   const [users, setUsers] = useState<EmpUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [launching, setLaunching] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) { navigate('/register/login'); return; }
@@ -106,6 +110,20 @@ export default function LicenseDetailPage() {
   const StatusIcon = STATUS_ICON[license.status] || Clock;
   const statusColor = STATUS_COLOR[license.status] || 'text-slate-400';
   const usedUsers = users.filter((u) => u.is_active).length;
+  const canOpenCompany = !!license.company_id && ['active', 'trial'].includes(license.status);
+
+  const handleOpenCompany = async () => {
+    try {
+      setLaunching(true);
+      const payload = await launchRegistrantCompany(license.id);
+      toast.success(`Opened ${payload.company?.name || 'company'} successfully`);
+      navigate('/dashboard', { replace: true });
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Unable to open this company');
+    } finally {
+      setLaunching(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-[#2d0444] to-slate-900">
@@ -115,7 +133,7 @@ export default function LicenseDetailPage() {
             <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
           </Link>
-          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-12 drop-shadow" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 drop-shadow" />
         </div>
       </div>
 
@@ -128,9 +146,22 @@ export default function LicenseDetailPage() {
               {license.company_name || 'Awaiting activation'}
             </p>
           </div>
-          <div className={`flex items-center gap-2 ${statusColor}`}>
-            <StatusIcon className="w-5 h-5" />
-            <span className="font-semibold capitalize">{license.status}</span>
+          <div className="flex items-center gap-3">
+            {canOpenCompany && (
+              <button
+                type="button"
+                onClick={handleOpenCompany}
+                disabled={launching}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+              >
+                {launching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+                Open company
+              </button>
+            )}
+            <div className={`flex items-center gap-2 ${statusColor}`}>
+              <StatusIcon className="w-5 h-5" />
+              <span className="font-semibold capitalize">{license.status}</span>
+            </div>
           </div>
         </div>
 
@@ -281,10 +312,10 @@ export default function LicenseDetailPage() {
                 <span>📞 +91 6355 997 080</span>
               </a>
               <a
-                href="mailto:support@microtechniqueit.com"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 text-purple-300 hover:text-purple-200 text-sm transition-colors"
               >
-                <span>✉️ support@microtechniqueit.com</span>
+                <span>✉️ support@microtechnique.in</span>
               </a>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { getUploadUrl } from '../services/fileUpload';
+import { normalizeRole } from '../lib/roles';
 
 export async function createEmployee(req: Request, res: Response) {
   try {
@@ -15,7 +16,19 @@ export async function createEmployee(req: Request, res: Response) {
 
      const result = await query(
        `INSERT INTO employee_profiles (user_id, company_id, employee_code, designation, department, godown_id, joining_date, employment_type, annual_salary, pan_number)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (user_id) DO UPDATE SET
+          designation = EXCLUDED.designation,
+          department = EXCLUDED.department,
+          godown_id = EXCLUDED.godown_id,
+          joining_date = EXCLUDED.joining_date,
+          employment_type = EXCLUDED.employment_type,
+          annual_salary = EXCLUDED.annual_salary,
+          pan_number = EXCLUDED.pan_number,
+          is_deleted = false,
+          is_active = true,
+          updated_at = NOW()
+        RETURNING *`,
        [user_id, companyId, employeeCode, designation, department, godown_id, joining_date, employment_type, annual_salary, pan_number]
      );
      res.json(success(result.rows[0]));
@@ -25,9 +38,11 @@ export async function createEmployee(req: Request, res: Response) {
 export async function getEmployees(req: Request, res: Response) {
   try {
      const result = await query(
-       `SELECT e.*, u.name, u.email, u.phone, u.is_active as user_active 
+       `SELECT e.*, u.name, u.email, u.phone, u.role, u.is_active as user_active, g.name AS godown_name
         FROM employee_profiles e JOIN users u ON e.user_id = u.id
-        WHERE e.company_id = $1`, [req.user!.company_id]
+        LEFT JOIN godowns g ON g.id = e.godown_id AND g.is_deleted = false
+        WHERE e.company_id = $1 AND e.is_deleted = false AND u.is_deleted = false
+        ORDER BY u.name ASC`, [req.user!.company_id]
      );
      res.json(success(result.rows));
   } catch(err:any){ res.status(500).json(error(err.message)); }
@@ -40,8 +55,8 @@ function monthStart(input?: string) {
 }
 
 async function assertEmployeeAccess(req: Request, userId: string) {
-  const role = req.user!.role;
-  const canManage = ['manager', 'accountant', 'company_admin', 'super_admin'].includes(role);
+  const role = normalizeRole(req.user!.role);
+  const canManage = ['manager', 'admin', 'super_admin'].includes(role);
   if (!canManage && userId !== req.user!.id) throw new Error('Forbidden');
 }
 
@@ -50,8 +65,9 @@ export async function getMyProfile(req: Request, res: Response) {
     const userId = req.user!.id;
     const companyId = req.user!.company_id;
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_active,
-              ep.*, g.name AS godown_name
+      `SELECT ep.*, ep.id AS employee_profile_id,
+              u.id AS id, u.id AS user_id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_active,
+              g.name AS godown_name
        FROM users u
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns g ON g.id = ep.godown_id AND g.is_deleted = false
@@ -76,8 +92,9 @@ export async function getEmployeeProfile(req: Request, res: Response) {
     await assertEmployeeAccess(req, userId);
     const companyId = req.user!.company_id;
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_active,
-              ep.*, g.name AS godown_name
+      `SELECT ep.*, ep.id AS employee_profile_id,
+              u.id AS id, u.id AS user_id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_active,
+              g.name AS godown_name
        FROM users u
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
        LEFT JOIN godowns g ON g.id = ep.godown_id AND g.is_deleted = false
@@ -122,6 +139,17 @@ export async function updateEmployeeProfile(req: Request, res: Response) {
       }
     }
     if (!updates.length) return res.status(400).json(error('No fields to update'));
+    await query(
+      `INSERT INTO employee_profiles (company_id, user_id, employee_code, joining_date)
+       SELECT $1, $2,
+              'EMP-' || LPAD(((SELECT COUNT(*) + 1 FROM employee_profiles WHERE company_id = $1))::text, 4, '0'),
+              CURRENT_DATE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM employee_profiles WHERE company_id = $1 AND user_id = $2 AND is_deleted = false
+       )
+       ON CONFLICT (user_id) DO NOTHING`,
+      [companyId, userId],
+    );
     values.push(companyId, userId);
     const result = await query(
       `UPDATE employee_profiles SET ${updates.join(', ')}
@@ -160,7 +188,7 @@ export async function addSalaryAdjustment(req: Request, res: Response) {
   try {
     const userId = req.params.userId;
     await assertEmployeeAccess(req, userId);
-    if (!['accountant', 'company_admin', 'super_admin'].includes(req.user!.role)) {
+    if (!['admin', 'super_admin'].includes(normalizeRole(req.user!.role))) {
       return res.status(403).json(error('Only accounting or admin roles can add salary adjustments'));
     }
     const d = req.body || {};

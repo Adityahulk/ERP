@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, RotateCcw, UserPlus } from 'lucide-react';
+import { Edit2, Plus, RotateCcw, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
@@ -14,6 +14,8 @@ import toast from 'react-hot-toast';
 export default function SaleReturnTab() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [creditNoteNumber, setCreditNoteNumber] = useState('');
 
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
@@ -44,9 +46,9 @@ export default function SaleReturnTab() {
   };
 
   const createMut = useMutation({
-    mutationFn: (payload: any) => api.post('/sales/returns', payload),
+    mutationFn: (payload: any) => editingId ? api.put(`/sales/returns/${editingId}`, payload) : api.post('/sales/returns', payload),
     onSuccess: () => {
-      toast.success('Sale return / credit note recorded');
+      toast.success(editingId ? 'Credit note updated' : 'Sale return / credit note recorded');
       qc.invalidateQueries({ queryKey: ['sale-returns'] });
       resetForm(); setShowForm(false);
     },
@@ -64,7 +66,29 @@ export default function SaleReturnTab() {
 
   const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
   const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
-  const resetForm = () => { clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
+  const resetForm = () => { setEditingId(null); setCreditNoteNumber(''); clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
+
+  const openEdit = (row: any) => {
+    setEditingId(row.id);
+    setCreditNoteNumber(row.credit_note_number || '');
+    setPartyId(row.party_id || '');
+    setPartyName(row.party_name_snapshot || row.party_name || '');
+    setReturnDate(String(row.return_date || new Date().toISOString().split('T')[0]).slice(0, 10));
+    setReason(row.reason || '');
+    setInvoiceId(row.invoice_id || '');
+    setRefInvoiceNo('');
+    setItems((row.items || []).map((it: any) => ({
+      item_id: it.item_id || '',
+      name: it.item_name || it.name || 'Item',
+      hsn_code: it.hsn_code || '',
+      unit: it.unit || '',
+      quantity: Number(it.quantity) || 0,
+      unit_price: Number(it.unit_price) || 0,
+      discount_amount: 0,
+      gst_rate: Number(it.gst_rate) || 0,
+    })));
+    setShowForm(true);
+  };
 
   const handleCreate = () => {
     if (!partyId && !partyName) { toast.error('Select or enter a party'); return; }
@@ -75,6 +99,7 @@ export default function SaleReturnTab() {
       invoice_id: invoiceId || undefined,
       return_date: returnDate,
       reason: reason.trim() || undefined,
+      credit_note_number: creditNoteNumber.trim() || undefined,
       items: items.map(it => ({
         item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
         unit: it.unit, quantity: it.quantity, unit_price: it.unit_price, gst_rate: it.gst_rate,
@@ -100,12 +125,13 @@ export default function SaleReturnTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Reason</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Action</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && returns.length === 0 && (
-              <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
                 <RotateCcw className="w-10 h-10 mx-auto mb-2 opacity-30" />No sale returns / credit notes yet.
               </td></tr>
             )}
@@ -116,6 +142,11 @@ export default function SaleReturnTab() {
                 <td className="px-4 py-2.5 font-medium">{r.party_name_snapshot || r.party_name || '—'}</td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground hidden lg:table-cell truncate max-w-[200px]">{r.reason || '—'}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-red-500">{formatMoney(parseInt(r.total_amount)||0)}</td>
+                <td className="px-4 py-2.5 text-right">
+                  <Button type="button" variant="ghost" size="icon" title="Edit credit note" onClick={() => openEdit(r)}>
+                    <Edit2 className="w-4 h-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -124,7 +155,7 @@ export default function SaleReturnTab() {
 
       <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
         <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
-          <SheetHeader className="mb-5"><SheetTitle>Sale Return / Credit Note</SheetTitle></SheetHeader>
+          <SheetHeader className="mb-5"><SheetTitle>{editingId ? 'Edit Credit Note' : 'Sale Return / Credit Note'}</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
               <Label className="text-xs">Party *</Label>
@@ -155,11 +186,17 @@ export default function SaleReturnTab() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
+              {editingId && (
+                <div>
+                  <Label className="text-xs">Credit Note No.</Label>
+                  <Input className="mt-1 h-9 font-mono text-xs" value={creditNoteNumber} onChange={e => setCreditNoteNumber(e.target.value)} />
+                </div>
+              )}
               <div>
                 <Label className="text-xs">Return Date</Label>
                 <Input type="date" className="mt-1 h-9" value={returnDate} onChange={e => setReturnDate(e.target.value)} />
               </div>
-              <div>
+              <div className={editingId ? 'col-span-2' : ''}>
                 <Label className="text-xs">Against Invoice No. (optional)</Label>
                 <Input className="mt-1 h-9 font-mono text-xs" placeholder="Original invoice number" value={refInvoiceNo} onChange={e => lookupInvoice(e.target.value)} />
                 {refInvoiceNo && (
@@ -181,7 +218,7 @@ export default function SaleReturnTab() {
             <div className="flex gap-3 pt-3 border-t">
               <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
               <Button className="flex-1" loading={createMut.isPending} onClick={handleCreate} disabled={items.length === 0}>
-                Save Credit Note
+                {editingId ? 'Update Credit Note' : 'Save Credit Note'}
               </Button>
             </div>
           </div>

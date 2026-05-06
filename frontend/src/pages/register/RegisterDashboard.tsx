@@ -3,16 +3,17 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   ShieldCheck, Clock, CheckCircle2, XCircle, Plus,
   Building2, Users, LogOut, ChevronRight, CreditCard,
-  Phone, Mail, AlertCircle,
+  Phone, Mail, AlertCircle, Rocket, Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
 import { useRegistrantStore } from '@/store/registrantStore';
+import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 
 interface License {
   id: string;
   license_key: string;
-  status: 'pending' | 'active' | 'expired' | 'revoked';
+  status: 'pending' | 'active' | 'trial' | 'expired' | 'revoked';
   tier_name: string;
   tier_display_name: string;
   max_users: number;
@@ -35,6 +36,11 @@ const STATUS_CONFIG = {
     label: 'Active',
     icon: CheckCircle2,
     className: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30',
+  },
+  trial: {
+    label: 'Trial Active',
+    icon: Rocket,
+    className: 'bg-violet-500/10 text-violet-300 border border-violet-500/30',
   },
   expired: {
     label: 'Expired',
@@ -61,9 +67,11 @@ function formatDate(d: string | null) {
 
 export default function RegisterDashboard() {
   const navigate = useNavigate();
-  const { registrant, logout, isAuthenticated } = useRegistrantStore();
+  const { registrant, logout, isAuthenticated, updateRegistrant } = useRegistrantStore();
   const [licenses, setLicenses] = useState<License[]>([]);
   const [loading, setLoading] = useState(true);
+  const [launchingLicenseId, setLaunchingLicenseId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -75,14 +83,33 @@ export default function RegisterDashboard() {
 
   const fetchData = async () => {
     try {
+      setLoadError(null);
       const { data: res } = await registrantApi.get('/register/me');
       if (res.success) {
+        if (res.data.registrant) {
+          updateRegistrant(res.data.registrant);
+        }
         setLicenses(res.data.licenses);
       }
-    } catch {
-      toast.error('Failed to load dashboard data');
+    } catch (err: any) {
+      const message = err.response?.data?.error || 'Failed to load dashboard data';
+      setLoadError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenCompany = async (licenseId: string) => {
+    try {
+      setLaunchingLicenseId(licenseId);
+      const payload = await launchRegistrantCompany(licenseId);
+      toast.success(`Opened ${payload.company?.name || 'company'} successfully`);
+      navigate('/dashboard', { replace: true });
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Unable to open this company');
+    } finally {
+      setLaunchingLicenseId(null);
     }
   };
 
@@ -91,7 +118,7 @@ export default function RegisterDashboard() {
     navigate('/');
   };
 
-  const activeLicenses = licenses.filter((l) => l.status === 'active');
+  const activeLicenses = licenses.filter((l) => l.status === 'active' || l.status === 'trial');
   const pendingLicenses = licenses.filter((l) => l.status === 'pending');
 
   return (
@@ -100,7 +127,7 @@ export default function RegisterDashboard() {
       <nav className="border-b border-white/10 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-12 drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 drop-shadow" />
             <span className="text-white font-semibold hidden sm:block">Microtechnique Accounts</span>
           </div>
           <div className="flex items-center gap-4">
@@ -168,7 +195,7 @@ export default function RegisterDashboard() {
                 +91 6355 997 080
               </a>
               <a
-                href="mailto:support@microtechniqueit.com"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Mail className="w-4 h-4" />
@@ -195,6 +222,22 @@ export default function RegisterDashboard() {
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : loadError ? (
+          <div className="text-center py-20 bg-white/5 border border-white/10 rounded-2xl">
+            <AlertCircle className="w-14 h-14 text-amber-300 mx-auto mb-4 opacity-80" />
+            <h3 className="text-white text-xl font-semibold mb-2">Couldn&apos;t load your dashboard</h3>
+            <p className="text-slate-400 mb-6">{loadError}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                fetchData();
+              }}
+              className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-xl transition-all"
+            >
+              Try again
+            </button>
+          </div>
         ) : licenses.length === 0 ? (
           <div className="text-center py-20 bg-white/5 border border-white/10 rounded-2xl">
             <ShieldCheck className="w-16 h-16 text-purple-400 mx-auto mb-4 opacity-50" />
@@ -213,10 +256,11 @@ export default function RegisterDashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {licenses.map((lic) => {
-              const statusCfg = STATUS_CONFIG[lic.status];
+              const statusCfg = STATUS_CONFIG[lic.status] || STATUS_CONFIG.pending;
               const StatusIcon = statusCfg.icon;
               const tierColor = TIER_COLORS[lic.tier_name as keyof typeof TIER_COLORS] || 'from-purple-400 to-purple-300';
               const usedUsers = parseInt(lic.active_users) || 0;
+              const canOpenCompany = !!lic.company_id && (lic.status === 'active' || lic.status === 'trial');
 
               return (
                 <div
@@ -285,14 +329,26 @@ export default function RegisterDashboard() {
                     )}
                   </div>
 
-                  {/* View detail link */}
-                  <Link
-                    to={`/register/licenses/${lic.id}`}
-                    className="flex items-center justify-between text-sm text-purple-400 hover:text-purple-300 transition-colors pt-1 border-t border-white/10"
-                  >
-                    View details
-                    <ChevronRight className="w-4 h-4" />
-                  </Link>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1 border-t border-white/10">
+                    {canOpenCompany && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCompany(lic.id)}
+                        disabled={launchingLicenseId === lic.id}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-white text-slate-900 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold"
+                      >
+                        {launchingLicenseId === lic.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+                        Open company
+                      </button>
+                    )}
+                    <Link
+                      to={`/register/licenses/${lic.id}`}
+                      className="flex items-center justify-between text-sm text-purple-400 hover:text-purple-300 transition-colors sm:ml-auto"
+                    >
+                      View details
+                      <ChevronRight className="w-4 h-4" />
+                    </Link>
+                  </div>
                 </div>
               );
             })}

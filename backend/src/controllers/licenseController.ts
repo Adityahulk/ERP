@@ -5,12 +5,33 @@ import { success, error } from '../lib/response';
 import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 const CONTACT_PHONE = '+91 6355 997 080';
-const CONTACT_EMAIL = 'support@microtechniqueit.com';
+const CONTACT_EMAIL = 'support@microtechnique.in';
+
+async function enforceCurrentTierPrices() {
+  await query(
+    `UPDATE license_tiers
+     SET price_inr = CASE name
+       WHEN 'silver' THEN 9999
+       WHEN 'gold' THEN 18999
+       WHEN 'diamond' THEN 30999
+       ELSE price_inr
+     END,
+     updated_at = NOW()
+     WHERE name IN ('silver', 'gold', 'diamond')
+       AND price_inr IS DISTINCT FROM CASE name
+         WHEN 'silver' THEN 9999
+         WHEN 'gold' THEN 18999
+         WHEN 'diamond' THEN 30999
+         ELSE price_inr
+       END`
+  );
+}
 
 // ── GET /api/licenses/tiers ───────────────────────────────────
 // Public — returns all active tiers with features
 export async function getLicenseTiers(req: Request, res: Response) {
   try {
+    await enforceCurrentTierPrices();
     const tiersResult = await query(
       `SELECT id, name, display_name, max_users, price_inr, description, sort_order
        FROM license_tiers
@@ -46,6 +67,7 @@ export async function getLicenseTiers(req: Request, res: Response) {
 // Authenticated registrant — create a pending license for a chosen tier
 export async function requestLicense(req: Request, res: Response) {
   try {
+    await enforceCurrentTierPrices();
     const registrantId = req.registrant!.id;
     const { tier_id } = req.body;
 

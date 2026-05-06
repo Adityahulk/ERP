@@ -15,6 +15,24 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+function cleanText(value: unknown): string | null {
+  const text = String(value ?? '').trim();
+  return text ? text : null;
+}
+
+function cleanMoneyPaise(value: unknown): number {
+  const text = String(value ?? '').replace(/,/g, '').trim();
+  if (!text) return 0;
+  return rupeesToPaise(text);
+}
+
+function cleanDays(value: unknown): number {
+  const text = String(value ?? '').trim();
+  if (!text) return 0;
+  const n = Number(text);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     paid: 'bg-emerald-100 text-emerald-700',
@@ -72,8 +90,19 @@ export default function PartyDetail() {
       return;
     }
     try {
-      const payload: any = { ...form, gstin: g.length === 15 ? g : null };
-      if (payload.credit_limit !== '') payload.credit_limit = rupeesToPaise(payload.credit_limit);
+      const payload: any = {
+        name: String(form.name || '').trim(),
+        phone: cleanText(form.phone),
+        email: cleanText(form.email),
+        gstin: g.length === 15 ? g : null,
+        pan: cleanText(form.pan ? String(form.pan).toUpperCase() : ''),
+        billing_address: cleanText(form.billing_address),
+        city: cleanText(form.city),
+        state: cleanText(form.state),
+        pincode: cleanText(form.pincode),
+        credit_limit: cleanMoneyPaise(form.credit_limit),
+        credit_days: cleanDays(form.credit_days),
+      };
       await updateMutation.mutateAsync({ id: id!, data: payload });
       toast.success('Party updated');
       setEditOpen(false);

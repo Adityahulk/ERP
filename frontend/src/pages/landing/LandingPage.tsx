@@ -22,6 +22,7 @@ import {
   XCircle,
   UserPlus,
   Mail,
+  MessageCircle,
 } from 'lucide-react';
 
 const TIERS = [
@@ -29,7 +30,7 @@ const TIERS = [
     name: 'silver',
     display: 'Silver',
     icon: Star,
-    price: '₹4,999',
+    price: '₹9,999',
     period: '/year',
     maxUsers: 4,
     description: 'Perfect for small businesses. Core business features to get started.',
@@ -56,7 +57,7 @@ const TIERS = [
     name: 'gold',
     display: 'Gold',
     icon: Zap,
-    price: '₹8,999',
+    price: '₹18,999',
     period: '/year',
     maxUsers: 5,
     description: 'Grow confidently. Full application with GST filing and expense management.',
@@ -84,7 +85,7 @@ const TIERS = [
     name: 'diamond',
     display: 'Diamond',
     icon: Diamond,
-    price: '₹14,999',
+    price: '₹30,999',
     period: '/year',
     maxUsers: 7,
     description: 'Enterprise-grade. Every module, 7 seats, priority support.',
@@ -206,6 +207,15 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-[#420662] selection:text-white">
+      <a
+        href="https://wa.me/916355997080"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Message support on WhatsApp"
+        className="fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-2xl shadow-emerald-500/30 transition-transform hover:scale-105 hover:bg-emerald-600"
+      >
+        <MessageCircle className="h-7 w-7" />
+      </a>
       {/* ── Navbar ── */}
       <nav
         className={`fixed top-0 w-full z-50 transition-all duration-300 ${
@@ -214,13 +224,12 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-3 min-w-0 shrink">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-14 h-14 shrink-0 drop-shadow" />
             <div className="leading-tight min-w-0 text-left">
               <p className="text-[15px] font-semibold text-slate-900 leading-snug">
                 <span className="block">Microtechnique</span>
                 <span className="block">Accounts</span>
               </p>
-              <p className="text-xs font-medium text-violet-700 mt-0.5 tracking-normal">Business suite</p>
             </div>
           </Link>
           <div className="hidden md:flex items-center gap-8">
@@ -282,6 +291,9 @@ export default function LandingPage() {
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#420662]" />
               </span>
               India's All-in-One Business Accounts
+            </div>
+            <div className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-indigo-700">
+              Bills with AI
             </div>
             <h1 className="text-4xl md:text-6xl font-extrabold text-slate-900 tracking-tight leading-tight mb-6">
               Run Your Entire Business —{' '}
@@ -442,9 +454,9 @@ export default function LandingPage() {
                 +91 6355 997 080
               </a>
               <span className="text-white/20">|</span>
-              <a href="mailto:support@microtechniqueit.com" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="mailto:support@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Mail className="w-4 h-4" />
-                support@microtechniqueit.com
+                support@microtechnique.in
               </a>
             </div>
           </div>
@@ -643,13 +655,12 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
             <div className="mb-6 flex items-start gap-3">
-              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow brightness-0 invert" />
+              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-14 h-14 shrink-0 drop-shadow brightness-0 invert" />
               <div className="leading-tight min-w-0">
                 <p className="text-base font-semibold text-white leading-snug">
                   <span className="block">Microtechnique</span>
                   <span className="block">Accounts</span>
                 </p>
-                <p className="text-xs font-medium text-violet-300 mt-0.5 tracking-normal">Business suite</p>
               </div>
             </div>
             <p className="mb-6 max-w-sm">
@@ -687,10 +698,10 @@ export default function LandingPage() {
               <li className="flex items-start gap-2">
                 <Mail className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
                 <a
-                  href="mailto:support@microtechniqueit.com"
+                  href="mailto:support@microtechnique.in"
                   className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
                 >
-                  support@microtechniqueit.com
+                  support@microtechnique.in
                 </a>
               </li>
             </ul>

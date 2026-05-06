@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { X, Printer, Plus, Minus, FileText } from 'lucide-react';
+import { X, Printer, Plus, Minus, Eye, Download } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -16,6 +16,8 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
   const [generalPreset, setGeneralPreset] = useState<'24' | '40' | '65'>('24');
   const [labelPreset, setLabelPreset] = useState<'single' | 'double'>('single');
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const size: '58x40' | '100x50' | 'a4' = mode === 'general_printer'
     ? 'a4'
@@ -32,18 +34,51 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
       ? '1 label per page'
       : '2 labels per page';
 
+  const buildPayload = () => ({
+    mode,
+    size,
+    labels_per_page: mode === 'general_printer' ? Number(generalPreset) : labelPreset === 'single' ? 1 : 2,
+    items: activeItems.map(i => ({ item_id: i.item_id, sku: i.sku, quantity: i.print_qty }))
+  });
+
+  const createLabelPdfUrl = async () => {
+    const res = await api.post('/labels/bulk', buildPayload(), { responseType: 'blob' });
+    return window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+  };
+
+  const handlePreview = async () => {
+     try {
+       setPreviewLoading(true);
+       if (previewUrl) window.URL.revokeObjectURL(previewUrl);
+       const url = await createLabelPdfUrl();
+       setPreviewUrl(url);
+       toast.success(`Preview ready (${pageInfo}).`);
+    } catch (e: any) {
+      let msg = 'Failed to preview labels.';
+      const data = e?.response?.data;
+      if (data instanceof Blob) {
+        try {
+          const txt = await data.text();
+          const parsed = JSON.parse(txt);
+          msg = parsed?.error || msg;
+        } catch {
+          // keep default message
+        }
+      } else if (data?.error) {
+        msg = data.error;
+      } else if (e?.message) {
+        msg = e.message;
+      }
+      toast.error(msg);
+     } finally {
+       setPreviewLoading(false);
+     }
+  };
+
   const handlePrint = async () => {
      try {
        setLoading(true);
-       const payload = {
-         mode,
-         size,
-         labels_per_page: mode === 'general_printer' ? Number(generalPreset) : labelPreset === 'single' ? 1 : 2,
-         items: activeItems.map(i => ({ item_id: i.item_id, sku: i.sku, quantity: i.print_qty }))
-       };
-       const res = await api.post('/labels/bulk', payload, { responseType: 'blob' });
-       
-       const url = window.URL.createObjectURL(new Blob([res.data]));
+       const url = previewUrl || await createLabelPdfUrl();
        const link = document.createElement('a');
        link.href = url;
        link.setAttribute('download', `labels-${Date.now()}.pdf`);
@@ -51,9 +86,8 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
        link.click();
        link.remove();
        
-       toast.success(`Labels generated (${pageInfo}). Please open the PDF and print.`);
+       toast.success(`Labels generated (${pageInfo}).`);
        setLoading(false);
-       onClose();
     } catch (e: any) {
       setLoading(false);
       let msg = 'Failed to generate labels.';
@@ -75,12 +109,17 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
      }
   };
 
+  const close = () => {
+    if (previewUrl) window.URL.revokeObjectURL(previewUrl);
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
        <Card className="w-full max-w-2xl bg-white shadow-xl animate-in zoom-in-95 duration-200">
           <div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl">
              <h2 className="text-lg font-bold flex items-center gap-2"><Printer className="w-5 h-5"/> Print Barcode Labels</h2>
-             <Button variant="ghost" size="icon" onClick={onClose}><X className="w-5 h-5"/></Button>
+             <Button variant="ghost" size="icon" onClick={close}><X className="w-5 h-5"/></Button>
           </div>
           <CardContent className="p-6 space-y-6">
              <div className="grid sm:grid-cols-2 gap-3">
@@ -141,12 +180,20 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
              <div className="flex justify-between items-center pt-2">
                 <span className="text-slate-500">Total Labels: <b className="text-slate-900 text-lg">{totalLabels}</b></span>
                 <div className="flex gap-2">
-                   <Button variant="outline" onClick={onClose}>Cancel</Button>
+                   <Button variant="outline" onClick={close}>Cancel</Button>
+                   <Button variant="outline" onClick={handlePreview} disabled={activeItems.length === 0 || previewLoading} className="gap-2">
+                      {previewLoading ? <span className="animate-pulse">Preparing...</span> : <><Eye className="w-4 h-4"/> Preview</>}
+                   </Button>
                    <Button onClick={handlePrint} disabled={activeItems.length === 0 || loading} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
-                      {loading ? <span className="animate-pulse">Generating...</span> : <><FileText className="w-4 h-4"/> Generate PDF</>}
+                      {loading ? <span className="animate-pulse">Generating...</span> : <><Download className="w-4 h-4"/> Download PDF</>}
                    </Button>
                 </div>
              </div>
+             {previewUrl && (
+               <div className="border rounded-lg overflow-hidden bg-slate-100">
+                 <iframe title="Barcode label print preview" src={previewUrl} className="w-full h-[420px] bg-white" />
+               </div>
+             )}
           </CardContent>
        </Card>
     </div>

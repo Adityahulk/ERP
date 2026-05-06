@@ -1267,11 +1267,9 @@ export async function sendWhatsApp(req: Request, res: Response) {
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
     const row = invRes.rows[0];
 
-    const phone = String(row.party_phone || '').replace(/\s+/g, '');
+    const phone = String(req.body?.phone || row.party_phone || '').replace(/\s+/g, '');
     if (!phone) {
-      return res.status(400).json(
-        error('Customer has no phone on file. Add a mobile number to the party or share from the invoice screen.'),
-      );
+      return res.status(400).json(error('Enter a mobile number to share this invoice.'));
     }
 
     const partyName = row.party_name_snapshot || row.party_name || 'Customer';
