@@ -5,7 +5,7 @@ import { success, error } from '../lib/response';
 import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 const CONTACT_PHONE = '+91 6355 997 080';
-const CONTACT_EMAIL = 'support@microtechnique.in';
+const CONTACT_EMAIL = 'support@microtechniqueit.com';
 
 async function enforceCurrentTierPrices() {
   await query(

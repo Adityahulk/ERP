@@ -195,7 +195,7 @@ export default function RegisterDashboard() {
                 +91 6355 997 080
               </a>
               <a
-                href="mailto:support@microtechnique.in"
+                href="mailto:support@microtechniqueit.com"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Mail className="w-4 h-4" />

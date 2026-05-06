@@ -784,7 +784,7 @@ export default function AppLayout() {
                   Call to Purchase — +91 6355 997 080
                 </a>
                 <a
-                  href="mailto:support@microtechnique.in"
+                  href="mailto:support@microtechniqueit.com"
                   className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
                 >
                   Email Sales
