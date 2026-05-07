@@ -3,11 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
-import { useRegistrantStore } from '@/store/registrantStore';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const { login } = useRegistrantStore();
 
   const [form, setForm] = useState({
     name: '',
@@ -44,9 +42,16 @@ export default function RegisterPage() {
       });
 
       if (res.success) {
-        login(res.data.registrant, res.data.token);
-        toast.success('Account created! Welcome aboard.');
-        navigate('/register/dashboard');
+        toast.success(res.data?.message || 'Verification code sent to your email.');
+        navigate('/register/verify', {
+          replace: true,
+          state: {
+            verificationToken: res.data.verification_token,
+            emailMasked: res.data.email_masked,
+            email: form.email,
+            devCode: res.data.dev_code,
+          },
+        });
       }
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Registration failed. Please try again.');

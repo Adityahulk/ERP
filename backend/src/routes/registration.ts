@@ -8,6 +8,9 @@ import {
   registrantForgotPassword,
   registrantResetPassword,
   launchOwnedCompany,
+  verifySignup,
+  resendSignupOtp,
+  getVerificationStatus,
 } from '../controllers/registrationController';
 import { z } from 'zod';
 
@@ -34,9 +37,24 @@ const resetSchema = z.object({
   password: z.string().min(8).max(100),
 });
 
+const verifySchema = z.object({
+  verification_token: z.string().min(1),
+  code: z.string().min(4).max(10),
+});
+
+const resendSchema = z.object({
+  verification_token: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+}).refine((d) => Boolean(d.verification_token || d.email), {
+  message: 'Provide a verification_token or email',
+});
+
 // Public routes
 router.post('/', validateBody(registerSchema), register);
 router.post('/login', validateBody(loginSchema), registrantLogin);
+router.post('/verify', validateBody(verifySchema), verifySignup);
+router.post('/resend-verification', validateBody(resendSchema), resendSignupOtp);
+router.get('/verification-status', getVerificationStatus);
 router.post('/forgot-password', validateBody(forgotSchema), registrantForgotPassword);
 router.post('/reset-password', validateBody(resetSchema), registrantResetPassword);
 

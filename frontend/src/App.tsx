@@ -7,6 +7,9 @@ import RegisterLoginPage from '@/pages/register/RegisterLoginPage';
 import RegisterDashboard from '@/pages/register/RegisterDashboard';
 import LicenseTiersPage from '@/pages/register/LicenseTiersPage';
 import LicenseDetailPage from '@/pages/register/LicenseDetailPage';
+import VerifyEmailPage from '@/pages/register/VerifyEmailPage';
+import ForgotPasswordPage from '@/pages/register/ForgotPasswordPage';
+import ResetPasswordPage from '@/pages/register/ResetPasswordPage';
 import ModuleGate from '@/components/shared/ModuleGate';
 
 // Pages
@@ -307,6 +310,9 @@ export default function App() {
       {/* ── Registrant / License routes ─────────────────────── */}
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/register/login" element={<RegisterLoginPage />} />
+      <Route path="/register/verify" element={<VerifyEmailPage />} />
+      <Route path="/register/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/register/reset-password" element={<ResetPasswordPage />} />
       <Route
         path="/register/dashboard"
         element={<RegistrantRoute><RegisterDashboard /></RegistrantRoute>}

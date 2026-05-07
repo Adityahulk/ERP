@@ -30,6 +30,19 @@ const envSchema = z.object({
   TWILIO_WHATSAPP_NUMBER: z.string().optional(),
   TWILIO_SMS_FROM: z.string().optional(),
 
+  // SMTP (transactional email — OTP, password reset, etc.)
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default('Microtechnique Accounts <no-reply@microtechnique.in>'),
+  // OTP behaviour
+  OTP_LENGTH: z.coerce.number().default(6),
+  OTP_TTL_MINUTES: z.coerce.number().default(15),
+  OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().default(60),
+  OTP_MAX_ATTEMPTS: z.coerce.number().default(5),
+
   // File uploads
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_FILE_SIZE: z.coerce.number().default(10485760), // 10MB

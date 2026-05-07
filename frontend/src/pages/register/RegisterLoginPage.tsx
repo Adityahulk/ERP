@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
 import { useRegistrantStore } from '@/store/registrantStore';
@@ -11,6 +11,7 @@ export default function RegisterLoginPage() {
   const { login } = useRegistrantStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -25,7 +26,22 @@ export default function RegisterLoginPage() {
         navigate(next && next.startsWith('/register') ? next : '/register/dashboard', { replace: true });
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Login failed');
+      const status = err?.response?.status;
+      const code = err?.response?.data?.code;
+      if (status === 403 && code === 'EMAIL_NOT_VERIFIED') {
+        const data = err.response.data?.data || {};
+        toast('Please verify your email to continue.', { icon: '✉️' });
+        navigate('/register/verify', {
+          state: {
+            verificationToken: data.verification_token,
+            emailMasked: data.email_masked,
+            email,
+            devCode: data.dev_code,
+          },
+        });
+        return;
+      }
+      toast.error(err?.response?.data?.error || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -62,14 +78,31 @@ export default function RegisterLoginPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-purple-200">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
-            />
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-purple-200">Password</label>
+              <Link
+                to="/register/forgot-password"
+                className="text-xs text-purple-300 hover:text-purple-200"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <div className="relative mt-1">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 pr-12 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <button
             type="submit"
