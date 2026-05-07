@@ -10,6 +10,9 @@ import { Input } from '@/components/ui/input';
 import { Clock, LogIn, LogOut, FileText, CheckCircle2, User } from 'lucide-react';
 import { normalizeRole } from '@/lib/roles';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const validUuid = (id?: string | null) => !!id && id !== 'null' && id !== 'undefined' && UUID_RE.test(id);
+
 export default function AttendancePage() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
@@ -113,14 +116,16 @@ export default function AttendancePage() {
                    <CardContent className="p-4">
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="font-bold text-slate-800 text-sm leading-tight">{a.user_name}</h3>
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/hr/employees/${a.user_id || a.id}`)}
-                          className="shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
-                          title="View profile"
-                        >
-                          <User className="w-4 h-4" />
-                        </button>
+                        {validUuid(a.user_id || a.id) && (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/hr/employees/${a.user_id || a.id}`)}
+                            className="shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
+                            title="View profile"
+                          >
+                            <User className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                       <p className={`text-sm mt-1 flex items-center gap-1 ${a.clock_in ? 'text-emerald-600' : 'text-slate-500'}`}>
                         <CheckCircle2 className="w-4 h-4"/> {a.clock_in ? 'Present' : 'Not punched'}
@@ -130,13 +135,15 @@ export default function AttendancePage() {
                         {a.clock_in ? `${new Date(a.clock_in).toLocaleTimeString()} - ${a.clock_out ? new Date(a.clock_out).toLocaleTimeString() : 'Active'}` : '—'}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">{a.user_role} {a.godown_name ? `• ${a.godown_name}` : ''}</p>
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/hr/employees/${a.user_id || a.id}`)}
-                        className="mt-3 w-full text-xs text-indigo-600 hover:text-indigo-800 font-medium border border-indigo-100 hover:border-indigo-300 rounded-md py-1 transition-colors"
-                      >
-                        Manage Profile
-                      </button>
+                      {validUuid(a.user_id || a.id) && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/hr/employees/${a.user_id || a.id}`)}
+                          className="mt-3 w-full text-xs text-indigo-600 hover:text-indigo-800 font-medium border border-indigo-100 hover:border-indigo-300 rounded-md py-1 transition-colors"
+                        >
+                          Manage Profile
+                        </button>
+                      )}
                    </CardContent>
                 </Card>
             ))}

@@ -509,9 +509,9 @@ export default function LandingPage() {
                 +91 6355 997 080
               </a>
               <span className="text-white/20">|</span>
-              <a href="mailto:support@microtechniqueit.com" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
+              <a href="mailto:support@microtechnique.in" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
                 <Mail className="w-4 h-4" />
-                support@microtechniqueit.com
+                support@microtechnique.in
               </a>
             </div>
           </div>
@@ -753,10 +753,10 @@ export default function LandingPage() {
               <li className="flex items-start gap-2">
                 <Mail className="w-5 h-5 mt-0.5 text-[#420662] shrink-0" />
                 <a
-                  href="mailto:support@microtechniqueit.com"
+                  href="mailto:support@microtechnique.in"
                   className="hover:text-white transition-colors underline-offset-2 hover:underline break-all"
                 >
-                  support@microtechniqueit.com
+                  support@microtechnique.in
                 </a>
               </li>
             </ul>

@@ -31,6 +31,7 @@ export default function ProfilePage() {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [adjustment, setAdjustment] = useState({ adjustment_type: 'bonus', title: '', amount: '', notes: '' });
   const canPayroll = ['admin', 'super_admin'].includes(normalizeRole(user?.role));
+  const licenseKey = String(license?.license_key || '');
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['employee-profile', 'me'],
@@ -140,7 +141,7 @@ export default function ProfilePage() {
               <Key className="w-3 h-3 text-slate-400" />
               <span className="text-xs text-slate-400">License Key:</span>
               <span className="text-xs font-mono text-slate-500">
-                {license.license_key.slice(0, 8)}…{license.license_key.slice(-4)}
+                {licenseKey ? `${licenseKey.slice(0, 8)}…${licenseKey.slice(-4)}` : 'Pending'}
               </span>
             </div>
           </CardContent>

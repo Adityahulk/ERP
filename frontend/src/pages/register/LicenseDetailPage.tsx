@@ -312,10 +312,10 @@ export default function LicenseDetailPage() {
                 <span>📞 +91 6355 997 080</span>
               </a>
               <a
-                href="mailto:support@microtechniqueit.com"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 text-purple-300 hover:text-purple-200 text-sm transition-colors"
               >
-                <span>✉️ support@microtechniqueit.com</span>
+                <span>✉️ support@microtechnique.in</span>
               </a>
             </div>
           </div>

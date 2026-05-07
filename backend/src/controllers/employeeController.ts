@@ -4,15 +4,34 @@ import { success, error } from '../lib/response';
 import { getUploadUrl } from '../services/fileUpload';
 import { normalizeRole } from '../lib/roles';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
+function cleanUuid(value: unknown): string | null {
+  if (value === undefined || value === null || value === '' || value === 'null' || value === 'undefined') return null;
+  return isValidUuid(value) ? value : null;
+}
+
+function routeUserId(req: Request): string {
+  const userId = req.params.userId || req.user!.id;
+  if (!isValidUuid(userId)) throw new Error('Invalid employee id');
+  return userId;
+}
+
 export async function createEmployee(req: Request, res: Response) {
   try {
      const { user_id, designation, department, godown_id, joining_date, employment_type, annual_salary, pan_number } = req.body;
      const companyId = req.user!.company_id;
+     if (!isValidUuid(user_id)) return res.status(400).json(error('Invalid employee user id'));
+     const cleanGodownId = cleanUuid(godown_id);
      
      // Generate EMP code
      const countRes = await query('SELECT count(*) from employee_profiles WHERE company_id = $1', [companyId]);
      const count = parseInt(countRes.rows[0].count) + 1;
-     const employeeCode = `EMP-G${godown_id || 1}-${String(count).padStart(4, '0')}`;
+     const employeeCode = `EMP-G${cleanGodownId ? cleanGodownId.slice(0, 4).toUpperCase() : 1}-${String(count).padStart(4, '0')}`;
 
      const result = await query(
        `INSERT INTO employee_profiles (user_id, company_id, employee_code, designation, department, godown_id, joining_date, employment_type, annual_salary, pan_number)
@@ -29,23 +48,28 @@ export async function createEmployee(req: Request, res: Response) {
           is_active = true,
           updated_at = NOW()
         RETURNING *`,
-       [user_id, companyId, employeeCode, designation, department, godown_id, joining_date, employment_type, annual_salary, pan_number]
+       [user_id, companyId, employeeCode, designation, department, cleanGodownId, joining_date, employment_type, annual_salary, pan_number]
      );
      res.json(success(result.rows[0]));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch(err:any){ res.status(err.message === 'Invalid employee id' ? 400 : 500).json(error(err.message)); }
 }
 
 export async function getEmployees(req: Request, res: Response) {
   try {
      const result = await query(
-       `SELECT e.*, u.name, u.email, u.phone, u.role, u.is_active as user_active, g.name AS godown_name
-        FROM employee_profiles e JOIN users u ON e.user_id = u.id
-        LEFT JOIN godowns g ON g.id = e.godown_id AND g.is_deleted = false
-        WHERE e.company_id = $1 AND e.is_deleted = false AND u.is_deleted = false
+       `SELECT ep.*, ep.id AS employee_profile_id,
+               u.id, u.id AS user_id, u.name, u.email, u.phone, u.role, u.is_active as user_active,
+               g.name AS godown_name
+        FROM users u
+        LEFT JOIN employee_profiles ep ON ep.user_id = u.id AND ep.is_deleted = false
+        LEFT JOIN godowns g ON g.id = ep.godown_id AND g.is_deleted = false
+        WHERE u.company_id = $1
+          AND u.is_deleted = false
+          AND u.role NOT IN ('admin', 'company_admin', 'accountant', 'super_admin')
         ORDER BY u.name ASC`, [req.user!.company_id]
      );
      res.json(success(result.rows));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch(err:any){ res.status(err.message === 'Invalid employee id' ? 400 : 500).json(error(err.message)); }
 }
 
 function monthStart(input?: string) {
@@ -88,7 +112,7 @@ export async function getMyProfile(req: Request, res: Response) {
 
 export async function getEmployeeProfile(req: Request, res: Response) {
   try {
-    const userId = req.params.userId;
+    const userId = routeUserId(req);
     await assertEmployeeAccess(req, userId);
     const companyId = req.user!.company_id;
     const result = await query(
@@ -112,14 +136,14 @@ export async function getEmployeeProfile(req: Request, res: Response) {
     );
     res.json(success({ ...result.rows[0], documents: docs.rows, salary_adjustments: adjustments.rows }));
   } catch (err: any) {
-    const status = err.message === 'Forbidden' ? 403 : 500;
+    const status = err.message === 'Forbidden' ? 403 : err.message === 'Invalid employee id' ? 400 : 500;
     res.status(status).json(error(err.message));
   }
 }
 
 export async function updateEmployeeProfile(req: Request, res: Response) {
   try {
-    const userId = req.params.userId || req.user!.id;
+    const userId = routeUserId(req);
     await assertEmployeeAccess(req, userId);
     const companyId = req.user!.company_id;
     const d = req.body || {};
@@ -135,7 +159,7 @@ export async function updateEmployeeProfile(req: Request, res: Response) {
     for (const field of profileFields) {
       if (d[field] !== undefined) {
         updates.push(`${field} = $${idx++}`);
-        values.push(d[field] === '' ? null : d[field]);
+        values.push(field === 'godown_id' ? cleanUuid(d[field]) : d[field] === '' || d[field] === 'null' || d[field] === 'undefined' ? null : d[field]);
       }
     }
     if (!updates.length) return res.status(400).json(error('No fields to update'));
@@ -160,14 +184,14 @@ export async function updateEmployeeProfile(req: Request, res: Response) {
     if (!result.rows.length) return res.status(404).json(error('Employee profile not found'));
     res.json(success(result.rows[0]));
   } catch (err: any) {
-    const status = err.message === 'Forbidden' ? 403 : 500;
+    const status = err.message === 'Forbidden' ? 403 : err.message === 'Invalid employee id' ? 400 : 500;
     res.status(status).json(error(err.message));
   }
 }
 
 export async function uploadEmployeeDocument(req: Request, res: Response) {
   try {
-    const userId = req.params.userId || req.user!.id;
+    const userId = routeUserId(req);
     await assertEmployeeAccess(req, userId);
     if (!req.file) return res.status(400).json(error('No document uploaded'));
     const url = getUploadUrl(req.file.path);
@@ -179,14 +203,14 @@ export async function uploadEmployeeDocument(req: Request, res: Response) {
     );
     res.json(success(result.rows[0]));
   } catch (err: any) {
-    const status = err.message === 'Forbidden' ? 403 : 500;
+    const status = err.message === 'Forbidden' ? 403 : err.message === 'Invalid employee id' ? 400 : 500;
     res.status(status).json(error(err.message));
   }
 }
 
 export async function addSalaryAdjustment(req: Request, res: Response) {
   try {
-    const userId = req.params.userId;
+    const userId = routeUserId(req);
     await assertEmployeeAccess(req, userId);
     if (!['admin', 'super_admin'].includes(normalizeRole(req.user!.role))) {
       return res.status(403).json(error('Only accounting or admin roles can add salary adjustments'));
@@ -209,13 +233,13 @@ export async function addSalaryAdjustment(req: Request, res: Response) {
     );
     res.json(success(result.rows[0]));
   } catch (err: any) {
-    res.status(/Forbidden|Only/.test(err.message) ? 403 : 500).json(error(err.message));
+    res.status(/Forbidden|Only/.test(err.message) ? 403 : err.message === 'Invalid employee id' ? 400 : 500).json(error(err.message));
   }
 }
 
 export async function generateSalarySlip(req: Request, res: Response) {
   try {
-    const userId = req.params.userId;
+    const userId = routeUserId(req);
     await assertEmployeeAccess(req, userId);
     const companyId = req.user!.company_id;
     const salaryMonth = monthStart(String(req.body?.salary_month || req.query.month || ''));
@@ -282,14 +306,14 @@ export async function generateSalarySlip(req: Request, res: Response) {
     );
     res.json(success(slip.rows[0]));
   } catch (err: any) {
-    const status = err.message === 'Forbidden' ? 403 : 500;
+    const status = err.message === 'Forbidden' ? 403 : err.message === 'Invalid employee id' ? 400 : 500;
     res.status(status).json(error(err.message));
   }
 }
 
 export async function resignEmployee(req: Request, res: Response) {
   try {
-     const { userId } = req.params;
+     const userId = routeUserId(req);
      const { resignation_date, reason } = req.body;
      
      await withTransaction(async (client) => {
@@ -297,5 +321,5 @@ export async function resignEmployee(req: Request, res: Response) {
         await client.query(`UPDATE users SET is_active = false WHERE id = $1`, [userId]);
      });
      res.json(success({ message: "Employee marked as resigned." }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+  } catch(err:any){ res.status(err.message === 'Invalid employee id' ? 400 : 500).json(error(err.message)); }
 }

@@ -12,18 +12,18 @@ import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 
 interface License {
   id: string;
-  license_key: string;
-  status: 'pending' | 'active' | 'trial' | 'expired' | 'revoked';
-  tier_name: string;
-  tier_display_name: string;
-  max_users: number;
-  price_inr: number;
+  license_key?: string | null;
+  status?: 'pending' | 'active' | 'trial' | 'expired' | 'revoked' | string | null;
+  tier_name?: string | null;
+  tier_display_name?: string | null;
+  max_users?: number | string | null;
+  price_inr?: number | string | null;
   activated_at: string | null;
   expires_at: string | null;
   requested_at: string;
   company_id: string | null;
   company_name: string | null;
-  active_users: string;
+  active_users?: string | number | null;
 }
 
 const STATUS_CONFIG = {
@@ -89,7 +89,7 @@ export default function RegisterDashboard() {
         if (res.data.registrant) {
           updateRegistrant(res.data.registrant);
         }
-        setLicenses(res.data.licenses);
+        setLicenses(Array.isArray(res.data?.licenses) ? res.data.licenses : []);
       }
     } catch (err: any) {
       const message = err.response?.data?.error || 'Failed to load dashboard data';
@@ -195,7 +195,7 @@ export default function RegisterDashboard() {
                 +91 6355 997 080
               </a>
               <a
-                href="mailto:support@microtechniqueit.com"
+                href="mailto:support@microtechnique.in"
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg transition-colors"
               >
                 <Mail className="w-4 h-4" />
@@ -256,10 +256,13 @@ export default function RegisterDashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {licenses.map((lic) => {
-              const statusCfg = STATUS_CONFIG[lic.status] || STATUS_CONFIG.pending;
+              const statusCfg = STATUS_CONFIG[lic.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
               const StatusIcon = statusCfg.icon;
-              const tierColor = TIER_COLORS[lic.tier_name as keyof typeof TIER_COLORS] || 'from-purple-400 to-purple-300';
-              const usedUsers = parseInt(lic.active_users) || 0;
+              const tierName = String(lic.tier_name || '').toLowerCase();
+              const tierColor = TIER_COLORS[tierName as keyof typeof TIER_COLORS] || 'from-purple-400 to-purple-300';
+              const usedUsers = Number.parseInt(String(lic.active_users || '0'), 10) || 0;
+              const maxUsers = Number(lic.max_users || 0) || 0;
+              const licenseKey = String(lic.license_key || '');
               const canOpenCompany = !!lic.company_id && (lic.status === 'active' || lic.status === 'trial');
 
               return (
@@ -273,7 +276,7 @@ export default function RegisterDashboard() {
                       <span
                         className={`inline-block px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r ${tierColor} text-slate-900 mb-2`}
                       >
-                        {lic.tier_display_name} Plan
+                        {lic.tier_display_name || 'License'} Plan
                       </span>
                       <p className="text-white font-semibold">
                         {lic.company_name || 'Awaiting activation'}
@@ -290,7 +293,7 @@ export default function RegisterDashboard() {
                     <div className="bg-white/5 rounded-lg p-3">
                       <p className="text-slate-400 text-xs mb-1">License Key</p>
                       <p className="text-white font-mono text-xs truncate">
-                        {lic.license_key.slice(0, 8)}…{lic.license_key.slice(-4)}
+                        {licenseKey ? `${licenseKey.slice(0, 8)}…${licenseKey.slice(-4)}` : 'Pending'}
                       </p>
                     </div>
                     <div className="bg-white/5 rounded-lg p-3">
@@ -304,12 +307,12 @@ export default function RegisterDashboard() {
                             <Users className="w-3 h-3" /> User Seats
                           </p>
                           <p className="text-white text-xs">
-                            {usedUsers} / {lic.max_users} used
+                            {usedUsers} / {maxUsers || '—'} used
                           </p>
                           <div className="mt-1.5 h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full"
-                              style={{ width: `${Math.min((usedUsers / lic.max_users) * 100, 100)}%` }}
+                              style={{ width: `${maxUsers ? Math.min((usedUsers / maxUsers) * 100, 100) : 0}%` }}
                             />
                           </div>
                         </div>

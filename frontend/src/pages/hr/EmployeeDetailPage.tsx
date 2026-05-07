@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api, { getApiBaseURL } from '@/lib/api';
@@ -26,6 +26,9 @@ const ROLE_COLORS: Record<string, string> = {
   manager: 'bg-blue-100 text-blue-700',
   staff: 'bg-slate-100 text-slate-600',
 };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const validUuid = (id?: string | null) => !!id && id !== 'null' && id !== 'undefined' && UUID_RE.test(id);
 
 function InfoRow({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
   if (!value) return null;
@@ -68,20 +71,24 @@ export default function EmployeeDetailPage() {
   const isAdmin = ['admin', 'super_admin'].includes(actualRole);
   const canManage = ['manager', 'admin', 'super_admin'].includes(actualRole);
   const canPayroll = ['admin', 'super_admin'].includes(actualRole);
+  const invalidRouteUserId = !!userId && userId !== 'me' && !validUuid(userId);
   const isSelf = !userId || userId === me?.id || userId === 'me';
   const canEdit = isAdmin || isSelf;
 
-  // Redirect non-admins trying to view other profiles
-  if (!isSelf && !canManage) {
-    navigate('/profile', { replace: true });
-  }
+  useEffect(() => {
+    if (invalidRouteUserId || (!isSelf && !canManage)) {
+      navigate(invalidRouteUserId ? '/hr/employees' : '/profile', { replace: true });
+    }
+  }, [canManage, invalidRouteUserId, isSelf, navigate]);
 
   const effectiveUserId = isSelf ? 'me' : userId!;
+  const actionUserId = effectiveUserId === 'me' ? me?.id || '' : effectiveUserId;
   const apiPath = effectiveUserId === 'me' ? '/employees/me' : `/employees/${effectiveUserId}`;
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['employee-profile', effectiveUserId],
     queryFn: () => api.get(apiPath).then((r) => r.data?.data ?? r.data),
+    enabled: !invalidRouteUserId && (isSelf || canManage),
   });
 
   const [docType, setDocType] = useState('ID Proof');
@@ -116,7 +123,7 @@ export default function EmployeeDetailPage() {
   });
 
   const addAdjustmentMut = useMutation({
-    mutationFn: () => api.post(`/employees/${effectiveUserId}/salary-adjustments`, {
+    mutationFn: () => api.post(`/employees/${actionUserId}/salary-adjustments`, {
       ...adjustment,
       salary_month: `${month}-01`,
       amount: Math.round((Number(adjustment.amount) || 0) * 100),
@@ -131,13 +138,17 @@ export default function EmployeeDetailPage() {
 
   const salarySlipMut = useMutation({
     mutationFn: () =>
-      api.post(`/employees/${effectiveUserId}/salary-slips`, { salary_month: `${month}-01` })
+      api.post(`/employees/${actionUserId}/salary-slips`, { salary_month: `${month}-01` })
         .then((r) => r.data?.data ?? r.data),
     onSuccess: (slip: any) => toast.success(`Slip generated: net ${formatMoney(slip.net_salary || 0)}`),
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
   const save = (field: string) => (v: string) => saveProfileMut.mutate({ [field]: v });
+
+  if (invalidRouteUserId) {
+    return null;
+  }
 
   if (isLoading) {
     return (

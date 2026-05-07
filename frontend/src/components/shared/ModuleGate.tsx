@@ -37,7 +37,7 @@ export default function ModuleGate({ featureKey, featureLabel, children }: Modul
           <ArrowUpRight className="w-4 h-4" />
         </a>
         <a
-          href="mailto:support@microtechniqueit.com"
+          href="mailto:support@microtechnique.in"
           className="inline-flex items-center gap-2 px-6 py-3 border-2 border-violet-200 hover:border-violet-400 text-violet-700 rounded-xl font-semibold transition-colors"
         >
           Email Sales

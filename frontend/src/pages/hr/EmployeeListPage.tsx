@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -16,6 +16,9 @@ const ROLE_COLORS: Record<string, string> = {
   staff: 'bg-slate-100 text-slate-600',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const validUuid = (id?: string | null) => !!id && id !== 'null' && id !== 'undefined' && UUID_RE.test(id);
+
 export default function EmployeeListPage() {
   const navigate = useNavigate();
   const { user: me } = useAuthStore();
@@ -25,15 +28,19 @@ export default function EmployeeListPage() {
   const isAdmin = ['admin', 'super_admin'].includes(actualRole);
   const canManage = ['manager', 'admin', 'super_admin'].includes(actualRole);
 
-  if (!canManage) {
-    navigate(`/hr/employees/${me?.id}`, { replace: true });
-    return null;
-  }
-
   const { data, isLoading } = useQuery({
     queryKey: ['employees'],
     queryFn: () => api.get('/employees').then((r) => r.data?.data ?? []),
+    enabled: canManage,
   });
+
+  useEffect(() => {
+    if (!canManage && validUuid(me?.id)) {
+      navigate(`/hr/employees/${me?.id}`, { replace: true });
+    }
+  }, [canManage, me?.id, navigate]);
+
+  if (!canManage) return null;
 
   const employees: any[] = data ?? [];
   const filtered = employees.filter((e) =>
@@ -79,12 +86,13 @@ export default function EmployeeListPage() {
 
       <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
         {filtered.map((emp) => {
+          const targetUserId = validUuid(emp.user_id) ? emp.user_id : validUuid(emp.id) ? emp.id : '';
           const initials = (emp.name || '?').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
           return (
             <Card
-              key={emp.user_id || emp.id}
-              className="cursor-pointer hover:shadow-md hover:border-primary/30 transition-all group"
-              onClick={() => navigate(`/hr/employees/${emp.user_id || emp.id}`)}
+              key={targetUserId || emp.employee_profile_id || emp.id}
+              className={`${targetUserId ? 'cursor-pointer hover:shadow-md hover:border-primary/30' : 'opacity-70'} transition-all group`}
+              onClick={() => targetUserId && navigate(`/hr/employees/${targetUserId}`)}
             >
               <CardContent className="p-4 flex items-center gap-4">
                 <div className="w-11 h-11 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
