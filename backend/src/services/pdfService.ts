@@ -38,6 +38,48 @@ function resolveAssetUrl(src?: string): string {
   return `${env.FRONTEND_URL}/${raw.replace(/^\/+/, '')}`;
 }
 
+/**
+ * Read a /uploads/* asset from disk and inline as a base64 data URI so Puppeteer can render it
+ * without depending on the frontend HTTP server being reachable from the headless browser.
+ * Returns '' when the source is missing, unreadable, or unsupported.
+ */
+function inlineAssetAsDataUri(src?: string): string {
+  const raw = String(src || '').trim();
+  if (!raw) return '';
+  // Already inlinable / external — return as-is.
+  if (raw.startsWith('data:') || raw.startsWith('file://')) return raw;
+  // Network URLs we can't synchronously inline — fall through to network fetch.
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+
+  try {
+    let absPath: string;
+    if (raw.startsWith('/uploads/')) {
+      const rel = raw.replace(/^\/uploads\/?/, '');
+      absPath = path.resolve(env.UPLOAD_DIR, rel);
+    } else if (path.isAbsolute(raw)) {
+      absPath = raw;
+    } else {
+      absPath = path.resolve(env.UPLOAD_DIR, raw.replace(/^\/+/, ''));
+    }
+    if (!fs.existsSync(absPath)) return '';
+    const ext = path.extname(absPath).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.bmp': 'image/bmp',
+    };
+    const mime = mimeMap[ext] || 'application/octet-stream';
+    const buf = fs.readFileSync(absPath);
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
 function themeStyle(theme: string): string {
   if (theme === 'modern') return `<style>body{font-family:Inter,Segoe UI,Arial,sans-serif}.inv-card,.panel,.box{border-radius:12px}table th{background:#eef2ff}</style>`;
   if (theme === 'compact') return `<style>body{font-size:12px}table th,table td{padding:4px 6px}.section,.inv-card,.panel{margin-bottom:6px}</style>`;
@@ -123,6 +165,15 @@ function companyAddress(company: any): string {
   return [line1, line2].filter(Boolean).join(', ');
 }
 
+/** Build the buyer address from a party — prefers `billing_*` fields but falls back to legacy `city/state/pincode`. */
+function buyerAddress(party: any): string {
+  if (!party) return '';
+  const city = party.billing_city || party.city || '';
+  const state = party.billing_state || party.state || '';
+  const pincode = party.billing_pincode || party.pincode || '';
+  return [party.billing_address, city, state, pincode].filter(Boolean).join(', ');
+}
+
 function bankBlock(company: any): string {
   const rows = [
     ['Bank', company.bank_name],
@@ -178,10 +229,11 @@ export async function generateInvoicePDF(
     einvBlock = `<div class="einv"><p><b>IRN:</b> ${escapeHtml(invoice.irn)}</p><p><b>ACK:</b> ${escapeHtml(invoice.ack_number || '')}</p>${qrSrc ? `<img src="${qrSrc}" alt="QR" style="width:120px;height:120px"/>` : ''}</div>`;
   }
 
-  const buyerAddr = party
-    ? [party.billing_address, party.billing_city, party.billing_state, party.billing_pincode].filter(Boolean).join(', ')
-    : invoice.billing_address_snapshot || '';
+  const buyerAddr = party ? buyerAddress(party) : (invoice.billing_address_snapshot || '');
   const sellerAddress = companyAddress(company);
+
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
 
   const vars: Record<string, string> = {
     PRIMARY_COLOR: color,
@@ -190,7 +242,7 @@ export async function generateInvoicePDF(
     COMPANY_CITY_STATE_PIN: escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', ')),
     COMPANY_GSTIN: escapeHtml(company.gstin || ''),
     COMPANY_PHONE: escapeHtml(company.phone || ''),
-    LOGO_BLOCK: company.logo_url ? `<img src="${escapeHtml(resolveAssetUrl(company.logo_url))}" style="max-height:56px"/>` : '',
+    LOGO_BLOCK: logoSrc ? `<img src="${logoSrc}" style="max-height:72px;display:block" alt="${escapeHtml(company.name || 'Logo')}"/>` : '',
     INVOICE_NUMBER: escapeHtml(invoice.invoice_number),
     INVOICE_DATE: escapeHtml(String(invoice.invoice_date)),
     DUE_DATE: invoice.due_date ? escapeHtml(String(invoice.due_date)) : '—',
@@ -213,8 +265,8 @@ export async function generateInvoicePDF(
     UPI_QR_IMG: upiQr ? `<img src="${upiQr}" style="width:120px;height:120px" alt="UPI"/>` : '',
     EINVOICE_BLOCK: einvBlock,
     TERMS: escapeHtml((company.terms_and_conditions || '').split('\n').slice(0, 3).join(' ')),
-    SIGNATURE_BLOCK: company.signature_url
-      ? `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><img src="${escapeHtml(resolveAssetUrl(company.signature_url))}" style="max-height:48px"/><p>Authorised Signatory</p></div>`
+    SIGNATURE_BLOCK: signatureSrc
+      ? `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><img src="${signatureSrc}" style="max-height:48px"/><p>Authorised Signatory</p></div>`
       : `<div class="sign"><p>For <b>${escapeHtml(company.name)}</b></p><p>Authorised Signatory</p></div>`,
   };
 
@@ -225,7 +277,7 @@ export async function generateInvoicePDF(
   }
   const browser = await launchBrowser();
   const page = await browser.newPage();
-  await page.setContent(tpl, { waitUntil: 'networkidle0' });
+  await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
   await browser.close();
   return Buffer.from(pdf);
@@ -311,7 +363,7 @@ export async function generateThermalReceipt(
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setViewport({ width: Math.round((widthMm / 25.4) * 96), height: 1200, deviceScaleFactor: 2 });
-  await page.setContent(tpl, { waitUntil: 'networkidle0' });
+  await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({
     width: `${widthMm}mm`,
     height: '297mm',
@@ -362,7 +414,7 @@ export async function generateEinvoicePdf(
 
   const browser = await launchBrowser();
   const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'networkidle0' });
+  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({ format: 'A4', printBackground: true });
   await browser.close();
   return Buffer.from(pdf);
@@ -374,9 +426,7 @@ export async function generateQuotationPDF(
   party: any | null,
   items: any[],
 ): Promise<Buffer> {
-  const buyerAddr = party
-    ? [party.billing_address, party.billing_city, party.billing_state, party.billing_pincode].filter(Boolean).join(', ')
-    : '';
+  const buyerAddr = buyerAddress(party);
   const rows = items
     .map(
       (it: any, i: number) => `<tr>
@@ -394,11 +444,13 @@ export async function generateQuotationPDF(
 
   const primaryColor = String(company.document_primary_color || '#4F46E5');
   const theme = String(quotation.document_theme || company.document_theme || 'classic');
-  const logoBlock = company.logo_url
-    ? `<img src="${escapeHtml(resolveAssetUrl(company.logo_url))}" style="max-height:56px;display:block;margin-bottom:8px" />`
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  const logoBlock = logoSrc
+    ? `<img src="${logoSrc}" style="max-height:72px;display:block;margin-bottom:8px" alt="${escapeHtml(company.name || 'Logo')}" />`
     : '';
-  const signatureBlock = company.signature_url
-    ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(company.name || '')}</b></p><img src="${escapeHtml(resolveAssetUrl(company.signature_url))}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
+  const signatureBlock = signatureSrc
+    ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(company.name || '')}</b></p><img src="${signatureSrc}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
     : `<div style="text-align:right;margin-top:26px"><p>For <b>${escapeHtml(company.name || '')}</b></p><p>Authorised Signatory</p></div>`;
 
   let html = `<!doctype html><html><head><meta charset="utf-8" />
@@ -474,7 +526,7 @@ export async function generateQuotationPDF(
 
   const browser = await launchBrowser();
   const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'networkidle0' });
+  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
   await browser.close();
   return Buffer.from(pdf);

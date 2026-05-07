@@ -127,7 +127,7 @@ export default function RegisterDashboard() {
       <nav className="border-b border-white/10 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-20 drop-shadow" />
             <span className="text-white font-semibold hidden sm:block">Microtechnique Accounts</span>
           </div>
           <div className="flex items-center gap-4">

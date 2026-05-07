@@ -23,6 +23,8 @@ import {
   UserPlus,
   Mail,
   MessageCircle,
+  Sparkles,
+  Wand2,
 } from 'lucide-react';
 
 const TIERS = [
@@ -224,7 +226,7 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-3 min-w-0 shrink">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-14 h-14 shrink-0 drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-20 h-20 shrink-0 drop-shadow" />
             <div className="leading-tight min-w-0 text-left">
               <p className="text-[15px] font-semibold text-slate-900 leading-snug">
                 <span className="block">Microtechnique</span>
@@ -279,34 +281,69 @@ export default function LandingPage() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative pt-36 pb-20 lg:pt-52 lg:pb-32 overflow-hidden">
-        <div className="absolute top-0 right-0 -mr-40 -mt-40 w-[600px] h-[600px] rounded-full bg-[#420662]/10 blur-3xl opacity-60 pointer-events-none" />
-        <div className="absolute bottom-0 left-0 -ml-40 -mb-40 w-[500px] h-[500px] rounded-full bg-indigo-500/10 blur-3xl opacity-60 pointer-events-none" />
+      <section className="relative pt-36 pb-24 lg:pt-44 lg:pb-32 overflow-hidden">
+        {/* Soft background blobs */}
+        <div className="absolute top-0 right-0 -mr-40 -mt-40 w-[640px] h-[640px] rounded-full bg-[#420662]/10 blur-3xl opacity-70 pointer-events-none" />
+        <div className="absolute bottom-0 left-0 -ml-40 -mb-40 w-[520px] h-[520px] rounded-full bg-indigo-500/10 blur-3xl opacity-70 pointer-events-none" />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[420px] h-[420px] rounded-full bg-fuchsia-400/10 blur-3xl opacity-60 pointer-events-none" />
+
+        {/* Subtle grid texture */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.04]"
+          style={{
+            backgroundImage:
+              'linear-gradient(to right, #420662 1px, transparent 1px), linear-gradient(to bottom, #420662 1px, transparent 1px)',
+            backgroundSize: '48px 48px',
+            maskImage: 'radial-gradient(ellipse at center, black 40%, transparent 75%)',
+            WebkitMaskImage: 'radial-gradient(ellipse at center, black 40%, transparent 75%)',
+          }}
+        />
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center max-w-4xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#420662]/10 text-[#420662] text-xs font-semibold mb-6 border border-[#420662]/20">
+            {/* Tagline pill */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur ring-1 ring-[#420662]/15 text-[#420662] text-xs font-semibold mb-7 shadow-sm">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#420662] opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#420662]" />
               </span>
               India's All-in-One Business Accounts
             </div>
-            <div className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-indigo-700">
-              Bills with AI
+
+            {/* — Bill With AI showcase — */}
+            <div className="mb-7 flex justify-center">
+              <div className="group relative inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-gradient-to-r from-[#420662] via-indigo-600 to-fuchsia-600 shadow-[0_8px_32px_-4px_rgba(66,6,98,0.5)]">
+                {/* Animated glow */}
+                <span className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-r from-fuchsia-500 via-indigo-500 to-[#420662] blur-md opacity-60 -z-10 animate-pulse" />
+                <Sparkles className="w-4 h-4 text-amber-300 drop-shadow-[0_0_4px_rgba(251,191,36,0.7)]" />
+                <span className="text-white text-[13px] font-bold tracking-wider uppercase">
+                  Bill With&nbsp;
+                  <span className="bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-300 bg-clip-text text-transparent">
+                    AI
+                  </span>
+                </span>
+                <Wand2 className="w-4 h-4 text-amber-300 drop-shadow-[0_0_4px_rgba(251,191,36,0.7)]" />
+              </div>
             </div>
-            <h1 className="text-4xl md:text-6xl font-extrabold text-slate-900 tracking-tight leading-tight mb-6">
-              Run Your Entire Business —{' '}
-              <br className="hidden md:block" />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#420662] to-indigo-600">
-                Bills, Stock &amp; GST Sorted
+
+            {/* Main headline */}
+            <h1 className="text-[2.5rem] md:text-6xl lg:text-7xl font-extrabold text-slate-900 tracking-tight leading-[1.05] mb-6">
+              Run Your Entire Business —
+              <br className="hidden md:block" />{' '}
+              <span className="relative inline-block">
+                <span className="relative z-10 text-transparent bg-clip-text bg-gradient-to-r from-[#420662] via-indigo-600 to-fuchsia-600">
+                  Bills, Stock &amp; GST Sorted
+                </span>
+                <span className="absolute -bottom-1 left-0 right-0 h-3 bg-amber-200/60 -z-0 rounded-full blur-[2px]" aria-hidden />
               </span>
             </h1>
+
             <p className="text-lg md:text-xl text-slate-600 mb-10 max-w-2xl mx-auto leading-relaxed">
-              GST-compliant billing, inventory, purchases, and reports — for any
-              Indian business, from the corner shop to a growing enterprise.
-              No accounting degree needed.
+              GST-compliant billing, inventory, purchases &amp; reports — supercharged with
+              <span className="text-[#420662] font-semibold"> AI that scans bills, drafts invoices, and answers your books</span>.
+              Built for every Indian business, from the corner shop to a growing enterprise.
             </p>
+
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 to="/trial"
@@ -327,6 +364,24 @@ export default function LandingPage() {
               No credit card required &bull; All features unlocked &bull; 15 days free &bull;{' '}
               <Link to="/register" className="underline text-[#420662]">Buy a license</Link> to continue
             </p>
+
+            {/* AI capability chips */}
+            <div className="mt-12 flex flex-wrap items-center justify-center gap-2.5 max-w-3xl mx-auto">
+              {[
+                { icon: ScanLine, label: 'Scan bills with AI' },
+                { icon: Wand2, label: 'Auto-draft invoices' },
+                { icon: Sparkles, label: 'Smart GST insights' },
+                { icon: ShieldCheck, label: 'IRN & E-Way bill' },
+              ].map((chip) => (
+                <span
+                  key={chip.label}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/80 backdrop-blur ring-1 ring-slate-200 text-slate-700 text-xs font-medium shadow-sm hover:ring-[#420662]/40 hover:text-[#420662] transition-colors"
+                >
+                  <chip.icon className="w-3.5 h-3.5 text-[#420662]" />
+                  {chip.label}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -655,7 +710,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
             <div className="mb-6 flex items-start gap-3">
-              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-14 h-14 shrink-0 drop-shadow brightness-0 invert" />
+              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-20 h-20 shrink-0 drop-shadow brightness-0 invert" />
               <div className="leading-tight min-w-0">
                 <p className="text-base font-semibold text-white leading-snug">
                   <span className="block">Microtechnique</span>

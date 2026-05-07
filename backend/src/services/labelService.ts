@@ -25,19 +25,27 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
-function labelCard(i: { name: string; sku: string; selling_price: string | number; gst_rate: number; company_name: string; barcodeUri: string }, style = '') {
+type LabelItem = { name: string; sku: string; selling_price: string | number; gst_rate: number; company_name: string; barcodeUri: string };
+
+/** Render a single label. `density` controls how aggressively we shrink/hide content for tight grids. */
+function labelCard(i: LabelItem, density: 'roomy' | 'compact' | 'tight' = 'roomy') {
+  // Tight cells (60/page) hide the company line so the item name has breathing room.
+  const showCompany = density !== 'tight';
   return `
-    <div class="label-card" style="${style}">
-      <div class="company">${esc(i.company_name || 'My Company')}</div>
-      <div class="item-name">${esc(i.name)}</div>
-      ${i.barcodeUri ? `<img class="barcode" src="${i.barcodeUri}">` : ''}
-      <div class="sku">${esc(i.sku || 'N/A')}</div>
-      <div class="price">&#8377;${formatRupees(i.selling_price)} <span>GST:${Number(i.gst_rate || 0)}%</span></div>
+    <div class="label-card density-${density}">
+      ${showCompany ? `<div class="company">${esc(i.company_name || 'My Company')}</div>` : ''}
+      <div class="item-name" title="${esc(i.name)}">${esc(i.name)}</div>
+      ${i.barcodeUri ? `<img class="barcode" src="${i.barcodeUri}" alt="barcode">` : ''}
+      <div class="meta">
+        <span class="sku">${esc(i.sku || 'N/A')}</span>
+        <span class="price">&#8377;${formatRupees(i.selling_price)}</span>
+      </div>
+      ${density === 'roomy' ? `<div class="gst">GST ${Number(i.gst_rate || 0)}%</div>` : ''}
     </div>`;
 }
 
 const generateHtml = (
-  items: Array<{ name: string; sku: string; selling_price: string | number; gst_rate: number; company_name: string; barcodeUri: string }>,
+  items: Array<LabelItem>,
   type: '58x40' | '100x50' | 'a4',
   labelsPerPage?: number,
   mode: 'general_printer' | 'label_printer' = 'general_printer',
@@ -49,23 +57,28 @@ const generateHtml = (
     for (let idx = 0; idx < items.length; idx += 2) {
       pages.push(`
         <div class="roll-page two-up">
-          ${items.slice(idx, idx + 2).map((i) => labelCard(i)).join('')}
+          ${items.slice(idx, idx + 2).map((i) => labelCard(i, 'roomy')).join('')}
         </div>`);
     }
     body = pages.join('');
   } else if (type === '58x40') {
-    body = items.map(i => `<div class="roll-page single-58">${labelCard(i)}</div>`).join('');
+    body = items.map(i => `<div class="roll-page single-58">${labelCard(i, 'roomy')}</div>`).join('');
   } else if (type === '100x50') {
-    body = items.map(i => `<div class="roll-page single-100">${labelCard(i)}</div>`).join('');
+    body = items.map(i => `<div class="roll-page single-100">${labelCard(i, 'roomy')}</div>`).join('');
   } else if (type === 'a4') {
-    const preset = [24, 40, 65].includes(Number(labelsPerPage || 0)) ? Number(labelsPerPage) : 24;
-    const cols = preset === 24 ? 4 : preset === 40 ? 5 : 5;
-    const rows = Math.ceil(preset / cols);
+    // Allowed presets: 24 (4×6, roomy), 40 (5×8, compact), 60 (5×12, tight).
+    // Anything else (legacy "65") rounds down to 60 so cells aren't crushed.
+    const requested = Number(labelsPerPage || 0);
+    const preset = requested >= 60 ? 60 : requested >= 40 ? 40 : 24;
+    const cols = preset === 24 ? 4 : 5;
+    const rows = preset === 24 ? 6 : preset === 40 ? 8 : 12;
+    const density: 'roomy' | 'compact' | 'tight' =
+      preset === 24 ? 'roomy' : preset === 40 ? 'compact' : 'tight';
     const pages: string[] = [];
     for (let idx = 0; idx < items.length; idx += preset) {
       pages.push(`
-        <div class="a4-grid" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);">
-          ${items.slice(idx, idx + preset).map(i => labelCard(i)).join('')}
+        <div class="a4-grid a4-${preset}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);">
+          ${items.slice(idx, idx + preset).map(i => labelCard(i, density)).join('')}
         </div>
       `);
     }
@@ -75,14 +88,47 @@ const generateHtml = (
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
   @page { margin: 0; }
-  body,html{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;}
-  .label-card{border:1px dashed #aaa;padding:5px;text-align:center;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;width:100%;height:100%;}
-  .company{font-size:8px;font-weight:700;color:#444;overflow:hidden;white-space:nowrap;}
-  .item-name{font-size:10px;font-weight:700;line-height:1.15;overflow:hidden;max-height:24px;}
-  .barcode{width:100%;height:30px;object-fit:contain;}
-  .sku{font-size:8px;font-family:monospace;overflow:hidden;white-space:nowrap;}
-  .price{font-size:12px;font-weight:700;}
-  .price span{font-size:8px;color:#666;font-weight:400;}
+  body,html{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;-webkit-print-color-adjust:exact;}
+  .label-card{
+    border:1px dashed #bbb;
+    padding:3px 4px;
+    text-align:center;
+    box-sizing:border-box;
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    justify-content:space-between;
+    overflow:hidden;
+    width:100%;
+    height:100%;
+    line-height:1.1;
+  }
+  .label-card .company{font-size:8px;font-weight:600;color:#555;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .label-card .item-name{font-weight:700;line-height:1.15;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+  .label-card .barcode{width:100%;object-fit:contain;display:block;}
+  .label-card .meta{display:flex;justify-content:space-between;align-items:baseline;gap:4px;}
+  .label-card .sku{font-family:monospace;color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;text-align:left;}
+  .label-card .price{font-weight:700;color:#111;flex:0 0 auto;}
+  .label-card .gst{font-size:8px;color:#666;}
+
+  /* Density tiers — tighter cells get smaller fonts + barcode */
+  .density-roomy   .item-name{font-size:11px;max-height:26px;}
+  .density-roomy   .barcode  {height:34px;}
+  .density-roomy   .sku      {font-size:8px;}
+  .density-roomy   .price    {font-size:12px;}
+
+  .density-compact .item-name{font-size:9px;max-height:22px;}
+  .density-compact .barcode  {height:24px;}
+  .density-compact .sku      {font-size:7px;}
+  .density-compact .price    {font-size:10px;}
+
+  .density-tight   {padding:2px 3px;}
+  .density-tight   .item-name{font-size:8px;max-height:18px;-webkit-line-clamp:2;}
+  .density-tight   .barcode  {height:16px;}
+  .density-tight   .sku      {font-size:6.5px;}
+  .density-tight   .price    {font-size:9px;}
+
+  /* Roll labels for thermal printer */
   .roll-page{box-sizing:border-box;page-break-after:always;}
   .single-58{width:58mm;height:40mm;}
   .single-100{width:100mm;height:50mm;}
@@ -90,7 +136,12 @@ const generateHtml = (
   .single-100 .barcode{height:60px;}
   .single-100 .price{font-size:18px;}
   .two-up{width:116mm;height:40mm;display:grid;grid-template-columns:1fr 1fr;}
-  .a4-grid{width:210mm;height:297mm;box-sizing:border-box;padding:8mm;display:grid;gap:2mm;page-break-after:always;}
+
+  /* A4 grid pages — gap shrinks as density rises */
+  .a4-grid{width:210mm;height:297mm;box-sizing:border-box;padding:8mm;display:grid;page-break-after:always;}
+  .a4-24{gap:3mm;}
+  .a4-40{gap:1.5mm;padding:6mm;}
+  .a4-60{gap:1mm;padding:5mm;}
 </style></head>
 <body>${body}</body></html>`;
 };

@@ -118,7 +118,7 @@ export default function LicenseTiersPage() {
             <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
           </Link>
-          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-16 drop-shadow" />
+          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-20 drop-shadow" />
         </div>
       </div>
 
