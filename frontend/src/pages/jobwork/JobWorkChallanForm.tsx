@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { ArrowLeft, Plus, X, Wrench, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -19,12 +20,19 @@ export default function JobWorkChallanForm() {
     labour_charges: 0, other_charges: 0, notes: '',
   });
   const [items, setItems] = useState<any[]>([]);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   const { data: partiesData } = useQuery({
     queryKey: ['parties-jw'],
     queryFn: () => api.get('/parties/search', { params: { q: '' } }).then(r => r.data?.data ?? r.data),
   });
   const parties = partiesData ?? [];
+  const selectParty = (party: Record<string, unknown>) => {
+    const id = String(party.id || '');
+    if (!id) return;
+    setForm((prev: any) => ({ ...prev, party_id: id }));
+    qc.invalidateQueries({ queryKey: ['parties-jw'] });
+  };
 
   const { data: allItemsData } = useQuery({
     queryKey: ['items-jw'],
@@ -102,11 +110,18 @@ export default function JobWorkChallanForm() {
       <Card className="mb-6"><CardContent className="p-6 space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="col-span-2">
-            <Label>Job Worker / Party *</Label>
-            <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}>
-              <option value="">— Select —</option>
-              {parties.map((p: any) => <option key={p.id} value={p.id}>{p.name} {p.gstin ? `(${p.gstin})` : ''}</option>)}
-            </select>
+            <div className="flex items-center justify-between gap-2">
+              <Label>Job Worker / Party *</Label>
+              <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 text-indigo-600" onClick={() => setQuickAddOpen(true)}>
+                <Plus className="h-3.5 w-3.5" /> Quick add
+              </Button>
+            </div>
+            <div className="mt-1 flex gap-2">
+              <select className="w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}>
+                <option value="">— Select —</option>
+                {parties.map((p: any) => <option key={p.id} value={p.id}>{p.name} {p.gstin ? `(${p.gstin})` : ''}</option>)}
+              </select>
+            </div>
           </div>
           <div><Label>Date</Label><Input type="date" className="mt-1" value={form.challan_date} onChange={e => setForm({ ...form, challan_date: e.target.value })} /></div>
           <div><Label>Godown</Label>
@@ -188,6 +203,7 @@ export default function JobWorkChallanForm() {
         <Button variant="outline" onClick={() => navigate('/job-work')}>Cancel</Button>
         <Button loading={saveMutation.isPending} onClick={handleSave}>Create Challan</Button>
       </div>
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={selectParty} />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
+import puppeteer, { Browser } from 'puppeteer';
 
 // ── Helpers ───────────────────────────────────────────────────
 async function generateChallanNumber(companyId: string, type: string): Promise<string> {
@@ -15,6 +16,28 @@ async function generateChallanNumber(companyId: string, type: string): Promise<s
   );
   const yearStr = new Date().getFullYear().toString().slice(-2);
   return `${prefix}-${suffix}/${yearStr}/${String(parseInt(countRes.rows[0].count) + 1).padStart(4, '0')}`;
+}
+
+function esc(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function rupees(value: unknown): string {
+  const paise = Number(value || 0);
+  return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function stockQuantity(value: unknown, itemName: string): number {
+  const qty = Number(value);
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  if (!Number.isInteger(qty)) {
+    throw new Error(`Stock quantity for "${itemName}" must be a whole number. Enter ${Math.round(qty)} or update stock units before sending fractional quantities.`);
+  }
+  return qty;
 }
 
 // ── POST /api/job-work/challans ───────────────────────────────
@@ -153,6 +176,81 @@ export async function getChallan(req: Request, res: Response) {
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
+// ── GET /api/job-work/challans/:id/pdf ────────────────────────
+export async function downloadChallanPdf(req: Request, res: Response) {
+  let browser: Browser | null = null;
+  try {
+    const companyId = req.user!.company_id;
+    const [companyRes, challanRes, itemsRes] = await Promise.all([
+      query('SELECT name, address, gstin, phone, email FROM companies WHERE id = $1', [companyId]),
+      query(
+        `SELECT jw.*, p.name as party_name, p.gstin, p.billing_address, g.name as godown_name
+         FROM job_work_challans jw
+         LEFT JOIN parties p ON jw.party_id = p.id
+         LEFT JOIN godowns g ON jw.godown_id = g.id
+         WHERE jw.id = $1 AND jw.company_id = $2 AND jw.is_deleted = false`,
+        [req.params.id, companyId],
+      ),
+      query('SELECT * FROM job_work_challan_items WHERE challan_id = $1 ORDER BY sort_order', [req.params.id]),
+    ]);
+    if (!challanRes.rows.length) return res.status(404).json(error('Challan not found'));
+
+    const company = companyRes.rows[0] || {};
+    const challan = challanRes.rows[0];
+    const items = itemsRes.rows;
+    const title = challan.challan_type === 'outward' ? 'Job Work Outward Challan' : 'Job Work Inward Challan';
+    const rows = items.map((item: any, idx: number) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td><b>${esc(item.item_name)}</b>${item.hsn_code ? `<div class="muted">HSN: ${esc(item.hsn_code)}</div>` : ''}</td>
+        <td>${esc(item.unit || '')}</td>
+        <td class="num">${Number(item.quantity_sent || 0)}</td>
+        <td class="num">${Number(item.quantity_received || 0)}</td>
+        <td class="num">${Number(item.quantity_rejected || 0)}</td>
+        <td class="num">${Number(item.wastage || 0)}</td>
+        <td class="num">${rupees(item.total_value)}</td>
+      </tr>
+    `).join('');
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      @page{size:A4;margin:14mm} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0}
+      .top{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #4f46e5;padding-bottom:18px}
+      h1{margin:0;color:#3730a3;font-size:26px}.company{font-size:20px;font-weight:800}.muted{color:#64748b;font-size:12px;line-height:1.5}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}.box{border:1px solid #e2e8f0;border-radius:8px;padding:12px}
+      .label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:700;margin-bottom:4px}.value{font-size:14px;font-weight:700}
+      table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#4f46e5;color:white;text-align:left;padding:9px;font-size:12px}
+      td{border:1px solid #e2e8f0;padding:8px;font-size:12px;vertical-align:top}.num{text-align:right;font-variant-numeric:tabular-nums}
+      .summary{margin-left:auto;margin-top:16px;width:280px}.summary div{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0}
+      .note{margin-top:22px;font-size:12px;color:#475569}.sign{margin-top:46px;text-align:right;font-size:12px}
+    </style></head><body>
+      <section class="top">
+        <div><div class="company">${esc(company.name || 'Company')}</div><div class="muted">${esc(company.address || '')}</div><div class="muted">${company.gstin ? `GSTIN: ${esc(company.gstin)}` : ''}</div></div>
+        <div style="text-align:right"><h1>${esc(title)}</h1><div class="value">${esc(challan.challan_number)}</div><div class="muted">${new Date(challan.challan_date).toLocaleDateString('en-IN')}</div></div>
+      </section>
+      <section class="grid">
+        <div class="box"><div class="label">Job Worker / Party</div><div class="value">${esc(challan.party_name_snapshot || challan.party_name)}</div><div class="muted">${esc(challan.billing_address || '')}</div><div class="muted">${challan.party_gstin_snapshot || challan.gstin ? `GSTIN: ${esc(challan.party_gstin_snapshot || challan.gstin)}` : ''}</div></div>
+        <div class="box"><div class="label">Movement Details</div><div class="muted">Type: ${esc(challan.challan_type)}</div><div class="muted">Godown: ${esc(challan.godown_name || '-')}</div><div class="muted">Return due: ${challan.return_due_date ? new Date(challan.return_due_date).toLocaleDateString('en-IN') : '-'}</div><div class="muted">Vehicle: ${esc(challan.vehicle_number || '-')}</div></div>
+      </section>
+      <table><thead><tr><th>#</th><th>Material</th><th>Unit</th><th>Sent</th><th>Received</th><th>Rejected</th><th>Wastage</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>
+      <section class="summary"><div><span>Material Value</span><b>${rupees(challan.total_material_value)}</b></div><div><span>Labour Charges</span><b>${rupees(challan.labour_charges)}</b></div><div><span>Other Charges</span><b>${rupees(challan.other_charges)}</b></div><div><span>Total Charges</span><b>${rupees(challan.total_charges)}</b></div></section>
+      ${challan.notes ? `<section class="note"><b>Notes:</b> ${esc(challan.notes)}</section>` : ''}
+      <section class="sign">Authorised Signatory</section>
+    </body></html>`;
+
+    browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${challan.challan_number.replace(/[^\w.-]+/g, '-')}.pdf`);
+    res.send(Buffer.from(pdf));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
 // ── POST /api/job-work/challans/:id/send ──────────────────────
 export async function sendChallan(req: Request, res: Response) {
   try {
@@ -171,19 +269,21 @@ export async function sendChallan(req: Request, res: Response) {
         const itemsRes = await client.query('SELECT * FROM job_work_challan_items WHERE challan_id = $1', [challan.id]);
         for (const item of itemsRes.rows) {
           if (!item.item_id || !item.quantity_sent) continue;
+          const sentQty = stockQuantity(item.quantity_sent, item.item_name || 'item');
+          if (sentQty <= 0) continue;
           const stockRes = await client.query(
             'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3 FOR UPDATE',
             [item.item_id, godownId, companyId]
           );
-          const available = stockRes.rows[0]?.quantity || 0;
-          if (available < item.quantity_sent) throw new Error(`Insufficient stock for "${item.item_name}": available ${available}, need ${item.quantity_sent}`);
+          const available = Number(stockRes.rows[0]?.quantity || 0);
+          if (available < sentQty) throw new Error(`Insufficient stock for "${item.item_name}": available ${available}, need ${sentQty}`);
           await client.query('UPDATE item_stock SET quantity = quantity - $1 WHERE item_id = $2 AND godown_id = $3 AND company_id = $4',
-            [item.quantity_sent, item.item_id, godownId, companyId]);
+            [sentQty, item.item_id, godownId, companyId]);
           const balRes = await client.query('SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2', [item.item_id, godownId]);
           await client.query(
             `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
              VALUES ($1,$2,$3,'job_work_out','job_work_challan',$4,$5,$6,$7,$8)`,
-            [companyId, item.item_id, godownId, challan.id, -Number(item.quantity_sent), balRes.rows[0]?.quantity || 0,
+            [companyId, item.item_id, godownId, challan.id, -sentQty, Number(balRes.rows[0]?.quantity || 0),
              `Sent for job work via ${challan.challan_number}`, req.user!.id]
           );
         }
@@ -234,16 +334,17 @@ export async function receiveChallan(req: Request, res: Response) {
 
         // Add received quantity back to stock
         if (ci.item_id && godownId && recvItem.quantity_received > 0) {
+          const receivedQty = stockQuantity(recvItem.quantity_received, ci.item_name || 'item');
           await client.query(
             `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price) VALUES ($1,$2,$3,$4,0)
              ON CONFLICT (item_id, godown_id) DO UPDATE SET quantity = item_stock.quantity + EXCLUDED.quantity`,
-            [companyId, ci.item_id, godownId, recvItem.quantity_received]
+            [companyId, ci.item_id, godownId, receivedQty]
           );
           const balRes = await client.query('SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2', [ci.item_id, godownId]);
           await client.query(
             `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
              VALUES ($1,$2,$3,'job_work_in','job_work_challan',$4,$5,$6,$7,$8)`,
-            [companyId, ci.item_id, godownId, challan.id, Number(recvItem.quantity_received), balRes.rows[0]?.quantity || 0,
+            [companyId, ci.item_id, godownId, challan.id, receivedQty, Number(balRes.rows[0]?.quantity || 0),
              `Received from job work via ${challan.challan_number}`, req.user!.id]
           );
         }

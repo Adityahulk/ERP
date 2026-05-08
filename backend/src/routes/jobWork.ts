@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   createChallan, listChallans, getChallan, sendChallan, receiveChallan, cancelChallan,
-  listOverdue, jobWorkRegister
+  downloadChallanPdf, listOverdue, jobWorkRegister
 } from '../controllers/jobWorkController';
 
 const router = Router();
@@ -11,6 +11,7 @@ router.get('/register', jobWorkRegister);
 
 router.post('/challans', createChallan);
 router.get('/challans', listChallans);
+router.get('/challans/:id/pdf', downloadChallanPdf);
 router.get('/challans/:id', getChallan);
 router.post('/challans/:id/send', sendChallan);
 router.post('/challans/:id/receive', receiveChallan);

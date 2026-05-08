@@ -66,18 +66,17 @@ const generateHtml = (
   } else if (type === '100x50') {
     body = items.map(i => `<div class="roll-page single-100">${labelCard(i, 'roomy')}</div>`).join('');
   } else if (type === 'a4') {
-    // Allowed presets: 24 (4×6, roomy), 40 (5×8, compact), 60 (5×12, tight).
-    // Anything else (legacy "65") rounds down to 60 so cells aren't crushed.
-    const requested = Number(labelsPerPage || 0);
-    const preset = requested >= 60 ? 60 : requested >= 40 ? 40 : 24;
-    const cols = preset === 24 ? 4 : 5;
-    const rows = preset === 24 ? 6 : preset === 40 ? 8 : 12;
+    const requested = Math.min(100, Math.max(1, Math.floor(Number(labelsPerPage || 24))));
+    const preset = requested;
+    const cols = preset <= 24 ? 4 : 5;
+    const rows = Math.ceil(preset / cols);
     const density: 'roomy' | 'compact' | 'tight' =
-      preset === 24 ? 'roomy' : preset === 40 ? 'compact' : 'tight';
+      preset <= 24 ? 'roomy' : preset <= 40 ? 'compact' : 'tight';
+    const a4Class = preset <= 24 ? 'a4-24' : preset <= 40 ? 'a4-40' : 'a4-60';
     const pages: string[] = [];
     for (let idx = 0; idx < items.length; idx += preset) {
       pages.push(`
-        <div class="a4-grid a4-${preset}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);">
+        <div class="a4-grid ${a4Class}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);">
           ${items.slice(idx, idx + preset).map(i => labelCard(i, density)).join('')}
         </div>
       `);

@@ -24,8 +24,8 @@ router.post('/bulk', async (req: Request, res: Response) => {
        return res.status(400).json({ success: false, error: 'Invalid print mode' });
      }
      const labelsPerPageNum = Number(labels_per_page || 0);
-     if (mode === 'general_printer' && labelsPerPageNum && ![24, 40, 65].includes(labelsPerPageNum)) {
-       return res.status(400).json({ success: false, error: 'General printer supports only 24, 40, or 65 labels per page' });
+     if (mode === 'general_printer' && labelsPerPageNum && (!Number.isInteger(labelsPerPageNum) || labelsPerPageNum < 1 || labelsPerPageNum > 100)) {
+       return res.status(400).json({ success: false, error: 'General printer labels per page must be a whole number between 1 and 100' });
      }
      if (mode === 'label_printer' && labelsPerPageNum && ![1, 2].includes(labelsPerPageNum)) {
        return res.status(400).json({ success: false, error: 'Label printer supports only 1 or 2 labels per page' });

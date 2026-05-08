@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Wrench, Send, ArrowDownLeft, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Wrench, Send, ArrowDownLeft, XCircle, AlertTriangle, CheckCircle2, Download } from 'lucide-react';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 import { useState } from 'react';
@@ -32,6 +32,23 @@ export default function JobWorkChallanDetail() {
     onSuccess: () => { toast.success('Materials received'); setShowReceive(false); qc.invalidateQueries({ queryKey: ['jw-challan', id] }); },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
   });
+
+  const downloadPdf = async () => {
+    try {
+      const res = await api.get(`/job-work/challans/${id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${challan?.challan_number || 'job-work-challan'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Challan download started');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Download failed');
+    }
+  };
 
   const startReceive = () => {
     if (!challan?.items) return;
@@ -76,6 +93,7 @@ export default function JobWorkChallanDetail() {
 
       {/* Actions */}
       <div className="flex gap-2 mb-6 flex-wrap">
+        <Button variant="outline" onClick={downloadPdf} className="gap-2"><Download className="w-4 h-4" /> Download PDF</Button>
         {challan.status === 'draft' && challan.challan_type === 'outward' && (
           <Button onClick={() => sendMut.mutate()} loading={sendMut.isPending} className="gap-2"><Send className="w-4 h-4" /> Send to Job Worker</Button>
         )}

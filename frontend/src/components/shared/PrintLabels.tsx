@@ -13,7 +13,7 @@ interface PrintLabelsProps {
 export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps) {
   const [items, setItems] = useState(selectedItems.map(i => ({ ...i, print_qty: i.quantity || 1 })));
   const [mode, setMode] = useState<'general_printer' | 'label_printer'>('general_printer');
-  const [generalPreset, setGeneralPreset] = useState<'24' | '40' | '60'>('24');
+  const [generalPreset, setGeneralPreset] = useState<'24' | '40' | '65'>('24');
   const [labelPreset, setLabelPreset] = useState<'single' | 'double'>('single');
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -125,7 +125,7 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
              <div className="grid sm:grid-cols-2 gap-3">
                 <button onClick={() => setMode('general_printer')} className={`p-3 border rounded-lg text-left ${mode === 'general_printer' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
                   General Printer
-                  <span className="block text-xs font-normal mt-1 opacity-70">A4 sheets (24 / 40 / 60 labels)</span>
+                  <span className="block text-xs font-normal mt-1 opacity-70">A4 sheets (24 / 40 / 65 labels)</span>
                 </button>
                 <button onClick={() => setMode('label_printer')} className={`p-3 border rounded-lg text-left ${mode === 'label_printer' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
                   Label Printer
@@ -141,8 +141,8 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
                    <button onClick={() => setGeneralPreset('40')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '40' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
                      40 / page <span className="block text-xs font-normal mt-1 opacity-70">Medium A4 label</span>
                    </button>
-                   <button onClick={() => setGeneralPreset('60')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '60' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
-                     60 / page <span className="block text-xs font-normal mt-1 opacity-70">Small A4 label</span>
+                   <button onClick={() => setGeneralPreset('65')} className={`flex-1 p-3 border rounded-lg text-center ${generalPreset === '65' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-semibold' : 'hover:bg-slate-50'}`}>
+                     65 / page <span className="block text-xs font-normal mt-1 opacity-70">Small A4 label</span>
                    </button>
                  </>
                ) : (
@@ -169,7 +169,19 @@ export default function PrintLabels({ selectedItems, onClose }: PrintLabelsProps
                       </div>
                       <div className="flex items-center gap-3">
                          <button disabled={disabledByMode} onClick={() => { const cp = [...items]; cp[idx].print_qty = Math.max(0, cp[idx].print_qty - 1); setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Minus className="w-4 h-4"/></button>
-                         <span className="w-8 text-center text-sm font-semibold">{item.print_qty}</span>
+                         <input
+                           type="number"
+                           min={0}
+                           step={1}
+                           disabled={disabledByMode}
+                           value={item.print_qty}
+                           onChange={(e) => {
+                             const cp = [...items];
+                             cp[idx].print_qty = Math.max(0, parseInt(e.target.value, 10) || 0);
+                             setItems(cp);
+                           }}
+                           className="h-8 w-16 rounded-md border border-slate-200 bg-white text-center text-sm font-semibold tabular-nums disabled:bg-slate-50 disabled:text-slate-400"
+                         />
                          <button disabled={disabledByMode} onClick={() => { const cp = [...items]; cp[idx].print_qty += 1; setItems(cp) }} className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Plus className="w-4 h-4"/></button>
                       </div>
                     </div>
