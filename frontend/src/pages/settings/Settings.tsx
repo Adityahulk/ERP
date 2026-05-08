@@ -1109,15 +1109,15 @@ export default function Settings() {
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl">
                            <div>
-                              <label className="text-sm font-medium text-slate-700">Default PDF template</label>
+                              <label className="text-sm font-medium text-slate-700">Default invoice layout</label>
                               <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={invoiceTemplate} onChange={(e) => setInvoiceTemplate(e.target.value)}>
-                                 <option value="standard">Standard GST</option>
-                                 <option value="simple">Simple</option>
-                                 <option value="performa">Proforma</option>
+                                 <option value="standard">Detailed Tax Invoice</option>
+                                 <option value="simple">Professional Header</option>
+                                 <option value="performa">Centered Proforma</option>
                               </select>
                            </div>
                            <div>
-                              <label className="text-sm font-medium text-slate-700">Document theme</label>
+                              <label className="text-sm font-medium text-slate-700">Invoice color style</label>
                               <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value)}>
                                 {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
                               </select>

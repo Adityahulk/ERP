@@ -1087,6 +1087,9 @@ export async function getInvoicePDF(req: Request, res: Response) {
 
     const tpl = String(req.query.template || '');
     const templateOverride = (ALLOWED_PDF_TEMPLATES as readonly string[]).includes(tpl) ? tpl : invRes.rows[0].pdf_template || undefined;
+    if (templateOverride) {
+      invRes.rows[0].pdf_template = templateOverride;
+    }
     if ((ALLOWED_DOCUMENT_THEMES as readonly string[]).includes(String(req.query.theme || ''))) {
       invRes.rows[0].document_theme = String(req.query.theme);
     }
@@ -1233,6 +1236,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       total_amount: totals.totalAmount,
       irn: null,
       qr_code_url: null,
+      pdf_template: template,
       document_theme: theme,
     };
 

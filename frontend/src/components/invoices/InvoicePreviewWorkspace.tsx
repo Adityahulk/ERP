@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X, Download, Printer, Receipt, Send, Mail, MessageSquare } from 'lucide-react';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -8,24 +8,24 @@ import toast from 'react-hot-toast';
 const SKIP_PREVIEW_KEY = 'bizflow_skip_invoice_preview_after_save';
 
 export const INVOICE_PDF_TEMPLATES = [
-  { id: 'standard', label: 'GST standard', group: 'Classic', tip: 'HSN and full CGST/SGST or IGST columns for compliance.' },
-  { id: 'simple', label: 'Simple', group: 'Classic', tip: 'Fewer columns — quick retail-style print.' },
-  { id: 'performa', label: 'Proforma style', group: 'Minimal', tip: 'Totals-focused layout without detailed tax columns.' },
+  { id: 'standard', label: 'Detailed Tax Invoice', group: 'Business', tip: 'Complete GST-ready layout with buyer, seller, bank, signature, and tax details.' },
+  { id: 'simple', label: 'Professional Header', group: 'Business', tip: 'Bold header layout with clean item rows and compact totals.' },
+  { id: 'performa', label: 'Centered Proforma', group: 'Business', tip: 'Centered proforma-style layout for estimates and advance invoices.' },
 ] as const;
 
 export type InvoicePdfTemplateId = (typeof INVOICE_PDF_TEMPLATES)[number]['id'];
 export const DOCUMENT_THEME_OPTIONS = [
-  { id: 'classic', label: 'Classic' },
-  { id: 'modern', label: 'Modern' },
-  { id: 'compact', label: 'Compact' },
-  { id: 'executive', label: 'Executive' },
-  { id: 'sunrise', label: 'Sunrise' },
-  { id: 'forest', label: 'Forest' },
-  { id: 'midnight', label: 'Midnight' },
-  { id: 'royal', label: 'Royal' },
-  { id: 'slate', label: 'Slate' },
-  { id: 'retail', label: 'Retail' },
-  { id: 'minimal', label: 'Minimal' },
+  { id: 'classic', label: 'Amber Corporate' },
+  { id: 'modern', label: 'Blue Professional' },
+  { id: 'compact', label: 'Compact Neutral' },
+  { id: 'executive', label: 'Black Executive' },
+  { id: 'sunrise', label: 'Orange Accent' },
+  { id: 'forest', label: 'Green Business' },
+  { id: 'midnight', label: 'Navy Header' },
+  { id: 'royal', label: 'Violet Premium' },
+  { id: 'slate', label: 'Slate Formal' },
+  { id: 'retail', label: 'Retail Teal' },
+  { id: 'minimal', label: 'Minimal Black' },
 ] as const;
 export type DocumentThemeId = (typeof DOCUMENT_THEME_OPTIONS)[number]['id'];
 
@@ -95,6 +95,7 @@ export function InvoicePreviewWorkspace({
   const [skipNext, setSkipNext] = useState(() => readSkipInvoicePreview());
   const [waSending, setWaSending] = useState(false);
   const [sharePhone, setSharePhone] = useState(partyPhone || '');
+  const previewRequestSeq = useRef(0);
 
   useEffect(() => {
     setSharePhone(partyPhone || '');
@@ -115,29 +116,39 @@ export function InvoicePreviewWorkspace({
 
   const loadPdf = useCallback(async () => {
     if (!open) return;
+    const seq = previewRequestSeq.current + 1;
+    previewRequestSeq.current = seq;
+    const previewKey = `${Date.now()}-${seq}`;
     setLoading(true);
+    setPdfUrl((prev) => {
+      revoke(prev);
+      return null;
+    });
     try {
       let blob: Blob;
       if (mode === 'saved' && invoiceId) {
         const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-          params: { template, theme, inline: 1 },
+          params: { template, theme, inline: 1, preview_key: previewKey },
           responseType: 'blob',
         });
         blob = res.data as Blob;
       } else if (mode === 'draft' && draftPayload) {
-        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme }, { responseType: 'blob' });
+        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme, preview_key: previewKey }, { responseType: 'blob' });
         blob = res.data as Blob;
       } else {
         return;
       }
+      if (seq !== previewRequestSeq.current) return;
       setPdfUrl((prev) => {
         revoke(prev);
         return window.URL.createObjectURL(blob);
       });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || e.message || 'Could not load preview');
+      if (seq === previewRequestSeq.current) {
+        toast.error(e.response?.data?.error || e.message || 'Could not load preview');
+      }
     } finally {
-      setLoading(false);
+      if (seq === previewRequestSeq.current) setLoading(false);
     }
   }, [open, mode, invoiceId, draftPayload, template, theme, revoke]);
 
@@ -148,6 +159,7 @@ export function InvoicePreviewWorkspace({
 
   useEffect(() => {
     return () => {
+      previewRequestSeq.current += 1;
       setPdfUrl((prev) => {
         revoke(prev);
         return null;
@@ -166,14 +178,15 @@ Thank you.
 
   const fetchCurrentPdfFile = async (): Promise<File> => {
     let blob: Blob;
+    const previewKey = `${Date.now()}-export-${template}-${theme}`;
     if (mode === 'saved' && invoiceId) {
       const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-        params: { template, theme, inline: 1 },
+        params: { template, theme, inline: 1, preview_key: previewKey },
         responseType: 'blob',
       });
       blob = res.data as Blob;
     } else if (mode === 'draft' && draftPayload) {
-      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme }, { responseType: 'blob' });
+      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme, preview_key: previewKey }, { responseType: 'blob' });
       blob = res.data as Blob;
     } else {
       throw new Error('Nothing to share');
