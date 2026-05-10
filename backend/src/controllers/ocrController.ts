@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
 import { success, error } from '../lib/response';
+import { query } from '../config/db';
 
 // ── File upload config ─────────────────────────────────────────
 const storage = multer.diskStorage({
@@ -115,15 +116,62 @@ function extractTotal(lines: string[]): number | null {
   return null;
 }
 
+function normalizeName(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(pvt|private|limited|ltd|llp|inc|company|co|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isLikelyCompanyOwnLine(line: string, ownCompanyName?: string | null): boolean {
+  const own = normalizeName(ownCompanyName);
+  const candidate = normalizeName(line);
+  if (!own || !candidate) return false;
+  return candidate === own || candidate.includes(own) || own.includes(candidate);
+}
+
+function cleanPartyCandidate(line: string): string {
+  return line
+    .replace(/^(?:supplier|seller|vendor|party|customer|buyer|bill\s*to|ship\s*to|name)\s*(?:name)?\s*[:\-]\s*/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 /** Guess party / supplier name from first meaningful lines */
-function extractPartyName(lines: string[]): string | null {
-  const skipPat = /(?:GSTIN|GST\s*No|Tax\s*Invoice|Bill|Invoice|Date|Address|Mobile|Phone|Email|www\.|http|@|\d{10})/i;
-  for (let i = 0; i < Math.min(lines.length, 15); i++) {
-    const line = lines[i];
+function extractPartyName(lines: string[], opts: { ownCompanyName?: string | null; ownGstin?: string | null; supplierGstin?: string | null } = {}): string | null {
+  const skipPat = /(?:GSTIN|GST\s*No|Tax\s*Invoice|Invoice|Date|Address|Mobile|Phone|Email|www\.|http|@|\d{10}|PAN|FSSAI|IRN|Ack\s*No)/i;
+  const ownGstin = String(opts.ownGstin || '').toUpperCase();
+
+  const labeledPatterns = [
+    /(?:supplier|seller|vendor|party)\s*(?:name)?\s*[:\-]\s*(.+)$/i,
+    /bill\s*from\s*[:\-]\s*(.+)$/i,
+    /billed\s*by\s*[:\-]\s*(.+)$/i,
+    /bill\s*to\s*[:\-]\s*(.+)$/i,
+  ];
+
+  for (const line of lines.slice(0, 45)) {
+    for (const pat of labeledPatterns) {
+      const m = line.match(pat);
+      const candidate = m?.[1] ? cleanPartyCandidate(m[1]) : '';
+      if (candidate.length >= 3 && !skipPat.test(candidate) && !isLikelyCompanyOwnLine(candidate, opts.ownCompanyName)) return candidate;
+    }
+  }
+
+  for (let i = 0; i < Math.min(lines.length, 35); i++) {
+    const line = cleanPartyCandidate(lines[i]);
     if (line.length < 3) continue;
     if (/^\d+$/.test(line)) continue;
-    if (GSTIN_RE.test(line)) { GSTIN_RE.lastIndex = 0; continue; }
+    const gstins = [...line.matchAll(GSTIN_RE)].map(m => m[1].toUpperCase());
+    if (gstins.length) {
+      if (ownGstin && gstins.includes(ownGstin)) continue;
+      GSTIN_RE.lastIndex = 0;
+      continue;
+    }
     if (skipPat.test(line)) continue;
+    if (isLikelyCompanyOwnLine(line, opts.ownCompanyName)) continue;
+    if (/^(tax invoice|invoice|original for recipient|duplicate for transporter)$/i.test(line)) continue;
     // Looks like a company / person name
     return line;
   }
@@ -131,18 +179,20 @@ function extractPartyName(lines: string[]): string | null {
 }
 
 /** Master extractor: works on any text blob */
-function extractInvoiceData(rawText: string) {
+function extractInvoiceData(rawText: string, opts: { ownCompanyName?: string | null; ownGstin?: string | null } = {}) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
   const gstins = [...rawText.matchAll(GSTIN_RE)].map(m => m[1].toUpperCase());
   const uniqueGstins = [...new Set(gstins)];
+  const ownGstin = String(opts.ownGstin || '').toUpperCase();
+  const partyGstins = ownGstin ? uniqueGstins.filter(g => g !== ownGstin) : uniqueGstins;
 
   return {
     invoice_number: extractInvoiceNumber(lines),
     bill_date: extractDate(rawText),
-    party_name: extractPartyName(lines),
-    supplier_gstin: uniqueGstins[0] ?? null,
-    buyer_gstin: uniqueGstins[1] ?? null,
+    party_name: extractPartyName(lines, { ...opts, supplierGstin: partyGstins[0] ?? null }),
+    supplier_gstin: partyGstins[0] ?? uniqueGstins[0] ?? null,
+    buyer_gstin: ownGstin || partyGstins[1] || uniqueGstins[1] || null,
     total_amount_paise: extractTotal(lines),
     raw_lines: lines.slice(0, 30), // first 30 lines for UI preview
   };
@@ -183,7 +233,9 @@ export async function extractOcrData(req: Request, res: Response) {
       return res.status(422).json(error('Could not extract text from the uploaded file. Try a clearer image or a text-based PDF.'));
     }
 
-    const extracted = extractInvoiceData(text);
+    const companyRes = await query('SELECT name, gstin FROM companies WHERE id = $1', [req.user!.company_id]);
+    const company = companyRes.rows[0] || {};
+    const extracted = extractInvoiceData(text, { ownCompanyName: company.name, ownGstin: company.gstin });
     res.json(success(extracted));
   } catch (err: any) {
     console.error('[OCR] extraction error:', err.message);

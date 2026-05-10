@@ -85,6 +85,13 @@ function mapLineForGst(raw: any) {
   };
 }
 
+function invoiceLineName(item: any): string {
+  const value = item.item_name ?? item.name ?? item.description ?? item.item_description;
+  const text = String(value ?? '').trim();
+  if (text) return text;
+  return item.is_text_row ? ' ' : 'Item';
+}
+
 async function backupInvoiceSnapshot(client: any, companyId: string, invoiceId: string, action: string, createdBy: string) {
   const inv = await client.query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2`, [invoiceId, companyId]);
   const items = await client.query(
@@ -348,7 +355,7 @@ export async function createInvoice(req: Request, res: Response) {
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
           [
             invoice.id, companyId, item.item_id || null,
-            item.item_name || item.name || 'Item',
+            invoiceLineName(item),
             item.description || item.item_description || null,
             item.hsn_code || null,
             item.unit || 'PCS',
@@ -824,7 +831,7 @@ export async function updateInvoice(req: Request, res: Response) {
             id,
             companyId,
             item.item_id || null,
-            item.item_name || item.name || 'Item',
+            invoiceLineName(item),
             item.description || item.item_description || null,
             item.hsn_code || null,
             item.unit || 'PCS',
@@ -1203,7 +1210,8 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       const lineGst = mappedItems[i];
       const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
       pdfRows.push({
-        item_name: item.item_name || item.name || item.description || 'Item',
+        item_name: invoiceLineName(item),
+        item_description: item.item_description || item.description || null,
         hsn_code: item.hsn_code || null,
         quantity: lineGst.quantity,
         unit_price: lineGst.unit_price,

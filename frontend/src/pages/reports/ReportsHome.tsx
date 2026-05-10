@@ -257,6 +257,7 @@ export default function ReportsHome() {
   const renderCell = (key: string, value: unknown) => {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'number' && isMoneyKey(key)) return formatMoney(value);
+    if (typeof value === 'string' && isMoneyKey(key) && /^-?\d+(?:\.\d+)?$/.test(value.trim())) return formatMoney(Number(value));
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return formatDate(value);
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
