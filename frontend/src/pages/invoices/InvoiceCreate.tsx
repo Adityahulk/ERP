@@ -19,10 +19,9 @@ import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
 interface LineItem {
-  item_id?: string; name: string; hsn_code?: string;
+  item_id?: string; name: string; description?: string; hsn_code?: string;
   quantity: number; unit_price: number; gst_rate: number;
   discount_percent: number; cess_rate: number;
-  is_text_row?: boolean;
 }
 
 export default function InvoiceCreate() {
@@ -117,6 +116,7 @@ export default function InvoiceCreate() {
       return {
         item_id: it.item_id ? String(it.item_id) : undefined,
         name: String(it.item_name || ''),
+        description: String(it.item_description || ''),
         hsn_code: it.hsn_code ? String(it.hsn_code) : '',
         quantity: qty,
         unit_price: up,
@@ -218,19 +218,6 @@ export default function InvoiceCreate() {
     setItemSearch(''); setItemResults([]);
   };
 
-  const addTextRow = () => {
-    setItems([...items, {
-      name: '',
-      hsn_code: '',
-      quantity: 0,
-      unit_price: 0,
-      gst_rate: 0,
-      discount_percent: 0,
-      cess_rate: 0,
-      is_text_row: true,
-    }]);
-  };
-
   const updateLine = (idx: number, f: string, v: any) => {
     const updated = [...items];
     (updated[idx] as any)[f] = v;
@@ -272,10 +259,9 @@ export default function InvoiceCreate() {
       company_bank_account_id: companyBankAccountId || undefined,
       items: items.map((i) => ({
         item_id: i.item_id,
-        description: i.name,
+        description: i.description,
         name: i.name,
         item_name: i.name,
-        is_text_row: i.is_text_row,
         hsn_code: i.hsn_code,
         quantity: i.quantity,
         unit_price: i.unit_price,
@@ -294,10 +280,9 @@ export default function InvoiceCreate() {
 
     const itemPayload = items.map((i) => ({
       item_id: i.item_id,
-      description: i.name,
+      description: i.description,
       name: i.name,
       item_name: i.name,
-      is_text_row: i.is_text_row,
       hsn_code: i.hsn_code,
       quantity: i.quantity,
       unit_price: i.unit_price,
@@ -510,9 +495,6 @@ export default function InvoiceCreate() {
               <PackagePlus className="h-4 w-4" />
               Add item
             </Button>
-            <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={addTextRow}>
-              Add empty row
-            </Button>
           </div>
           {itemSearch.length >= 2 && itemResults.length === 0 && (
             <p className="text-sm text-muted-foreground">
@@ -541,22 +523,21 @@ export default function InvoiceCreate() {
                     const c = calcLine(item);
                     return (
                       <tr key={idx} className="border-b">
-                        <td className="p-2 font-medium">
-                          {item.is_text_row ? (
-                            <Input
-                              className="h-8 min-w-[240px]"
-                              placeholder="Write description or extra details..."
-                              value={item.name}
-                              onChange={e => updateLine(idx, 'name', e.target.value)}
-                            />
-                          ) : item.name}
+                        <td className="p-2 font-medium min-w-[260px]">
+                          <div>{item.name}</div>
+                          <textarea
+                            className="mt-1 w-full min-h-[44px] rounded-md border bg-background px-2 py-1 text-xs font-normal text-slate-700 resize-y"
+                            placeholder="Optional printed description/details under this item..."
+                            value={item.description || ''}
+                            onChange={e => updateLine(idx, 'description', e.target.value)}
+                          />
                         </td>
                         <td className="p-2"><Input className="w-16 text-xs h-7" value={item.hsn_code || ''} onChange={e => updateLine(idx, 'hsn_code', e.target.value)} /></td>
-                        <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={item.is_text_row ? 0 : 1} value={item.quantity} disabled={item.is_text_row} onChange={e => updateLine(idx, 'quantity', parseFloat(e.target.value) || 0)} /></td>
-                        <td className="p-2"><Input type="number" className="w-28 text-right h-7 tabular-nums" min={0} value={paiseToRupees(item.unit_price).toFixed(2)} disabled={item.is_text_row} onChange={e => updateLine(idx, 'unit_price', rupeesToPaise(e.target.value))} /></td>
-                        <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={0} max={100} value={item.discount_percent} disabled={item.is_text_row} onChange={e => updateLine(idx, 'discount_percent', parseFloat(e.target.value) || 0)} /></td>
+                        <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={1} value={item.quantity} onChange={e => updateLine(idx, 'quantity', parseFloat(e.target.value) || 0)} /></td>
+                        <td className="p-2"><Input type="number" className="w-28 text-right h-7 tabular-nums" min={0} value={paiseToRupees(item.unit_price).toFixed(2)} onChange={e => updateLine(idx, 'unit_price', rupeesToPaise(e.target.value))} /></td>
+                        <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={0} max={100} value={item.discount_percent} onChange={e => updateLine(idx, 'discount_percent', parseFloat(e.target.value) || 0)} /></td>
                         <td className="p-2">
-                          <select className="w-20 h-7 rounded border bg-transparent text-xs disabled:bg-muted/40" value={item.gst_rate} disabled={item.is_text_row} onChange={e => updateLine(idx, 'gst_rate', parseInt(e.target.value, 10))}>
+                          <select className="w-20 h-7 rounded border bg-transparent text-xs" value={item.gst_rate} onChange={e => updateLine(idx, 'gst_rate', parseInt(e.target.value, 10))}>
                             {GST_RATE_OPTIONS.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
                           </select>
                         </td>

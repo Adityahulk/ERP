@@ -110,6 +110,10 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function multilineHtml(value: unknown): string {
+  return escapeHtml(String(value ?? '')).replace(/\r?\n/g, '<br/>');
+}
+
 function companyAddress(company: any): string {
   const line1 = company.registered_address || company.gstin_address || company.address || '';
   const line2 = [company.city, company.state, company.pincode].filter(Boolean).join(', ');
@@ -188,7 +192,7 @@ function invoiceItemRows(items: any[], kind: string): string {
   return items
     .map((it, i) => {
       const name = escapeHtml(it.item_name || it.name || 'Item');
-      const desc = escapeHtml(it.item_description || it.description || '');
+      const desc = multilineHtml(it.item_description || it.description || '');
       const meta = [
         it.unit ? `Unit: ${it.unit}` : '',
         Number(it.gst_rate || 0) ? `GST: ${it.gst_rate}%` : '',
@@ -297,7 +301,7 @@ function buildInvoiceHtml(args: {
     .company-name,.party-name{font-size:15px;font-weight:800;color:${palette.accent}}.address{color:#52525b}.gst{font-size:10px;margin-top:3px}
     .bill-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.bill-card h3,.info-card h3{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary}}
     .bill-card{border:1px solid #e5e7eb;padding:10px;min-height:88px}.meta-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb}.meta-grid div{padding:7px 9px;border-bottom:1px solid #e5e7eb}.meta-grid div:nth-child(odd){border-right:1px solid #e5e7eb}.meta-grid div:nth-last-child(-n+2){border-bottom:0}.meta-grid span{display:block;color:#71717a;font-size:10px}.meta-grid b{display:block;margin-top:1px}
-    table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
+    table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-desc{white-space:pre-line;margin-top:2px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
     .lower{display:grid;grid-template-columns:1fr 330px;gap:18px;margin-top:10px}.totals{background:${palette.soft};padding:9px 12px}.total-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0}.grand{font-size:14px;border-top:2px solid #d4d4d8;margin-top:3px;padding-top:8px}.due{margin:8px -12px -9px;padding:9px 12px;background:${palette.primary};color:#fff;font-size:14px;font-weight:900}
     .info-card{border:1px solid #e5e7eb;padding:10px;margin-bottom:8px}.bank-card{line-height:1.55}.tax-summary{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-top:6px;color:#52525b}.tax-summary span{color:#71717a}
     .note-block{margin-top:10px;color:#52525b}.note-block h3{font-size:13px;color:#111827;margin:0 0 3px}.signature-card{text-align:right;margin-top:10px;break-inside:avoid}.signature-card img{max-height:48px;max-width:160px;object-fit:contain}.signature-line{height:34px;border-bottom:1px solid #9ca3af;margin-left:auto;width:160px}.qr-card{display:inline-flex;gap:8px;align-items:center;border:1px solid #e5e7eb;padding:6px;margin-top:6px}.qr-card img{width:70px;height:70px}.einv{font-size:9px;border:1px dashed ${palette.primary};padding:6px;margin-top:6px;word-break:break-all}.einv img{width:76px;height:76px}
