@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal } from 'lucide-react';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 
@@ -71,6 +71,24 @@ export default function InvoiceList() {
       setIrnLoadingId(null);
     }
   }, [queryClient]);
+
+  const downloadEinvoicePdf = useCallback(async (inv: any) => {
+    const t = toast.loading('Preparing e-invoice PDF…');
+    try {
+      const res = await api.get(`/invoices/${inv.id}/einvoice/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `einvoice-${inv.invoice_number}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('E-invoice PDF download started', { id: t });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to download e-invoice PDF', { id: t });
+    }
+  }, []);
 
   const statusColors: Record<string, string> = {
     paid: 'bg-emerald-100 text-emerald-700',
@@ -221,7 +239,25 @@ export default function InvoiceList() {
                           </Button>
 
                           {menuInvoiceId === inv.id && (
-                            <div className="absolute right-0 top-9 z-20 w-52 rounded-lg border bg-white p-1.5 shadow-xl">
+                            <div className="absolute right-0 top-9 z-20 w-60 rounded-lg border bg-white p-1.5 shadow-xl">
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
+                                <Eye className="h-4 w-4" /> Preview / print
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
+                                <Send className="h-4 w-4" /> Share / WhatsApp / email
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
+                                <Printer className="h-4 w-4" /> Print A4 / receipt
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); generatePDF(inv.id, inv.invoice_number); }}>
+                                <Download className="h-4 w-4" /> Download invoice PDF
+                              </button>
+                              {inv.irn && (
+                                <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); downloadEinvoicePdf(inv); }}>
+                                  <FileCheck className="h-4 w-4" /> Download e-Invoice PDF
+                                </button>
+                              )}
+                              <div className="my-1 border-t" />
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/${inv.id}`); }}>
                                 <Eye className="h-4 w-4" /> View / edit
                               </button>

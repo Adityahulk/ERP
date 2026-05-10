@@ -225,21 +225,10 @@ export async function generateIRN(
     return { irn, ack_number, ack_date: new Date().toISOString() };
   }
 
-  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
-  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
-
-  if (!username || !password) {
-    throw new Error('GSP credentials not configured. Set company e-invoice credentials or EINVOICE_USERNAME / EINVOICE_PASSWORD in environment.');
-  }
-
   const baseUrl: string =
     (mode === 'production'
       ? (env.EINVOICE_PRODUCTION_URL || env.EINVOICE_GSP_URL)
       : (env.EINVOICE_SANDBOX_URL || env.EINVOICE_GSP_URL || 'https://einv-apisandbox.nic.in')) || '';
-
-  if (!baseUrl) {
-    throw new Error('EINVOICE_GSP_URL or EINVOICE_SANDBOX_URL must be set for sandbox/production modes');
-  }
 
   const sellerGstin = String((payload as any)?.SellerDtls?.Gstin || '').trim().toUpperCase();
   const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
@@ -249,6 +238,17 @@ export async function generateIRN(
     } catch (e: any) {
       logger.warn('TaxPro IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
     }
+  }
+
+  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
+  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
+
+  if (!username || !password) {
+    throw new Error('GSP credentials not configured. Configure TaxPro variables (TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EINV_USER_NAME, TAXPRO_EINV_PASSWORD) or set company e-invoice credentials / EINVOICE_USERNAME / EINVOICE_PASSWORD.');
+  }
+
+  if (!baseUrl) {
+    throw new Error('EINVOICE_GSP_URL or EINVOICE_SANDBOX_URL must be set for sandbox/production modes');
   }
 
   try {
@@ -379,16 +379,10 @@ export async function cancelIRN(
     return { cancelled: true };
   }
 
-  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
-  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
-  if (!username || !password) throw new Error('GSP credentials not configured');
-
   const baseUrl: string =
     (env.EINVOICE_MODE === 'production'
       ? (env.EINVOICE_PRODUCTION_URL || env.EINVOICE_GSP_URL)
       : (env.EINVOICE_SANDBOX_URL || env.EINVOICE_GSP_URL || 'https://einv-apisandbox.nic.in')) || '';
-
-  if (!baseUrl) throw new Error('E-invoice base URL not configured');
 
   const body = { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) };
   const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
@@ -401,6 +395,14 @@ export async function cancelIRN(
       logger.warn('TaxPro cancel IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
     }
   }
+
+  const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
+  const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
+  if (!username || !password) {
+    throw new Error('GSP credentials not configured. Configure TaxPro variables (TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EINV_USER_NAME, TAXPRO_EINV_PASSWORD) or set company e-invoice credentials / EINVOICE_USERNAME / EINVOICE_PASSWORD.');
+  }
+
+  if (!baseUrl) throw new Error('E-invoice base URL not configured');
 
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/eicore/asp/v1.0/CancelEInvoice`, {
     method: 'POST',
