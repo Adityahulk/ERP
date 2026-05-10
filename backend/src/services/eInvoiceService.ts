@@ -232,11 +232,13 @@ export async function generateIRN(
 
   const sellerGstin = String((payload as any)?.SellerDtls?.Gstin || '').trim().toUpperCase();
   const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
+  let taxProError: Error | null = null;
   if (tryTaxPro && sellerGstin) {
     try {
       return await generateTaxProIRN(payload, sellerGstin);
     } catch (e: any) {
-      logger.warn('TaxPro IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
+      taxProError = e instanceof Error ? e : new Error(String(e?.message || e || 'TaxPro IRN failed'));
+      logger.warn('TaxPro IRN primary flow failed', { err: taxProError.message });
     }
   }
 
@@ -244,6 +246,7 @@ export async function generateIRN(
   const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
 
   if (!username || !password) {
+    if (taxProError) throw taxProError;
     throw new Error('GSP credentials not configured. Configure TaxPro variables (TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EINV_USER_NAME, TAXPRO_EINV_PASSWORD) or set company e-invoice credentials / EINVOICE_USERNAME / EINVOICE_PASSWORD.');
   }
 
@@ -387,18 +390,21 @@ export async function cancelIRN(
   const body = { Irn: irn, CnlRsn: reasonCode, CnlRem: reasonDescription.slice(0, 100) };
   const tryTaxPro = isTaxProEinvoiceEnabled() || Boolean(env.TAXPRO_API_BASE_URL) || /taxpro/i.test(baseUrl);
   const sellerGstin = String((company as any)?.gstin || '').trim().toUpperCase();
+  let taxProError: Error | null = null;
   if (tryTaxPro && sellerGstin) {
     try {
       const out = await cancelTaxProIRN(irn, reasonCode, reasonDescription, sellerGstin);
       if (out.cancelled) return { cancelled: true };
     } catch (e: any) {
-      logger.warn('TaxPro cancel IRN primary flow failed, falling back to generic GSP path', { err: e?.message });
+      taxProError = e instanceof Error ? e : new Error(String(e?.message || e || 'TaxPro cancel IRN failed'));
+      logger.warn('TaxPro cancel IRN primary flow failed', { err: taxProError.message });
     }
   }
 
   const username = company.einvoice_gsp_username || env.EINVOICE_USERNAME;
   const password = decryptSecret(company.einvoice_gsp_password_enc || undefined) || env.EINVOICE_PASSWORD;
   if (!username || !password) {
+    if (taxProError) throw taxProError;
     throw new Error('GSP credentials not configured. Configure TaxPro variables (TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EINV_USER_NAME, TAXPRO_EINV_PASSWORD) or set company e-invoice credentials / EINVOICE_USERNAME / EINVOICE_PASSWORD.');
   }
 
