@@ -413,22 +413,25 @@ export default function Settings() {
     }
   };
 
-  const fetchGstin = async () => {
+  const fetchGstin = async (options?: { silent?: boolean }) => {
+    const silent = !!options?.silent;
     const g = gstin.trim().toUpperCase();
     if (g.length !== 15) {
-      toast.error('Enter a 15-character GSTIN first');
+      if (!silent) toast.error('Enter a 15-character GSTIN first');
       return;
     }
     setGstinFetching(true);
-    const t = toast.loading('Fetching GSTIN details…');
+    const t = silent ? null : toast.loading('Fetching GSTIN details…');
     try {
       const res = await api.get(`/company/gstin/${g}`);
       const details = res.data?.data ?? res.data;
       setGstinDetails(details);
       if (details.legal_name) setLegalName(details.legal_name);
-      toast.success(details.source === 'provider' ? 'GSTIN details fetched' : 'GSTIN verified locally', { id: t });
+      if (!silent) {
+        toast.success(details.source === 'provider' ? 'GSTIN details fetched' : 'GSTIN verified locally', { id: t ?? undefined });
+      }
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'GSTIN lookup failed', { id: t });
+      if (!silent) toast.error(e.response?.data?.error || 'GSTIN lookup failed', { id: t ?? undefined });
     } finally {
       setGstinFetching(false);
     }
@@ -439,7 +442,7 @@ export default function Settings() {
     if (g.length !== 15 || g === lastAutoFetchedGstin.current) return;
     const timer = window.setTimeout(() => {
       lastAutoFetchedGstin.current = g;
-      fetchGstin();
+      fetchGstin({ silent: true });
     }, 500);
     return () => window.clearTimeout(timer);
   }, [gstin]);
@@ -651,7 +654,7 @@ export default function Settings() {
                               <label className="text-sm font-medium text-slate-700">GSTIN</label>
                              <div className="mt-1 flex gap-2">
                                <Input value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} className="uppercase font-mono" maxLength={15} />
-                               <Button type="button" variant="outline" size="icon" onClick={fetchGstin} loading={gstinFetching} aria-label="Fetch GSTIN details">
+                               <Button type="button" variant="outline" size="icon" onClick={() => fetchGstin()} loading={gstinFetching} aria-label="Fetch GSTIN details">
                                  <Search className="h-4 w-4" />
                                </Button>
                              </div>

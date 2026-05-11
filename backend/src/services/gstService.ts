@@ -2,6 +2,7 @@ import { env } from '../config/env';
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const GSTIN_CHECK_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const TAXPRO_SANDBOX_TEST_GSTIN_RE = /^[0-9]{2}AACCC1596Q(?:000|002)$/;
 
 const STATE_NAMES: Record<string, string> = {
   '01': 'Jammu and Kashmir',
@@ -66,6 +67,19 @@ function pickProviderField(raw: any, keys: string[]) {
   return null;
 }
 
+function isTaxProSandboxTestGstin(gstin: string): boolean {
+  if (env.TAXPRO_ENV !== 'sandbox') return false;
+  const configuredTestGstin = String(env.TAXPRO_SANDBOX_TEST_GSTIN || '')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+  if (configuredTestGstin && gstin === configuredTestGstin) return true;
+
+  // TaxPro/NIC sandbox uses pseudo GSTINs such as 34AACCC1596Q002 and
+  // 29AACCC1596Q000 for testing. They are intentionally not checksum-valid
+  // production GSTINs, so only allow them while the TaxPro environment is sandbox.
+  return TAXPRO_SANDBOX_TEST_GSTIN_RE.test(gstin);
+}
+
 export type GstinLookupDetails = {
   gstin: string;
   valid: boolean;
@@ -84,8 +98,29 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
   const gstin = String(input || '').replace(/\s+/g, '').toUpperCase();
   const stateCode = stateCodeFromGstin(gstin);
   const state = stateCode ? STATE_NAMES[stateCode] || null : null;
-  if (!GSTIN_RE.test(gstin) || !isValidGstinChecksum(gstin)) {
+  const isChecksumValidGstin = GSTIN_RE.test(gstin) && isValidGstinChecksum(gstin);
+  const isSandboxTestGstin = isTaxProSandboxTestGstin(gstin);
+  if (!isChecksumValidGstin && !isSandboxTestGstin) {
     throw new Error('Invalid GSTIN format or checksum');
+  }
+
+  if (isSandboxTestGstin) {
+    return {
+      gstin,
+      valid: true,
+      source: 'local',
+      legal_name: 'TaxPro Sandbox Test Company',
+      trade_name: 'TaxPro Sandbox',
+      status: 'Active',
+      taxpayer_type: 'Regular',
+      address: null,
+      state_code: stateCode,
+      state,
+      raw: {
+        note: 'TaxPro sandbox test GSTIN accepted without production checksum validation.',
+        sandbox: true,
+      },
+    };
   }
 
   if (env.GSTIN_LOOKUP_API_URL) {

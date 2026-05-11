@@ -66,6 +66,7 @@ const envSchema = z.object({
   TAXPRO_IRN_ENDPOINT: z.string().optional(),
   TAXPRO_CANCEL_ENDPOINT: z.string().optional(),
   TAXPRO_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  TAXPRO_SANDBOX_TEST_GSTIN: z.string().optional(),
   TAXPRO_API_HOST: z.string().optional(),
   TAXPRO_ASPID: z.string().optional(),
   TAXPRO_EINV_USER_NAME: z.string().optional(),
