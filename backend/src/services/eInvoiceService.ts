@@ -78,17 +78,45 @@ export interface EinvoiceInvoice {
 }
 
 const UQC_MAP: Record<string, string> = {
-  pcs: 'PCS', pc: 'PCS', piece: 'PCS', pieces: 'PCS', nos: 'NOS', no: 'NOS',
-  kg: 'KGS', kgs: 'KGS', g: 'GMS', gm: 'GMS', gms: 'GMS',
-  l: 'LTR', lt: 'LTR', ltr: 'LTR', litre: 'LTR', liter: 'LTR',
-  m: 'MTR', meter: 'MTR', metre: 'MTR', box: 'BOX', set: 'SET', bundle: 'BDL',
-  bag: 'BAG', pack: 'PAC', hour: 'HRS', dz: 'DOZ', dozen: 'DOZ',
+  pcs: 'PCS', pc: 'PCS', piece: 'PCS', pieces: 'PCS',
+  nos: 'NOS', no: 'NOS', number: 'NOS', numbers: 'NOS',
+  unit: 'UNT', units: 'UNT', unt: 'UNT',
+  kg: 'KGS', kgs: 'KGS', kilogram: 'KGS', kilograms: 'KGS',
+  g: 'GMS', gm: 'GMS', gms: 'GMS', gram: 'GMS', grams: 'GMS',
+  qtl: 'QTL', quintal: 'QTL', quintals: 'QTL',
+  ton: 'TON', tons: 'TON', tonne: 'TON', tonnes: 'TON',
+  l: 'LTR', lt: 'LTR', ltr: 'LTR', litre: 'LTR', litres: 'LTR', liter: 'LTR', liters: 'LTR',
+  ml: 'MLT', mlt: 'MLT', millilitre: 'MLT', milliliter: 'MLT',
+  m: 'MTR', mtr: 'MTR', meter: 'MTR', meters: 'MTR', metre: 'MTR', metres: 'MTR',
+  cm: 'CMS', cms: 'CMS', centimeter: 'CMS', centimetre: 'CMS',
+  km: 'KME', kms: 'KME', kilometer: 'KME', kilometre: 'KME',
+  sqft: 'SQF', 'sq.ft': 'SQF', 'sq ft': 'SQF', sqf: 'SQF', squarefeet: 'SQF', 'square feet': 'SQF',
+  sqm: 'SQM', 'sq.m': 'SQM', 'sq m': 'SQM', squaremeter: 'SQM', 'square meter': 'SQM',
+  box: 'BOX', boxes: 'BOX', set: 'SET', bundle: 'BDL', bdl: 'BDL',
+  bag: 'BAG', bags: 'BAG', pack: 'PAC', packet: 'PAC', packets: 'PAC', pac: 'PAC',
+  roll: 'ROL', rolls: 'ROL', pair: 'PRS', pairs: 'PRS',
+  hour: 'HRS', hours: 'HRS', hrs: 'HRS', dz: 'DOZ', dozen: 'DOZ', doz: 'DOZ',
 };
+const NIC_UQC_CODES = new Set([
+  'BAG', 'BAL', 'BDL', 'BKL', 'BOU', 'BOX', 'BTL', 'BUN', 'CAN', 'CBM', 'CCM', 'CMS',
+  'CTN', 'DOZ', 'DRM', 'GGR', 'GMS', 'GRS', 'GYD', 'KGS', 'KLR', 'KME', 'MLT', 'MTR',
+  'MTS', 'NOS', 'PAC', 'PCS', 'PRS', 'QTL', 'ROL', 'SET', 'SQF', 'SQM', 'SQY', 'TBS',
+  'TGM', 'THD', 'TON', 'TUB', 'UGS', 'UNT', 'YDS', 'OTH',
+]);
 
 export function mapUnitToUqc(unit: string | null | undefined): string {
   if (!unit) return 'PCS';
-  const k = unit.trim().toLowerCase();
-  return UQC_MAP[k] || unit.trim().slice(0, 3).toUpperCase() || 'PCS';
+  const raw = unit.trim();
+  const k = raw.toLowerCase();
+  const compact = k.replace(/[^a-z0-9]/g, '');
+  const mapped = UQC_MAP[k] || UQC_MAP[compact];
+  if (mapped) return mapped;
+  for (const [key, value] of Object.entries(UQC_MAP)) {
+    const keyCompact = key.replace(/[^a-z0-9]/g, '');
+    if (keyCompact.length >= 3 && compact.includes(keyCompact)) return value;
+  }
+  const code = raw.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
+  return NIC_UQC_CODES.has(code) ? code : 'PCS';
 }
 
 function formatNicDate(d: string | Date | null | undefined): string {
@@ -198,7 +226,7 @@ export function buildEinvoicePayload(
       PrdDesc: nicText(it.item_name || it.item_description, 'Item', 300),
       IsServc: isService,
       HsnCd: nicHsn(it.hsn_code, isService === 'Y'),
-      UQC: mapUnitToUqc(it.unit || undefined),
+      Unit: mapUnitToUqc(it.unit || undefined),
       Qty: qty,
       FreeQty: 0,
       UnitPrice: parseFloat(paiseToRupeesStr(it.unit_price)),
