@@ -81,6 +81,26 @@ function parseTaxProError(data: any): string {
   return JSON.stringify(data).slice(0, 2000);
 }
 
+function configuredSandboxGstin(): string {
+  return String(env.TAXPRO_SANDBOX_TEST_GSTIN || '').trim().toUpperCase();
+}
+
+function isKnownTaxProSandboxGstin(gstin: string): boolean {
+  const configured = configuredSandboxGstin();
+  if (configured && gstin === configured) return true;
+  return /^[0-9]{2}AACCC1596Q(?:000|002)$/.test(gstin);
+}
+
+function explainTaxProAuthFailure(message: string, sellerGstin: string): string {
+  const msg = String(message || '').trim();
+  if (env.TAXPRO_ENV === 'sandbox' && !isKnownTaxProSandboxGstin(sellerGstin) && /invalid\s+gstin|gstin.*user|user.*gstin/i.test(msg)) {
+    const configured = configuredSandboxGstin();
+    const expected = configured || 'one of TaxPro sandbox test GSTINs such as 34AACCC1596Q002 / 29AACCC1596Q000';
+    return `TaxPro sandbox rejected seller GSTIN ${sellerGstin}. Sandbox e-invoice credentials are mapped only to test GSTINs, not arbitrary real GSTINs. Use ${expected} in sandbox, or switch TAXPRO_ENV=production and use production TaxPro credentials for real GSTIN e-invoice generation. Original TaxPro message: ${msg}`;
+  }
+  return msg;
+}
+
 function extractAuthToken(body: any): string | null {
   const u = unwrapData(body);
   const t = u?.AuthToken || u?.authToken || body?.AuthToken || body?.authtoken || body?.auth_token || body?.access_token;
@@ -177,9 +197,15 @@ async function getEinvoiceAuthToken(sellerGstin: string): Promise<string> {
   const url = `${joinHostAndPath(c.host, c.einvAuthPath)}?${q.toString()}`;
   const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
   const body = await parseResponse(res);
-  if (!res.ok) throw new Error(`TaxPro e-invoice auth failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+  if (!res.ok) {
+    const parsed = parseTaxProError(body);
+    throw new Error(`TaxPro e-invoice auth failed: ${explainTaxProAuthFailure(parsed, gstin)} (HTTP ${res.status})`);
+  }
   const token = extractAuthToken(body);
-  if (!token) throw new Error(`TaxPro e-invoice auth missing AuthToken: ${parseTaxProError(body)}`);
+  if (!token) {
+    const parsed = parseTaxProError(body);
+    throw new Error(`TaxPro e-invoice auth missing AuthToken: ${explainTaxProAuthFailure(parsed, gstin)}`);
+  }
   await cacheTokenSet(memoryEinv, redisKey, token);
   return token;
 }

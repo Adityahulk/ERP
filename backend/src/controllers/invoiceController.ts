@@ -35,6 +35,10 @@ function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | '
   return 'unpaid';
 }
 
+function externalTaxErrorStatus(message: string): number {
+  return /TaxPro|GSP credentials|EINVOICE_|GSTIN|e-invoice auth|e-way auth/i.test(message) ? 400 : 500;
+}
+
 async function generateInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
   const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
   const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
@@ -1392,7 +1396,7 @@ export async function generateEinvoice(req: Request, res: Response) {
     res.json(success({ irn: irnData.irn, ack_number: irnData.ack_number, ack_date: irnData.ack_date, qr_code_url: qrUrl }));
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    res.status(externalTaxErrorStatus(err.message)).json(error(err.message));
   }
 }
 
