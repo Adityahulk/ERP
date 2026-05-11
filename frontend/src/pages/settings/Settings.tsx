@@ -29,6 +29,10 @@ export default function Settings() {
   const [printerType, setPrinterType] = useState<'a4' | 'thermal80' | 'thermal58'>('a4');
   const [legalName, setLegalName] = useState('');
   const [gstin, setGstin] = useState('');
+  const [registeredAddress, setRegisteredAddress] = useState('');
+  const [companyCity, setCompanyCity] = useState('');
+  const [companyState, setCompanyState] = useState('');
+  const [companyPincode, setCompanyPincode] = useState('');
   const [companyEmail, setCompanyEmail] = useState('');
   const [businessType, setBusinessType] = useState('');
   const [businessCategory, setBusinessCategory] = useState('');
@@ -358,6 +362,10 @@ export default function Settings() {
     if (saved === 'thermal80' || saved === 'thermal58' || saved === 'a4') setPrinterType(saved);
     setLegalName(company.legal_name || company.name || '');
     setGstin(company.gstin || '');
+    setRegisteredAddress(company.registered_address || '');
+    setCompanyCity(company.city || '');
+    setCompanyState(company.state || '');
+    setCompanyPincode(company.pincode || '');
     setCompanyEmail(company.email || '');
     setBusinessType(company.business_type || '');
     setBusinessCategory(company.business_category || '');
@@ -390,6 +398,9 @@ export default function Settings() {
       await updateCompany.mutateAsync({
         legal_name: legalName.trim() || null,
         gstin: gstin.trim().toUpperCase() || null,
+        registered_address: registeredAddress.trim() || null,
+        city: companyCity.trim() || null,
+        pincode: companyPincode.trim() || null,
         email: companyEmail.trim() || null,
         business_type: businessType || null,
         business_category: businessCategory.trim() || null,
@@ -399,7 +410,7 @@ export default function Settings() {
         gstin_taxpayer_type: gstinDetails?.taxpayer_type || null,
         gstin_address: gstinDetails?.address || null,
         state_code: gstinDetails?.state_code || company?.state_code || null,
-        state: gstinDetails?.state || company?.state || null,
+        state: companyState.trim() || gstinDetails?.state || company?.state || null,
         gstin_last_fetched_at: gstinDetails?.source ? new Date().toISOString() : company?.gstin_last_fetched_at || null,
         gstin_lookup_payload: gstinDetails?.raw || company?.gstin_lookup_payload || null,
         bank_name: bankName.trim() || null,
@@ -427,6 +438,8 @@ export default function Settings() {
       const details = res.data?.data ?? res.data;
       setGstinDetails(details);
       if (details.legal_name) setLegalName(details.legal_name);
+      if (details.address && !registeredAddress.trim()) setRegisteredAddress(details.address);
+      if (details.state && !companyState.trim()) setCompanyState(details.state);
       if (!silent) {
         toast.success(details.source === 'provider' ? 'GSTIN details fetched' : 'GSTIN verified locally', { id: t ?? undefined });
       }
@@ -666,6 +679,29 @@ export default function Settings() {
                                  {gstinDetails.status && <p><span className="font-semibold">Status:</span> {gstinDetails.status}</p>}
                                </div>
                              )}
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Registered Address</label>
+                             <textarea
+                               className="mt-1 w-full min-h-[92px] rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                               value={registeredAddress}
+                               onChange={(e) => setRegisteredAddress(e.target.value)}
+                               placeholder="Building, street, area"
+                             />
+                           </div>
+                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                             <div>
+                                <label className="text-sm font-medium text-slate-700">City</label>
+                               <Input value={companyCity} onChange={(e) => setCompanyCity(e.target.value)} className="mt-1" />
+                             </div>
+                             <div>
+                                <label className="text-sm font-medium text-slate-700">State</label>
+                               <Input value={companyState} onChange={(e) => setCompanyState(e.target.value)} className="mt-1" />
+                             </div>
+                             <div>
+                                <label className="text-sm font-medium text-slate-700">Pincode</label>
+                               <Input value={companyPincode} onChange={(e) => setCompanyPincode(e.target.value)} className="mt-1" maxLength={10} />
+                             </div>
                            </div>
                            <div>
                               <label className="text-sm font-medium text-slate-700">Email ID</label>
