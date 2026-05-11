@@ -69,7 +69,7 @@ async function generateInvoiceNumber(companyId: string, invoiceKind: string, god
   }
 
   const paddedSeq = String(seq).padStart(4, '0');
-  return `${prefix}/${branchCode}/${fyShort}/${paddedSeq}`;
+  return `${prefix}/${branchCode}/${fyShort}${paddedSeq}`;
 }
 
 function mapLineForGst(raw: any) {
@@ -1366,6 +1366,7 @@ export async function generateEinvoice(req: Request, res: Response) {
       name: inv.party_name_snapshot || 'Customer',
       billing_address: inv.billing_address_snapshot,
       billing_city: null,
+      billing_state: null,
       billing_pincode: null,
       billing_state_code: inv.place_of_supply,
     };
@@ -1377,6 +1378,7 @@ export async function generateEinvoice(req: Request, res: Response) {
           name: inv.party_name_snapshot || pRes.rows[0].name,
           billing_address: inv.billing_address_snapshot || pRes.rows[0].billing_address,
           billing_city: pRes.rows[0].billing_city,
+          billing_state: pRes.rows[0].billing_state || pRes.rows[0].state,
           billing_pincode: pRes.rows[0].billing_pincode,
           billing_state_code: pRes.rows[0].billing_state_code || inv.place_of_supply,
         };
@@ -1444,7 +1446,8 @@ export async function generateEwayBill(req: Request, res: Response) {
     if (!transporter_id || String(transporter_id).trim().length !== 15) {
       return res.status(400).json(error('transporter_id must be a 15-character transporter GSTIN / TRANSIN'));
     }
-    if (!vehicle_no || String(vehicle_no).trim().length < 4) {
+    const cleanVehicleNo = String(vehicle_no || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (!cleanVehicleNo || cleanVehicleNo.length < 4) {
       return res.status(400).json(error('vehicle_no is required (minimum 4 characters)'));
     }
 
@@ -1474,7 +1477,7 @@ export async function generateEwayBill(req: Request, res: Response) {
       distance_km: Number(distance_km || 0),
       trans_doc_no: trans_doc_no ? String(trans_doc_no) : undefined,
       trans_doc_dt: trans_doc_dt ? String(trans_doc_dt) : undefined,
-      vehicle_no: String(vehicle_no),
+      vehicle_no: cleanVehicleNo,
       vehicle_type: String(vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
     });
 
@@ -1492,7 +1495,7 @@ export async function generateEwayBill(req: Request, res: Response) {
     res.json(success(out));
   } catch (err: any) {
     console.error('generateEwayBill error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    res.status(externalTaxErrorStatus(err.message)).json(error(err.message));
   }
 }
 
@@ -1535,7 +1538,7 @@ export async function cancelEwayBill(req: Request, res: Response) {
     res.json(success(out));
   } catch (err: any) {
     console.error('cancelEwayBill error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    res.status(externalTaxErrorStatus(err.message)).json(error(err.message));
   }
 }
 

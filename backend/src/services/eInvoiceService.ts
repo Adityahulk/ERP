@@ -20,9 +20,11 @@ export type NicDocTyp = 'INV' | 'CRN' | 'DBN';
 export interface EinvoiceCompany {
   id: string;
   name: string;
+  legal_name?: string | null;
   gstin: string | null;
   registered_address: string | null;
   city: string | null;
+  state?: string | null;
   pincode: string | null;
   state_code: string | null;
   phone?: string | null;
@@ -33,6 +35,7 @@ export interface EinvoiceParty {
   name: string;
   billing_address?: string | null;
   billing_city?: string | null;
+  billing_state?: string | null;
   billing_pincode?: string | null;
   billing_state_code?: string | null;
 }
@@ -113,25 +116,88 @@ function paiseToRupeesStr(paise: number): string {
   return (Math.round(paise) / 100).toFixed(2);
 }
 
+function cleanGstin(value: unknown): string {
+  return String(value || '').replace(/\s+/g, '').toUpperCase();
+}
+
+function nicText(value: unknown, fallback: string, max = 100): string {
+  const text = String(value || '').replace(/\s+/g, ' ').trim() || fallback;
+  return text.slice(0, max);
+}
+
+function nicLocation(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (text.length >= 3) return text.slice(0, 50);
+  }
+  return 'India';
+}
+
+function nicStateCode(value: unknown, fallback = '96'): string {
+  const code = String(value || '').replace(/\D/g, '').slice(0, 2);
+  return code.length === 2 ? code : fallback;
+}
+
+function nicPin(value: unknown): number {
+  const pin = String(value || '').replace(/\D/g, '');
+  if (/^[1-9][0-9]{5}$/.test(pin)) return Number(pin);
+  return 999999;
+}
+
+function nicHsn(value: unknown, isService: boolean): string {
+  const hsn = String(value || '').replace(/\D/g, '');
+  if (isService) {
+    if (hsn.length >= 6) return hsn.slice(0, 8);
+    return '998599';
+  }
+  if (hsn.length >= 4) return hsn.slice(0, 8);
+  return '9999';
+}
+
+function nicQty(value: unknown): number {
+  const qty = Number(value);
+  return Number.isFinite(qty) && qty > 0 ? Number(qty.toFixed(3)) : 1;
+}
+
+export function normalizeEinvoiceDocumentNumber(value: unknown): string {
+  const raw = String(value || '').trim().toUpperCase();
+  let docNo = raw.replace(/[^A-Z0-9/-]/g, '');
+  docNo = docNo.replace(/^[^A-Z1-9]+/, '');
+  if (!docNo) return `INV${Date.now().toString().slice(-12)}`;
+  if (docNo.length <= 16) return docNo;
+
+  const withoutLastSeparator = docNo.replace(/([/-])([A-Z0-9]+)$/, '$2');
+  if (withoutLastSeparator.length <= 16 && /^[A-Z1-9]/.test(withoutLastSeparator)) return withoutLastSeparator;
+
+  const compact = docNo.replace(/[/-]/g, '');
+  if (compact.length <= 16 && /^[A-Z1-9]/.test(compact)) return compact;
+
+  const shortened = `${compact.slice(0, 8)}${compact.slice(-8)}`.replace(/^[^A-Z1-9]+/, '');
+  return shortened || `INV${Date.now().toString().slice(-12)}`;
+}
+
 export function buildEinvoicePayload(
   invoice: EinvoiceInvoice,
   company: EinvoiceCompany,
   party: EinvoiceParty,
   items: EinvoiceItemRow[],
 ): Record<string, unknown> {
-  const buyerGst = (party.gstin || '').trim().toUpperCase();
+  const sellerGst = cleanGstin(company.gstin);
+  const buyerGst = cleanGstin(party.gstin);
   const supTyp: NicSupTyp = buyerGst && buyerGst !== 'URP' ? 'B2B' : 'B2C';
-  const pos = (invoice.place_of_supply || party.billing_state_code || company.state_code || '96').slice(0, 2);
+  const sellerStateCode = nicStateCode(company.state_code);
+  const pos = nicStateCode(invoice.place_of_supply || party.billing_state_code || company.state_code, sellerStateCode);
+  const buyerStateCode = buyerGst.length === 15 ? buyerGst.slice(0, 2) : nicStateCode(party.billing_state_code || pos, pos);
 
   const itemList = items.map((it, idx) => {
-    const qty = typeof it.quantity === 'string' ? parseFloat(it.quantity) : it.quantity;
     const isService = it.item_type === 'service' ? 'Y' : 'N';
+    const qty = nicQty(it.quantity);
     const gstRt = Number(it.gst_rate) || 0;
     return {
       SlNo: String(idx + 1),
-      PrdDesc: (it.item_name || it.item_description || 'Item').slice(0, 300),
+      PrdDesc: nicText(it.item_name || it.item_description, 'Item', 300),
       IsServc: isService,
-      HsnCd: ((it.hsn_code || '').replace(/\D/g, '') || '00000000').padEnd(8, '0').slice(0, 8),
+      HsnCd: nicHsn(it.hsn_code, isService === 'Y'),
       UQC: mapUnitToUqc(it.unit || undefined),
       Qty: qty,
       FreeQty: 0,
@@ -163,25 +229,27 @@ export function buildEinvoicePayload(
     },
     DocDtls: {
       Typ: 'INV' as NicDocTyp,
-      No: invoice.invoice_number,
+      No: normalizeEinvoiceDocumentNumber(invoice.invoice_number),
       Dt: formatNicDate(invoice.invoice_date),
     },
     SellerDtls: {
-      Gstin: (company.gstin || '').toUpperCase(),
-      TrdNm: company.name,
-      Addr1: (company.registered_address || company.city || '-').slice(0, 100),
-      Loc: company.city || '-',
-      Pin: parseInt(String(company.pincode || '0').replace(/\D/g, '') || '0', 10) || 100000,
-      Stcd: (company.state_code || '96').slice(0, 2),
+      Gstin: sellerGst,
+      LglNm: nicText(company.legal_name || company.name, 'Seller', 100),
+      TrdNm: nicText(company.name || company.legal_name, 'Seller', 100),
+      Addr1: nicText(company.registered_address || company.city || company.state, 'Registered Address', 100),
+      Loc: nicLocation(company.city, company.state, company.registered_address),
+      Pin: nicPin(company.pincode),
+      Stcd: sellerStateCode,
     },
     BuyerDtls: {
       Gstin: buyerGst && buyerGst.length === 15 ? buyerGst : 'URP',
-      TrdNm: party.name || 'Customer',
+      LglNm: nicText(party.name, 'Customer', 100),
+      TrdNm: nicText(party.name, 'Customer', 100),
       Pos: pos,
-      Addr1: (party.billing_address || party.billing_city || '-').slice(0, 100),
-      Loc: party.billing_city || '-',
-      Pin: parseInt(String(party.billing_pincode || '0').replace(/\D/g, '') || '0', 10) || 100000,
-      Stcd: (party.billing_state_code || pos).slice(0, 2),
+      Addr1: nicText(party.billing_address || party.billing_city || party.billing_state, 'Customer Address', 100),
+      Loc: nicLocation(party.billing_city, party.billing_state, party.billing_address),
+      Pin: nicPin(party.billing_pincode),
+      Stcd: buyerStateCode,
     },
     ItemList: itemList,
     ValDtls: {

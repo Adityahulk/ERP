@@ -336,6 +336,27 @@ function normalizeTransportDocDate(raw?: string): string {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }
 
+function normalizeEwayTransportMode(value: unknown): string {
+  const mode = String(value || '1').trim();
+  return ['1', '2', '3', '4'].includes(mode) ? mode : '1';
+}
+
+function normalizeEwayDistance(value: unknown): number {
+  const distance = Math.round(Number(value) || 0);
+  if (distance < 0) return 0;
+  if (distance > 4000) return 4000;
+  return distance;
+}
+
+function normalizeEwayDocNo(value: unknown): string {
+  const docNo = String(value || '').trim().replace(/[^A-Za-z0-9/-]/g, '').slice(0, 15);
+  return docNo || `DOC${Date.now().toString().slice(-12)}`.slice(0, 15);
+}
+
+function normalizeEwayVehicleNo(value: unknown): string {
+  return String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 20);
+}
+
 function extractEwbFields(u: any): { ewbNo: string; ewbDt: string; validUpto: string } | null {
   const cands = [u, unwrapData(u), u?.Data, u?.data];
   for (const c of cands) {
@@ -369,12 +390,12 @@ export async function generateTaxProEwayBill(args: {
   const payload = {
     Irn: args.irn,
     TransId: String(args.transporter_id || '').trim().toUpperCase(),
-    TransName: String(args.transporter_name || 'Transport').trim().slice(0, 100),
-    TransMode: String(args.transport_mode || '1'),
-    Distance: Number(args.distance_km || 0),
-    TransDocNo: String(args.trans_doc_no || '1').slice(0, 15),
+    TransName: String(args.transporter_name || 'Transport').replace(/\s+/g, ' ').trim().slice(0, 100),
+    TransMode: normalizeEwayTransportMode(args.transport_mode),
+    Distance: normalizeEwayDistance(args.distance_km),
+    TransDocNo: normalizeEwayDocNo(args.trans_doc_no),
     TransDocDt: normalizeTransportDocDate(args.trans_doc_dt),
-    VehNo: String(args.vehicle_no || '').replace(/\s/g, '').toUpperCase().slice(0, 20),
+    VehNo: normalizeEwayVehicleNo(args.vehicle_no),
     VehType: String(args.vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
   };
 
