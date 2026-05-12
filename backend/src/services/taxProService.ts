@@ -1,5 +1,6 @@
 import { redis } from '../config/redis';
 import { env } from '../config/env';
+import { logger } from '../config/logger';
 
 const SANDBOX_HOST = 'https://gstsandbox.charteredinfo.com';
 const PRODUCTION_HOST = 'https://einvapi.charteredinfo.com';
@@ -79,9 +80,13 @@ function parseTaxProError(data: any): string {
   if (typeof data === 'string') return data.slice(0, 2000);
   if (typeof data?._rawBody === 'string') return `non-JSON response: ${data._rawBody.slice(0, 1500)}`;
   const u = unwrapData(data);
-  const err = u?.ErrorDetails || data?.ErrorDetails;
-  if (Array.isArray(err) && err.length) return err.map((e: any) => e?.ErrorMessage || JSON.stringify(e)).join('; ');
+  const err = u?.ErrorDetails || u?.errorDetails || data?.ErrorDetails || data?.errorDetails;
+  if (Array.isArray(err) && err.length) {
+    return err.map((e: any) => e?.ErrorMessage || e?.errorMessage || e?.message || JSON.stringify(e)).join('; ');
+  }
   if (typeof u?.message === 'string' && u.message) return u.message;
+  if (typeof data?.message === 'string' && data.message) return data.message;
+  if (typeof u?.Status === 'string' && u.Status !== '1' && u?.ErrorMessage) return String(u.ErrorMessage);
   return JSON.stringify(data).slice(0, 2000);
 }
 
@@ -340,6 +345,63 @@ function normalizeTransportDocDate(raw?: string): string {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }
 
+function paiseToRupees(value: unknown): number {
+  return Math.round((Number(value) || 0)) / 100;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function extractPincode(address: unknown, fallback = 0): number {
+  const match = String(address || '').match(/\b([1-9][0-9]{5})\b/);
+  return match ? Number(match[1]) : fallback;
+}
+
+function safePlace(address: unknown, fallback = 'City', max = 50): string {
+  const parts = String(address || '').split(',').map((p) => p.trim()).filter(Boolean);
+  const candidates = [
+    parts[parts.length - 1],
+    parts[parts.length - 2],
+    String(address || ''),
+    fallback,
+  ];
+  for (const candidate of candidates) {
+    const loc = String(candidate || '').replace(/\b[1-9][0-9]{5}\b/g, '').replace(/\s+/g, ' ').trim();
+    if (loc.length >= 3) return loc.slice(0, max);
+  }
+  return fallback;
+}
+
+function ewbDocNo(value: unknown): string {
+  let docNo = String(value || '').trim().replace(/[^A-Za-z0-9/-]/g, '');
+  docNo = docNo.replace(/^[^A-Za-z1-9]+/, '');
+  if (!docNo) docNo = `INV${Date.now().toString().slice(-12)}`;
+  return docNo.slice(0, 16);
+}
+
+function ewbText(value: unknown, fallback: string, max = 100): string {
+  const text = String(value || '').replace(/\s+/g, ' ').trim() || fallback;
+  return text.slice(0, max);
+}
+
+function ewbQtyUnit(unit: unknown): string {
+  const raw = String(unit || '').trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(raw)) return raw;
+  const compact = raw.replace(/[^A-Z]/g, '');
+  const map: Record<string, string> = {
+    PCS: 'PCS', PIECE: 'PCS', PIECES: 'PCS',
+    NOS: 'NOS', NO: 'NOS', NUMBER: 'NOS',
+    KG: 'KGS', KGS: 'KGS', KILOGRAM: 'KGS',
+    G: 'GMS', GM: 'GMS', GMS: 'GMS',
+    L: 'LTR', LT: 'LTR', LTR: 'LTR', LITRE: 'LTR', LITER: 'LTR',
+    M: 'MTR', MTR: 'MTR', METER: 'MTR',
+    SQFT: 'SQF', SQF: 'SQF', SQM: 'SQM',
+    BOX: 'BOX', BAG: 'BAG', PACK: 'PAC', PAC: 'PAC',
+  };
+  return map[compact] || 'NOS';
+}
+
 function normalizeEwayTransportMode(value: unknown): string {
   const mode = String(value || '1').trim();
   return ['1', '2', '3', '4'].includes(mode) ? mode : '1';
@@ -362,18 +424,127 @@ function normalizeEwayVehicleNo(value: unknown): string {
 }
 
 function extractEwbFields(u: any): { ewbNo: string; ewbDt: string; validUpto: string } | null {
-  const cands = [u, unwrapData(u), u?.Data, u?.data];
-  for (const c of cands) {
-    if (!c || typeof c !== 'object') continue;
-    const no = c.ewbNo ?? c.EwbNo ?? c.ewayBillNo ?? c.ewaybillNo ?? c.EWayBillNo;
-    if (!no) continue;
-    const dtRaw = c.EwbDt ?? c.ewbDt ?? c.ewayBillDate ?? c.ewaybillDate;
-    const vuRaw = c.EwbValidTill ?? c.ewbValidTill ?? c.validUpto;
-    const ewbDt = parseIndianDateTimeLoose(dtRaw) || new Date().toISOString();
-    const validUpto = parseIndianDateTimeLoose(vuRaw) || ewbDt;
-    return { ewbNo: String(no), ewbDt, validUpto };
+  const queue = [u, unwrapData(u)];
+  const seen = new Set<any>();
+  while (queue.length) {
+    const cur = queue.shift();
+    if (!cur) continue;
+    if (typeof cur === 'string') {
+      const s = cur.trim();
+      if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))) {
+        const parsed = safeJson(s);
+        if (parsed) queue.push(parsed);
+      }
+      continue;
+    }
+    if (typeof cur !== 'object' || seen.has(cur)) continue;
+    seen.add(cur);
+    const no = cur.ewbNo ?? cur.EwbNo ?? cur.ewayBillNo ?? cur.ewaybillNo ?? cur.EWayBillNo;
+    if (no) {
+      const dtRaw = cur.EwbDt ?? cur.ewbDt ?? cur.ewayBillDate ?? cur.ewaybillDate;
+      const vuRaw = cur.EwbValidTill ?? cur.ewbValidTill ?? cur.validUpto ?? cur.validUptoDate;
+      const ewbDt = parseIndianDateTimeLoose(dtRaw) || new Date().toISOString();
+      const validUpto = parseIndianDateTimeLoose(vuRaw) || ewbDt;
+      return { ewbNo: String(no), ewbDt, validUpto };
+    }
+    for (const v of Object.values(cur)) queue.push(v);
   }
   return null;
+}
+
+function buildFullEwayPayload(args: NonNullable<Parameters<typeof generateTaxProEwayBill>[0]['fullInvoice']>, transport: {
+  transporter_id?: string;
+  transporter_name?: string;
+  transport_mode?: string;
+  distance_km?: number;
+  trans_doc_no?: string;
+  trans_doc_dt?: string;
+  vehicle_no?: string;
+  vehicle_type?: 'R' | 'O';
+}) {
+  const invoice = args.invoice || {};
+  const items = Array.isArray(args.items) ? args.items : [];
+  const sellerGstin = normalizeGstin(invoice.company_gstin);
+  const buyerGstin = normalizeGstin(invoice.customer_gstin) || 'URP';
+  const sellerStateCode = Number(sellerGstin.slice(0, 2)) || 0;
+  const buyerStateCode = buyerGstin !== 'URP' && buyerGstin.length >= 2 ? Number(buyerGstin.slice(0, 2)) || sellerStateCode : sellerStateCode;
+  const sellerAddress = invoice.company_address || 'Address';
+  const buyerAddress = invoice.customer_address || 'Address';
+  const fromPincode = extractPincode(sellerAddress);
+  const toPincode = extractPincode(buyerAddress);
+  if (!fromPincode) throw new Error("A valid 6-digit Pincode must be present in the user's Company Address.");
+  if (!toPincode) throw new Error('A valid 6-digit Pincode must be present in the Customer Address.');
+
+  const itemList = items.map((item: any) => {
+    const unitPrice = paiseToRupees(item.unit_price);
+    const qty = Number(item.quantity) || 1;
+    const taxableAmount = round2(paiseToRupees(item.taxable_amount) || unitPrice * qty);
+    return {
+      productName: ewbText(item.item_name || item.item_description || item.description, 'Item', 100),
+      productDesc: ewbText(item.item_description || item.item_name || item.description, 'Item', 100),
+      hsnCode: Number(String(item.hsn_code || '').replace(/\D/g, '').slice(0, 8) || '9999'),
+      quantity: qty,
+      qtyUnit: ewbQtyUnit(item.unit),
+      cgstRate: Number(item.cgst_rate || 0),
+      sgstRate: Number(item.sgst_rate || 0),
+      igstRate: Number(item.igst_rate || 0),
+      cessRate: 0,
+      cessNonadvol: 0,
+      taxableAmount,
+    };
+  });
+
+  const totalValue = round2(itemList.reduce((sum: number, item: any) => sum + Number(item.taxableAmount || 0), 0));
+  const cgstValue = round2(paiseToRupees(invoice.cgst_amount));
+  const sgstValue = round2(paiseToRupees(invoice.sgst_amount));
+  const igstValue = round2(paiseToRupees(invoice.igst_amount));
+  const cessValue = round2(paiseToRupees(invoice.cess_amount));
+  const discount = round2(paiseToRupees(invoice.discount_amount || invoice.discount));
+  const payload: any = {
+    supplyType: 'O',
+    subSupplyType: '1',
+    docType: 'INV',
+    docNo: ewbDocNo(invoice.invoice_number),
+    docDate: normalizeTransportDocDate(String(invoice.invoice_date || transport.trans_doc_dt || '')),
+    fromGstin: sellerGstin,
+    fromTrdName: ewbText(invoice.company_name, 'Seller', 100),
+    fromAddr1: ewbText(sellerAddress, 'Address', 100),
+    fromPlace: safePlace(sellerAddress, 'City', 50),
+    fromPincode,
+    actFromStateCode: sellerStateCode,
+    fromStateCode: sellerStateCode,
+    toGstin: buyerGstin,
+    toTrdName: ewbText(invoice.customer_name, 'Buyer', 100),
+    toAddr1: ewbText(buyerAddress, 'Address', 100),
+    toPlace: safePlace(buyerAddress, 'City', 50),
+    toPincode,
+    actToStateCode: buyerStateCode,
+    toStateCode: buyerStateCode,
+    transactionType: 1,
+    totalValue,
+    cgstValue,
+    sgstValue,
+    igstValue,
+    cessValue,
+    cessNonAdvolValue: 0,
+    totInvValue: round2(totalValue + cgstValue + sgstValue + igstValue + cessValue - discount),
+    transMode: normalizeEwayTransportMode(transport.transport_mode),
+    transDistance: String(normalizeEwayDistance(transport.distance_km)),
+    vehicleNo: normalizeEwayVehicleNo(transport.vehicle_no),
+    vehicleType: String(transport.vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
+    itemList,
+  };
+
+  const transId = String(transport.transporter_id || '').trim().toUpperCase();
+  if (transId) payload.transporterId = transId;
+  const transName = String(transport.transporter_name || '').trim();
+  if (transName) payload.transporterName = transName.slice(0, 100);
+  const transDocNo = String(transport.trans_doc_no || '').trim();
+  if (transDocNo) payload.transDocNo = normalizeEwayDocNo(transDocNo);
+  const transDocDt = transport.trans_doc_dt ? normalizeTransportDocDate(transport.trans_doc_dt) : '';
+  if (transDocDt) payload.transDocDate = transDocDt;
+
+  return payload;
 }
 
 export async function generateTaxProEwayBill(args: {
@@ -387,10 +558,14 @@ export async function generateTaxProEwayBill(args: {
   trans_doc_dt?: string;
   vehicle_no: string;
   vehicle_type?: 'R' | 'O';
+  fullInvoice?: {
+    invoice: Record<string, any>;
+    items: Record<string, any>[];
+  };
 }): Promise<{ ewb_no: string; ewb_date: string; valid_upto: string }> {
   const c = getConfig();
   const gstin = normalizeGstin(args.sellerGstin);
-  const payload = {
+  const byIrnPayload = {
     Irn: String(args.irn || '').trim(),
     TransId: String(args.transporter_id || '').trim().toUpperCase(),
     TransName: String(args.transporter_name || 'Transport').replace(/\s+/g, ' ').trim().slice(0, 100),
@@ -402,7 +577,51 @@ export async function generateTaxProEwayBill(args: {
     VehType: String(args.vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
   };
 
-  if (payload.Irn) {
+  const fullPayload = args.fullInvoice?.items?.length ? buildFullEwayPayload(args.fullInvoice, args) : null;
+  const redisKey = `${REDIS_EWB_PREFIX}${gstin}`;
+
+  if (fullPayload) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const authtoken = await getEwayAuthToken(gstin);
+      const q = new URLSearchParams({
+        action: c.ewbGenAction,
+        aspid: c.aspid,
+        password: c.password,
+        gstin,
+        authtoken,
+      });
+      const url = `${joinHostAndPath(c.host, c.ewbApiPath)}?${q.toString()}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(fullPayload),
+      });
+      const body = await parseResponse(res);
+      const fields = extractEwbFields(body);
+      if (fields?.ewbNo) return { ewb_no: fields.ewbNo, ewb_date: fields.ewbDt, valid_upto: fields.validUpto };
+      if (attempt === 0 && isAuthTokenExpiredError(body)) {
+        await cacheTokenDelete(memoryEwb, redisKey);
+        continue;
+      }
+      logger.warn('TaxPro EWB full payload failed', {
+        status: res.status,
+        err: parseTaxProError(body),
+        payload: {
+          docNo: fullPayload.docNo,
+          docDate: fullPayload.docDate,
+          fromGstin: fullPayload.fromGstin,
+          toGstin: fullPayload.toGstin,
+          transMode: fullPayload.transMode,
+          transDistance: fullPayload.transDistance,
+          vehicleNo: fullPayload.vehicleNo,
+          itemCount: fullPayload.itemList?.length || 0,
+        },
+      });
+      throw new Error(`TaxPro E-Way Bill generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+    }
+  }
+
+  if (byIrnPayload.Irn) {
     const authToken = await getEinvoiceAuthToken(gstin);
     const res = await fetch(joinHostAndPath(c.host, c.ewbByIrnPath), {
       method: 'POST',
@@ -417,7 +636,7 @@ export async function generateTaxProEwayBill(args: {
         irp: c.irp,
         irpurl: c.irpUrl,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(byIrnPayload),
     });
     const body = await parseResponse(res);
     const fields = extractEwbFields(body);
@@ -426,8 +645,6 @@ export async function generateTaxProEwayBill(args: {
     }
     return { ewb_no: fields.ewbNo, ewb_date: fields.ewbDt, valid_upto: fields.validUpto };
   }
-
-  const redisKey = `${REDIS_EWB_PREFIX}${gstin}`;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const authtoken = await getEwayAuthToken(gstin);
@@ -442,7 +659,7 @@ export async function generateTaxProEwayBill(args: {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(byIrnPayload),
     });
     const body = await parseResponse(res);
     const fields = extractEwbFields(body);

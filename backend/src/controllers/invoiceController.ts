@@ -1463,10 +1463,52 @@ export async function generateEwayBill(req: Request, res: Response) {
       return res.status(400).json(error('E-Way Bill already generated for this invoice'));
     }
 
-    const compRes = await query(`SELECT gstin FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
+    const compRes = await query(`SELECT * FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
     if (!compRes.rows.length) return res.status(400).json(error('Company not found'));
-    const sellerGstin = String(compRes.rows[0].gstin || '').trim().toUpperCase();
+    const company = compRes.rows[0];
+    const sellerGstin = String(company.gstin || '').trim().toUpperCase();
     if (sellerGstin.length !== 15) return res.status(400).json(error('Company GSTIN is required to generate E-Way Bill'));
+
+    const itemsRes = await query(
+      `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
+      [id, companyId],
+    );
+    if (!itemsRes.rows.length) return res.status(400).json(error('Invoice must have at least one item to generate E-Way Bill'));
+
+    let party: any = {
+      gstin: inv.party_gstin_snapshot,
+      name: inv.party_name_snapshot || 'Customer',
+      billing_address: inv.billing_address_snapshot,
+      billing_city: null,
+      billing_state: null,
+      billing_pincode: null,
+    };
+    if (inv.party_id) {
+      const pRes = await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`, [inv.party_id, companyId]);
+      if (pRes.rows[0]) {
+        party = {
+          gstin: inv.party_gstin_snapshot || pRes.rows[0].gstin,
+          name: inv.party_name_snapshot || pRes.rows[0].name,
+          billing_address: inv.billing_address_snapshot || pRes.rows[0].billing_address || pRes.rows[0].address,
+          billing_city: pRes.rows[0].billing_city || pRes.rows[0].city,
+          billing_state: pRes.rows[0].billing_state || pRes.rows[0].state,
+          billing_pincode: pRes.rows[0].billing_pincode || pRes.rows[0].pincode,
+        };
+      }
+    }
+
+    const companyAddress = [
+      company.registered_address,
+      company.city,
+      company.state,
+      company.pincode,
+    ].filter(Boolean).join(', ');
+    const partyAddress = [
+      party.billing_address,
+      party.billing_city,
+      party.billing_state,
+      party.billing_pincode,
+    ].filter(Boolean).join(', ');
 
     const out = await generateEwayBillViaService({
       sellerGstin,
@@ -1479,6 +1521,18 @@ export async function generateEwayBill(req: Request, res: Response) {
       trans_doc_dt: trans_doc_dt ? String(trans_doc_dt) : undefined,
       vehicle_no: cleanVehicleNo,
       vehicle_type: String(vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
+      fullInvoice: {
+        invoice: {
+          ...inv,
+          company_gstin: sellerGstin,
+          company_name: company.legal_name || company.name,
+          company_address: companyAddress,
+          customer_gstin: party.gstin,
+          customer_name: party.name,
+          customer_address: partyAddress,
+        },
+        items: itemsRes.rows,
+      },
     });
 
     await query(

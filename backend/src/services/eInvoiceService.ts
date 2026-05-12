@@ -595,6 +595,10 @@ export async function generateEwayBill(params: {
   trans_doc_dt?: string;
   vehicle_no: string;
   vehicle_type?: 'R' | 'O';
+  fullInvoice?: {
+    invoice: Record<string, any>;
+    items: Record<string, any>[];
+  };
 }): Promise<{ ewb_no: string; ewb_date: string; valid_upto: string }> {
   if (!isTaxProEwayEnabled()) {
     throw new Error('TaxPro E-Way Bill is not configured. Set TAXPRO_ASPID, TAXPRO_PASSWORD, TAXPRO_EWB_USER_NAME, TAXPRO_EWB_PASSWORD');
