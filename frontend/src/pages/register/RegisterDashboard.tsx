@@ -71,6 +71,8 @@ export default function RegisterDashboard() {
   const [licenses, setLicenses] = useState<License[]>([]);
   const [loading, setLoading] = useState(true);
   const [launchingLicenseId, setLaunchingLicenseId] = useState<string | null>(null);
+  const [startingTrial, setStartingTrial] = useState(false);
+  const [canStartTrial, setCanStartTrial] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +92,7 @@ export default function RegisterDashboard() {
           updateRegistrant(res.data.registrant);
         }
         setLicenses(Array.isArray(res.data?.licenses) ? res.data.licenses : []);
+        setCanStartTrial(Boolean(res.data?.can_start_trial));
       }
     } catch (err: any) {
       const message = err.response?.data?.error || 'Failed to load dashboard data';
@@ -110,6 +113,24 @@ export default function RegisterDashboard() {
       toast.error(err.response?.data?.error || 'Unable to open this company');
     } finally {
       setLaunchingLicenseId(null);
+    }
+  };
+
+  const handleStartTrial = async () => {
+    try {
+      setStartingTrial(true);
+      await registrantApi.post('/licenses/start-trial', {});
+      toast.success('Your 15-day full Diamond trial is active.');
+      await fetchData();
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        toast('You already have an active trial.');
+        await fetchData();
+        return;
+      }
+      toast.error(err.response?.data?.error || 'Unable to start trial');
+    } finally {
+      setStartingTrial(false);
     }
   };
 
@@ -205,16 +226,29 @@ export default function RegisterDashboard() {
           </div>
         )}
 
-        {/* Action — buy new license */}
+        {/* Actions */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-white">Your Licenses</h2>
-          <Link
-            to="/register/licenses"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white text-sm font-semibold rounded-lg transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            Buy New License
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {canStartTrial && (
+              <button
+                type="button"
+                onClick={handleStartTrial}
+                disabled={startingTrial}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-all"
+              >
+                {startingTrial ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+                Start Free Trial
+              </button>
+            )}
+            <Link
+              to="/register/licenses"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white text-sm font-semibold rounded-lg transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              Request New Plan
+            </Link>
+          </div>
         </div>
 
         {/* License cards */}
@@ -243,15 +277,26 @@ export default function RegisterDashboard() {
             <ShieldCheck className="w-16 h-16 text-purple-400 mx-auto mb-4 opacity-50" />
             <h3 className="text-white text-xl font-semibold mb-2">No licenses yet</h3>
             <p className="text-slate-400 mb-6">
-              Purchase a license to get software access for you and your team.
+              Start a full Diamond trial now, or request a paid plan and activate it with our team.
             </p>
-            <Link
-              to="/register/licenses"
-              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-xl transition-all"
-            >
-              <Plus className="w-5 h-5" />
-              Explore License Plans
-            </Link>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleStartTrial}
+                disabled={startingTrial}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all"
+              >
+                {startingTrial ? <Loader2 className="w-5 h-5 animate-spin" /> : <Rocket className="w-5 h-5" />}
+                Start Free Trial
+              </button>
+              <Link
+                to="/register/licenses"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-xl transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                Request a Plan
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -1,13 +1,18 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import registrantApi from '@/lib/registrantApi';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const intentParam = searchParams.get('intent');
+  const intent = intentParam === 'trial' || intentParam === 'plan' ? intentParam : '';
+  const tier = searchParams.get('tier') || '';
 
   const [form, setForm] = useState({
+    business_name: '',
     name: '',
     email: '',
     phone: '',
@@ -31,14 +36,20 @@ export default function RegisterPage() {
       toast.error('Password must be at least 8 characters');
       return;
     }
+    if (!form.business_name.trim()) {
+      toast.error('Business name is required');
+      return;
+    }
 
     setLoading(true);
     try {
       const { data: res } = await registrantApi.post('/register', {
+        business_name: form.business_name.trim(),
         name: form.name,
         email: form.email,
         phone: form.phone || undefined,
         password: form.password,
+        intent: intent || undefined,
       });
 
       if (res.success) {
@@ -49,6 +60,9 @@ export default function RegisterPage() {
             verificationToken: res.data.verification_token,
             emailMasked: res.data.email_masked,
             email: form.email,
+            businessName: form.business_name.trim(),
+            intent,
+            tier,
             devCode: res.data.dev_code,
           },
         });
@@ -120,10 +134,28 @@ export default function RegisterPage() {
 
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-white">Create your account</h2>
-              <p className="text-slate-400 mt-1">Register to explore license options</p>
+              <p className="text-slate-400 mt-1">
+                {intent === 'trial'
+                  ? 'Verify once, then start your 15-day full Diamond trial.'
+                  : intent === 'plan'
+                    ? 'Verify once, then request your selected plan.'
+                    : 'Manage trials, licenses, and companies from one dashboard.'}
+              </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-purple-200 mb-1">Business / Company Name *</label>
+                <input
+                  type="text"
+                  value={form.business_name}
+                  onChange={(e) => update('business_name', e.target.value)}
+                  required
+                  placeholder="Your business name"
+                  className="w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-purple-200 mb-1">Full Name *</label>
                 <input
@@ -198,7 +230,13 @@ export default function RegisterPage() {
                 className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 transition-all disabled:opacity-50 mt-2"
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {loading ? 'Creating account…' : 'Create Account'}
+                {loading
+                  ? 'Creating account…'
+                  : intent === 'trial'
+                    ? 'Create Account & Verify'
+                    : intent === 'plan'
+                      ? 'Create Account & Request Plan'
+                      : 'Create Account'}
               </button>
             </form>
 

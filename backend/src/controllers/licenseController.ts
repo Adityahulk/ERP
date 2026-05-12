@@ -6,6 +6,7 @@ import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 const CONTACT_PHONE = '+91 6355 997 080';
 const CONTACT_EMAIL = 'support@microtechnique.in';
+const TRIAL_DAYS = 15;
 
 async function enforceCurrentTierPrices() {
   await query(
@@ -100,6 +101,117 @@ export async function requestLicense(req: Request, res: Response) {
       license: { ...license, tier },
       contact: { phone: CONTACT_PHONE, email: CONTACT_EMAIL },
       message: `Your license request for the ${tier.display_name} plan has been received. Please contact us at ${CONTACT_PHONE} or ${CONTACT_EMAIL} to complete payment and activate your license.`,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/licenses/start-trial ────────────────────────────
+// Authenticated registrant — provision a full Diamond trial company after email verification
+export async function startTrialLicense(req: Request, res: Response) {
+  try {
+    await enforceCurrentTierPrices();
+    const registrantId = req.registrant!.id;
+    const requestedBusinessName = typeof req.body?.business_name === 'string' ? req.body.business_name.trim() : '';
+
+    const registrantResult = await query(
+      `SELECT id, name, email, phone, password_hash, is_active, email_verified_at
+       FROM registrants
+       WHERE id = $1 AND is_deleted = false
+       LIMIT 1`,
+      [registrantId]
+    );
+    if (!registrantResult.rows.length) {
+      return res.status(404).json(error('Registrant not found'));
+    }
+
+    const registrant = registrantResult.rows[0];
+    if (!registrant.is_active) {
+      return res.status(403).json(error('Your account has been deactivated. Please contact support.'));
+    }
+    if (!registrant.email_verified_at) {
+      return res.status(403).json(error('Please verify your email before starting a trial.'));
+    }
+
+    const activeTrialResult = await query(
+      `SELECT l.id, l.license_key, l.status, l.expires_at,
+              c.id AS company_id, c.name AS company_name
+       FROM licenses l
+       LEFT JOIN companies c ON c.id = l.company_id AND c.is_deleted = false
+       WHERE l.registrant_id = $1
+         AND l.status = 'trial'
+         AND l.is_deleted = false
+         AND (l.expires_at IS NULL OR l.expires_at > NOW())
+       ORDER BY l.created_at DESC
+       LIMIT 1`,
+      [registrantId]
+    );
+    if (activeTrialResult.rows.length) {
+      return res.status(409).json({
+        success: false,
+        error: 'You already have an active trial.',
+        data: { license: activeTrialResult.rows[0] },
+      });
+    }
+
+    const tierResult = await query(
+      `SELECT id, name, display_name, max_users, price_inr
+       FROM license_tiers
+       WHERE name = 'diamond' AND is_active = true
+       LIMIT 1`
+    );
+    if (!tierResult.rows.length) {
+      return res.status(500).json(error('Trial configuration error. Please contact support.'));
+    }
+
+    const tier = tierResult.rows[0];
+    const trialExpiresAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    const companyName = requestedBusinessName || `${registrant.name}'s Business`;
+
+    const result = await withTransaction(async (client) => {
+      const licRes = await client.query(
+        `INSERT INTO licenses (registrant_id, tier_id, status, activated_at, expires_at, notes)
+         VALUES ($1, $2, 'trial', NOW(), $3, 'Self-serve 15-day Diamond free trial')
+         RETURNING id, license_key, status, activated_at, expires_at, requested_at`,
+        [registrant.id, tier.id, trialExpiresAt]
+      );
+      const license = licRes.rows[0];
+
+      const companyRes = await client.query(
+        `INSERT INTO companies (name, email, phone, license_id, plan_type, plan_expires_at)
+         VALUES ($1, $2, $3, $4, 'trial', $5)
+         RETURNING id, name, email, phone`,
+        [companyName, registrant.email, registrant.phone || null, license.id, trialExpiresAt]
+      );
+      const company = companyRes.rows[0];
+
+      await client.query(
+        `UPDATE licenses SET company_id = $1, updated_at = NOW() WHERE id = $2`,
+        [company.id, license.id]
+      );
+
+      const userRes = await client.query(
+        `INSERT INTO users (company_id, name, email, phone, password_hash, role, is_active)
+         VALUES ($1, $2, $3, $4, $5, 'company_admin', true)
+         RETURNING id, name, email, role`,
+        [company.id, registrant.name, registrant.email, registrant.phone || null, registrant.password_hash]
+      );
+
+      return {
+        license: { ...license, tier, company_id: company.id, company_name: company.name },
+        company,
+        admin_user: userRes.rows[0],
+      };
+    });
+
+    res.status(201).json(success({
+      message: 'Your 15-day full Diamond trial is active.',
+      license: result.license,
+      company: result.company,
+      admin_user: result.admin_user,
+      trial_expires_at: trialExpiresAt,
+      trial_days_remaining: TRIAL_DAYS,
     }));
   } catch (err: any) {
     res.status(500).json(error(err.message));

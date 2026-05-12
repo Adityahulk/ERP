@@ -21,6 +21,8 @@ const registerSchema = z.object({
   email: z.string().email(),
   phone: z.string().max(20).optional(),
   password: z.string().min(8).max(100),
+  business_name: z.string().trim().min(2).max(500).optional(),
+  intent: z.enum(['trial', 'plan']).optional(),
 });
 
 const loginSchema = z.object({

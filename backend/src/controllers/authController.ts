@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { query, withTransaction } from '../config/db';
+import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import {
@@ -430,99 +430,13 @@ export async function resetPassword(req: Request, res: Response) {
 }
 
 // ── POST /api/auth/trial-signup ───────────────────────────────
-// Self-serve 15-day free trial. Creates registrant + company + user + trial license
-// in one transaction. No admin approval required.
+// Backward-compatible response for old clients. Trial provisioning now requires
+// verified registrant auth and lives at POST /api/licenses/start-trial.
 export async function trialSignup(req: Request, res: Response) {
   try {
-    const { name, email, password, business_name, phone } = req.body;
-
-    const cleanEmail = email.toLowerCase().trim();
-
-    // Ensure the email isn't already an application user
-    const existing = await query(
-      `SELECT id FROM users WHERE email = $1 AND is_deleted = false LIMIT 1`,
-      [cleanEmail]
-    );
-    if (existing.rows.length) {
-      return res.status(409).json(error('An account with this email already exists. Please log in.'));
-    }
-
-    // Fetch Diamond tier (trial gets full feature access)
-    const tierRes = await query(
-      `SELECT id, max_users FROM license_tiers WHERE name = 'diamond' AND is_active = true LIMIT 1`
-    );
-    if (!tierRes.rows.length) {
-      return res.status(500).json(error('Trial configuration error. Please contact support.'));
-    }
-    const tier = tierRes.rows[0];
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const trialExpiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000); // 15 days
-
-    const result = await withTransaction(async (client) => {
-      // 1. Create or reuse registrant
-      let registrantId: string;
-      const regCheck = await client.query(
-        `SELECT id FROM registrants WHERE email = $1 AND is_deleted = false LIMIT 1`,
-        [cleanEmail]
-      );
-      if (regCheck.rows.length) {
-        registrantId = regCheck.rows[0].id;
-      } else {
-        const regRes = await client.query(
-          `INSERT INTO registrants (name, email, phone, password_hash, is_verified, is_active)
-           VALUES ($1, $2, $3, $4, true, true)
-           RETURNING id`,
-          [name.trim(), cleanEmail, phone?.trim() || null, passwordHash]
-        );
-        registrantId = regRes.rows[0].id;
-      }
-
-      // 2. Create trial license (company_id filled after company creation)
-      const licRes = await client.query(
-        `INSERT INTO licenses (registrant_id, tier_id, status, activated_at, expires_at, notes)
-         VALUES ($1, $2, 'trial', NOW(), $3, 'Self-serve 15-day free trial')
-         RETURNING id, license_key`,
-        [registrantId, tier.id, trialExpiresAt]
-      );
-      const license = licRes.rows[0];
-
-      // 3. Create company
-      const companyRes = await client.query(
-        `INSERT INTO companies (name, email, license_id)
-         VALUES ($1, $2, $3)
-         RETURNING id, name`,
-        [business_name.trim(), cleanEmail, license.id]
-      );
-      const company = companyRes.rows[0];
-
-      // 4. Link license → company
-      await client.query(
-        `UPDATE licenses SET company_id = $1 WHERE id = $2`,
-        [company.id, license.id]
-      );
-
-      // 5. Create application user (company_admin, same credentials)
-      const userRes = await client.query(
-        `INSERT INTO users (company_id, name, email, password_hash, role, is_active)
-         VALUES ($1, $2, $3, $4, 'company_admin', true)
-         RETURNING id, name, email, role`,
-        [company.id, name.trim(), cleanEmail, passwordHash]
-      );
-      const user = userRes.rows[0];
-
-      return { user, company, license, trialExpiresAt };
-    });
-
-    const daysRemaining = 15;
-
-    res.status(201).json(success({
-      message: `Your 15-day free trial is active! Log in with your email and password.`,
-      email: cleanEmail,
-      company_name: result.company.name,
-      trial_expires_at: result.trialExpiresAt,
-      trial_days_remaining: daysRemaining,
-    }));
+    res.status(410).json(error(
+      'Trial signup has moved. Please register and verify your email first, then start your 15-day trial from the registrant dashboard.'
+    ));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

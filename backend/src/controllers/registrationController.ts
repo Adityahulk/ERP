@@ -362,9 +362,16 @@ export async function getRegistrantMe(req: Request, res: Response) {
       [registrantId]
     );
 
+    const hasActiveTrial = licensesResult.rows.some((license) => {
+      if (license.status !== 'trial') return false;
+      if (!license.expires_at) return true;
+      return new Date(license.expires_at).getTime() > Date.now();
+    });
+
     res.json(success({
       registrant: registrantResult.rows[0],
       licenses: licensesResult.rows,
+      can_start_trial: !hasActiveTrial,
     }));
   } catch (err: any) {
     res.status(500).json(error(err.message));

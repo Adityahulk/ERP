@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Phone, Mail, CheckCircle2, XCircle,
   Loader2, Star, Zap, Diamond, X,
@@ -55,6 +55,7 @@ function formatPrice(inr: number) {
 
 export default function LicenseTiersPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAuthenticated } = useRegistrantStore();
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [contact, setContact] = useState<ContactInfo | null>(null);
@@ -63,10 +64,22 @@ export default function LicenseTiersPage() {
   const [requesting, setRequesting] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
   const [requestedLicense, setRequestedLicense] = useState<any>(null);
+  const [highlightedTierApplied, setHighlightedTierApplied] = useState(false);
 
   useEffect(() => {
     fetchTiers();
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || highlightedTierApplied || !tiers.length) return;
+    const requestedTier = searchParams.get('tier');
+    if (!requestedTier) return;
+    const tier = tiers.find((t) => t.name.toLowerCase() === requestedTier.toLowerCase());
+    if (tier) {
+      setSelectedTier(tier);
+      setHighlightedTierApplied(true);
+    }
+  }, [highlightedTierApplied, isAuthenticated, searchParams, tiers]);
 
   const fetchTiers = async () => {
     try {
@@ -84,8 +97,8 @@ export default function LicenseTiersPage() {
 
   const handleBuyClick = (tier: Tier) => {
     if (!isAuthenticated) {
-      toast('Please register or sign in first', { icon: '🔑' });
-      navigate('/register');
+      toast('Please register or sign in first');
+      navigate(`/register?intent=plan&tier=${encodeURIComponent(tier.name)}`);
       return;
     }
     setSelectedTier(tier);
@@ -127,7 +140,7 @@ export default function LicenseTiersPage() {
         <div className="text-center mb-14">
           <h1 className="text-4xl font-bold text-white mb-4">Choose Your Plan</h1>
           <p className="text-slate-400 text-lg max-w-xl mx-auto">
-            Select the plan that fits your business. All plans include full data isolation — your data stays yours.
+            Request the plan that fits your business. You can start a 15-day full-feature Diamond trial before or after requesting payment activation.
           </p>
           {contact && (
             <div className="flex items-center justify-center gap-4 mt-6 flex-wrap">
@@ -214,7 +227,7 @@ export default function LicenseTiersPage() {
                     onClick={() => handleBuyClick(tier)}
                     className={`w-full py-3 rounded-xl font-semibold text-sm transition-all bg-gradient-to-r ${meta.gradient} text-slate-900 hover:opacity-90 hover:shadow-lg`}
                   >
-                    Buy {tier.display_name} Plan
+                    Request {tier.display_name} Plan
                   </button>
                 </div>
               );
@@ -235,7 +248,7 @@ export default function LicenseTiersPage() {
               Request {selectedTier.display_name} Plan
             </h3>
             <p className="text-slate-400 text-sm mb-6">
-              We'll create a license request for you. Our sales team will reach out to complete payment and activate your account.
+              We'll create a license request for you. Our sales team will reach out to complete payment and activate your company.
             </p>
 
             <div className="bg-white/5 rounded-xl p-4 mb-6 space-y-2">

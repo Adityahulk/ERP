@@ -12,6 +12,9 @@ interface LocationState {
   verificationToken?: string;
   emailMasked?: string;
   email?: string;
+  businessName?: string;
+  intent?: 'trial' | 'plan' | '';
+  tier?: string;
   devCode?: string;
 }
 
@@ -127,7 +130,31 @@ export default function VerifyEmailPage() {
       });
       if (res.success) {
         login(res.data.registrant, res.data.token);
+        const intent = initialState.intent || '';
+        if (intent === 'trial') {
+          try {
+            await registrantApi.post('/licenses/start-trial', {
+              business_name: initialState.businessName || undefined,
+            });
+            toast.success('Email verified and your 15-day trial is active.');
+          } catch (trialErr: any) {
+            if (trialErr?.response?.status === 409) {
+              toast('Email verified. You already have an active trial.');
+            } else {
+              toast.error(trialErr?.response?.data?.error || 'Email verified, but trial could not be started.');
+            }
+          }
+          navigate('/register/dashboard', { replace: true });
+          return;
+        }
+
         toast.success('Email verified — welcome!');
+        if (intent === 'plan') {
+          const qs = initialState.tier ? `?tier=${encodeURIComponent(initialState.tier)}` : '';
+          navigate(`/register/licenses${qs}`, { replace: true });
+          return;
+        }
+
         navigate('/register/dashboard', { replace: true });
       }
     } catch (err: any) {
@@ -217,7 +244,13 @@ export default function VerifyEmailPage() {
             className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 transition-all disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {submitting ? 'Verifying…' : 'Verify and continue'}
+            {submitting
+              ? 'Verifying…'
+              : initialState.intent === 'trial'
+                ? 'Verify and start trial'
+                : initialState.intent === 'plan'
+                  ? 'Verify and request plan'
+                  : 'Verify and continue'}
           </button>
 
           <div className="flex items-center justify-between text-sm border-t border-white/10 pt-4">

@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/role';
 import {
   getLicenseTiers,
   requestLicense,
+  startTrialLicense,
   getMyLicenses,
   getLicenseDetail,
   activateLicense,
@@ -19,6 +20,10 @@ const router = Router();
 const requestSchema = z.object({
   tier_id: z.string().uuid(),
 });
+
+const startTrialSchema = z.object({
+  business_name: z.string().trim().min(2).max(500).optional(),
+}).optional().default({});
 
 const activateSchema = z.object({
   company_name: z.string().min(2).max(500),
@@ -34,6 +39,7 @@ router.get('/tiers', getLicenseTiers);
 
 // Registrant-authenticated routes
 router.post('/request', verifyRegistrantToken, validateBody(requestSchema), requestLicense);
+router.post('/start-trial', verifyRegistrantToken, validateBody(startTrialSchema), startTrialLicense);
 router.get('/', verifyRegistrantToken, getMyLicenses);
 router.get('/:id', verifyRegistrantToken, getLicenseDetail);
 

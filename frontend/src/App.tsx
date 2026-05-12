@@ -51,7 +51,6 @@ import SuperAdminLicenses from '@/pages/superadmin/SuperAdminLicenses';
 import SuperAdminLicenseDetail from '@/pages/superadmin/SuperAdminLicenseDetail';
 import SuperAdminCompanies from '@/pages/superadmin/SuperAdminCompanies';
 import SuperAdminCompanyDetail from '@/pages/superadmin/SuperAdminCompanyDetail';
-import TrialSignupPage from '@/pages/trial/TrialSignupPage';
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
@@ -304,8 +303,8 @@ export default function App() {
 
       <Route path="/onboarding" element={<OnboardingEntry />} />
 
-      {/* ── Free Trial signup ────────────────────────────────── */}
-      <Route path="/trial" element={<TrialSignupPage />} />
+      {/* ── Free Trial signup redirects into unified registration ── */}
+      <Route path="/trial" element={<Navigate to="/register?intent=trial" replace />} />
 
       {/* ── Registrant / License routes ─────────────────────── */}
       <Route path="/register" element={<RegisterPage />} />

@@ -191,7 +191,7 @@ export default function LandingPage() {
     },
     {
       q: 'How does licensing work?',
-      a: 'Register on our website, choose a plan (Silver, Gold, or Diamond), and contact us to complete payment. We then activate your company and provide login credentials for you and your team.',
+      a: 'Register once, verify your email, then use the registrant dashboard to start a 15-day Diamond trial, request paid plans, open companies, and track pending activations.',
     },
     {
       q: 'Can multiple users access the system?',
@@ -256,18 +256,11 @@ export default function LandingPage() {
               Login
             </Link>
             <Link
-              to="/trial"
+              to="/register?intent=trial"
               className="hidden sm:inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-amber-500/30"
             >
               <Zap className="w-4 h-4" />
-              Free Trial
-            </Link>
-            <Link
-              to="/register"
-              className="hidden sm:inline-flex items-center gap-2 bg-[#420662] hover:bg-[#2d0444] text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-[#420662]/30"
-            >
-              <UserPlus className="w-4 h-4" />
-              Register Now
+              Start / Register
             </Link>
             <button
               onClick={() => setShowPhone(!showPhone)}
@@ -346,7 +339,7 @@ export default function LandingPage() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
-                to="/trial"
+                to="/register?intent=trial"
                 className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-amber-500/30 flex items-center justify-center gap-2 group"
               >
                 <Zap className="w-5 h-5" />
@@ -362,7 +355,7 @@ export default function LandingPage() {
             </div>
             <p className="mt-4 text-sm text-slate-500">
               No credit card required &bull; All features unlocked &bull; 15 days free &bull;{' '}
-              <Link to="/register" className="underline text-[#420662]">Buy a license</Link> to continue
+              <Link to="/register?intent=plan" className="underline text-[#420662]">Request a plan</Link> any time
             </p>
 
             {/* AI capability chips */}
@@ -399,7 +392,7 @@ export default function LandingPage() {
             </div>
           </div>
           <Link
-            to="/trial"
+            to="/register?intent=trial"
             className="shrink-0 inline-flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl transition-colors shadow-lg shadow-amber-500/30 text-sm"
           >
             Start Free Trial
@@ -500,8 +493,7 @@ export default function LandingPage() {
               Simple, Transparent Pricing
             </h2>
             <p className="text-lg text-purple-300 max-w-2xl mx-auto">
-              Register free, choose a plan, and contact us to activate. All plans include
-              full data isolation — your business data stays yours.
+              Register once, start a full Diamond trial, request a plan, and manage every company from one account.
             </p>
             <div className="flex items-center justify-center gap-4 mt-6 text-sm text-purple-300">
               <a href="tel:+916355997080" className="flex items-center gap-2 hover:text-purple-200 transition-colors">
@@ -561,10 +553,10 @@ export default function LandingPage() {
                   </ul>
 
                   <Link
-                    to="/register"
+                    to={`/register?intent=plan&tier=${tier.name}`}
                     className={`w-full py-3 rounded-xl font-semibold text-sm text-center transition-all bg-gradient-to-r ${tier.gradient} text-slate-900 hover:opacity-90 hover:shadow-lg`}
                   >
-                    Get {tier.display} Plan
+                    Request {tier.display} Plan
                   </Link>
                 </div>
               );
@@ -595,18 +587,18 @@ export default function LandingPage() {
             {[
               {
                 step: '1',
-                title: 'Register Free',
-                desc: 'Create your registrant account on our website. No payment needed upfront.',
+                title: 'Register Once',
+                desc: 'Create one verified account for trials, license requests, and company access.',
               },
               {
                 step: '2',
-                title: 'Choose a Plan',
-                desc: 'Pick Silver, Gold, or Diamond based on your team size and feature needs.',
+                title: 'Start Trial or Request Plan',
+                desc: 'Use the 15-day Diamond trial and request Silver, Gold, or Diamond whenever you are ready.',
               },
               {
                 step: '3',
-                title: 'Pay & Activate',
-                desc: 'Contact us via phone or email to complete payment. We activate your company and send login credentials.',
+                title: 'Activate Paid License',
+                desc: 'Contact us via phone or email to complete offline payment. We activate the requested company.',
               },
               {
                 step: '4',
@@ -625,11 +617,11 @@ export default function LandingPage() {
           </div>
           <div className="text-center mt-12">
             <Link
-              to="/register"
+              to="/register?intent=trial"
               className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-[#420662] to-indigo-600 hover:from-[#2d0444] hover:to-indigo-700 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-[#420662]/30 group"
             >
               <UserPlus className="w-5 h-5" />
-              Start with Step 1 — Register Free
+              Start with Step 1 — Register
               <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Link>
           </div>
@@ -684,15 +676,15 @@ export default function LandingPage() {
             Ready to simplify how you run your business?
           </h2>
           <p className="text-xl text-purple-200 mb-10">
-            Register free today. Choose your plan, pay offline, and go live in 24 hours.
+            Register once, start the free trial, and request paid activation when you are ready.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
             <Link
-              to="/register"
+              to="/register?intent=trial"
               className="px-10 py-5 bg-white text-[#420662] hover:bg-purple-50 rounded-xl font-extrabold text-xl transition-all shadow-2xl hover:shadow-white/20 hover:scale-105 flex items-center justify-center gap-3"
             >
               <UserPlus className="w-6 h-6" />
-              Register Now — Free
+              Start / Register
             </Link>
             <button
               onClick={() => setShowPhone(true)}
