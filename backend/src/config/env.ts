@@ -7,7 +7,7 @@ const envSchema = z.object({
   // Server
   PORT: z.coerce.number().default(5000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  FRONTEND_URL: z.string().default('http://localhost:3000'),
+  FRONTEND_URL: z.string().default('https://microtechnique.in'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   FRONTEND_DIST_DIR: z.string().default('./public'),
 

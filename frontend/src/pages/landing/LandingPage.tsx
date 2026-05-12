@@ -250,10 +250,10 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              to="/login"
+              to="/register/dashboard"
               className="text-sm font-medium text-[#420662] hover:text-[#2d0444] transition-colors hidden sm:block"
             >
-              Login
+              Sign in
             </Link>
             <Link
               to="/register?intent=trial"
@@ -350,7 +350,7 @@ export default function LandingPage() {
                 to="/login"
                 className="w-full sm:w-auto px-8 py-4 bg-white border-2 border-slate-200 hover:border-[#420662] hover:text-[#420662] text-slate-700 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2"
               >
-                Already have access? Sign In
+                Already have access? Open Software
               </Link>
             </div>
             <p className="mt-4 text-sm text-slate-500">
@@ -727,7 +727,8 @@ export default function LandingPage() {
               <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
               <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
               <li><Link to="/register" className="hover:text-white transition-colors">Register</Link></li>
-              <li><Link to="/login" className="hover:text-white transition-colors">Login</Link></li>
+              <li><Link to="/register/dashboard" className="hover:text-white transition-colors">Sign in</Link></li>
+              <li><Link to="/login" className="hover:text-white transition-colors">Software Login</Link></li>
             </ul>
           </div>
           <div>
