@@ -10,6 +10,7 @@ const PRODUCTION_EWB_API_PATH = '/v1.03/dec/ewayapi';
 const EINV_AUTH_PATH = '/eivital/dec/v1.04/auth';
 const EINV_INVOICE_PATH = '/eicore/dec/v1.03/Invoice';
 const EINV_CANCEL_PATH = '/eicore/dec/v1.03/Invoice/Cancel';
+const EWB_BY_IRN_PATH = '/eiewb/dec/v1.03/ewaybill';
 
 const REDIS_EINV_PREFIX = 'taxpro:einv:auth:';
 const REDIS_EWB_PREFIX = 'taxpro:ewb:auth:';
@@ -34,6 +35,9 @@ function getConfig() {
     einvAuthPath: (env.TAXPRO_EINV_AUTH_PATH || EINV_AUTH_PATH).trim(),
     einvInvoicePath: (env.TAXPRO_EINV_INVOICE_PATH || EINV_INVOICE_PATH).trim(),
     einvCancelPath: (env.TAXPRO_EINV_CANCEL_PATH || EINV_CANCEL_PATH).trim(),
+    ewbByIrnPath: (env.TAXPRO_EWB_BY_IRN_PATH || EWB_BY_IRN_PATH).trim(),
+    irp: (env.TAXPRO_IRP || 'NIC1').trim(),
+    irpUrl: (env.TAXPRO_IRP_URL || '1').trim(),
     ewbAuthPath: (env.TAXPRO_EWB_AUTH_PATH || (isProduction ? PRODUCTION_EWB_AUTH_PATH : SANDBOX_EWB_AUTH_PATH)).trim(),
     ewbApiPath: (env.TAXPRO_EWB_API_PATH || (isProduction ? PRODUCTION_EWB_API_PATH : SANDBOX_EWB_API_PATH)).trim(),
   };
@@ -386,9 +390,8 @@ export async function generateTaxProEwayBill(args: {
 }): Promise<{ ewb_no: string; ewb_date: string; valid_upto: string }> {
   const c = getConfig();
   const gstin = normalizeGstin(args.sellerGstin);
-  const redisKey = `${REDIS_EWB_PREFIX}${gstin}`;
   const payload = {
-    Irn: args.irn,
+    Irn: String(args.irn || '').trim(),
     TransId: String(args.transporter_id || '').trim().toUpperCase(),
     TransName: String(args.transporter_name || 'Transport').replace(/\s+/g, ' ').trim().slice(0, 100),
     TransMode: normalizeEwayTransportMode(args.transport_mode),
@@ -398,6 +401,33 @@ export async function generateTaxProEwayBill(args: {
     VehNo: normalizeEwayVehicleNo(args.vehicle_no),
     VehType: String(args.vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
   };
+
+  if (payload.Irn) {
+    const authToken = await getEinvoiceAuthToken(gstin);
+    const res = await fetch(joinHostAndPath(c.host, c.ewbByIrnPath), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        Accept: 'application/json',
+        aspid: c.aspid,
+        password: c.password,
+        Gstin: gstin,
+        user_name: c.einvUser,
+        AuthToken: authToken,
+        irp: c.irp,
+        irpurl: c.irpUrl,
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await parseResponse(res);
+    const fields = extractEwbFields(body);
+    if (!res.ok || !fields?.ewbNo) {
+      throw new Error(`TaxPro E-Way Bill generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+    }
+    return { ewb_no: fields.ewbNo, ewb_date: fields.ewbDt, valid_upto: fields.validUpto };
+  }
+
+  const redisKey = `${REDIS_EWB_PREFIX}${gstin}`;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const authtoken = await getEwayAuthToken(gstin);

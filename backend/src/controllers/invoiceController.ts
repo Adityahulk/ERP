@@ -1387,7 +1387,7 @@ export async function generateEinvoice(req: Request, res: Response) {
 
     const payload = buildEinvoicePayload(inv, company, party, itemsRes.rows as EinvoiceItemRow[]);
     const irnData = await generateIRN(payload, company);
-    const qrUrl = await generateEinvoiceQR(irnData.irn, inv, env.EINVOICE_MODE, payload);
+    const qrUrl = await generateEinvoiceQR(irnData.irn, inv, env.EINVOICE_MODE, payload, irnData.signed_qr_code);
 
     await query(
       `UPDATE invoices SET irn = $1, ack_number = $2, ack_date = $3, einvoice_status = $4, qr_code_url = $5, updated_at = now()

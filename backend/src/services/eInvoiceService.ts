@@ -569,14 +569,14 @@ export async function generateEinvoiceQR(
   invoice: Pick<EinvoiceInvoice, 'invoice_number' | 'invoice_date' | 'total_amount'>,
   mode: string,
   payload?: Record<string, unknown>,
+  signedQrCode?: string,
 ): Promise<string> {
   const uploadsDir = path.resolve(env.UPLOAD_DIR, 'einvoice-qr');
   fs.mkdirSync(uploadsDir, { recursive: true });
 
-  const qrPayload =
-    mode === 'mock'
-      ? JSON.stringify({ irn, inv: invoice.invoice_number, mock: true, payload })
-      : irn;
+  const qrPayload = signedQrCode || (mode === 'mock'
+    ? JSON.stringify({ irn, inv: invoice.invoice_number, mock: true, payload })
+    : irn);
 
   const fileName = `${invoice.invoice_number.replace(/[^\w.-]+/g, '_')}-${Date.now()}.png`;
   const absPath = path.join(uploadsDir, fileName);

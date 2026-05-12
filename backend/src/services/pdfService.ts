@@ -477,36 +477,56 @@ export async function generateEinvoicePdf(
   party: any | null,
   items: any[],
 ): Promise<Buffer> {
-  const qr = invoice.qr_code_url
-    ? invoice.qr_code_url.startsWith('http') || invoice.qr_code_url.startsWith('data:')
-      ? invoice.qr_code_url
-      : `${env.FRONTEND_URL}${invoice.qr_code_url}`
-    : await QRCode.toDataURL(JSON.stringify({ irn: invoice.irn, no: invoice.invoice_number }), { width: 180 });
-
+  const qr = inlineAssetAsDataUri(invoice.qr_code_url)
+    || (invoice.qr_code_url && (invoice.qr_code_url.startsWith('http') || invoice.qr_code_url.startsWith('data:')) ? invoice.qr_code_url : '')
+    || await QRCode.toDataURL(invoice.irn || JSON.stringify({ irn: invoice.irn, no: invoice.invoice_number }), { width: 220, margin: 1 });
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const sellerAddress = companyAddress(company);
+  const buyerAddressText = invoice.billing_address_snapshot || buyerAddress(party);
+  const primary = String(company.document_primary_color || '#174EA6');
+  const rows = items.map((it, i) => `<tr>
+    <td class="center">${i + 1}</td>
+    <td><b>${escapeHtml(it.item_name || '')}</b>${it.item_description ? `<div class="muted small">${multilineHtml(it.item_description)}</div>` : ''}</td>
+    <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
+    <td class="right">${Number(it.quantity) || 0}</td>
+    <td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td>
+    <td class="right">${Number(it.gst_rate || 0).toFixed(2)}%</td>
+    <td class="right">${fmtPaise(Number(it.taxable_amount) || 0)}</td>
+    <td class="right"><b>${fmtPaise(Number(it.total_amount) || 0)}</b></td>
+  </tr>`).join('');
+  const ackDate = invoice.ack_date ? new Date(invoice.ack_date) : null;
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>
-    body{font-family:Arial,sans-serif;padding:24px;color:#111}
-    h1{font-size:20px} .muted{color:#555;font-size:12px}
-    table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px}
-    th,td{border:1px solid #ccc;padding:6px;text-align:left}
-    th{background:#f3f4f6}
-    .right{text-align:right}.mono{font-family:monospace}
+    @page{size:A4;margin:12mm}
+    *{box-sizing:border-box} body{font-family:Inter,Segoe UI,Arial,sans-serif;color:#111827;margin:0;background:#fff;font-size:12px}
+    .top{display:grid;grid-template-columns:1.3fr .7fr;gap:18px;border-bottom:4px solid ${escapeHtml(primary)};padding-bottom:14px}
+    .brand{display:flex;gap:12px;align-items:flex-start}.logo{max-width:82px;max-height:64px;object-fit:contain}.title{text-align:right}
+    h1{margin:0;color:${escapeHtml(primary)};font-size:34px;letter-spacing:1px}.muted{color:#667085}.small{font-size:11px}.mono{font-family:"SFMono-Regular",Consolas,monospace}
+    .company{font-size:18px;font-weight:800}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.box{border:1px solid #d9e2ec;border-radius:8px;padding:12px;min-height:96px}
+    .box h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:${escapeHtml(primary)};letter-spacing:.04em}.kv{display:grid;grid-template-columns:92px 1fr;gap:6px}.irn{word-break:break-all;line-height:1.45}
+    .qrbox{display:flex;gap:12px;align-items:center;border:1px solid #d9e2ec;border-radius:8px;padding:10px;margin-top:12px}.qrbox img{width:132px;height:132px;object-fit:contain}
+    table{width:100%;border-collapse:collapse;margin-top:14px}th{background:${escapeHtml(primary)};color:#fff;padding:8px;text-align:left;font-size:11px}td{border-bottom:1px solid #e5e7eb;padding:8px;vertical-align:top}
+    .right{text-align:right}.center{text-align:center}.totals{display:grid;grid-template-columns:1fr 310px;gap:18px;margin-top:12px}.totals table{margin-top:0}.totals td{padding:7px;border-bottom:1px solid #e5e7eb}.grand td{font-size:15px;font-weight:800;color:#111827}
+    .seal{margin-top:12px;padding:10px;border-radius:8px;background:#eef6ff;color:#174a7c}.footer{margin-top:16px;border-top:1px solid #e5e7eb;padding-top:10px;color:#667085}
   </style></head><body>
-    <h1>e-Invoice</h1>
-    <p class="muted">${escapeHtml(company.name)} &middot; GSTIN ${escapeHtml(company.gstin || '')}</p>
-    <p><b>IRN:</b> <span class="mono">${escapeHtml(invoice.irn || '')}</span></p>
-    <p><b>ACK:</b> ${escapeHtml(invoice.ack_number || '')} &nbsp; <b>Ack Date:</b> ${escapeHtml(String(invoice.ack_date || ''))}</p>
-    <p><b>Invoice:</b> ${escapeHtml(invoice.invoice_number)} &nbsp; <b>Date:</b> ${escapeHtml(String(invoice.invoice_date))}</p>
-    <p><b>Buyer:</b> ${escapeHtml(party?.name || invoice.party_name_snapshot || '')}</p>
-    <img src="${qr}" width="180" height="180" alt="QR"/>
-    <table><thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Taxable</th><th>Total</th></tr></thead><tbody>
-    ${items
-      .map(
-        (it, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(it.item_name)}</td><td class="mono">${escapeHtml(it.hsn_code || '')}</td>
-      <td class="right">${it.quantity}</td><td class="right">${fmtPaise(it.taxable_amount)}</td><td class="right">${fmtPaise(it.total_amount)}</td></tr>`,
-      )
-      .join('')}
-    </tbody></table>
-    <p style="margin-top:16px"><b>Grand Total:</b> ₹${fmtPaise(invoice.total_amount)} (${escapeHtml(amountToWordsINR(Math.round(invoice.total_amount / 100)))})</p>
+    <section class="top">
+      <div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}<div><div class="company">${escapeHtml(company.legal_name || company.name || '')}</div><div class="muted">${addressHtml(sellerAddress)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(company.gstin || '—')}</span>${company.email ? ` · ${escapeHtml(company.email)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div></div></div>
+      <div class="title"><h1>e-INVOICE</h1><div class="muted">Government registered tax invoice</div></div>
+    </section>
+    <section class="grid">
+      <div class="box"><h3>Bill To</h3><b>${escapeHtml(invoice.party_name_snapshot || party?.name || 'Customer')}</b><div class="muted">${addressHtml(buyerAddressText)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(invoice.party_gstin_snapshot || party?.gstin || 'URP')}</span></div></div>
+      <div class="box"><h3>Invoice Details</h3><div class="kv"><span>Invoice No</span><b>${escapeHtml(invoice.invoice_number || '')}</b><span>Date</span><b>${formatDocDate(invoice.invoice_date)}</b><span>Ack No</span><b>${escapeHtml(invoice.ack_number || '—')}</b><span>Ack Date</span><b>${escapeHtml(ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate.toLocaleString('en-IN') : String(invoice.ack_date || '—'))}</b></div></div>
+    </section>
+    <section class="qrbox"><img src="${qr}" alt="Signed QR Code" /><div><h3 style="margin:0 0 6px;color:${escapeHtml(primary)}">IRN</h3><div class="mono irn">${escapeHtml(invoice.irn || '')}</div><div class="seal small">Scan the QR code to verify the signed e-invoice details from IRP.</div></div></section>
+    <table><thead><tr><th class="center">#</th><th>Item</th><th class="center">HSN/SAC</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">GST</th><th class="right">Taxable</th><th class="right">Total</th></tr></thead><tbody>${rows}</tbody></table>
+    <section class="totals"><div><b>Amount in words</b><div class="muted">${escapeHtml(amountToWordsINR(Math.round((Number(invoice.total_amount) || 0) / 100)))}</div></div><table>
+      <tr><td>Taxable Value</td><td class="right">${fmtPaise(Number(invoice.taxable_amount) || 0)}</td></tr>
+      <tr><td>CGST</td><td class="right">${fmtPaise(Number(invoice.cgst_amount) || 0)}</td></tr>
+      <tr><td>SGST</td><td class="right">${fmtPaise(Number(invoice.sgst_amount) || 0)}</td></tr>
+      <tr><td>IGST</td><td class="right">${fmtPaise(Number(invoice.igst_amount) || 0)}</td></tr>
+      <tr><td>Round Off</td><td class="right">${fmtPaise(Number(invoice.round_off) || 0)}</td></tr>
+      <tr class="grand"><td>Grand Total</td><td class="right">₹${fmtPaise(Number(invoice.total_amount) || 0)}</td></tr>
+    </table></section>
+    <div class="footer">This document is generated from IRN details stored in Microtechnique Accounts.</div>
   </body></html>`;
 
   const browser = await launchBrowser();
