@@ -4,13 +4,29 @@ import { logger } from '../config/logger';
 
 let transporter: Transporter | null = null;
 
-export function isMailerConfigured(): boolean {
+function hasResendConfig(): boolean {
+  return Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
+}
+
+function hasSmtpConfig(): boolean {
   return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+}
+
+function activeProvider(): 'resend' | 'smtp' | null {
+  if (env.MAIL_PROVIDER === 'resend') return hasResendConfig() ? 'resend' : null;
+  if (env.MAIL_PROVIDER === 'smtp') return hasSmtpConfig() ? 'smtp' : null;
+  if (hasResendConfig()) return 'resend';
+  if (hasSmtpConfig()) return 'smtp';
+  return null;
+}
+
+export function isMailerConfigured(): boolean {
+  return activeProvider() !== null;
 }
 
 function getTransporter(): Transporter | null {
   if (transporter) return transporter;
-  if (!isMailerConfigured()) return null;
+  if (!hasSmtpConfig()) return null;
 
   transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
@@ -33,27 +49,62 @@ export interface SendMailArgs {
  * successfully so flows can still be tested — the OTP/link is also logged to the console.
  */
 export async function sendMail({ to, subject, html, text }: SendMailArgs): Promise<{ delivered: boolean; reason?: string }> {
-  const tx = getTransporter();
-  if (!tx) {
-    logger.warn(`[mailer] SMTP not configured — would have sent: to=${to} subject="${subject}"`);
+  const provider = activeProvider();
+  if (!provider) {
+    logger.warn(`[mailer] transactional email provider not configured — would have sent: to=${to} subject="${subject}"`);
     if (env.NODE_ENV !== 'production') {
       // In dev print the body so we can copy the OTP / reset link from logs
       logger.info(`[mailer:dev] body:\n${text || html}`);
     }
-    return { delivered: false, reason: 'smtp_not_configured' };
+    return { delivered: false, reason: 'mailer_not_configured' };
   }
 
   try {
-    await tx.sendMail({
-      from: env.SMTP_FROM,
-      to,
-      subject,
-      html,
-      text: text || html.replace(/<[^>]+>/g, ' '),
-    });
+    if (provider === 'resend') {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: env.RESEND_FROM,
+          to: [to],
+          subject,
+          html,
+          text: text || html.replace(/<[^>]+>/g, ' '),
+          ...(env.RESEND_REPLY_TO ? { reply_to: env.RESEND_REPLY_TO } : {}),
+        }),
+      });
+      const payloadText = await response.text();
+      let payload: any = null;
+      try {
+        payload = payloadText ? JSON.parse(payloadText) : null;
+      } catch {
+        payload = payloadText;
+      }
+      if (!response.ok) {
+        const msg = typeof payload?.message === 'string'
+          ? payload.message
+          : typeof payload?.error === 'string'
+            ? payload.error
+            : payloadText || `HTTP ${response.status}`;
+        throw new Error(`Resend email delivery failed: ${msg}`);
+      }
+    } else {
+      const tx = getTransporter();
+      if (!tx) throw new Error('SMTP mailer is not configured');
+      await tx.sendMail({
+        from: env.SMTP_FROM,
+        to,
+        subject,
+        html,
+        text: text || html.replace(/<[^>]+>/g, ' '),
+      });
+    }
     return { delivered: true };
   } catch (e: any) {
-    logger.error(`[mailer] send failed to=${to} subject="${subject}"`, e);
+    logger.error(`[mailer] ${provider} send failed to=${to} subject="${subject}"`, e);
     return { delivered: false, reason: e?.message || 'send_failed' };
   }
 }

@@ -30,7 +30,12 @@ const envSchema = z.object({
   TWILIO_WHATSAPP_NUMBER: z.string().optional(),
   TWILIO_SMS_FROM: z.string().optional(),
 
-  // SMTP (transactional email — OTP, password reset, etc.)
+  // Transactional email — OTP, password reset, etc.
+  MAIL_PROVIDER: z.enum(['resend', 'smtp']).optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM: z.string().default('Microtechnique Accounts <no-reply@microtechnique.in>'),
+  RESEND_REPLY_TO: z.string().optional(),
+  // SMTP fallback
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_SECURE: z.coerce.boolean().default(false),
