@@ -1443,8 +1443,9 @@ export async function generateEwayBill(req: Request, res: Response) {
       vehicle_type,
     } = req.body || {};
 
-    if (!transporter_id || String(transporter_id).trim().length !== 15) {
-      return res.status(400).json(error('transporter_id must be a 15-character transporter GSTIN / TRANSIN'));
+    const cleanTransporterId = String(transporter_id || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (cleanTransporterId && cleanTransporterId.length !== 15) {
+      return res.status(400).json(error('transporter_id must be blank or a 15-character transporter GSTIN / TRANSIN'));
     }
     const cleanVehicleNo = String(vehicle_no || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     if (!cleanVehicleNo || cleanVehicleNo.length < 4) {
@@ -1493,6 +1494,7 @@ export async function generateEwayBill(req: Request, res: Response) {
           billing_city: pRes.rows[0].billing_city || pRes.rows[0].city,
           billing_state: pRes.rows[0].billing_state || pRes.rows[0].state,
           billing_pincode: pRes.rows[0].billing_pincode || pRes.rows[0].pincode,
+          billing_state_code: pRes.rows[0].billing_state_code || inv.place_of_supply,
         };
       }
     }
@@ -1513,7 +1515,7 @@ export async function generateEwayBill(req: Request, res: Response) {
     const out = await generateEwayBillViaService({
       sellerGstin,
       irn: inv.irn,
-      transporter_id: String(transporter_id).trim(),
+      transporter_id: cleanTransporterId,
       transporter_name: transporter_name ? String(transporter_name) : undefined,
       transport_mode: transport_mode ? String(transport_mode) : undefined,
       distance_km: Number(distance_km || 0),
@@ -1530,6 +1532,7 @@ export async function generateEwayBill(req: Request, res: Response) {
           customer_gstin: party.gstin,
           customer_name: party.name,
           customer_address: partyAddress,
+          customer_state_code: party.billing_state_code || inv.place_of_supply,
         },
         items: itemsRes.rows,
       },

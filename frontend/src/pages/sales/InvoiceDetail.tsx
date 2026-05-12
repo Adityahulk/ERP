@@ -174,8 +174,8 @@ export default function InvoiceDetail() {
   const handleSubmitEwb = async () => {
     const tid = ewbForm.transporter_id.trim().toUpperCase();
     const vn = ewbForm.vehicle_no.trim().toUpperCase();
-    if (tid.length !== 15) {
-      toast.error('Transporter ID must be exactly 15 characters (GSTIN / TRANSIN)');
+    if (tid && tid.length !== 15) {
+      toast.error('Transporter ID must be blank or exactly 15 characters (GSTIN / TRANSIN)');
       return;
     }
     if (vn.length < 4) {
@@ -187,7 +187,7 @@ export default function InvoiceDetail() {
       await genEwb.mutateAsync({
         id: id!,
         data: {
-          transporter_id: tid,
+          transporter_id: tid || undefined,
           transporter_name: ewbForm.transporter_name.trim() || undefined,
           vehicle_no: vn,
           vehicle_type: ewbForm.vehicle_type,
@@ -737,18 +737,18 @@ Thank you.
           </SheetHeader>
           <div className="mt-6 space-y-4 text-sm">
             <p className="text-muted-foreground text-xs">
-              Transporter ID is the 15-character GSTIN or TRANSIN. Vehicle number must be at least 4 characters (as per NIC
-              rules).
+              Transporter ID is optional. Enter it only when you have a valid 15-character transporter GSTIN or TRANSIN.
+              Vehicle number must be at least 4 characters.
             </p>
             <div className="space-y-2">
-              <Label htmlFor="ewb-transporter-id">Transporter ID (15 chars)</Label>
+              <Label htmlFor="ewb-transporter-id">Transporter ID (optional)</Label>
               <Input
                 id="ewb-transporter-id"
                 className="font-mono uppercase"
                 maxLength={15}
                 value={ewbForm.transporter_id}
                 onChange={(e) => setEwbForm((f) => ({ ...f, transporter_id: e.target.value }))}
-                placeholder="15-char GSTIN / TRANSIN"
+                placeholder="Leave blank for own vehicle"
               />
             </div>
             <div className="space-y-2">

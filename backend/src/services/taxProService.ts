@@ -402,6 +402,19 @@ function ewbQtyUnit(unit: unknown): string {
   return map[compact] || 'NOS';
 }
 
+function stateCodeFrom(value: unknown): number {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 2);
+  return digits.length === 2 ? Number(digits) : 0;
+}
+
+function isLikelyValidTransporterId(value: unknown): boolean {
+  const id = String(value || '').trim().toUpperCase();
+  if (!id) return false;
+  if (!/^[0-9A-Z]{15}$/.test(id)) return false;
+  if (/^(0{15}|NIL|NONE|NULL)$/i.test(id)) return false;
+  return true;
+}
+
 function normalizeEwayTransportMode(value: unknown): string {
   const mode = String(value || '1').trim();
   return ['1', '2', '3', '4'].includes(mode) ? mode : '1';
@@ -467,7 +480,10 @@ function buildFullEwayPayload(args: NonNullable<Parameters<typeof generateTaxPro
   const sellerGstin = normalizeGstin(invoice.company_gstin);
   const buyerGstin = normalizeGstin(invoice.customer_gstin) || 'URP';
   const sellerStateCode = Number(sellerGstin.slice(0, 2)) || 0;
-  const buyerStateCode = buyerGstin !== 'URP' && buyerGstin.length >= 2 ? Number(buyerGstin.slice(0, 2)) || sellerStateCode : sellerStateCode;
+  const buyerStateFromGstin = buyerGstin !== 'URP' && buyerGstin.length >= 2 ? Number(buyerGstin.slice(0, 2)) || 0 : 0;
+  const buyerStateFromInvoice = stateCodeFrom(invoice.place_of_supply || invoice.billing_state_code || invoice.customer_state_code);
+  const buyerStateCode = buyerStateFromGstin || buyerStateFromInvoice || sellerStateCode;
+  const isInterstate = sellerStateCode > 0 && buyerStateCode > 0 && sellerStateCode !== buyerStateCode;
   const sellerAddress = invoice.company_address || 'Address';
   const buyerAddress = invoice.customer_address || 'Address';
   const fromPincode = extractPincode(sellerAddress);
@@ -479,15 +495,22 @@ function buildFullEwayPayload(args: NonNullable<Parameters<typeof generateTaxPro
     const unitPrice = paiseToRupees(item.unit_price);
     const qty = Number(item.quantity) || 1;
     const taxableAmount = round2(paiseToRupees(item.taxable_amount) || unitPrice * qty);
+    const gstRate = Number(item.gst_rate || 0);
+    const storedCgst = Number(item.cgst_rate || 0);
+    const storedSgst = Number(item.sgst_rate || 0);
+    const storedIgst = Number(item.igst_rate || 0);
+    const cgstRate = isInterstate ? 0 : (storedCgst || (storedIgst ? 0 : round2(gstRate / 2)));
+    const sgstRate = isInterstate ? 0 : (storedSgst || (storedIgst ? 0 : round2(gstRate / 2)));
+    const igstRate = isInterstate ? (storedIgst || gstRate || round2(storedCgst + storedSgst)) : 0;
     return {
       productName: ewbText(item.item_name || item.item_description || item.description, 'Item', 100),
       productDesc: ewbText(item.item_description || item.item_name || item.description, 'Item', 100),
       hsnCode: Number(String(item.hsn_code || '').replace(/\D/g, '').slice(0, 8) || '9999'),
       quantity: qty,
       qtyUnit: ewbQtyUnit(item.unit),
-      cgstRate: Number(item.cgst_rate || 0),
-      sgstRate: Number(item.sgst_rate || 0),
-      igstRate: Number(item.igst_rate || 0),
+      cgstRate,
+      sgstRate,
+      igstRate,
       cessRate: 0,
       cessNonadvol: 0,
       taxableAmount,
@@ -495,9 +518,12 @@ function buildFullEwayPayload(args: NonNullable<Parameters<typeof generateTaxPro
   });
 
   const totalValue = round2(itemList.reduce((sum: number, item: any) => sum + Number(item.taxableAmount || 0), 0));
-  const cgstValue = round2(paiseToRupees(invoice.cgst_amount));
-  const sgstValue = round2(paiseToRupees(invoice.sgst_amount));
-  const igstValue = round2(paiseToRupees(invoice.igst_amount));
+  const sourceCgstValue = paiseToRupees(invoice.cgst_amount);
+  const sourceSgstValue = paiseToRupees(invoice.sgst_amount);
+  const sourceIgstValue = paiseToRupees(invoice.igst_amount);
+  const cgstValue = isInterstate ? 0 : round2(sourceCgstValue || ((sourceIgstValue || 0) / 2));
+  const sgstValue = isInterstate ? 0 : round2(sourceSgstValue || ((sourceIgstValue || 0) / 2));
+  const igstValue = isInterstate ? round2(sourceIgstValue || sourceCgstValue + sourceSgstValue) : 0;
   const cessValue = round2(paiseToRupees(invoice.cess_amount));
   const discount = round2(paiseToRupees(invoice.discount_amount || invoice.discount));
   const payload: any = {
@@ -536,7 +562,7 @@ function buildFullEwayPayload(args: NonNullable<Parameters<typeof generateTaxPro
   };
 
   const transId = String(transport.transporter_id || '').trim().toUpperCase();
-  if (transId) payload.transporterId = transId;
+  if (isLikelyValidTransporterId(transId)) payload.transporterId = transId;
   const transName = String(transport.transporter_name || '').trim();
   if (transName) payload.transporterName = transName.slice(0, 100);
   const transDocNo = String(transport.trans_doc_no || '').trim();
