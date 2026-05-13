@@ -90,6 +90,56 @@ function parseTaxProError(data: any): string {
   return JSON.stringify(data).slice(0, 2000);
 }
 
+function taxProMessage(data: any): string {
+  const raw = parseTaxProError(data);
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  const lower = normalized.toLowerCase();
+  const messages: string[] = [];
+  const add = (msg: string) => {
+    if (!messages.includes(msg)) messages.push(msg);
+  };
+
+  if (/\b222\b/.test(normalized) || lower.includes('invalid transporter id')) {
+    add('Transporter ID is invalid. Leave Transporter ID blank for own vehicle movement, or enter a valid 15-character transporter GSTIN/TRANSIN.');
+  }
+  if (/\b624\b/.test(normalized) || lower.includes('cgst/sgst value is not applicable for inter state')) {
+    add('This is an inter-state transaction. Use IGST only; CGST and SGST must be zero.');
+  }
+  if (/\b219\b/.test(normalized) || lower.includes('invalid tax rate for inter state')) {
+    add('Tax rate does not match an inter-state transaction. For inter-state invoices, use IGST with the correct GST rate.');
+  }
+  if (lower.includes('intra-state') && lower.includes('igst')) {
+    add('This is an intra-state transaction. Use CGST + SGST; IGST must be zero.');
+  }
+  if (lower.includes('invalid invoice date')) {
+    add('Invoice date is invalid for E-Way Bill/e-Invoice. Use the actual invoice date in DD/MM/YYYY format and make sure it is allowed by GST rules.');
+  }
+  if (lower.includes('document number') || lower.includes('doc no')) {
+    add('Invoice number is invalid for e-Invoice. Use letters/numbers with optional slash or hyphen, maximum 16 characters, and do not start with 0.');
+  }
+  if (lower.includes('unit quantity code') || lower.includes('uqc')) {
+    add('Item unit is invalid or missing. Select a GST/NIC unit such as NOS, PCS, KGS, LTR, MTR, SQF, or similar valid UQC.');
+  }
+  if (lower.includes('pin') || lower.includes('pincode')) {
+    add('A valid 6-digit pincode is required in both company and party addresses.');
+  }
+  if (lower.includes('invalid gstin') || lower.includes('gstin for this user') || lower.includes('gstin is not')) {
+    add('GSTIN is not valid or not mapped to these TaxPro credentials. Confirm the company GSTIN is active and enabled under your TaxPro/NIC account.');
+  }
+  if (lower.includes('legal name') || lower.includes('lgl')) {
+    add('Legal name is missing. Add the legal/trade name in company and party details.');
+  }
+  if (lower.includes('location') || lower.includes('loc')) {
+    add('Location/city is missing or too short. Add a valid city/location in company and party addresses.');
+  }
+  if (lower.includes('hsn')) {
+    add('HSN/SAC code is invalid or missing. Add a valid HSN/SAC code for every invoice item.');
+  }
+
+  if (!messages.length) return normalized || 'TaxPro rejected the request. Please verify invoice, GSTIN, tax, address, and transport details.';
+  return `${messages.join(' ')} TaxPro details: ${normalized}`;
+}
+
 function configuredSandboxGstin(): string {
   return String(env.TAXPRO_SANDBOX_TEST_GSTIN || '').trim().toUpperCase();
 }
@@ -208,12 +258,12 @@ async function getEinvoiceAuthToken(sellerGstin: string): Promise<string> {
   const body = await parseResponse(res);
   if (!res.ok) {
     const parsed = parseTaxProError(body);
-    throw new Error(`TaxPro e-invoice auth failed: ${explainTaxProAuthFailure(parsed, gstin)} (HTTP ${res.status})`);
+    throw new Error(`TaxPro e-invoice auth failed: ${taxProMessage(explainTaxProAuthFailure(parsed, gstin))} (HTTP ${res.status})`);
   }
   const token = extractAuthToken(body);
   if (!token) {
     const parsed = parseTaxProError(body);
-    throw new Error(`TaxPro e-invoice auth missing AuthToken: ${explainTaxProAuthFailure(parsed, gstin)}`);
+    throw new Error(`TaxPro e-invoice auth missing AuthToken: ${taxProMessage(explainTaxProAuthFailure(parsed, gstin))}`);
   }
   await cacheTokenSet(memoryEinv, redisKey, token);
   return token;
@@ -240,9 +290,9 @@ async function getEwayAuthToken(gstinArg: string): Promise<string> {
   const url = `${joinHostAndPath(c.host, c.ewbAuthPath)}?${q.toString()}`;
   const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
   const body = await parseResponse(res);
-  if (!res.ok) throw new Error(`TaxPro e-way auth failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`TaxPro e-way auth failed: ${taxProMessage(body)} (HTTP ${res.status})`);
   const token = extractAuthToken(body);
-  if (!token) throw new Error(`TaxPro e-way auth missing AuthToken: ${parseTaxProError(body)}`);
+  if (!token) throw new Error(`TaxPro e-way auth missing AuthToken: ${taxProMessage(body)}`);
   await cacheTokenSet(memoryEwb, redisKey, token);
   return token;
 }
@@ -285,7 +335,7 @@ export async function generateTaxProIRN(nicPayload: Record<string, unknown>, sel
         await cacheTokenDelete(memoryEinv, redisKey);
         continue;
       }
-      throw new Error(`TaxPro IRN generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro IRN generation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
     return {
       irn: String(fields.irn),
@@ -329,7 +379,7 @@ export async function cancelTaxProIRN(irn: string, reasonCode: number, reasonDes
         await cacheTokenDelete(memoryEinv, redisKey);
         continue;
       }
-      throw new Error(`TaxPro IRN cancellation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro IRN cancellation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
     const u = unwrapData(body);
     const cancelDate = u?.CancelDate || u?.cancelDate || u?.CnlDt;
@@ -631,7 +681,7 @@ export async function generateTaxProEwayBill(args: {
       }
       logger.warn('TaxPro EWB full payload failed', {
         status: res.status,
-        err: parseTaxProError(body),
+        err: taxProMessage(body),
         payload: {
           docNo: fullPayload.docNo,
           docDate: fullPayload.docDate,
@@ -643,7 +693,7 @@ export async function generateTaxProEwayBill(args: {
           itemCount: fullPayload.itemList?.length || 0,
         },
       });
-      throw new Error(`TaxPro E-Way Bill generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro E-Way Bill generation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
   }
 
@@ -667,7 +717,7 @@ export async function generateTaxProEwayBill(args: {
     const body = await parseResponse(res);
     const fields = extractEwbFields(body);
     if (!res.ok || !fields?.ewbNo) {
-      throw new Error(`TaxPro E-Way Bill generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro E-Way Bill generation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
     return { ewb_no: fields.ewbNo, ewb_date: fields.ewbDt, valid_upto: fields.validUpto };
   }
@@ -694,7 +744,7 @@ export async function generateTaxProEwayBill(args: {
         await cacheTokenDelete(memoryEwb, redisKey);
         continue;
       }
-      throw new Error(`TaxPro E-Way Bill generation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro E-Way Bill generation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
     return { ewb_no: fields.ewbNo, ewb_date: fields.ewbDt, valid_upto: fields.validUpto };
   }
@@ -742,7 +792,7 @@ export async function cancelTaxProEwayBill(args: {
         await cacheTokenDelete(memoryEwb, redisKey);
         continue;
       }
-      throw new Error(`TaxPro E-Way Bill cancellation failed: ${parseTaxProError(body)} (HTTP ${res.status})`);
+      throw new Error(`TaxPro E-Way Bill cancellation failed: ${taxProMessage(body)} (HTTP ${res.status})`);
     }
     const u = unwrapData(body);
     const cancelDateRaw = u?.cancelDate || u?.CancelDate;
