@@ -26,6 +26,7 @@ export default function Settings() {
   const [einvSandbox, setEinvSandbox] = useState(true);
   const [einvUser, setEinvUser] = useState('');
   const [einvPass, setEinvPass] = useState('');
+  const [ewayBillOnlyAbove50k, setEwayBillOnlyAbove50k] = useState(false);
   const [printerType, setPrinterType] = useState<'a4' | 'thermal80' | 'thermal58'>('a4');
   const [legalName, setLegalName] = useState('');
   const [gstin, setGstin] = useState('');
@@ -358,6 +359,7 @@ export default function Settings() {
     setEinvTurnover(!!company.einvoice_turnover_above_5cr);
     setEinvSandbox(company.einvoice_sandbox !== false);
     setEinvUser(company.einvoice_gsp_username || '');
+    setEwayBillOnlyAbove50k(!!company.eway_bill_only_above_50k);
     const saved = localStorage.getItem('bizflow_printer_type') as 'a4' | 'thermal80' | 'thermal58' | null;
     if (saved === 'thermal80' || saved === 'thermal58' || saved === 'a4') setPrinterType(saved);
     setLegalName(company.legal_name || company.name || '');
@@ -495,6 +497,7 @@ export default function Settings() {
         einvoice_turnover_above_5cr: einvTurnover,
         einvoice_sandbox: einvSandbox,
         einvoice_gsp_username: einvUser || null,
+        eway_bill_only_above_50k: ewayBillOnlyAbove50k,
         ...(einvPass ? { einvoice_gsp_password: einvPass } : {}),
       });
       setEinvPass('');
@@ -970,6 +973,13 @@ export default function Settings() {
                            <span className="text-sm">Sandbox mode</span>
                            <Switch checked={einvSandbox} onCheckedChange={setEinvSandbox} />
                         </div>
+                        <div className="flex items-center justify-between gap-4 max-w-xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                           <div>
+                              <p className="text-sm font-medium text-slate-900">Allow E-Way Bill only above ₹50,000</p>
+                              <p className="text-xs text-slate-600">When enabled, users cannot generate E-Way Bills for smaller invoices.</p>
+                           </div>
+                           <Switch checked={ewayBillOnlyAbove50k} onCheckedChange={setEwayBillOnlyAbove50k} />
+                        </div>
                         <div className="grid md:grid-cols-2 gap-4 max-w-xl">
                            <div>
                               <label className="text-sm font-medium text-slate-700">GSP username</label>
@@ -1153,6 +1163,7 @@ export default function Settings() {
                                  <option value="standard">Detailed Tax Invoice</option>
                                  <option value="simple">Professional Header</option>
                                  <option value="performa">Centered Proforma</option>
+                                 <option value="monochrome">Black & White Standard</option>
                               </select>
                            </div>
                            <div>

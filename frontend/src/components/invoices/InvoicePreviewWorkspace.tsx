@@ -11,6 +11,7 @@ export const INVOICE_PDF_TEMPLATES = [
   { id: 'standard', label: 'Detailed Tax Invoice', group: 'Business', tip: 'Complete GST-ready layout with buyer, seller, bank, signature, and tax details.' },
   { id: 'simple', label: 'Professional Header', group: 'Business', tip: 'Bold header layout with clean item rows and compact totals.' },
   { id: 'performa', label: 'Centered Proforma', group: 'Business', tip: 'Centered proforma-style layout for estimates and advance invoices.' },
+  { id: 'monochrome', label: 'Black & White Standard', group: 'Business', tip: 'Plain black-and-white invoice with boxed details, unit column, GST, bank, and signature.' },
 ] as const;
 
 export type InvoicePdfTemplateId = (typeof INVOICE_PDF_TEMPLATES)[number]['id'];
@@ -39,6 +40,7 @@ export type InvoicePreviewDraftPayload = {
   invoice_date: string;
   due_date?: string;
   is_interstate: boolean;
+  place_of_supply?: string;
   notes?: string;
   amount_paid?: number;
   discount_amount?: number;

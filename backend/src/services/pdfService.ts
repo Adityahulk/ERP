@@ -206,10 +206,8 @@ function invoiceItemRows(items: any[], kind: string): string {
           ${meta ? `<div class="item-meta">${escapeHtml(meta)}</div>` : ''}
         </td>
         <td class="mono">${escapeHtml(it.hsn_code || '')}</td>
-        <td class="right">
-          <b>${fmtQty(it.quantity)}</b>
-          ${it.unit ? `<div class="item-meta">${escapeHtml(it.unit)}</div>` : ''}
-        </td>
+        <td class="right"><b>${fmtQty(it.quantity)}</b></td>
+        <td class="mono">${escapeHtml(it.unit || 'PCS')}</td>
         <td class="right">${fmtPaise(Number(it.unit_price || 0))}</td>
         ${showTax ? `<td class="right">${fmtPaise(tax)}</td>` : ''}
         <td class="right amount">${fmtPaise(Number(it.total_amount || 0))}</td>
@@ -285,7 +283,7 @@ function buildInvoiceHtml(args: {
     </div>`;
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
   const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(company.name || '')}</b></p>${signature}<p>Authorised Signatory</p></div>`;
-  const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
+  const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
   const itemTable = `<table class="items">${itemsHead}<tbody>${invoiceItemRows(items, kind)}</tbody></table>`;
   const totals = `<div class="totals">${totalsRows(invoice)}<div class="grand total-row"><span>Total</span><b>₹${fmtPaise(Number(invoice.total_amount || 0))}</b></div><div class="due total-row"><span>Balance Due</span><b>₹${fmtPaise(balanceDue)}</b></div></div>`;
 
@@ -332,7 +330,41 @@ function buildInvoiceHtml(args: {
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
   </main></body></html>`;
 
-  return kind === 'simple' ? simple : kind === 'performa' ? performa : standard;
+  const monochrome = `${baseCss}<style>
+    @page{margin:10mm}.page{padding:0;color:#111;font-family:Arial,Helvetica,sans-serif}.monochrome *{color:#111!important}
+    .monochrome .doc-title{font-size:26px;letter-spacing:.06em;font-weight:800;color:#111;margin:0;text-align:center}
+    .mono-table{width:100%;border-collapse:collapse}.mono-table td,.mono-table th{border:1px solid #111;padding:5px 7px;vertical-align:top}.mono-table th{background:#fff;color:#111;font-weight:700}
+    .monochrome .company-name{font-size:16px;color:#111;text-align:center}.monochrome .address{text-align:center;color:#111}.monochrome .gst{text-align:center}
+    .monochrome table.items th{background:#fff!important;color:#111!important;border:1px solid #111;padding:5px 6px}.monochrome table.items td{border:1px solid #111;padding:6px}.monochrome table.items tr:nth-child(even) td{background:#fff}
+    .monochrome .lower{grid-template-columns:1fr 300px;gap:10px}.monochrome .totals{background:#fff;border:1px solid #111}.monochrome .due{background:#fff;color:#111;border-top:1px solid #111;margin:6px -12px -9px}
+    .monochrome .info-card,.monochrome .bill-card{border:1px solid #111}.monochrome .signature-line{border-bottom:1px solid #111}.monochrome .footer-line{border-top:1px solid #111}
+  </style></head><body><main class="page monochrome">
+    <table class="mono-table">
+      <tr>
+        <td style="width:18%;text-align:center">${logoSrc ? `<img src="${logoSrc}" style="max-width:86px;max-height:56px;object-fit:contain" />` : ''}</td>
+        <td style="width:56%">
+          <div class="company-name">${escapeHtml(company.legal_name || company.name || '')}</div>
+          <div class="address">${addressHtml(companyAddress(company))}</div>
+          <div class="gst mono">${company.gstin ? `GSTIN: ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · Ph: ${escapeHtml(company.phone)}` : ''}${company.email ? ` · ${escapeHtml(company.email)}` : ''}</div>
+        </td>
+        <td style="width:26%;text-align:center"><h1 class="doc-title">${title}</h1></td>
+      </tr>
+    </table>
+    <table class="mono-table" style="margin-top:8px">
+      <tr>
+        <td style="width:50%"><b>${isPurchase ? 'Bill From' : 'Bill To'}</b><br/><b>${escapeHtml(primaryPartyName)}</b><br/>${addressHtml(primaryPartyAddr)}${primaryPartyGstin ? `<br/><span class="mono">GSTIN: ${escapeHtml(primaryPartyGstin)}</span>` : ''}</td>
+        <td style="width:50%"><b>${isPurchase ? 'Bill To' : 'Ship To'}</b><br/>${addressHtml(isPurchase ? buyerAddr : shipAddr)}</td>
+      </tr>
+    </table>
+    <table class="mono-table" style="margin-top:8px">
+      <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Place of Supply</b><br/>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</td></tr>
+    </table>
+    ${itemTable}
+    <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}<div class="info-card"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
+    <div class="footer-line">${escapeHtml(notes || 'Thank you for your business.')}</div>
+  </main></body></html>`;
+
+  return kind === 'simple' ? simple : kind === 'performa' ? performa : kind === 'monochrome' ? monochrome : standard;
 }
 
 export async function generateInvoicePDF(
@@ -343,7 +375,7 @@ export async function generateInvoicePDF(
   opts?: { templateOverride?: string },
 ): Promise<Buffer> {
   const rawKind = String(opts?.templateOverride || invoice.pdf_template || company.invoice_pdf_template || 'standard');
-  const kind = ['standard', 'simple', 'performa'].includes(rawKind) ? rawKind : 'standard';
+  const kind = ['standard', 'simple', 'performa', 'monochrome'].includes(rawKind) ? rawKind : 'standard';
   const docTheme = String(invoice.document_theme || company.document_theme || 'classic');
 
   const upi = company.upi_id || invoice.upi_id_snapshot || '';
@@ -489,6 +521,7 @@ export async function generateEinvoicePdf(
     <td><b>${escapeHtml(it.item_name || '')}</b>${it.item_description ? `<div class="muted small">${multilineHtml(it.item_description)}</div>` : ''}</td>
     <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
     <td class="right">${Number(it.quantity) || 0}</td>
+    <td class="center mono">${escapeHtml(it.unit || 'PCS')}</td>
     <td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td>
     <td class="right">${Number(it.gst_rate || 0).toFixed(2)}%</td>
     <td class="right">${fmtPaise(Number(it.taxable_amount) || 0)}</td>
@@ -517,7 +550,7 @@ export async function generateEinvoicePdf(
       <div class="box"><h3>Invoice Details</h3><div class="kv"><span>Invoice No</span><b>${escapeHtml(invoice.invoice_number || '')}</b><span>Date</span><b>${formatDocDate(invoice.invoice_date)}</b><span>Ack No</span><b>${escapeHtml(invoice.ack_number || '—')}</b><span>Ack Date</span><b>${escapeHtml(ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate.toLocaleString('en-IN') : String(invoice.ack_date || '—'))}</b></div></div>
     </section>
     <section class="qrbox"><img src="${qr}" alt="Signed QR Code" /><div><h3 style="margin:0 0 6px;color:${escapeHtml(primary)}">IRN</h3><div class="mono irn">${escapeHtml(invoice.irn || '')}</div><div class="seal small">Scan the QR code to verify the signed e-invoice details from IRP.</div></div></section>
-    <table><thead><tr><th class="center">#</th><th>Item</th><th class="center">HSN/SAC</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">GST</th><th class="right">Taxable</th><th class="right">Total</th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th class="center">#</th><th>Item</th><th class="center">HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th><th class="right">GST</th><th class="right">Taxable</th><th class="right">Total</th></tr></thead><tbody>${rows}</tbody></table>
     <section class="totals"><div><b>Amount in words</b><div class="muted">${escapeHtml(amountToWordsINR(Math.round((Number(invoice.total_amount) || 0) / 100)))}</div></div><table>
       <tr><td>Taxable Value</td><td class="right">${fmtPaise(Number(invoice.taxable_amount) || 0)}</td></tr>
       <tr><td>CGST</td><td class="right">${fmtPaise(Number(invoice.cgst_amount) || 0)}</td></tr>

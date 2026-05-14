@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send } from 'lucide-react';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 
@@ -89,6 +89,20 @@ export default function InvoiceList() {
       toast.error(err?.response?.data?.error || 'Failed to download e-invoice PDF', { id: t });
     }
   }, []);
+
+  const deleteInvoice = useCallback(async (inv: any) => {
+    const ok = window.confirm(`Delete invoice ${inv.invoice_number}? This removes it from active records.`);
+    if (!ok) return;
+    const t = toast.loading('Deleting invoice…');
+    try {
+      await api.delete(`/invoices/${inv.id}`);
+      toast.success('Invoice deleted', { id: t });
+      setMenuInvoiceId(null);
+      queryClient.invalidateQueries({ queryKey: ['salesInvoices'] });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to delete invoice', { id: t });
+    }
+  }, [queryClient]);
 
   const statusColors: Record<string, string> = {
     paid: 'bg-emerald-100 text-emerald-700',
@@ -182,6 +196,7 @@ export default function InvoiceList() {
                   const canEdit = !inv.irn && inv.status !== 'cancelled' && !hasPaid;
                   const canIRN = !inv.irn && inv.status !== 'cancelled';
                   const canEWB = inv.irn && !inv.ewb_no && inv.status !== 'cancelled';
+                  const canDelete = !inv.irn && inv.einvoice_status !== 'generated' && !hasPaid && inv.status !== 'cancelled';
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
@@ -229,6 +244,18 @@ export default function InvoiceList() {
                               : <Download className="h-4 w-4" />}
                           </Button>
 
+                          {canDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deleteInvoice(inv)}
+                              title="Delete invoice"
+                              className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+
                           <Button
                             variant="ghost"
                             size="icon"
@@ -269,6 +296,9 @@ export default function InvoiceList() {
                               </button>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEWB} onClick={() => { setMenuInvoiceId(null); if (canEWB) navigate(`/sales/${inv.id}?tab=ewb`); }}>
                                 <Truck className="h-4 w-4" /> Generate E-Way Bill
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-40" disabled={!canDelete} onClick={() => { if (canDelete) deleteInvoice(inv); }}>
+                                <Trash2 className="h-4 w-4" /> Delete invoice
                               </button>
                             </div>
                           )}

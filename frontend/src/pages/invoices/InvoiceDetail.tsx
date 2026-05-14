@@ -129,7 +129,7 @@ export default function InvoiceDetail() {
                   <td className="p-3 text-muted-foreground">{i + 1}</td>
                   <td className="p-3"><div className="font-medium">{item.item_name || item.description || '—'}</div>{item.item_sku && <div className="text-xs text-muted-foreground">{item.item_sku}</div>}</td>
                   <td className="p-3 hidden md:table-cell text-muted-foreground font-mono text-xs">{item.hsn_code || '—'}</td>
-                  <td className="p-3 text-right tabular-nums">{item.quantity} {item.unit_abbr || ''}</td>
+                  <td className="p-3 text-right tabular-nums">{item.quantity} {item.unit || item.unit_abbr || ''}</td>
                   <td className="p-3 text-right tabular-nums">{formatMoney(item.unit_price)}</td>
                   <td className="p-3 text-right tabular-nums hidden md:table-cell">{formatMoney(item.taxable_amount)}</td>
                   <td className="p-3 text-right tabular-nums hidden lg:table-cell"><span className="text-muted-foreground text-xs">{item.gst_rate}%</span> {formatMoney((item.cgst_amount || 0) + (item.sgst_amount || 0) + (item.igst_amount || 0))}</td>

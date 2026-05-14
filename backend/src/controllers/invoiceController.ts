@@ -23,7 +23,7 @@ import {
   type Queryable,
 } from '../lib/bankAccountSnapshots';
 
-const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa'] as const;
+const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa', 'monochrome'] as const;
 const ALLOWED_DOCUMENT_THEMES = [
   'classic', 'modern', 'compact', 'executive', 'sunrise',
   'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal',
@@ -135,9 +135,11 @@ export async function searchItems(req: Request, res: Response) {
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i
+       LEFT JOIN item_units u ON u.id = i.unit_id
        ${godownJoin}
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.is_active = true
        AND (i.name ILIKE $2 OR i.sku ILIKE $2 OR i.barcode ILIKE $2)
@@ -171,9 +173,11 @@ export async function scanBarcode(req: Request, res: Response) {
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i
+       LEFT JOIN item_units u ON u.id = i.unit_id
        ${godownJoin}
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.is_active = true
        AND (i.barcode = $2 OR i.sku = $2)
@@ -219,8 +223,12 @@ export async function createInvoice(req: Request, res: Response) {
 
       const invoiceNumber = d.invoice_number || await generateInvoiceNumber(companyId, rawType, d.godown_id || req.user!.godown_id);
 
+      const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
       let isInterstate = d.is_interstate;
-      if (isInterstate === undefined && d.party_id) {
+      if (explicitPlaceOfSupply) {
+        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+        isInterstate = determineGSTType(cRes.rows[0]?.state_code, explicitPlaceOfSupply) === 'inter';
+      } else if (isInterstate === undefined && d.party_id) {
         const pRes = await client.query(
           'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
           [d.party_id, companyId]
@@ -274,7 +282,7 @@ export async function createInvoice(req: Request, res: Response) {
       const posRow = d.party_id
         ? await client.query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
         : { rows: [{}] };
-      const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
+      const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
@@ -661,8 +669,12 @@ export async function updateInvoice(req: Request, res: Response) {
         }),
       );
 
+      const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
       let isInterstate = d.is_interstate;
-      if (isInterstate === undefined && d.party_id) {
+      if (explicitPlaceOfSupply) {
+        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+        isInterstate = determineGSTType(cRes.rows[0]?.state_code, explicitPlaceOfSupply) === 'inter';
+      } else if (isInterstate === undefined && d.party_id) {
         const pRes = await client.query(
           'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
           [d.party_id, companyId],
@@ -753,7 +765,7 @@ export async function updateInvoice(req: Request, res: Response) {
       const posRow = d.party_id
         ? await client.query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
         : { rows: [{}] };
-      const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
+      const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
@@ -1028,43 +1040,112 @@ export async function deleteInvoice(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const companyId = req.user!.company_id;
-    const invRes = await query(
-      `SELECT id, status, paid_amount, irn, invoice_number FROM invoices
-       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
-      [id, companyId],
-    );
-    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
-    const inv = invRes.rows[0];
-    if (inv.irn) {
-      return res.status(400).json(error('This invoice has an active IRN. Cancel e-invoice before deleting.'));
-    }
-    if (Number(inv.paid_amount || 0) > 0) {
-      return res.status(400).json(error('Cannot delete an invoice that has payments recorded.'));
-    }
-    if (inv.status !== 'draft' && inv.status !== 'cancelled') {
-      return res.status(400).json(error('Only draft or already-cancelled invoices can be deleted. Cancel the invoice first.'));
-    }
-    await withTransaction(async (client) => {
-      await backupInvoiceSnapshot(client, companyId, id, 'delete_invoice', req.user!.id);
-      await client.query(
-        `UPDATE invoices SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`,
+
+    const result = await withTransaction(async (client) => {
+      const invRes = await client.query(
+        `SELECT *
+         FROM invoices
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
         [id, companyId],
       );
+      if (!invRes.rows.length) throw new Error('Invoice not found');
+      const inv = invRes.rows[0];
+      if (inv.irn) throw new Error('This invoice has an active IRN. Cancel e-invoice before deleting.');
+      if (Number(inv.paid_amount || 0) > 0) throw new Error('Cannot delete an invoice that has payments recorded.');
+
+      await backupInvoiceSnapshot(client, companyId, id, 'delete_invoice', req.user!.id);
+
+      if (inv.status !== 'draft' && inv.status !== 'cancelled') {
+        const itemsRes = await client.query(
+          `SELECT ii.*, it.name AS item_master_name, it.track_inventory
+           FROM invoice_items ii
+           LEFT JOIN items it ON it.id = ii.item_id
+           WHERE ii.invoice_id = $1 AND ii.company_id = $2
+           ORDER BY ii.sort_order, ii.id`,
+          [id, companyId],
+        );
+
+        if (inv.invoice_type !== 'purchase' && inv.godown_id) {
+          for (const row of itemsRes.rows) {
+            if (!row.item_id || !row.track_inventory) continue;
+            const qty = Number(row.quantity) || 0;
+            await client.query(
+              `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+               VALUES ($1, $2, $3, $4, 0)
+               ON CONFLICT (item_id, godown_id) DO UPDATE SET
+                 quantity = item_stock.quantity + EXCLUDED.quantity`,
+              [companyId, row.item_id, inv.godown_id, qty],
+            );
+            const balRes = await client.query(
+              `SELECT quantity
+               FROM item_stock
+               WHERE company_id = $1 AND item_id = $2 AND godown_id = $3`,
+              [companyId, row.item_id, inv.godown_id],
+            );
+            await client.query(
+              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
+               VALUES ($1, $2, $3, 'sale_delete', 'invoice', $4, $5, $6, $7, $8)`,
+              [companyId, row.item_id, inv.godown_id, inv.id, qty, balRes.rows[0]?.quantity || qty, `Deleted ${inv.invoice_number}`, req.user!.id],
+            );
+          }
+        }
+
+        if (inv.party_id) {
+          const partyDelta = inv.invoice_type === 'purchase' ? Number(inv.total_amount || 0) : -Number(inv.total_amount || 0);
+          await client.query(
+            `UPDATE parties
+             SET balance = balance + $1
+             WHERE id = $2 AND company_id = $3`,
+            [partyDelta, inv.party_id, companyId],
+          );
+          await client.query(
+            `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+             VALUES (
+               $1, $2, $3, $4,
+               (SELECT balance FROM parties WHERE id = $2),
+               'invoice_delete', $5, $6, $7
+             )`,
+            [
+              companyId,
+              inv.party_id,
+              inv.invoice_type === 'purchase' ? 'debit' : 'credit',
+              Number(inv.total_amount || 0),
+              inv.id,
+              `Deleted ${inv.invoice_number}`,
+              req.user!.id,
+            ],
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE invoices
+         SET status = CASE WHEN status = 'draft' THEN status ELSE 'cancelled' END,
+             is_deleted = true,
+             updated_at = NOW()
+         WHERE id = $1 AND company_id = $2`,
+        [id, companyId],
+      );
+      return inv;
     });
+
     await logAction(
       req.user!.id,
       companyId,
       'delete',
       'invoice',
       id,
-      { invoice_number: inv.invoice_number },
+      { invoice_number: result.invoice_number },
       null,
       req.ip,
       req.get('User-Agent'),
     );
     res.json(success({ message: 'Invoice removed from active records' }));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    const msg = err?.message || 'Failed to delete invoice';
+    const status = /not found/i.test(msg) ? 404 : /IRN|payments/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
   }
 }
 
@@ -1178,8 +1259,12 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       party = pRes.rows[0] || null;
     }
 
+    const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
     let isInterstate = Boolean(d.is_interstate);
-    if (d.is_interstate === undefined && d.party_id) {
+    if (explicitPlaceOfSupply) {
+      const cRes = await query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+      isInterstate = determineGSTType(cRes.rows[0]?.state_code, explicitPlaceOfSupply) === 'inter';
+    } else if (d.is_interstate === undefined && d.party_id) {
       const pRes = await query(
         'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
         [d.party_id, companyId],
@@ -1202,7 +1287,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     const posRow = d.party_id
       ? await query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
       : { rows: [{}] };
-    const placeOfSupply = (posRow.rows[0]?.billing_state_code || d.place_of_supply || '').toString().slice(0, 5) || null;
+    const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
 
     const partySnap = party
       ? { name: party.name as string, gstin: party.gstin as string | null, bill: party.billing_address as string | null }
@@ -1218,6 +1303,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
         item_description: item.item_description || item.description || null,
         hsn_code: item.hsn_code || null,
         quantity: lineGst.quantity,
+        unit: item.unit || 'PCS',
         unit_price: lineGst.unit_price,
         discount_amount: taxInfo.totalDiscountLineLevel,
         taxable_amount: taxInfo.totalTaxable,
@@ -1469,6 +1555,9 @@ export async function generateEwayBill(req: Request, res: Response) {
     const company = compRes.rows[0];
     const sellerGstin = String(company.gstin || '').trim().toUpperCase();
     if (sellerGstin.length !== 15) return res.status(400).json(error('Company GSTIN is required to generate E-Way Bill'));
+    if (company.eway_bill_only_above_50k && Number(inv.total_amount || 0) <= 5000000) {
+      return res.status(400).json(error('Company setting allows E-Way Bill generation only for invoices above ₹50,000.'));
+    }
 
     const itemsRes = await query(
       `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,

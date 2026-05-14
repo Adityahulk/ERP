@@ -20,8 +20,32 @@ import toast from 'react-hot-toast';
 
 interface LineItem {
   item_id?: string; name: string; description?: string; hsn_code?: string;
+  unit?: string;
   quantity: number; unit_price: number; gst_rate: number;
   discount_percent: number; cess_rate: number;
+}
+
+const GST_STATE_OPTIONS = [
+  ['01', 'Jammu & Kashmir'], ['02', 'Himachal Pradesh'], ['03', 'Punjab'], ['04', 'Chandigarh'],
+  ['05', 'Uttarakhand'], ['06', 'Haryana'], ['07', 'Delhi'], ['08', 'Rajasthan'], ['09', 'Uttar Pradesh'],
+  ['10', 'Bihar'], ['11', 'Sikkim'], ['12', 'Arunachal Pradesh'], ['13', 'Nagaland'], ['14', 'Manipur'],
+  ['15', 'Mizoram'], ['16', 'Tripura'], ['17', 'Meghalaya'], ['18', 'Assam'], ['19', 'West Bengal'],
+  ['20', 'Jharkhand'], ['21', 'Odisha'], ['22', 'Chhattisgarh'], ['23', 'Madhya Pradesh'], ['24', 'Gujarat'],
+  ['26', 'Dadra & Nagar Haveli and Daman & Diu'], ['27', 'Maharashtra'], ['29', 'Karnataka'], ['30', 'Goa'],
+  ['31', 'Lakshadweep'], ['32', 'Kerala'], ['33', 'Tamil Nadu'], ['34', 'Puducherry'], ['35', 'Andaman & Nicobar Islands'],
+  ['36', 'Telangana'], ['37', 'Andhra Pradesh'], ['38', 'Ladakh'], ['97', 'Other Territory'],
+] as const;
+
+function cleanMoneyInput(value: string) {
+  const cleaned = String(value || '').replace(/[^\d.]/g, '');
+  const [whole, ...decimalParts] = cleaned.split('.');
+  const decimals = decimalParts.join('').slice(0, 2);
+  return decimalParts.length ? `${whole}.${decimals}` : whole;
+}
+
+function formatEditableRupees(paise: number) {
+  if (!paise) return '';
+  return paiseToRupees(paise).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
 export default function InvoiceCreate() {
@@ -46,6 +70,7 @@ export default function InvoiceCreate() {
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
   const [isInterstate, setIsInterstate] = useState(false);
+  const [placeOfSupply, setPlaceOfSupply] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
   const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
@@ -62,6 +87,7 @@ export default function InvoiceCreate() {
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
+  const [moneyDrafts, setMoneyDrafts] = useState<Record<string, string>>({});
 
   const hydratedIdRef = useRef<string | null>(null);
 
@@ -95,6 +121,7 @@ export default function InvoiceCreate() {
     setInvoiceDate(invDate || new Date().toISOString().split('T')[0]);
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
     setIsInterstate(Boolean(inv.is_interstate));
+    setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
     setNotes(String(inv.notes || ''));
     setAmountPaid(0);
     const tpl = String(inv.pdf_template || 'standard');
@@ -118,6 +145,7 @@ export default function InvoiceCreate() {
         name: String(it.item_name || ''),
         description: String(it.item_description || ''),
         hsn_code: it.hsn_code ? String(it.hsn_code) : '',
+        unit: String(it.unit || it.unit_abbr || 'PCS'),
         quantity: qty,
         unit_price: up,
         gst_rate: Number(it.gst_rate) || 0,
@@ -126,6 +154,7 @@ export default function InvoiceCreate() {
       };
     });
     setItems(mappedItems);
+    setMoneyDrafts({});
 
     hydratedIdRef.current = editInvoiceId;
   }, [editInvoiceId, existingInv, navigate]);
@@ -183,9 +212,15 @@ export default function InvoiceCreate() {
     setPartyResults([]);
     const companyStateCode = String((company as any)?.state_code || '').trim();
     const partyStateCode = String(p.billing_state_code || p.state_code || '').trim();
-    if (companyStateCode && partyStateCode) {
+    if (!placeOfSupply && companyStateCode && partyStateCode) {
       setIsInterstate(companyStateCode !== partyStateCode);
     }
+  };
+
+  const updatePlaceOfSupply = (value: string) => {
+    setPlaceOfSupply(value);
+    const companyStateCode = String((company as any)?.state_code || '').trim();
+    if (value && companyStateCode) setIsInterstate(companyStateCode !== value);
   };
 
   const openQuickAdd = (prefillName?: string) => {
@@ -212,6 +247,7 @@ export default function InvoiceCreate() {
     if (items.find(i => i.item_id === item.id)) return;
     setItems([...items, {
       item_id: item.id, name: item.name, hsn_code: item.hsn_code || '',
+      unit: item.unit || item.unit_abbr || item.unit_name || 'PCS',
       quantity: 1, unit_price: item.unit_price ?? item.selling_price,
       gst_rate: item.gst_rate || 18, discount_percent: 0, cess_rate: 0,
     }]);
@@ -225,6 +261,26 @@ export default function InvoiceCreate() {
   };
 
   const removeLine = (idx: number) => setItems(items.filter((_, i) => i !== idx));
+
+  const setMoneyDraft = (key: string, raw: string, applyPaise: (paise: number) => void) => {
+    const next = cleanMoneyInput(raw);
+    setMoneyDrafts((drafts) => ({ ...drafts, [key]: next }));
+    applyPaise(rupeesToPaise(next || '0'));
+  };
+
+  const clearMoneyDraft = (key: string) => {
+    setMoneyDrafts((drafts) => {
+      const next = { ...drafts };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const moneyValue = (key: string, paise: number) => (
+    Object.prototype.hasOwnProperty.call(moneyDrafts, key)
+      ? moneyDrafts[key]
+      : formatEditableRupees(paise)
+  );
 
   // Calculations
   const calcLine = (item: LineItem) => {
@@ -254,6 +310,7 @@ export default function InvoiceCreate() {
       invoice_date: invoiceDate,
       due_date: dueDate || undefined,
       is_interstate: isInterstate,
+      place_of_supply: placeOfSupply || undefined,
       notes: notes || undefined,
       amount_paid: amountPaid,
       company_bank_account_id: companyBankAccountId || undefined,
@@ -263,6 +320,7 @@ export default function InvoiceCreate() {
         name: i.name,
         item_name: i.name,
         hsn_code: i.hsn_code,
+        unit: i.unit || 'PCS',
         quantity: i.quantity,
         unit_price: i.unit_price,
         gst_rate: i.gst_rate,
@@ -284,6 +342,7 @@ export default function InvoiceCreate() {
       name: i.name,
       item_name: i.name,
       hsn_code: i.hsn_code,
+      unit: i.unit || 'PCS',
       quantity: i.quantity,
       unit_price: i.unit_price,
       gst_rate: isGstInvoice ? i.gst_rate : 0,
@@ -305,6 +364,7 @@ export default function InvoiceCreate() {
             invoice_date: invoiceDate,
             due_date: dueDate || undefined,
             is_interstate: isInterstate,
+            place_of_supply: placeOfSupply || undefined,
             notes,
             company_bank_account_id: companyBankAccountId || undefined,
             items: itemPayload,
@@ -326,7 +386,7 @@ export default function InvoiceCreate() {
         document_theme: documentTheme,
         party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
-        is_interstate: isInterstate, notes,
+        is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined, notes,
         amount_paid: amountPaid,
         company_bank_account_id: companyBankAccountId || undefined,
         items: itemPayload,
@@ -441,6 +501,13 @@ export default function InvoiceCreate() {
                 </label>
               </div>
             </div>
+            <div>
+              <Label>Place of Supply</Label>
+              <select className="mt-1 w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={placeOfSupply} onChange={e => updatePlaceOfSupply(e.target.value)} disabled={!isGstInvoice}>
+                <option value="">Same as party billing state</option>
+                {GST_STATE_OPTIONS.map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}
+              </select>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border p-2">
                 <input type="checkbox" checked={isGstInvoice} onChange={e => setIsGstInvoice(e.target.checked)} className="rounded border-input" />
@@ -512,6 +579,7 @@ export default function InvoiceCreate() {
                   <th className="p-2 text-left font-medium">Item</th>
                   <th className="p-2 text-left font-medium w-16">HSN</th>
                   <th className="p-2 text-right font-medium w-16">Qty</th>
+                  <th className="p-2 text-left font-medium w-20">Unit</th>
                   <th className="p-2 text-right font-medium w-28">Price (Basic)</th>
                   <th className="p-2 text-right font-medium w-16">Disc%</th>
                   <th className="p-2 text-right font-medium w-16">GST%</th>
@@ -534,7 +602,19 @@ export default function InvoiceCreate() {
                         </td>
                         <td className="p-2"><Input className="w-16 text-xs h-7" value={item.hsn_code || ''} onChange={e => updateLine(idx, 'hsn_code', e.target.value)} /></td>
                         <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={1} value={item.quantity} onChange={e => updateLine(idx, 'quantity', parseFloat(e.target.value) || 0)} /></td>
-                        <td className="p-2"><Input type="number" className="w-28 text-right h-7 tabular-nums" min={0} value={paiseToRupees(item.unit_price).toFixed(2)} onChange={e => updateLine(idx, 'unit_price', rupeesToPaise(e.target.value))} /></td>
+                        <td className="p-2"><Input className="w-20 h-7 text-xs uppercase" value={item.unit || ''} placeholder="PCS" onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())} /></td>
+                        <td className="p-2">
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-28 text-right h-7 tabular-nums"
+                            placeholder="0"
+                            value={moneyValue(`line-${idx}-price`, item.unit_price)}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onBlur={() => clearMoneyDraft(`line-${idx}-price`)}
+                            onChange={e => setMoneyDraft(`line-${idx}-price`, e.target.value, (paise) => updateLine(idx, 'unit_price', paise))}
+                          />
+                        </td>
                         <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={0} max={100} value={item.discount_percent} onChange={e => updateLine(idx, 'discount_percent', parseFloat(e.target.value) || 0)} /></td>
                         <td className="p-2">
                           <select className="w-20 h-7 rounded border bg-transparent text-xs" value={item.gst_rate} onChange={e => updateLine(idx, 'gst_rate', parseInt(e.target.value, 10))}>
@@ -580,7 +660,16 @@ export default function InvoiceCreate() {
               <>
                 <div className="pt-2">
                   <Label>Amount Paid (₹)</Label>
-                  <Input type="number" className="mt-1 tabular-nums" min={0} value={paiseToRupees(amountPaid).toFixed(2)} onChange={e => setAmountPaid(rupeesToPaise(e.target.value))} />
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    className="mt-1 tabular-nums"
+                    placeholder="0"
+                    value={moneyValue('amount-paid', amountPaid)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={() => clearMoneyDraft('amount-paid')}
+                    onChange={e => setMoneyDraft('amount-paid', e.target.value, setAmountPaid)}
+                  />
                 </div>
                 {balanceDue > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>Balance Due</span><span className="tabular-nums">{formatMoney(balanceDue)}</span></div>}
               </>
@@ -638,6 +727,7 @@ export default function InvoiceCreate() {
             name: String(row.name ?? ''),
             hsn_code: String(row.hsn_code ?? ''),
             unit_price: Number(row.selling_price ?? 0),
+            unit: String(row.unit || row.unit_abbr || row.unit_name || 'PCS'),
             gst_rate: Number(row.gst_rate ?? 18),
           });
         }}
