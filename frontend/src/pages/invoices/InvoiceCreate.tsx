@@ -36,6 +36,17 @@ const GST_STATE_OPTIONS = [
   ['36', 'Telangana'], ['37', 'Andhra Pradesh'], ['38', 'Ladakh'], ['97', 'Other Territory'],
 ] as const;
 
+function partyFullAddress(p: any, kind: 'shipping' | 'billing' = 'shipping') {
+  const direct = kind === 'shipping' ? p?.shipping_address : p?.billing_address;
+  if (direct) return String(direct);
+  return [
+    p?.billing_address,
+    p?.billing_city || p?.city,
+    p?.billing_state || p?.state,
+    p?.billing_pincode || p?.pincode,
+  ].filter(Boolean).join(', ');
+}
+
 function cleanMoneyInput(value: string) {
   const cleaned = String(value || '').replace(/[^\d.]/g, '');
   const [whole, ...decimalParts] = cleaned.split('.');
@@ -71,6 +82,7 @@ export default function InvoiceCreate() {
   const [dueDate, setDueDate] = useState('');
   const [isInterstate, setIsInterstate] = useState(false);
   const [placeOfSupply, setPlaceOfSupply] = useState('');
+  const [shippingAddress, setShippingAddress] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
   const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
@@ -122,6 +134,7 @@ export default function InvoiceCreate() {
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
     setIsInterstate(Boolean(inv.is_interstate));
     setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
+    setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setAmountPaid(0);
     const tpl = String(inv.pdf_template || 'standard');
@@ -176,6 +189,7 @@ export default function InvoiceCreate() {
     setPartyPhone('');
     setPartySearch('');
     setPartyResults([]);
+    setShippingAddress('');
   };
 
   // Search parties
@@ -208,6 +222,7 @@ export default function InvoiceCreate() {
     setPartyId(id);
     setPartyName(String(p.name ?? ''));
     setPartyPhone(p.phone || '');
+    setShippingAddress(partyFullAddress(p, 'shipping') || partyFullAddress(p, 'billing'));
     setPartySearch('');
     setPartyResults([]);
     const companyStateCode = String((company as any)?.state_code || '').trim();
@@ -311,6 +326,7 @@ export default function InvoiceCreate() {
       due_date: dueDate || undefined,
       is_interstate: isInterstate,
       place_of_supply: placeOfSupply || undefined,
+      shipping_address: shippingAddress.trim() || undefined,
       notes: notes || undefined,
       amount_paid: amountPaid,
       company_bank_account_id: companyBankAccountId || undefined,
@@ -328,7 +344,7 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const handleSubmit = async () => {
@@ -365,6 +381,7 @@ export default function InvoiceCreate() {
             due_date: dueDate || undefined,
             is_interstate: isInterstate,
             place_of_supply: placeOfSupply || undefined,
+            shipping_address: shippingAddress.trim() || undefined,
             notes,
             company_bank_account_id: companyBankAccountId || undefined,
             items: itemPayload,
@@ -386,7 +403,8 @@ export default function InvoiceCreate() {
         document_theme: documentTheme,
         party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
-        is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined, notes,
+        is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined,
+        shipping_address: shippingAddress.trim() || undefined, notes,
         amount_paid: amountPaid,
         company_bank_account_id: companyBankAccountId || undefined,
         items: itemPayload,
@@ -502,11 +520,20 @@ export default function InvoiceCreate() {
               </div>
             </div>
             <div>
-              <Label>Place of Supply</Label>
+              <Label>Place of Supply State</Label>
               <select className="mt-1 w-full h-10 rounded-md border bg-transparent px-3 text-sm" value={placeOfSupply} onChange={e => updatePlaceOfSupply(e.target.value)} disabled={!isGstInvoice}>
                 <option value="">Same as party billing state</option>
                 {GST_STATE_OPTIONS.map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}
               </select>
+            </div>
+            <div>
+              <Label>Ship To / Place of Supply Address</Label>
+              <textarea
+                className="mt-1 w-full min-h-[76px] rounded-md border bg-background px-3 py-2 text-sm resize-y"
+                value={shippingAddress}
+                onChange={(e) => setShippingAddress(e.target.value)}
+                placeholder="Leave blank to use party shipping or billing address"
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border p-2">

@@ -41,6 +41,7 @@ export type InvoicePreviewDraftPayload = {
   due_date?: string;
   is_interstate: boolean;
   place_of_supply?: string;
+  shipping_address?: string;
   notes?: string;
   amount_paid?: number;
   discount_amount?: number;

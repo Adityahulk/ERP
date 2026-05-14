@@ -39,6 +39,11 @@ function externalTaxErrorStatus(message: string): number {
   return /TaxPro|GSP credentials|EINVOICE_|GSTIN|e-invoice auth|e-way auth/i.test(message) ? 400 : 500;
 }
 
+function trimOrNull(value: unknown): string | null {
+  const s = String(value ?? '').trim();
+  return s ? s : null;
+}
+
 async function generateInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
   const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
   const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
@@ -267,9 +272,11 @@ export async function createInvoice(req: Request, res: Response) {
             name: pr.rows[0].name,
             gstin: pr.rows[0].gstin,
             bill: pr.rows[0].billing_address,
-            ship: pr.rows[0].shipping_address,
+            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
         }
+      } else if (trimOrNull(d.shipping_address)) {
+        partySnap.ship = trimOrNull(d.shipping_address) || undefined;
       }
 
       const compEinv = await client.query(
@@ -757,9 +764,11 @@ export async function updateInvoice(req: Request, res: Response) {
             name: pr.rows[0].name,
             gstin: pr.rows[0].gstin,
             bill: pr.rows[0].billing_address,
-            ship: pr.rows[0].shipping_address,
+            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
         }
+      } else if (trimOrNull(d.shipping_address)) {
+        partySnap.ship = trimOrNull(d.shipping_address) || undefined;
       }
 
       const posRow = d.party_id
@@ -1290,8 +1299,18 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
 
     const partySnap = party
-      ? { name: party.name as string, gstin: party.gstin as string | null, bill: party.billing_address as string | null }
-      : { name: String(d.party_name || 'Walk-in Customer'), gstin: null as string | null, bill: null as string | null };
+      ? {
+          name: party.name as string,
+          gstin: party.gstin as string | null,
+          bill: party.billing_address as string | null,
+          ship: trimOrNull(d.shipping_address) || party.shipping_address || party.billing_address || null,
+        }
+      : {
+          name: String(d.party_name || 'Walk-in Customer'),
+          gstin: null as string | null,
+          bill: null as string | null,
+          ship: trimOrNull(d.shipping_address),
+        };
 
     const pdfRows: any[] = [];
     for (let i = 0; i < d.items.length; i++) {
@@ -1322,6 +1341,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       party_name_snapshot: partySnap.name,
       party_gstin_snapshot: partySnap.gstin,
       billing_address_snapshot: partySnap.bill,
+      shipping_address_snapshot: partySnap.ship,
       place_of_supply: placeOfSupply,
       is_interstate: isInterstate,
       subtotal: totals.subtotal,

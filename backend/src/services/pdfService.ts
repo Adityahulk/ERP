@@ -272,7 +272,7 @@ function buildInvoiceHtml(args: {
       <div><span>Invoice#</span><b>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</b></div>
       <div><span>Invoice Date</span><b>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</b></div>
       <div><span>Due Date</span><b>${formatDocDate(invoice.due_date)}</b></div>
-      <div><span>Place of Supply</span><b>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</b></div>
+      <div><span>Supply State Code</span><b>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</b></div>
     </div>`;
   const gstSummary = `
     <div class="tax-summary">
@@ -312,7 +312,7 @@ function buildInvoiceHtml(args: {
       <div style="text-align:right"><h1 class="doc-title">${title}</h1><div class="doc-subtitle"># ${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</div><div style="font-size:13px;margin-top:28px">Balance Due</div><div style="font-size:24px;font-weight:900">₹${fmtPaise(balanceDue)}</div></div>
     </section>
     <section class="bill-grid"><div class="bill-card"><h3>${isPurchase ? 'Bill From' : 'Bill To'}</h3><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}</div><div>${invoiceMeta}</div></section>
-    <section class="bill-grid" style="margin-top:0"><div class="bill-card"><h3>${isPurchase ? 'Bill To' : 'Ship To'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div><div>${gstSummary}</div></section>
+    <section class="bill-grid" style="margin-top:0"><div class="bill-card"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div><div>${gstSummary}</div></section>
     ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
     <div class="footer-line">${escapeHtml(company.name || '')}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
@@ -320,13 +320,13 @@ function buildInvoiceHtml(args: {
   const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted{color:#e5e7eb}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div><div class="company-name" style="color:#fff">${escapeHtml(company.name || '')}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>₹${fmtPaise(balanceDue)}</b></section>
-    <section class="simple-body"><div class="bill-grid"><div><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}<div style="margin-top:24px"><h3>${isPurchase ? 'Bill To' : 'Ship To'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div></div>${invoiceMeta}</div>
+    <section class="simple-body"><div class="bill-grid"><div><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}<div style="margin-top:24px"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div></div>${invoiceMeta}</div>
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.center{text-align:center}.performa .doc-title{font-size:48px;font-weight:800;color:${palette.primary};line-height:1.05;margin-top:8px}.performa .logo img{margin:0 auto}.performa .logo-fallback{margin:0 auto;width:52px;height:52px;font-size:26px}.performa .rule{height:2px;background:${palette.primary};margin:12px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:6px}.performa table.items{margin-top:12px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb}.performa table.items td{border-bottom:1px solid #e5e7eb}.performa .totals{background:#fff}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary}}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div class="company-name" style="margin-top:10px">${escapeHtml(company.name || '')}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<h1 class="doc-title">${title}</h1></section>
-    <div class="rule"></div><section class="bill-card"><h3>Bill To</h3><div class="party-name">${escapeHtml(buyerName)}</div><div class="address">${addressHtml(buyerAddr)}</div>${fieldLine('GSTIN', buyerGstin, 'gst mono')}</section><div class="rule"></div>
+    <div class="rule"></div><section class="bill-card"><h3>Bill To</h3><div class="party-name">${escapeHtml(buyerName)}</div><div class="address">${addressHtml(buyerAddr)}</div>${fieldLine('GSTIN', buyerGstin, 'gst mono')}<div style="margin-top:10px"><h3>Ship To / Place of Supply</h3><div class="address">${addressHtml(shipAddr)}</div></div></section><div class="rule"></div>
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
   </main></body></html>`;
 
@@ -353,11 +353,11 @@ function buildInvoiceHtml(args: {
     <table class="mono-table" style="margin-top:8px">
       <tr>
         <td style="width:50%"><b>${isPurchase ? 'Bill From' : 'Bill To'}</b><br/><b>${escapeHtml(primaryPartyName)}</b><br/>${addressHtml(primaryPartyAddr)}${primaryPartyGstin ? `<br/><span class="mono">GSTIN: ${escapeHtml(primaryPartyGstin)}</span>` : ''}</td>
-        <td style="width:50%"><b>${isPurchase ? 'Bill To' : 'Ship To'}</b><br/>${addressHtml(isPurchase ? buyerAddr : shipAddr)}</td>
+        <td style="width:50%"><b>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</b><br/>${addressHtml(isPurchase ? buyerAddr : shipAddr)}</td>
       </tr>
     </table>
     <table class="mono-table" style="margin-top:8px">
-      <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Place of Supply</b><br/>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</td></tr>
+      <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</td></tr>
     </table>
     ${itemTable}
     <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}<div class="info-card"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>

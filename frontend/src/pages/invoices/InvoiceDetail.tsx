@@ -99,6 +99,12 @@ export default function InvoiceDetail() {
           {inv.party_billing_address && <p className="text-sm text-muted-foreground mt-2">{inv.party_billing_address}</p>}
           {inv.party_city && <p className="text-sm text-muted-foreground">{inv.party_city}{inv.party_state ? `, ${inv.party_state}` : ''} {inv.party_pincode || ''}</p>}
           {inv.party_phone && <p className="text-sm text-muted-foreground mt-1">📞 {inv.party_phone}</p>}
+          {inv.shipping_address_snapshot && (
+            <div className="mt-4 rounded-md border bg-muted/30 p-3">
+              <p className="text-xs font-semibold uppercase text-muted-foreground">Ship To / Place of Supply</p>
+              <p className="mt-1 whitespace-pre-line text-sm">{inv.shipping_address_snapshot}</p>
+            </div>
+          )}
         </CardContent></Card>
         <Card><CardContent className="p-5">
           <h3 className="font-semibold text-sm text-muted-foreground mb-3">{inv.invoice_type === 'sale' ? 'From' : 'To'}</h3>
