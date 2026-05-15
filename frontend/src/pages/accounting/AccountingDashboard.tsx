@@ -162,7 +162,7 @@ export default function AccountingDashboard() {
     const rows = [
       ['Date', 'Type', 'Narration', 'Debit', 'Credit', 'Balance'],
       ...(statement.transactions || []).map((r: any) => [
-        formatDate(r.created_at),
+        formatDate(r.transaction_date || r.created_at),
         r.type,
         String(r.narration || '').replace(/"/g, '""'),
         r.type === 'debit' ? (Number(r.amount || 0) / 100).toFixed(2) : '',
@@ -434,7 +434,7 @@ export default function AccountingDashboard() {
                           <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No ledger entries in this period.</td></tr>
                         ) : (statement?.transactions || []).map((r: any) => (
                           <tr key={r.id} className="border-b">
-                            <td className="px-4 py-2 text-muted-foreground">{formatDate(r.created_at)}</td>
+                            <td className="px-4 py-2 text-muted-foreground">{formatDate(r.transaction_date || r.created_at)}</td>
                             <td className="px-4 py-2">{r.narration || r.reference_type || '-'}</td>
                             <td className="px-4 py-2 text-right tabular-nums">{r.type === 'debit' ? formatMoney(Number(r.amount || 0)) : '-'}</td>
                             <td className="px-4 py-2 text-right tabular-nums">{r.type === 'credit' ? formatMoney(Number(r.amount || 0)) : '-'}</td>

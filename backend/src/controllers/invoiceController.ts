@@ -180,6 +180,7 @@ export async function scanBarcode(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i

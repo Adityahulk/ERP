@@ -128,7 +128,7 @@ export default function WholesaleOrderDetail() {
           <thead className="bg-slate-50 border-b"><tr>
             <th className="px-4 py-3 font-semibold text-slate-600">#</th>
             <th className="px-4 py-3 font-semibold text-slate-600">Item</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">HSN</th>
+            <th className="px-4 py-3 font-semibold text-slate-600">HSN/SAC</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">Qty</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">Rate</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">GST %</th>

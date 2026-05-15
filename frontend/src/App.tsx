@@ -31,6 +31,7 @@ import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
 import BillingScreen from '@/pages/billing/BillingScreen';
 import ReportsHome from '@/pages/reports/ReportsHome';
+import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import Settings from '@/pages/settings/Settings';
 import LandingPage from '@/pages/landing/LandingPage';
 
@@ -283,6 +284,7 @@ export default function App() {
         <Route path="/expenses" element={<Navigate to="/purchase-expense/expenses" replace />} />
         {/* Reports & Accounting */}
         <Route path="/reports" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="basic_reports" featureLabel="Business Reports"><ReportsHome /></ModuleGate></RoleGate>} />
+        <Route path="/accounting" element={<RoleGate allowed={['admin', 'manager']}><AccountingDashboard /></RoleGate>} />
         <Route path="/gst-filing" element={<RoleGate allowed={['admin']}><ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><GSTDashboard /></ModuleGate></RoleGate>} />
 
         {/* HR & Attendance */}

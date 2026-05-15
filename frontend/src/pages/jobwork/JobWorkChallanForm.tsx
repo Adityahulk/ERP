@@ -174,7 +174,7 @@ export default function JobWorkChallanForm() {
                   onChange={e => updateItem(i, 'unit_price', Math.round((parseFloat(e.target.value) || 0) * 100))} 
                 />
               </div>
-              <div className="col-span-2">{i === 0 && <Label className="text-xs">HSN</Label>}<Input className="mt-1" value={item.hsn_code || ''} onChange={e => updateItem(i, 'hsn_code', e.target.value)} /></div>
+              <div className="col-span-2">{i === 0 && <Label className="text-xs">HSN/SAC</Label>}<Input className="mt-1" value={item.hsn_code || ''} onChange={e => updateItem(i, 'hsn_code', e.target.value)} /></div>
               <div className="col-span-1">{i === 0 && <Label className="text-xs">Total (₹)</Label>}<p className="text-sm font-bold mt-2 text-right">{( (item.unit_price || 0) * (item.quantity || 0) / 100).toFixed(2)}</p></div>
               <div className="col-span-1 flex justify-end"><Button variant="ghost" size="icon" className="text-red-400" onClick={() => removeItem(i)}><X className="w-4 h-4" /></Button></div>
             </div>

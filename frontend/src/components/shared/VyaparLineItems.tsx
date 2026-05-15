@@ -23,6 +23,8 @@ export interface VyaparLineItem {
   name: string;
   description?: string;
   hsn_code?: string;
+  item_type?: string;
+  track_inventory?: boolean;
   unit?: string;
   quantity: number;
   unit_price: number;   // in paise
@@ -122,6 +124,8 @@ export default function VyaparLineItems({
         item_id: item.id,
         name: item.name,
         hsn_code: item.hsn_code || '',
+        item_type: item.item_type,
+        track_inventory: item.track_inventory,
         unit: item.unit || item.unit_name || 'PCS',
         quantity: 1,
         unit_price: lineUnitPriceFromItem(item),
@@ -145,6 +149,8 @@ export default function VyaparLineItems({
       name: row.name,
       sku: row.sku,
       hsn_code: row.hsn_code,
+      item_type: row.item_type,
+      track_inventory: row.track_inventory,
       selling_price: row.selling_price,
       purchase_price: row.purchase_price,
       gst_rate: row.gst_rate,
@@ -247,7 +253,7 @@ export default function VyaparLineItems({
                 </div>
                 <div className="text-right flex-shrink-0 text-muted-foreground text-xs">
                   {formatMoney(Number(it.unit_price ?? it.selling_price ?? 0))}
-                  {typeof it.available_stock === 'number' && (
+                  {it.item_type !== 'service' && typeof it.available_stock === 'number' && (
                     <span className="ml-2">· {it.available_stock} in stock</span>
                   )}
                 </div>
@@ -379,12 +385,12 @@ export default function VyaparLineItems({
                           <div className="flex flex-wrap gap-3 text-xs">
                             {showHsn && (
                               <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-16">HSN Code</span>
+                                <span className="text-muted-foreground w-16">{item.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</span>
                                 <Input
                                   className="h-7 w-28 text-xs font-mono"
                                   value={item.hsn_code || ''}
                                   onChange={(e) => update(idx, { hsn_code: e.target.value })}
-                                  placeholder="HSN"
+                                  placeholder={item.item_type === 'service' ? 'SAC' : 'HSN'}
                                 />
                               </div>
                             )}

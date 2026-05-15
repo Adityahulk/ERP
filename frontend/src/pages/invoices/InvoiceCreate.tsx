@@ -20,6 +20,7 @@ import toast from 'react-hot-toast';
 
 interface LineItem {
   item_id?: string; name: string; description?: string; hsn_code?: string;
+  item_type?: string; track_inventory?: boolean;
   unit?: string;
   quantity: number; unit_price: number; gst_rate: number;
   discount_percent: number; cess_rate: number;
@@ -264,6 +265,7 @@ export default function InvoiceCreate() {
     if (items.find(i => i.item_id === item.id)) return;
     setItems([...items, {
       item_id: item.id, name: item.name, hsn_code: item.hsn_code || '',
+      item_type: item.item_type, track_inventory: item.track_inventory,
       unit: item.unit || item.unit_abbr || item.unit_name || 'PCS',
       quantity: 1, unit_price: item.unit_price ?? item.selling_price,
       gst_rate: item.gst_rate || 18, discount_percent: 0, cess_rate: 0,
@@ -584,7 +586,7 @@ export default function InvoiceCreate() {
                       </span>
                       <span className="tabular-nums">
                         {formatMoney(Number(it.unit_price || 0))}
-                        {typeof it.available_stock === 'number' ? ` • Stock ${it.available_stock}` : ''}
+                        {it.item_type === 'service' ? ' • Service' : typeof it.available_stock === 'number' ? ` • Stock ${it.available_stock}` : ''}
                       </span>
                     </button>
                   ))}
@@ -610,7 +612,7 @@ export default function InvoiceCreate() {
               <table className="w-full text-sm">
                 <thead><tr className="bg-muted/40 border-b">
                   <th className="p-2 text-left font-medium">Item</th>
-                  <th className="p-2 text-left font-medium w-16">HSN</th>
+                  <th className="p-2 text-left font-medium w-16">HSN/SAC</th>
                   <th className="p-2 text-right font-medium w-16">Qty</th>
                   <th className="p-2 text-left font-medium w-20">Unit</th>
                   <th className="p-2 text-right font-medium w-28">Price (Basic)</th>
@@ -633,7 +635,14 @@ export default function InvoiceCreate() {
                             onChange={e => updateLine(idx, 'description', e.target.value)}
                           />
                         </td>
-                        <td className="p-2"><Input className="w-16 text-xs h-7" value={item.hsn_code || ''} onChange={e => updateLine(idx, 'hsn_code', e.target.value)} /></td>
+                        <td className="p-2">
+                          <Input
+                            className="w-16 text-xs h-7"
+                            placeholder={item.item_type === 'service' ? 'SAC' : 'HSN'}
+                            value={item.hsn_code || ''}
+                            onChange={e => updateLine(idx, 'hsn_code', e.target.value)}
+                          />
+                        </td>
                         <td className="p-2"><Input type="number" className="w-16 text-center h-7 tabular-nums" min={1} value={item.quantity} onChange={e => updateLine(idx, 'quantity', parseFloat(e.target.value) || 0)} /></td>
                         <td className="p-2"><Input className="w-20 h-7 text-xs uppercase" value={item.unit || ''} placeholder="PCS" onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())} /></td>
                         <td className="p-2">

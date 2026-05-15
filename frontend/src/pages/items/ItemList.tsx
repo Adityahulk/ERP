@@ -667,7 +667,7 @@ export default function ItemList() {
         </TabsContent>
       </Tabs>
 
-      <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} />
+      <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} defaultItemType={activeTab === 'services' ? 'service' : 'product'} />
       {showImportPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <Card className="w-full max-w-2xl bg-background shadow-xl">

@@ -495,7 +495,7 @@ Thank you.
                   <tr key={i.id}>
                     <td className="py-3 px-4">
                       <div className="font-medium">{i.item_name}</div>
-                      <div className="text-xs text-muted-foreground">HSN: {i.hsn_code}</div>
+                      <div className="text-xs text-muted-foreground">HSN/SAC: {i.hsn_code}</div>
                     </td>
                     <td className="py-3 px-4 text-center">{Number(i.quantity)}</td>
                     <td className="py-3 px-4 text-right tabular-nums">{formatMoney(i.unit_price)}</td>

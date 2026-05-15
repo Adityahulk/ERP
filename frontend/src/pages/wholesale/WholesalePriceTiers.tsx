@@ -69,7 +69,7 @@ export default function WholesalePriceTiers() {
               <div className="flex justify-between items-center">
                 <div>
                   <p className="font-bold text-slate-900">{selectedItemInfo.name}</p>
-                  <p className="text-xs text-slate-500">{selectedItemInfo.sku || '—'} • HSN: {selectedItemInfo.hsn_code || '—'}</p>
+                  <p className="text-xs text-slate-500">{selectedItemInfo.sku || '—'} • {selectedItemInfo.item_type === 'service' ? 'SAC' : 'HSN'}: {selectedItemInfo.hsn_code || '—'}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-slate-500">Base Selling Price</p>

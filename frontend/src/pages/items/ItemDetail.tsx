@@ -55,7 +55,7 @@ export default function ItemDetail() {
             <h1 className="text-2xl font-bold">{item.name}</h1>
             <div className="flex items-center gap-2 mt-1">
               {item.sku && <Badge variant="outline" className="font-mono">{item.sku}</Badge>}
-              {item.hsn_code && <Badge variant="secondary">HSN: {item.hsn_code}</Badge>}
+              {item.hsn_code && <Badge variant="secondary">{item.item_type === 'service' ? 'SAC' : 'HSN'}: {item.hsn_code}</Badge>}
               <Badge variant={item.is_active ? 'success' : 'destructive'}>{item.is_active ? 'Active' : 'Inactive'}</Badge>
             </div>
           </div>

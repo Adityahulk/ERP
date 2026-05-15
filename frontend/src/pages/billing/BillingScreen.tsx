@@ -16,6 +16,8 @@ interface BillItem {
   name: string;
   sku: string;
   hsn_code: string;
+  item_type?: string;
+  track_inventory?: boolean;
   quantity: number;
   unit_price: number;
   gst_rate: number;
@@ -46,7 +48,7 @@ export default function BillingScreen() {
     queryFn: async () => {
       if (searchQuery.length < 2) return [];
       const res = await api.post('/invoices/search-items', { q: searchQuery });
-      return res.data;
+      return res.data?.data || [];
     },
     enabled: searchQuery.length >= 2,
     staleTime: 0,
@@ -83,8 +85,9 @@ export default function BillingScreen() {
       // Check strictly if it matches a barcode
       try {
         const res = await api.post('/invoices/scan-barcode', { barcode: searchQuery });
-        if (res.data.found) {
-          addItem(res.data.item);
+        const scan = res.data?.data || res.data;
+        if (scan.found) {
+          addItem(scan.item);
           setSearchQuery('');
           toast.success('Item added');
         } else {
@@ -107,6 +110,8 @@ export default function BillingScreen() {
         name: item.name,
         sku: item.sku,
         hsn_code: item.hsn_code,
+        item_type: item.item_type,
+        track_inventory: item.track_inventory,
         quantity: 1,
         unit_price: item.unit_price, // Assuming paise payload directly
         gst_rate: item.gst_rate || 0,
@@ -236,7 +241,11 @@ export default function BillingScreen() {
                     </div>
                     <div className="text-right">
                       <div className="font-bold text-primary">{formatMoney(item.unit_price)}</div>
-                      <div className="text-xs text-muted-foreground">In Stock: {item.available_stock}</div>
+                      {item.item_type === 'service' ? (
+                        <div className="text-xs text-muted-foreground">Service</div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">In Stock: {item.available_stock}</div>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -456,6 +465,8 @@ export default function BillingScreen() {
             name: row.name as string,
             sku: String(row.sku ?? ''),
             hsn_code: String(row.hsn_code ?? ''),
+            item_type: String(row.item_type ?? 'product'),
+            track_inventory: row.track_inventory !== false,
             unit_price: Number(row.selling_price ?? 0),
             gst_rate: Number(row.gst_rate ?? 0),
           });

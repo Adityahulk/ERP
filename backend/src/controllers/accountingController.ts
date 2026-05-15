@@ -435,10 +435,12 @@ export async function getCashFlow(req: Request, res: Response) {
 
 function signedPaymentSql(alias = 'p') {
   return `CASE
-    WHEN ${alias}.payment_type IN ('incoming', 'receipt', 'payment_in') THEN ${alias}.amount
-    WHEN ${alias}.payment_type IN ('outgoing', 'payment_out') THEN -${alias}.amount
     WHEN ${alias}.payment_type = 'bank_deposit' THEN ${alias}.amount
     WHEN ${alias}.payment_type = 'bank_withdrawal' THEN -${alias}.amount
+    WHEN ${alias}.payment_mode IN ('bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque')
+      AND ${alias}.payment_type IN ('incoming', 'receipt', 'payment_in') THEN ${alias}.amount
+    WHEN ${alias}.payment_mode IN ('bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque')
+      AND ${alias}.payment_type IN ('outgoing', 'payment_out') THEN -${alias}.amount
     ELSE 0
   END`;
 }

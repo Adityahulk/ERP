@@ -122,7 +122,7 @@ export default function InvoiceDetail() {
             <thead><tr className="border-b bg-muted/40">
               <th className="p-3 text-left font-medium">#</th>
               <th className="p-3 text-left font-medium">Item</th>
-              <th className="p-3 text-left font-medium hidden md:table-cell">HSN</th>
+              <th className="p-3 text-left font-medium hidden md:table-cell">HSN/SAC</th>
               <th className="p-3 text-right font-medium">Qty</th>
               <th className="p-3 text-right font-medium">Price</th>
               <th className="p-3 text-right font-medium hidden md:table-cell">Taxable</th>

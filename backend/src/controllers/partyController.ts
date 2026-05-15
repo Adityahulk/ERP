@@ -184,8 +184,8 @@ export async function createParty(req: Request, res: Response) {
       const type = opening > 0 ? 'debit' : 'credit';
       await query(
         `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, narration, created_by)
-         VALUES ($1, $2, $3, $4, $4, 'Opening Balance', $5)`,
-        [companyId, result.rows[0].id, type, Math.abs(opening), req.user!.id]
+         VALUES ($1, $2, $3, $4, $5, 'Opening Balance', $6)`,
+        [companyId, result.rows[0].id, type, Math.abs(opening), opening, req.user!.id]
       );
     }
 
@@ -318,7 +318,7 @@ export async function getPartyLedger(req: Request, res: Response) {
     let idx = 3;
 
     if (from_date) { where += ` AND l.created_at >= $${idx}::date`; params.push(from_date); idx++; }
-    if (to_date) { where += ` AND l.created_at <= $${idx}::date + interval '1 day'`; params.push(to_date); idx++; }
+    if (to_date) { where += ` AND l.created_at < $${idx}::date + interval '1 day'`; params.push(to_date); idx++; }
 
     const countRes = await query(`SELECT COUNT(*) FROM party_ledger l WHERE ${where}`, params);
     const total = parseInt(countRes.rows[0].count);
@@ -367,43 +367,66 @@ export async function getPartyStatement(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const { from_date, to_date } = req.query;
 
-    let where = 'l.party_id = $1 AND l.company_id = $2';
+    const ledgerCte = `
+      WITH ledger_effective AS (
+        SELECT
+          l.*,
+          COALESCE(pay.payment_date, inv.invoice_date, pi.bill_date, sr.return_date, l.created_at::date) AS transaction_date
+        FROM party_ledger l
+        LEFT JOIN payments pay
+          ON pay.id = l.reference_id AND pay.company_id = l.company_id AND l.reference_type = 'payment'
+        LEFT JOIN invoices inv
+          ON inv.id = l.reference_id AND inv.company_id = l.company_id AND l.reference_type = 'invoice'
+        LEFT JOIN purchase_invoices pi
+          ON pi.id = l.reference_id AND pi.company_id = l.company_id AND l.reference_type = 'purchase_invoice'
+        LEFT JOIN sale_returns sr
+          ON sr.id = l.reference_id AND sr.company_id = l.company_id AND l.reference_type = 'credit_note'
+      )
+    `;
+
+    let where = 'le.party_id = $1 AND le.company_id = $2';
     const params: any[] = [id, companyId];
     let idx = 3;
 
-    if (from_date) { where += ` AND l.created_at >= $${idx}::date`; params.push(from_date); idx++; }
-    if (to_date) { where += ` AND l.created_at <= $${idx}::date + interval '1 day'`; params.push(to_date); idx++; }
+    if (from_date) { where += ` AND le.transaction_date >= $${idx}::date`; params.push(from_date); idx++; }
+    if (to_date) { where += ` AND le.transaction_date <= $${idx}::date`; params.push(to_date); idx++; }
 
-    // Fetch opening balance specifically before the from_date if from_date exists
-    let openingBalance = 0;
+    const openingParams: any[] = [id, companyId];
+    let openingFilter = '';
     if (from_date) {
-        const obRes = await query(
-          `SELECT 
-             COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) as ob
-           FROM party_ledger l WHERE l.party_id = $1 AND l.company_id = $2 AND l.created_at < $3::date`,
-          [id, companyId, from_date]
-        );
-        openingBalance = parseInt(obRes.rows[0].ob);
+      openingFilter = 'AND le.transaction_date < $3::date';
+      openingParams.push(from_date);
     }
-    
-    // Fallback: If no from_date, opening_balance = initial parties opening balance + 0
-    if (!from_date) {
-        const pObRes = await query('SELECT opening_balance, opening_balance_type FROM parties WHERE id = $1', [id]);
-        openingBalance = (pObRes.rows[0]?.opening_balance_type === 'debit' ? 1 : -1) * (pObRes.rows[0]?.opening_balance || 0);
-    }
+    const obRes = await query(
+      `${ledgerCte}
+       SELECT COALESCE(SUM(CASE WHEN type = 'debit' THEN amount ELSE -amount END), 0)::bigint AS opening_balance
+       FROM ledger_effective le
+       WHERE le.party_id = $1 AND le.company_id = $2 ${openingFilter}`,
+      openingParams,
+    );
+    let openingBalance = Number(obRes.rows[0]?.opening_balance || 0);
 
     const result = await query(
-      `SELECT l.* FROM party_ledger l WHERE ${where} ORDER BY l.created_at ASC, l.id ASC`, params
+      `${ledgerCte}
+       SELECT le.* FROM ledger_effective le WHERE ${where} ORDER BY le.transaction_date ASC, le.created_at ASC, le.id ASC`,
+      params
     );
 
     let runningBalance = openingBalance;
+    let totalDebit = 0;
+    let totalCredit = 0;
     const statementRows = result.rows.map(r => {
-       runningBalance += (r.type === 'debit' ? r.amount : -r.amount);
+       const amount = Number(r.amount || 0);
+       if (r.type === 'debit') totalDebit += amount;
+       if (r.type === 'credit') totalCredit += amount;
+       runningBalance += (r.type === 'debit' ? amount : -amount);
        return { ...r, running_balance: runningBalance };
     });
 
     res.json(success({
        opening_balance: openingBalance,
+       total_debit: totalDebit,
+       total_credit: totalCredit,
        transactions: statementRows,
        closing_balance: runningBalance
     }));

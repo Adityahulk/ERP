@@ -155,7 +155,7 @@ export default function JobWorkChallanDetail() {
           <thead className="bg-slate-50 border-b"><tr>
             <th className="px-4 py-3 font-semibold text-slate-600">#</th>
             <th className="px-4 py-3 font-semibold text-slate-600">Material</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">HSN</th>
+            <th className="px-4 py-3 font-semibold text-slate-600">HSN/SAC</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">Sent</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">Received</th>
             <th className="px-4 py-3 font-semibold text-slate-600 text-right">Rejected</th>

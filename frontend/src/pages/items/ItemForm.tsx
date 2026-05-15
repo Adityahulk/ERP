@@ -22,6 +22,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   item: Item | null;
+  defaultItemType?: string;
 }
 
 const ITEM_TYPES = [
@@ -32,7 +33,7 @@ const ITEM_TYPES = [
   { value: 'service', label: 'Service' },
 ];
 
-export default function ItemForm({ open, onOpenChange, item }: Props) {
+export default function ItemForm({ open, onOpenChange, item, defaultItemType = 'product' }: Props) {
   const qc = useQueryClient();
   const isEdit = !!item;
   const createMutation = useCreateItem();
@@ -87,12 +88,13 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
       setCustomFields(cf);
       setShowWholesalePricing(false);
     } else {
-      setForm({ name: '', item_type: 'product', gst_rate: 18, tax_preference: 'taxable', track_inventory: true, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
+      const isService = defaultItemType === 'service';
+      setForm({ name: '', item_type: defaultItemType, gst_rate: 18, tax_preference: 'taxable', track_inventory: !isService, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
       setCustomFields([]);
       setShowWholesalePricing(false);
       setWholesaleTiers([]);
     }
-  }, [item, open]);
+  }, [item, open, defaultItemType]);
 
   useEffect(() => {
     if (!open) return;
@@ -106,20 +108,33 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
     );
   }, [existingWholesaleTiers, open]);
 
-  const update = (field: string, value: any) => setForm((f: any) => ({ ...f, [field]: value }));
+  const update = (field: string, value: any) => setForm((f: any) => {
+    if (field === 'item_type' && value === 'service') {
+      return { ...f, item_type: value, track_inventory: false, is_serialized: false, opening_stock: 0, opening_stock_value: '', godown_id: '' };
+    }
+    return { ...f, [field]: value };
+  });
 
   const margin = (form.selling_price || 0) - (form.purchase_price || 0);
   const marginPct = form.purchase_price > 0 ? ((margin / form.purchase_price) * 100).toFixed(1) : '—';
 
   const handleSubmit = async () => {
     if (!form.name?.trim()) { toast.error('Product name is required'); return; }
+    const isService = form.item_type === 'service';
 
     const data: any = {
       ...form,
+      track_inventory: isService ? false : form.track_inventory,
+      is_serialized: isService ? false : form.is_serialized,
+      opening_stock: isService ? 0 : form.opening_stock,
       purchase_price: Math.round((form.purchase_price || 0) * 100),
       selling_price: Math.round((form.selling_price || 0) * 100),
-      opening_stock_value: form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
+      opening_stock_value: isService || form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
     };
+    if (isService) {
+      delete data.godown_id;
+      delete data.opening_stock_date;
+    }
     if (data.opening_stock_value === undefined) delete data.opening_stock_value;
     if (!data.godown_id) delete data.godown_id;
 
@@ -324,9 +339,16 @@ export default function ItemForm({ open, onOpenChange, item }: Props) {
               </div>
             )}
             <div>
-              <Label>HSN Code</Label>
-              <Input className="mt-1" placeholder="e.g. 1006" value={form.hsn_code || ''} onChange={e => update('hsn_code', e.target.value)} />
-              <a href="https://cbic-gst.gov.in/gst-goods-services-rates.html" target="_blank" className="text-xs text-primary mt-1 inline-block hover:underline">Look up HSN code →</a>
+              <Label>{form.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</Label>
+              <Input
+                className="mt-1"
+                placeholder={form.item_type === 'service' ? 'e.g. 9983' : 'e.g. 1006'}
+                value={form.hsn_code || ''}
+                onChange={e => update('hsn_code', e.target.value)}
+              />
+              <a href="https://cbic-gst.gov.in/gst-goods-services-rates.html" target="_blank" className="text-xs text-primary mt-1 inline-block hover:underline">
+                Look up {form.item_type === 'service' ? 'SAC' : 'HSN'} code →
+              </a>
             </div>
             <div>
               <Label>GST Rate</Label>

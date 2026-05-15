@@ -124,15 +124,16 @@ export async function createPayment(req: Request, res: Response) {
 
       // 3. Update Party Ledger (Payment received decreases customer balance, given payment decreases supplier balance)
       if (d.party_id) {
-         const isIncoming = d.payment_type === 'incoming';
+         const paymentType = String(d.payment_type || 'incoming');
+         const isIncoming = ['incoming', 'payment_in', 'receipt'].includes(paymentType);
          // Incoming reduces customer balance. Outgoing applies identically if negative/positive flip. Actually let's assume raw subtraction for both depending on schema.
          // Usually, incoming (customer) -> credit ledger. Outgoing (supplier) -> debit ledger.
          await client.query(
            `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
-            VALUES ($1, $2, $3, $4, (SELECT balance - $4 FROM parties WHERE id = $2), 'payment', $5, $6, $7)`,
-            [companyId, d.party_id, isIncoming ? 'credit' : 'debit', d.amount, payment.id, `Payment ${payment.payment_number}`, req.user!.id]
+            VALUES ($1, $2, $3, $4, (SELECT balance + $8 FROM parties WHERE id = $2 AND company_id = $1), 'payment', $5, $6, $7)`,
+            [companyId, d.party_id, isIncoming ? 'credit' : 'debit', d.amount, payment.id, `Payment ${payment.payment_number}`, req.user!.id, isIncoming ? -Number(d.amount) : Number(d.amount)]
          );
-         await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2', [isIncoming ? d.amount : -d.amount, d.party_id]);
+         await client.query('UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3', [isIncoming ? -Number(d.amount) : Number(d.amount), d.party_id, companyId]);
       }
 
       return payment;
