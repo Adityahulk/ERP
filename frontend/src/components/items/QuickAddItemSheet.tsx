@@ -121,7 +121,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     }
     const hsn = hsnCode.trim();
     if (hsn.length > 20) {
-      toast.error('HSN is too long (max 20 characters)');
+      toast.error(`${itemType === 'service' ? 'SAC' : 'HSN'} is too long (max 20 characters)`);
       return;
     }
 
@@ -354,8 +354,15 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                 </div>
               </div>
               <div>
-                <Label>HSN code</Label>
-                <Input className="mt-1 font-mono text-sm" maxLength={20} value={hsnCode} onChange={(e) => setHsnCode(e.target.value)} disabled={createItem.isPending} />
+                <Label>{itemType === 'service' ? 'SAC code' : 'HSN code'}</Label>
+                <Input
+                  className="mt-1 font-mono text-sm"
+                  maxLength={20}
+                  value={hsnCode}
+                  onChange={(e) => setHsnCode(e.target.value)}
+                  placeholder={itemType === 'service' ? 'Service Accounting Code' : 'HSN code'}
+                  disabled={createItem.isPending}
+                />
               </div>
               <div>
                 <Label>GST %</Label>

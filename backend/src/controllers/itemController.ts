@@ -384,6 +384,11 @@ export async function createItem(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const data = req.body;
+    const itemType = String(data.item_type || 'product').toLowerCase();
+    const isService = itemType === 'service';
+    const trackInventory = isService ? false : data.track_inventory !== false;
+    const openingStock = trackInventory ? Number(data.opening_stock || 0) : 0;
+    const openingStockValue = trackInventory ? Number(data.opening_stock_value || 0) : 0;
 
     // SKU uniqueness
     if (data.sku) {
@@ -420,14 +425,14 @@ export async function createItem(req: Request, res: Response) {
           companyId, data.name, data.description, data.sku, data.barcode || null, data.hsn_code,
           data.category_id, data.brand, data.unit_id,
           data.secondary_unit_id, data.unit_conversion_factor,
-          data.item_type || 'product',
-          data.track_inventory !== false,
-          data.is_serialized || false,
+          itemType,
+          trackInventory,
+          isService ? false : data.is_serialized || false,
           data.purchase_price || 0, data.selling_price || 0,
           data.tax_preference || 'taxable', gstRate, halfRate, halfRate, gstRate,
           data.cess_rate || 0,
-          data.opening_stock || 0, data.opening_stock_value || 0,
-          data.opening_stock_date || null,
+          openingStock, openingStockValue,
+          trackInventory ? data.opening_stock_date || null : null,
           data.reorder_point || 0, data.max_stock_level || 0,
           data.image_url, data.custom_fields ? JSON.stringify(data.custom_fields) : '{}',
         ]
@@ -436,13 +441,13 @@ export async function createItem(req: Request, res: Response) {
       const item = itemRes.rows[0];
 
       // Create initial stock if opening_stock > 0
-      if ((data.opening_stock || 0) > 0 && data.track_inventory !== false) {
+      if (openingStock > 0 && trackInventory) {
         const godownId = data.godown_id || req.user!.godown_id;
         if (!godownId) {
           throw new Error('Select a godown before setting opening stock');
         }
-        const qty = Number(data.opening_stock || 0);
-        const openingValue = Number(data.opening_stock_value || 0);
+        const qty = openingStock;
+        const openingValue = openingStockValue;
         const unitCost = qty > 0 && openingValue > 0 ? openingValue / qty : Number(data.purchase_price || 0);
         await applyOpeningStock(client, {
           companyId,
@@ -636,6 +641,15 @@ export async function updateItem(req: Request, res: Response) {
       data.sgst_rate = data.gst_rate / 2;
       data.igst_rate = data.gst_rate;
     }
+    const nextItemType = String(data.item_type ?? old.item_type ?? 'product').toLowerCase();
+    if (nextItemType === 'service') {
+      data.item_type = 'service';
+      data.track_inventory = false;
+      data.is_serialized = false;
+      data.opening_stock = 0;
+      data.opening_stock_value = 0;
+      data.opening_stock_date = null;
+    }
 
     const result = await withTransaction(async (client) => {
       const fields = [
@@ -656,8 +670,8 @@ export async function updateItem(req: Request, res: Response) {
       }
       if (!updates.length) throw new Error('No fields to update');
 
-      if (data.opening_stock !== undefined) {
-        const trackInventory = data.track_inventory !== undefined ? data.track_inventory !== false : old.track_inventory !== false;
+      if (data.opening_stock !== undefined && nextItemType !== 'service') {
+        const trackInventory = nextItemType === 'service' ? false : data.track_inventory !== undefined ? data.track_inventory !== false : old.track_inventory !== false;
         const nextOpening = Math.trunc(Number(data.opening_stock || 0));
         const prevOpening = Math.trunc(Number(old.opening_stock || 0));
         const delta = nextOpening - prevOpening;
@@ -769,17 +783,19 @@ export async function bulkImport(req: Request, res: Response) {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      const importedType = String(row['Item Type'] || row['item_type'] || 'product').trim().toLowerCase();
+      const importedIsService = importedType === 'service';
       const item: any = {
         name: row['Name'] || row['name'] || '',
         sku: row['SKU'] || row['sku'] || null,
         barcode: row['Barcode'] || row['barcode'] || row['EAN'] || row['ean'] || null,
-        hsn_code: row['HSN Code'] || row['hsn_code'] || null,
+        hsn_code: row['HSN Code'] || row['SAC Code'] || row['hsn_code'] || row['sac_code'] || null,
         brand: row['Brand'] || row['brand'] || null,
-        item_type: row['Item Type'] || row['item_type'] || 'product',
+        item_type: importedType,
         selling_price: Math.round(Number(row['Selling Price'] || row['selling_price'] || 0) * 100),
         purchase_price: Math.round(Number(row['Purchase Price'] || row['purchase_price'] || 0) * 100),
         gst_rate: parseInt(row['GST Rate'] || row['gst_rate'] || 18),
-        opening_stock: parseInt(row['Opening Stock'] || row['opening_stock'] || 0),
+        opening_stock: importedIsService ? 0 : parseInt(row['Opening Stock'] || row['opening_stock'] || 0),
         reorder_point: parseInt(row['Reorder Point'] || row['reorder_point'] || 0),
       };
 
@@ -825,10 +841,11 @@ export async function bulkImport(req: Request, res: Response) {
         for (const p of preview) {
           const d = p.data;
           const halfRate = d.gst_rate / 2;
+          const isService = d.item_type === 'service';
           const itemIns = await client.query(
-            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, brand, item_type, purchase_price, selling_price,
+            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, brand, item_type, track_inventory, purchase_price, selling_price,
               gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
              RETURNING id`,
             [
               companyId,
@@ -838,18 +855,19 @@ export async function bulkImport(req: Request, res: Response) {
               d.hsn_code,
               d.brand,
               d.item_type,
+              !isService,
               d.purchase_price,
               d.selling_price,
               d.gst_rate,
               halfRate,
               halfRate,
               d.gst_rate,
-              d.opening_stock,
-              d.opening_stock * d.purchase_price,
+              isService ? 0 : d.opening_stock,
+              isService ? 0 : d.opening_stock * d.purchase_price,
               d.reorder_point,
             ]
           );
-          const openingQty = Number(d.opening_stock || 0);
+          const openingQty = isService ? 0 : Number(d.opening_stock || 0);
           if (openingQty > 0) {
             await applyOpeningStock(client, {
               companyId,

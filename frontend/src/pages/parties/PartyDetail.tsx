@@ -468,7 +468,7 @@ export default function PartyDetail() {
               </div>
               <div>
                 <Label>Payment Terms (days)</Label>
-                <Input className="mt-1" type="number" min={0} value={form.credit_days || 30} onChange={(e) => setForm((p: any) => ({ ...p, credit_days: parseInt(e.target.value) || 0 }))} />
+                <Input className="mt-1" type="text" inputMode="numeric" value={form.credit_days ?? ''} onChange={(e) => setForm((p: any) => ({ ...p, credit_days: e.target.value.replace(/\D/g, '') }))} placeholder="30" />
               </div>
             </div>
 

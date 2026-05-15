@@ -8,13 +8,37 @@ import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 export async function listPayments(req: Request, res: Response) {
   try {
     const { page, limit, offset } = parsePagination(req.query);
+    const where: string[] = ['p.company_id = $1', 'p.is_deleted = false'];
+    const params: any[] = [req.user!.company_id];
+    let idx = 2;
+    if (req.query.payment_type) {
+      where.push(`p.payment_type = $${idx++}`);
+      params.push(String(req.query.payment_type));
+    }
+    if (req.query.party_id) {
+      where.push(`p.party_id = $${idx++}`);
+      params.push(String(req.query.party_id));
+    }
+    if (req.query.payment_mode) {
+      where.push(`p.payment_mode = $${idx++}`);
+      params.push(String(req.query.payment_mode));
+    }
+    if (req.query.from_date) {
+      where.push(`p.payment_date >= $${idx++}::date`);
+      params.push(String(req.query.from_date));
+    }
+    if (req.query.to_date) {
+      where.push(`p.payment_date <= $${idx++}::date`);
+      params.push(String(req.query.to_date));
+    }
     const result = await query(
-      `SELECT p.*, pt.name as party_name 
+      `SELECT p.*, pt.name as party_name, ba.account_label as bank_label, ba.bank_name, ba.account_number
        FROM payments p LEFT JOIN parties pt ON p.party_id = pt.id
-       WHERE p.company_id = $1 AND p.is_deleted = false
-       ORDER BY p.payment_date DESC LIMIT $2 OFFSET $3`, [req.user!.company_id, limit, offset]
+       LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id AND ba.company_id = p.company_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY p.payment_date DESC, p.created_at DESC LIMIT $${idx++} OFFSET $${idx}`, [...params, limit, offset]
     );
-    const countRes = await query('SELECT COUNT(*) FROM payments WHERE company_id = $1 AND is_deleted = false', [req.user!.company_id]);
+    const countRes = await query(`SELECT COUNT(*) FROM payments p WHERE ${where.join(' AND ')}`, params);
     res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit)));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
@@ -40,12 +64,21 @@ export async function createPayment(req: Request, res: Response) {
     const result = await withTransaction(async (client) => {
       // 1. Create Payment
       const pRes = await client.query(
-        `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, reference_number, notes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        `INSERT INTO payments (
+           company_id, payment_type, payment_number, payment_date, party_id, amount,
+           payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date, notes, created_by
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
         [
            companyId, d.payment_type || 'incoming', `PAY-${Math.floor(Math.random() * 10000)}`,
            d.payment_date || new Date().toISOString().split('T')[0], d.party_id, d.amount,
-           d.payment_mode || 'cash', d.reference_number, d.notes, req.user!.id
+           d.payment_mode || 'cash',
+           d.reference_number,
+           d.company_bank_account_id || null,
+           d.cheque_number || (d.payment_mode === 'cheque' ? d.reference_number || null : null),
+           d.instrument_date || null,
+           d.notes,
+           req.user!.id
         ]
       );
       const payment = pRes.rows[0];

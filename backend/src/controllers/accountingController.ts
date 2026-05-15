@@ -432,3 +432,184 @@ export async function getCashFlow(req: Request, res: Response) {
     res.status(500).json(error(err.message));
   }
 }
+
+function signedPaymentSql(alias = 'p') {
+  return `CASE
+    WHEN ${alias}.payment_type IN ('incoming', 'receipt', 'payment_in') THEN ${alias}.amount
+    WHEN ${alias}.payment_type IN ('outgoing', 'payment_out') THEN -${alias}.amount
+    WHEN ${alias}.payment_type = 'bank_deposit' THEN ${alias}.amount
+    WHEN ${alias}.payment_type = 'bank_withdrawal' THEN -${alias}.amount
+    ELSE 0
+  END`;
+}
+
+function signedCashSql(alias = 'p') {
+  return `CASE
+    WHEN ${alias}.payment_type = 'bank_deposit' THEN -${alias}.amount
+    WHEN ${alias}.payment_type = 'bank_withdrawal' THEN ${alias}.amount
+    WHEN ${alias}.payment_mode = 'cash' AND ${alias}.payment_type IN ('incoming', 'receipt', 'payment_in') THEN ${alias}.amount
+    WHEN ${alias}.payment_mode = 'cash' AND ${alias}.payment_type IN ('outgoing', 'payment_out') THEN -${alias}.amount
+    ELSE 0
+  END`;
+}
+
+export async function getCashBankSummary(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+
+    const cashRes = await query(
+      `SELECT COALESCE(SUM(${signedCashSql('p')}), 0)::bigint AS balance
+       FROM payments p
+       WHERE p.company_id = $1 AND p.is_deleted = false AND COALESCE(p.status, 'posted') != 'cancelled'`,
+      [companyId],
+    );
+
+    const banksRes = await query(
+      `SELECT ba.id, ba.account_label, ba.bank_name, ba.account_number, ba.ifsc, ba.upi_id, ba.is_primary,
+              COALESCE(SUM(${signedPaymentSql('p')}), 0)::bigint AS balance
+       FROM company_bank_accounts ba
+       LEFT JOIN payments p ON p.company_bank_account_id = ba.id
+         AND p.company_id = ba.company_id
+         AND p.is_deleted = false
+         AND COALESCE(p.status, 'posted') != 'cancelled'
+       WHERE ba.company_id = $1 AND ba.is_deleted = false AND ba.is_active = true
+       GROUP BY ba.id
+       ORDER BY ba.is_primary DESC, ba.bank_name ASC, ba.account_label ASC`,
+      [companyId],
+    );
+
+    const unassignedBankRes = await query(
+      `SELECT COALESCE(SUM(${signedPaymentSql('p')}), 0)::bigint AS balance
+       FROM payments p
+       WHERE p.company_id = $1 AND p.is_deleted = false AND COALESCE(p.status, 'posted') != 'cancelled'
+         AND p.company_bank_account_id IS NULL
+         AND p.payment_mode IN ('bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque')`,
+      [companyId],
+    );
+
+    const chequesRes = await query(
+      `SELECT p.*, pt.name AS party_name, ba.account_label, ba.bank_name
+       FROM payments p
+       LEFT JOIN parties pt ON pt.id = p.party_id
+       LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id
+       WHERE p.company_id = $1 AND p.is_deleted = false
+         AND p.payment_mode = 'cheque'
+       ORDER BY p.payment_date DESC, p.created_at DESC
+       LIMIT 50`,
+      [companyId],
+    );
+
+    const recentRes = await query(
+      `SELECT p.*, pt.name AS party_name, ba.account_label, ba.bank_name,
+              ${signedPaymentSql('p')}::bigint AS signed_bank_amount,
+              ${signedCashSql('p')}::bigint AS signed_cash_amount
+       FROM payments p
+       LEFT JOIN parties pt ON pt.id = p.party_id
+       LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id
+       WHERE p.company_id = $1 AND p.is_deleted = false AND COALESCE(p.status, 'posted') != 'cancelled'
+       ORDER BY p.payment_date DESC, p.created_at DESC
+       LIMIT 80`,
+      [companyId],
+    );
+
+    res.json(success({
+      cash_in_hand: Number(cashRes.rows[0]?.balance || 0),
+      bank_accounts: banksRes.rows,
+      unassigned_bank_balance: Number(unassignedBankRes.rows[0]?.balance || 0),
+      cheques: chequesRes.rows,
+      recent_transactions: recentRes.rows,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function getCashBankTransactions(req: Request, res: Response) {
+  try {
+    const { page, limit, offset } = parsePagination(req.query);
+    const companyId = req.user!.company_id;
+    const where: string[] = ['p.company_id = $1', 'p.is_deleted = false'];
+    const params: any[] = [companyId];
+    let idx = 2;
+    if (req.query.account_id) {
+      where.push(`p.company_bank_account_id = $${idx++}`);
+      params.push(String(req.query.account_id));
+    }
+    if (req.query.mode) {
+      where.push(`p.payment_mode = $${idx++}`);
+      params.push(String(req.query.mode));
+    }
+    if (req.query.from_date) {
+      where.push(`p.payment_date >= $${idx++}::date`);
+      params.push(String(req.query.from_date));
+    }
+    if (req.query.to_date) {
+      where.push(`p.payment_date <= $${idx++}::date`);
+      params.push(String(req.query.to_date));
+    }
+
+    const rows = await query(
+      `SELECT p.*, pt.name AS party_name, ba.account_label, ba.bank_name,
+              ${signedPaymentSql('p')}::bigint AS signed_bank_amount,
+              ${signedCashSql('p')}::bigint AS signed_cash_amount
+       FROM payments p
+       LEFT JOIN parties pt ON pt.id = p.party_id
+       LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY p.payment_date DESC, p.created_at DESC
+       LIMIT $${idx++} OFFSET $${idx}`,
+      [...params, limit, offset],
+    );
+    const countRes = await query(`SELECT COUNT(*) FROM payments p WHERE ${where.join(' AND ')}`, params);
+    res.json(success(buildPaginatedResponse(rows.rows, Number(countRes.rows[0]?.count || 0), page, limit)));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function createCashBankAdjustment(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const type = String(d.type || '').trim();
+    if (!['bank_deposit', 'bank_withdrawal'].includes(type)) {
+      return res.status(400).json(error('type must be bank_deposit or bank_withdrawal'));
+    }
+    const amount = Math.round(Number(d.amount) || 0);
+    if (amount <= 0) return res.status(400).json(error('Enter a valid amount'));
+    if (!d.company_bank_account_id) return res.status(400).json(error('Select a bank account'));
+
+    const result = await withTransaction(async (client) => {
+      const bank = await client.query(
+        `SELECT id FROM company_bank_accounts
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true`,
+        [d.company_bank_account_id, companyId],
+      );
+      if (!bank.rows.length) throw new Error('Bank account not found');
+      const pay = await client.query(
+        `INSERT INTO payments (
+           company_id, payment_type, payment_number, payment_date, amount,
+           payment_mode, reference_number, company_bank_account_id, notes, created_by
+         )
+         VALUES ($1,$2,$3,$4,$5,'cash_bank_transfer',$6,$7,$8,$9)
+         RETURNING *`,
+        [
+          companyId,
+          type,
+          `${type === 'bank_deposit' ? 'DEP' : 'WDL'}-${Date.now()}`,
+          d.payment_date || new Date().toISOString().split('T')[0],
+          amount,
+          d.reference_number || null,
+          d.company_bank_account_id,
+          d.notes || (type === 'bank_deposit' ? 'Cash deposited to bank' : 'Cash withdrawn from bank'),
+          req.user!.id,
+        ],
+      );
+      return pay.rows[0];
+    });
+
+    res.status(201).json(success(result));
+  } catch (err: any) {
+    res.status(400).json(error(err.message));
+  }
+}

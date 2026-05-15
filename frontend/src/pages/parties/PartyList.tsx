@@ -52,6 +52,11 @@ export default function PartyList() {
       if (form.opening_balance !== undefined && form.opening_balance !== '') {
         payload.opening_balance = rupeesToPaise(form.opening_balance);
       }
+      if (form.payment_terms !== undefined && form.payment_terms !== '') {
+        payload.payment_terms = parseInt(String(form.payment_terms), 10);
+      } else {
+        delete payload.payment_terms;
+      }
       await createMutation.mutateAsync(payload);
       toast.success('Party created');
       setShowForm(false);
@@ -280,7 +285,7 @@ export default function PartyList() {
               </div>
               <div>
                 <Label>Payment terms (days)</Label>
-                <Input className="mt-1" type="number" min={0} value={form.payment_terms || 30} onChange={(e) => u('payment_terms', parseInt(e.target.value) || 0)} />
+                <Input className="mt-1" type="text" inputMode="numeric" value={form.payment_terms ?? ''} onChange={(e) => u('payment_terms', e.target.value.replace(/\D/g, ''))} placeholder="30" />
               </div>
             </div>
             <div>

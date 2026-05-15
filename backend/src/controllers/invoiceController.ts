@@ -141,6 +141,7 @@ export async function searchItems(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i
@@ -470,8 +471,11 @@ export async function createInvoice(req: Request, res: Response) {
 
       if (amountPaid > 0) {
         const payRes = await client.query(
-          `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, notes, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+          `INSERT INTO payments (
+             company_id, payment_type, payment_number, payment_date, party_id, amount,
+             payment_mode, reference_number, company_bank_account_id, cheque_number, notes, created_by
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
           [
             companyId,
             isPurchase ? 'outgoing' : 'incoming',
@@ -480,6 +484,9 @@ export async function createInvoice(req: Request, res: Response) {
             d.party_id || null,
             amountPaid,
             d.payment_mode || 'cash',
+            d.payment_reference_number || d.reference_number || null,
+            d.company_bank_account_id || null,
+            d.payment_mode === 'cheque' ? d.payment_reference_number || d.cheque_number || null : null,
             `Payment on ${invoice.invoice_number}`,
             req.user!.id,
           ]
@@ -1733,7 +1740,7 @@ export async function getEinvoicePdf(req: Request, res: Response) {
 export async function recordPayment(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { amount, payment_mode, reference_number } = req.body;
+    const { amount, payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date } = req.body;
     const amt = Math.round(Number(amount) || 0);
     if (amt <= 0) return res.status(400).json(error('Invalid amount'));
     const companyId = req.user!.company_id;
@@ -1756,10 +1763,25 @@ export async function recordPayment(req: Request, res: Response) {
       if (amt > remaining) throw new Error(`Payment exceeds balance due of ${remaining}`);
 
       const payRes = await client.query(
-        `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, party_id, amount, payment_mode, reference_number, notes, created_by)
-         VALUES ($1, 'incoming', $2, CURRENT_DATE, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO payments (
+           company_id, payment_type, payment_number, payment_date, party_id, amount,
+           payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date, notes, created_by
+         )
+         VALUES ($1, 'incoming', $2, CURRENT_DATE, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
-        [companyId, `PAY-${Date.now()}`, inv.party_id, amt, payment_mode || 'cash', reference_number || null, `Allocation for ${inv.invoice_number}`, req.user!.id]
+        [
+          companyId,
+          `PAY-${Date.now()}`,
+          inv.party_id,
+          amt,
+          payment_mode || 'cash',
+          reference_number || null,
+          company_bank_account_id || null,
+          cheque_number || (payment_mode === 'cheque' ? reference_number || null : null),
+          instrument_date || null,
+          `Allocation for ${inv.invoice_number}`,
+          req.user!.id,
+        ]
       );
 
       await client.query(

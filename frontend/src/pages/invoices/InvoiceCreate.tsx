@@ -99,6 +99,8 @@ export default function InvoiceCreate() {
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
+  const [paymentMode, setPaymentMode] = useState('cash');
+  const [paymentReferenceNumber, setPaymentReferenceNumber] = useState('');
   const [moneyDrafts, setMoneyDrafts] = useState<Record<string, string>>({});
 
   const hydratedIdRef = useRef<string | null>(null);
@@ -329,6 +331,8 @@ export default function InvoiceCreate() {
       shipping_address: shippingAddress.trim() || undefined,
       notes: notes || undefined,
       amount_paid: amountPaid,
+      payment_mode: amountPaid > 0 ? paymentMode : undefined,
+      payment_reference_number: amountPaid > 0 ? paymentReferenceNumber || undefined : undefined,
       company_bank_account_id: companyBankAccountId || undefined,
       items: items.map((i) => ({
         item_id: i.item_id,
@@ -344,7 +348,7 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, paymentMode, paymentReferenceNumber, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const handleSubmit = async () => {
@@ -406,6 +410,8 @@ export default function InvoiceCreate() {
         is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined,
         shipping_address: shippingAddress.trim() || undefined, notes,
         amount_paid: amountPaid,
+        payment_mode: amountPaid > 0 ? paymentMode : undefined,
+        payment_reference_number: amountPaid > 0 ? paymentReferenceNumber || undefined : undefined,
         company_bank_account_id: companyBankAccountId || undefined,
         items: itemPayload,
       });
@@ -699,6 +705,28 @@ export default function InvoiceCreate() {
                   />
                 </div>
                 {balanceDue > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>Balance Due</span><span className="tabular-nums">{formatMoney(balanceDue)}</span></div>}
+                {amountPaid > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <Label>Payment Type</Label>
+                      <select
+                        className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                        value={paymentMode}
+                        onChange={(e) => setPaymentMode(e.target.value)}
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="upi">UPI / Online</option>
+                        <option value="bank_transfer">NEFT / Bank Transfer</option>
+                        <option value="cheque">Cheque</option>
+                        <option value="card">Card</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label>{paymentMode === 'cheque' ? 'Cheque No.' : 'Reference No.'}</Label>
+                      <Input className="mt-1" value={paymentReferenceNumber} onChange={(e) => setPaymentReferenceNumber(e.target.value)} placeholder="Optional" />
+                    </div>
+                  </div>
+                )}
               </>
             )}
 

@@ -16,6 +16,10 @@ router.get('/journal-entries', ctrl.listJournalEntries);
 router.get('/journal-entries/:id', ctrl.getJournalEntry);
 router.post('/journal-entries/:id/reverse', requireMinRole('accountant'), ctrl.reverseJournalEntry);
 
+router.get('/cash-bank/summary', ctrl.getCashBankSummary);
+router.get('/cash-bank/transactions', ctrl.getCashBankTransactions);
+router.post('/cash-bank/adjustment', requireMinRole('manager'), ctrl.createCashBankAdjustment);
+
 router.get('/accounts/:id/ledger', ctrl.getLedger);
 
 export default router;
