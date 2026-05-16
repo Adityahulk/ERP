@@ -120,6 +120,16 @@ function companyAddress(company: any): string {
   return [line1, line2].filter(Boolean).join(', ');
 }
 
+function companyLegalDisplayName(company: any): string {
+  return String(
+    company?.legal_name ||
+    company?.gstin_legal_name ||
+    company?.name ||
+    company?.gstin_trade_name ||
+    'Company',
+  ).trim();
+}
+
 /** Build the buyer address from a party — prefers `billing_*` fields but falls back to legacy `city/state/pincode`. */
 function buyerAddress(party: any): string {
   if (!party) return '';
@@ -248,8 +258,9 @@ function buildInvoiceHtml(args: {
   const palette = themePalette(theme, String(company.document_primary_color || ''));
   const isPurchase = Boolean(invoice.bill_number || invoice.purchase_invoice_id);
   const title = kind === 'performa' ? 'PROFORMA INVOICE' : isPurchase ? 'PURCHASE BILL' : 'INVOICE';
-  const sellerName = isPurchase ? (party?.name || invoice.party_name_snapshot || 'Supplier') : (company.name || '');
-  const buyerName = isPurchase ? (company.name || '') : (party?.name || invoice.party_name_snapshot || 'Walk-in Customer');
+  const legalCompanyName = companyLegalDisplayName(company);
+  const sellerName = isPurchase ? (party?.name || invoice.party_name_snapshot || 'Supplier') : legalCompanyName;
+  const buyerName = isPurchase ? legalCompanyName : (party?.name || invoice.party_name_snapshot || 'Walk-in Customer');
   const sellerGstin = isPurchase ? (party?.gstin || invoice.party_gstin_snapshot || '') : (company.gstin || '');
   const buyerGstin = isPurchase ? (company.gstin || '') : (party?.gstin || invoice.party_gstin_snapshot || '');
   const sellerAddr = isPurchase ? (party ? buyerAddress(party) : invoice.billing_address_snapshot || '') : companyAddress(company);
@@ -262,7 +273,7 @@ function buildInvoiceHtml(args: {
   const balanceDue = Number(invoice.balance_due ?? Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)));
   const terms = String(invoice.terms_and_conditions || company.terms_and_conditions || 'Thank you for your business.').trim();
   const notes = String(invoice.notes || company.invoice_notes || 'Thanks for your business.').trim();
-  const logo = logoSrc ? `<img src="${logoSrc}" alt="${escapeHtml(company.name || 'Logo')}"/>` : `<div class="logo-fallback">${escapeHtml((company.name || 'M').slice(0, 1))}</div>`;
+  const logo = logoSrc ? `<img src="${logoSrc}" alt="${escapeHtml(legalCompanyName || 'Logo')}"/>` : `<div class="logo-fallback">${escapeHtml((legalCompanyName || 'M').slice(0, 1))}</div>`;
   const signature = signatureSrc
     ? `<img src="${signatureSrc}" alt="Signature" />`
     : '<div class="signature-line"></div>';
@@ -282,7 +293,7 @@ function buildInvoiceHtml(args: {
       <div>${fieldLine('Company Email', company.email)}</div>
     </div>`;
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
-  const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(company.name || '')}</b></p>${signature}<p>Authorised Signatory</p></div>`;
+  const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>Authorised Signatory</p></div>`;
   const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
   const itemTable = `<table class="items">${itemsHead}<tbody>${invoiceItemRows(items, kind)}</tbody></table>`;
   const totals = `<div class="totals">${totalsRows(invoice)}<div class="grand total-row"><span>Total</span><b>₹${fmtPaise(Number(invoice.total_amount || 0))}</b></div><div class="due total-row"><span>Balance Due</span><b>₹${fmtPaise(balanceDue)}</b></div></div>`;
@@ -308,24 +319,24 @@ function buildInvoiceHtml(args: {
 
   const standard = `${baseCss}</head><body><main class="page standard">
     <section style="display:grid;grid-template-columns:1fr 1.05fr;gap:26px;align-items:start">
-      <div><div class="logo">${logo}</div><div class="company-name" style="margin-top:12px">${escapeHtml(company.name || '')}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}</div>
+      <div><div class="logo">${logo}</div><div class="company-name" style="margin-top:12px">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}</div>
       <div style="text-align:right"><h1 class="doc-title">${title}</h1><div class="doc-subtitle"># ${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</div><div style="font-size:13px;margin-top:28px">Balance Due</div><div style="font-size:24px;font-weight:900">₹${fmtPaise(balanceDue)}</div></div>
     </section>
     <section class="bill-grid"><div class="bill-card"><h3>${isPurchase ? 'Bill From' : 'Bill To'}</h3><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}</div><div>${invoiceMeta}</div></section>
     <section class="bill-grid" style="margin-top:0"><div class="bill-card"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div><div>${gstSummary}</div></section>
     ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
-    <div class="footer-line">${escapeHtml(company.name || '')}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
+    <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
 
   const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted{color:#e5e7eb}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
-    <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div><div class="company-name" style="color:#fff">${escapeHtml(company.name || '')}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}</div></section>
+    <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div><div class="company-name" style="color:#fff">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>₹${fmtPaise(balanceDue)}</b></section>
     <section class="simple-body"><div class="bill-grid"><div><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}<div style="margin-top:24px"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div></div>${invoiceMeta}</div>
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.center{text-align:center}.performa .doc-title{font-size:48px;font-weight:800;color:${palette.primary};line-height:1.05;margin-top:8px}.performa .logo img{margin:0 auto}.performa .logo-fallback{margin:0 auto;width:52px;height:52px;font-size:26px}.performa .rule{height:2px;background:${palette.primary};margin:12px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:6px}.performa table.items{margin-top:12px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb}.performa table.items td{border-bottom:1px solid #e5e7eb}.performa .totals{background:#fff}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary}}</style></head><body><main class="page performa">
-    <section class="center"><div class="logo">${logo}</div><div class="company-name" style="margin-top:10px">${escapeHtml(company.name || '')}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<h1 class="doc-title">${title}</h1></section>
+    <section class="center"><div class="logo">${logo}</div><div class="company-name" style="margin-top:10px">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<h1 class="doc-title">${title}</h1></section>
     <div class="rule"></div><section class="bill-card"><h3>Bill To</h3><div class="party-name">${escapeHtml(buyerName)}</div><div class="address">${addressHtml(buyerAddr)}</div>${fieldLine('GSTIN', buyerGstin, 'gst mono')}<div style="margin-top:10px"><h3>Ship To / Place of Supply</h3><div class="address">${addressHtml(shipAddr)}</div></div></section><div class="rule"></div>
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
   </main></body></html>`;
@@ -343,7 +354,7 @@ function buildInvoiceHtml(args: {
       <tr>
         <td style="width:18%;text-align:center">${logoSrc ? `<img src="${logoSrc}" style="max-width:86px;max-height:56px;object-fit:contain" />` : ''}</td>
         <td style="width:56%">
-          <div class="company-name">${escapeHtml(company.legal_name || company.name || '')}</div>
+          <div class="company-name">${escapeHtml(legalCompanyName)}</div>
           <div class="address">${addressHtml(companyAddress(company))}</div>
           <div class="gst mono">${company.gstin ? `GSTIN: ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · Ph: ${escapeHtml(company.phone)}` : ''}${company.email ? ` · ${escapeHtml(company.email)}` : ''}</div>
         </td>
@@ -381,7 +392,7 @@ export async function generateInvoicePDF(
   const upi = company.upi_id || invoice.upi_id_snapshot || '';
   let upiQr = '';
   if (upi) {
-    const upiPayload = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(company.name)}&am=${(invoice.total_amount / 100).toFixed(2)}&cu=INR`;
+    const upiPayload = `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(companyLegalDisplayName(company))}&am=${(invoice.total_amount / 100).toFixed(2)}&cu=INR`;
     upiQr = await QRCode.toDataURL(upiPayload, { width: 160, margin: 1 });
   }
 
@@ -449,7 +460,7 @@ export async function generateThermalReceipt(
 
   let upiQr = '';
   if (company.upi_id && invoice.payment_mode === 'upi') {
-    const upiPayload = `upi://pay?pa=${encodeURIComponent(company.upi_id)}&pn=${encodeURIComponent(company.name)}&cu=INR`;
+    const upiPayload = `upi://pay?pa=${encodeURIComponent(company.upi_id)}&pn=${encodeURIComponent(companyLegalDisplayName(company))}&cu=INR`;
     upiQr = await QRCode.toDataURL(upiPayload, { width: 160, margin: 0 });
   }
 
@@ -458,7 +469,7 @@ export async function generateThermalReceipt(
 
   const vars: Record<string, string> = {
     PAPER_WIDTH: paperW,
-    COMPANY_NAME: escapeHtml(company.name || ''),
+    COMPANY_NAME: escapeHtml(companyLegalDisplayName(company)),
     COMPANY_ADDRESS: escapeHtml(company.registered_address || ''),
     CITY_STATE_PIN: escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', ')),
     GSTIN: escapeHtml(company.gstin || '—'),
@@ -516,6 +527,7 @@ export async function generateEinvoicePdf(
   const sellerAddress = companyAddress(company);
   const buyerAddressText = invoice.billing_address_snapshot || buyerAddress(party);
   const primary = String(company.document_primary_color || '#174EA6');
+  const legalCompanyName = companyLegalDisplayName(company);
   const rows = items.map((it, i) => `<tr>
     <td class="center">${i + 1}</td>
     <td><b>${escapeHtml(it.item_name || '')}</b>${it.item_description ? `<div class="muted small">${multilineHtml(it.item_description)}</div>` : ''}</td>
@@ -542,7 +554,7 @@ export async function generateEinvoicePdf(
     .seal{margin-top:12px;padding:10px;border-radius:8px;background:#eef6ff;color:#174a7c}.footer{margin-top:16px;border-top:1px solid #e5e7eb;padding-top:10px;color:#667085}
   </style></head><body>
     <section class="top">
-      <div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}<div><div class="company">${escapeHtml(company.legal_name || company.name || '')}</div><div class="muted">${addressHtml(sellerAddress)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(company.gstin || '—')}</span>${company.email ? ` · ${escapeHtml(company.email)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div></div></div>
+      <div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}<div><div class="company">${escapeHtml(legalCompanyName)}</div><div class="muted">${addressHtml(sellerAddress)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(company.gstin || '—')}</span>${company.email ? ` · ${escapeHtml(company.email)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div></div></div>
       <div class="title"><h1>e-INVOICE</h1><div class="muted">Government registered tax invoice</div></div>
     </section>
     <section class="grid">
@@ -596,12 +608,13 @@ export async function generateQuotationPDF(
   const theme = String(quotation.document_theme || company.document_theme || 'classic');
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  const legalCompanyName = companyLegalDisplayName(company);
   const logoBlock = logoSrc
-    ? `<img src="${logoSrc}" style="max-height:72px;display:block;margin-bottom:8px" alt="${escapeHtml(company.name || 'Logo')}" />`
+    ? `<img src="${logoSrc}" style="max-height:72px;display:block;margin-bottom:8px" alt="${escapeHtml(legalCompanyName || 'Logo')}" />`
     : '';
   const signatureBlock = signatureSrc
-    ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(company.name || '')}</b></p><img src="${signatureSrc}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
-    : `<div style="text-align:right;margin-top:26px"><p>For <b>${escapeHtml(company.name || '')}</b></p><p>Authorised Signatory</p></div>`;
+    ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(legalCompanyName)}</b></p><img src="${signatureSrc}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
+    : `<div style="text-align:right;margin-top:26px"><p>For <b>${escapeHtml(legalCompanyName)}</b></p><p>Authorised Signatory</p></div>`;
 
   let html = `<!doctype html><html><head><meta charset="utf-8" />
   <style>
@@ -623,7 +636,7 @@ export async function generateQuotationPDF(
       <div>
         ${logoBlock}
         <h1>Quotation</h1>
-        <p class="muted">${escapeHtml(company.name || '')}</p>
+        <p class="muted">${escapeHtml(legalCompanyName)}</p>
         <p class="muted">${escapeHtml(company.registered_address || '')}</p>
         <p class="muted">GSTIN ${escapeHtml(company.gstin || '—')} · ${escapeHtml(company.phone || company.email || '—')}</p>
       </div>
@@ -636,7 +649,7 @@ export async function generateQuotationPDF(
     <div class="grid2">
       <div class="box">
         <b>Seller</b>
-        <p style="margin:6px 0 0">${escapeHtml(company.name || '')}</p>
+        <p style="margin:6px 0 0">${escapeHtml(legalCompanyName)}</p>
         <p class="muted" style="margin:4px 0">${escapeHtml(company.registered_address || '')}</p>
         <p class="muted" style="margin:4px 0">${escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', '))}</p>
         <p class="muted" style="margin:4px 0">GSTIN: ${escapeHtml(company.gstin || '—')}</p>
