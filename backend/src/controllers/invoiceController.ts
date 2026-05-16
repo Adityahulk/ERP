@@ -1530,7 +1530,11 @@ export async function generateEinvoice(req: Request, res: Response) {
 
     const inv = invRes.rows[0];
     const itemsRes = await query(
-      `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order`,
+      `SELECT ii.*, it.item_type, it.track_inventory
+       FROM invoice_items ii
+       LEFT JOIN items it ON it.id = ii.item_id AND it.company_id = ii.company_id
+       WHERE ii.invoice_id = $1 AND ii.company_id = $2
+       ORDER BY ii.sort_order, ii.id`,
       [id, companyId]
     );
 

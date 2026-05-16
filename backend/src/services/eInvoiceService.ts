@@ -182,6 +182,12 @@ function nicHsn(value: unknown, isService: boolean): string {
   return '9999';
 }
 
+function nicIsServiceLine(item: EinvoiceItemRow): boolean {
+  const itemType = String(item.item_type || '').trim().toLowerCase();
+  const hsn = String(item.hsn_code || '').replace(/\D/g, '');
+  return itemType === 'service' || hsn.startsWith('99');
+}
+
 function nicQty(value: unknown): number {
   const qty = Number(value);
   return Number.isFinite(qty) && qty > 0 ? Number(qty.toFixed(3)) : 1;
@@ -218,7 +224,7 @@ export function buildEinvoicePayload(
   const buyerStateCode = buyerGst.length === 15 ? buyerGst.slice(0, 2) : nicStateCode(party.billing_state_code || pos, pos);
 
   const itemList = items.map((it, idx) => {
-    const isService = it.item_type === 'service' ? 'Y' : 'N';
+    const isService = nicIsServiceLine(it) ? 'Y' : 'N';
     const qty = nicQty(it.quantity);
     const gstRt = Number(it.gst_rate) || 0;
     return {
