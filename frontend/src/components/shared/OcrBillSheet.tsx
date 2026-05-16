@@ -24,6 +24,11 @@ export interface OcrResult {
   buyer_gstin: string | null;
   total_amount_paise: number | null;
   raw_lines: string[];
+  matched_party_id?: string | null;
+  matched_party_name?: string | null;
+  party_match_confidence?: number;
+  party_match_reason?: string | null;
+  matched_party?: any | null;
 }
 
 interface FieldState {
@@ -77,6 +82,7 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
     try {
       const form = new FormData();
       form.append('file', file);
+      form.append('context', context);
       const { data: res } = await api.post('/ocr/extract', form);
       const data: OcrResult = res.data;
       setResult(data);
@@ -84,7 +90,7 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
       setFields({
         invoice_number: data.invoice_number ?? '',
         bill_date: data.bill_date ?? '',
-        party_name: data.party_name ?? '',
+        party_name: data.matched_party_name ?? data.party_name ?? '',
         supplier_gstin: data.supplier_gstin ?? '',
         total_amount_rupees: data.total_amount_paise != null
           ? paiseToRupees(data.total_amount_paise).toFixed(2)
@@ -192,6 +198,12 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
             {/* Editable extracted fields */}
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Verify &amp; correct extracted details</p>
+              {result.matched_party_id && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                  Matched existing party: <span className="font-semibold">{result.matched_party_name}</span>
+                  {result.party_match_reason === 'gstin_exact' ? ' by GSTIN' : ' by name'}
+                </div>
+              )}
 
               <div>
                 <Label className="text-xs">Bill / Invoice Number</Label>

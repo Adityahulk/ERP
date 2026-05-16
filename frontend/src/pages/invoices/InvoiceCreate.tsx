@@ -184,6 +184,12 @@ export default function InvoiceCreate() {
   /** OCR confirmed from a customer PO / incoming bill → pre-fill invoice fields */
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.bill_date) setInvoiceDate(data.bill_date);
+    if (data.invoice_number) setInvoiceNumber(String(data.invoice_number).trim().toUpperCase().slice(0, 16));
+    if (data.matched_party_id && data.matched_party) {
+      selectParty(data.matched_party);
+      toast.success('Matched party from OCR and applied it');
+      return;
+    }
     if (data.party_name) {
       // Seed party search so the user can pick or quick-add the customer
       setPartySearch(data.party_name);

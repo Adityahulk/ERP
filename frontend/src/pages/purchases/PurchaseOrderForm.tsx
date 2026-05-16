@@ -73,6 +73,11 @@ export default function PurchaseOrderForm() {
 
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.bill_date) setExpectedDate(data.bill_date);
+    if (data.matched_party_id && data.matched_party) {
+      selectSupplier(data.matched_party);
+      toast.success('Matched supplier from OCR and applied it');
+      return;
+    }
     if (data.party_name) {
       setPartySearch(data.party_name);
       searchSuppliers(data.party_name);

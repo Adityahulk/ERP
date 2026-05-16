@@ -26,6 +26,7 @@ export const ocrUpload = multer({
 
 // ── Regex helpers ──────────────────────────────────────────────
 const GSTIN_RE = /\b(\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/g;
+const MONEY_RE = /(?:₹|rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?/i;
 
 const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
@@ -61,6 +62,19 @@ function parseRawDate(raw: string): string | null {
   }
 
   return null;
+}
+
+function normalizeOcrText(text: string): string {
+  return String(text || '')
+    .replace(/\r/g, '\n')
+    .replace(/[|¦]/g, ' ')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[₹]/g, '₹')
+    .split('\n')
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Pull the first date that appears after a date keyword. Falls back to any date in the text. */
@@ -125,6 +139,20 @@ function normalizeName(value: unknown): string {
     .trim();
 }
 
+function nameTokens(value: unknown): string[] {
+  const normalized = normalizeName(value);
+  return normalized ? normalized.split(' ').filter(t => t.length > 1) : [];
+}
+
+function nameSimilarity(a: unknown, b: unknown): number {
+  const at = new Set(nameTokens(a));
+  const bt = new Set(nameTokens(b));
+  if (!at.size || !bt.size) return 0;
+  let intersection = 0;
+  for (const t of at) if (bt.has(t)) intersection += 1;
+  return intersection / Math.max(at.size, bt.size);
+}
+
 function isLikelyCompanyOwnLine(line: string, ownCompanyName?: string | null): boolean {
   const own = normalizeName(ownCompanyName);
   const candidate = normalizeName(line);
@@ -134,15 +162,110 @@ function isLikelyCompanyOwnLine(line: string, ownCompanyName?: string | null): b
 
 function cleanPartyCandidate(line: string): string {
   return line
-    .replace(/^(?:supplier|seller|vendor|party|customer|buyer|bill\s*to|ship\s*to|name)\s*(?:name)?\s*[:\-]\s*/i, '')
+    .replace(/^(?:supplier|seller|vendor|party|customer|buyer|bill\s*from|bill\s*to|ship\s*to|billed\s*by|billed\s*to|name)\s*(?:name)?\s*[:\-]\s*/i, '')
+    .replace(/\b(?:GSTIN|GST\s*No|GST|PAN|State|Code|Phone|Mobile|Email)\b.*$/i, '')
+    .replace(GSTIN_RE, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
+function isNoiseLine(line: string): boolean {
+  const text = line.trim();
+  if (text.length < 3) return true;
+  if (/^\d+$/.test(text)) return true;
+  if (GSTIN_RE.test(text)) {
+    GSTIN_RE.lastIndex = 0;
+    return true;
+  }
+  GSTIN_RE.lastIndex = 0;
+  if (MONEY_RE.test(text) && /\b(total|amount|tax|cgst|sgst|igst|rate|qty|quantity|discount)\b/i.test(text)) return true;
+  return /(?:tax\s*invoice|invoice|bill\s*of\s*supply|original|duplicate|triplicate|date|irn|ack\s*no|eway|e-way|address|mobile|phone|email|www\.|http|@|pan|fssai|cin|state\s*code|place\s*of\s*supply)/i.test(text);
+}
+
+function bestNameNearGstin(lines: string[], gstin: string, opts: { ownCompanyName?: string | null } = {}): string | null {
+  const target = gstin.toUpperCase();
+  const index = lines.findIndex(line => line.toUpperCase().includes(target));
+  if (index < 0) return null;
+  const candidates: Array<{ name: string; score: number }> = [];
+  for (let i = Math.max(0, index - 5); i <= Math.min(lines.length - 1, index + 3); i++) {
+    if (i === index) continue;
+    const cleaned = cleanPartyCandidate(lines[i]);
+    if (!cleaned || cleaned.length < 3) continue;
+    if (isNoiseLine(cleaned)) continue;
+    if (isLikelyCompanyOwnLine(cleaned, opts.ownCompanyName)) continue;
+    let score = 20 - Math.abs(index - i);
+    if (/\b(pvt|private|ltd|limited|llp|industries|enterprise|enterprises|traders|agency|agencies|company|corp|corporation|services|solutions)\b/i.test(cleaned)) score += 6;
+    if (/^[A-Z0-9 .,&()/-]+$/.test(cleaned) && /[A-Z]{3}/.test(cleaned)) score += 2;
+    candidates.push({ name: cleaned, score });
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.name || null;
+}
+
+function choosePartyGstin(lines: string[], gstins: string[], ownGstin: string, context: string): string | null {
+  const candidates = [...new Set(gstins.map(g => g.toUpperCase()).filter(g => g && g !== ownGstin))];
+  if (!candidates.length) return null;
+  const isPurchase = /purchase|supplier|vendor|grn/i.test(context);
+  const positive = isPurchase
+    ? /\b(supplier|seller|vendor|bill\s*from|billed\s*by|consignor)\b/i
+    : /\b(customer|buyer|bill\s*to|billed\s*to|ship\s*to|consignee)\b/i;
+  const negative = isPurchase
+    ? /\b(customer|buyer|bill\s*to|ship\s*to|consignee)\b/i
+    : /\b(supplier|seller|vendor|bill\s*from|billed\s*by|consignor)\b/i;
+
+  let best = candidates[0];
+  let bestScore = -999;
+  for (const gstin of candidates) {
+    const idx = lines.findIndex(line => line.toUpperCase().includes(gstin));
+    let score = idx >= 0 ? 20 - Math.min(idx, 20) : 0;
+    const nearby = lines.slice(Math.max(0, idx - 5), Math.min(lines.length, idx + 5)).join(' ');
+    if (positive.test(nearby)) score += 30;
+    if (negative.test(nearby)) score -= 25;
+    const name = bestNameNearGstin(lines, gstin);
+    if (name) score += 8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = gstin;
+    }
+  }
+  return best;
+}
+
+function extractSectionName(lines: string[], context: string, opts: { ownCompanyName?: string | null } = {}): string | null {
+  const isPurchase = /purchase|supplier|vendor|grn/i.test(context);
+  const labels = isPurchase
+    ? [/bill\s*from/i, /supplier/i, /seller/i, /vendor/i, /billed\s*by/i, /party\s*name/i]
+    : [/bill\s*to/i, /buyer/i, /customer/i, /ship\s*to/i, /billed\s*to/i, /party\s*name/i];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const label of labels) {
+      if (!label.test(line)) continue;
+      const inline = cleanPartyCandidate(line);
+      if (inline && inline.length >= 3 && !isNoiseLine(inline) && !isLikelyCompanyOwnLine(inline, opts.ownCompanyName)) return inline;
+      for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j++) {
+        const candidate = cleanPartyCandidate(lines[j]);
+        if (candidate.length >= 3 && !isNoiseLine(candidate) && !isLikelyCompanyOwnLine(candidate, opts.ownCompanyName)) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** Guess party / supplier name from first meaningful lines */
-function extractPartyName(lines: string[], opts: { ownCompanyName?: string | null; ownGstin?: string | null; supplierGstin?: string | null } = {}): string | null {
+function extractPartyName(lines: string[], opts: { ownCompanyName?: string | null; ownGstin?: string | null; supplierGstin?: string | null; context?: string } = {}): string | null {
   const skipPat = /(?:GSTIN|GST\s*No|Tax\s*Invoice|Invoice|Date|Address|Mobile|Phone|Email|www\.|http|@|\d{10}|PAN|FSSAI|IRN|Ack\s*No)/i;
   const ownGstin = String(opts.ownGstin || '').toUpperCase();
+
+  if (opts.supplierGstin) {
+    const nearGstin = bestNameNearGstin(lines, opts.supplierGstin, opts);
+    if (nearGstin) return nearGstin;
+  }
+
+  const sectionName = extractSectionName(lines, opts.context || '', opts);
+  if (sectionName) return sectionName;
 
   const labeledPatterns = [
     /(?:supplier|seller|vendor|party)\s*(?:name)?\s*[:\-]\s*(.+)$/i,
@@ -178,23 +301,76 @@ function extractPartyName(lines: string[], opts: { ownCompanyName?: string | nul
   return null;
 }
 
-/** Master extractor: works on any text blob */
-function extractInvoiceData(rawText: string, opts: { ownCompanyName?: string | null; ownGstin?: string | null } = {}) {
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+async function findExistingParty(companyId: string, extracted: { party_name?: string | null; supplier_gstin?: string | null }) {
+  const gstin = String(extracted.supplier_gstin || '').toUpperCase();
+  if (gstin) {
+    const exact = await query(
+      `SELECT id, name, phone, gstin, city, state, state_code, billing_state_code,
+              billing_address, shipping_address, billing_city, billing_state, billing_pincode,
+              party_type, balance
+       FROM parties
+       WHERE company_id = $1 AND is_deleted = false AND is_active = true AND UPPER(gstin) = $2
+       LIMIT 1`,
+      [companyId, gstin],
+    );
+    if (exact.rows[0]) return { party: exact.rows[0], confidence: 1, reason: 'gstin_exact' };
+  }
 
-  const gstins = [...rawText.matchAll(GSTIN_RE)].map(m => m[1].toUpperCase());
+  const name = String(extracted.party_name || '').trim();
+  if (name.length < 3) return null;
+  const parties = await query(
+    `SELECT id, name, phone, gstin, city, state, state_code, billing_state_code,
+            billing_address, shipping_address, billing_city, billing_state, billing_pincode,
+            party_type, balance
+     FROM parties
+     WHERE company_id = $1 AND is_deleted = false AND is_active = true
+     LIMIT 500`,
+    [companyId],
+  );
+  let best: any = null;
+  let score = 0;
+  for (const party of parties.rows) {
+    const s = nameSimilarity(name, party.name);
+    if (s > score) {
+      score = s;
+      best = party;
+    }
+  }
+  return best && score >= 0.62 ? { party: best, confidence: score, reason: 'name_fuzzy' } : null;
+}
+
+/** Master extractor: works on any text blob */
+async function extractInvoiceData(rawText: string, companyId: string, opts: { ownCompanyName?: string | null; ownGstin?: string | null; context?: string } = {}) {
+  const text = normalizeOcrText(rawText);
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const gstins = [...text.matchAll(GSTIN_RE)].map(m => m[1].toUpperCase());
   const uniqueGstins = [...new Set(gstins)];
   const ownGstin = String(opts.ownGstin || '').toUpperCase();
   const partyGstins = ownGstin ? uniqueGstins.filter(g => g !== ownGstin) : uniqueGstins;
-
-  return {
+  const supplierGstin = choosePartyGstin(lines, uniqueGstins, ownGstin, opts.context || '') ?? partyGstins[0] ?? uniqueGstins[0] ?? null;
+  const base = {
     invoice_number: extractInvoiceNumber(lines),
-    bill_date: extractDate(rawText),
-    party_name: extractPartyName(lines, { ...opts, supplierGstin: partyGstins[0] ?? null }),
-    supplier_gstin: partyGstins[0] ?? uniqueGstins[0] ?? null,
+    bill_date: extractDate(text),
+    party_name: extractPartyName(lines, { ...opts, supplierGstin }),
+    supplier_gstin: supplierGstin,
     buyer_gstin: ownGstin || partyGstins[1] || uniqueGstins[1] || null,
     total_amount_paise: extractTotal(lines),
-    raw_lines: lines.slice(0, 30), // first 30 lines for UI preview
+    raw_lines: lines.slice(0, 60),
+  };
+
+  const match = await findExistingParty(companyId, base);
+  if (match?.party) {
+    base.party_name = match.party.name || base.party_name;
+  }
+
+  return {
+    ...base,
+    matched_party_id: match?.party?.id ?? null,
+    matched_party_name: match?.party?.name ?? null,
+    party_match_confidence: match?.confidence ?? 0,
+    party_match_reason: match?.reason ?? null,
+    matched_party: match?.party ?? null,
   };
 }
 
@@ -233,9 +409,13 @@ export async function extractOcrData(req: Request, res: Response) {
       return res.status(422).json(error('Could not extract text from the uploaded file. Try a clearer image or a text-based PDF.'));
     }
 
-    const companyRes = await query('SELECT name, gstin FROM companies WHERE id = $1', [req.user!.company_id]);
+    const companyRes = await query('SELECT name, legal_name, gstin FROM companies WHERE id = $1', [req.user!.company_id]);
     const company = companyRes.rows[0] || {};
-    const extracted = extractInvoiceData(text, { ownCompanyName: company.name, ownGstin: company.gstin });
+    const extracted = await extractInvoiceData(text, req.user!.company_id, {
+      ownCompanyName: company.legal_name || company.name,
+      ownGstin: company.gstin,
+      context: String(req.body?.context || ''),
+    });
     res.json(success(extracted));
   } catch (err: any) {
     console.error('[OCR] extraction error:', err.message);
