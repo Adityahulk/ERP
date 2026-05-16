@@ -37,6 +37,9 @@ const GST_STATE_OPTIONS = [
   ['36', 'Telangana'], ['37', 'Andhra Pradesh'], ['38', 'Ladakh'], ['97', 'Other Territory'],
 ] as const;
 
+const INVOICE_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const INVOICE_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
+
 function partyFullAddress(p: any, kind: 'shipping' | 'billing' = 'shipping') {
   const direct = kind === 'shipping' ? p?.shipping_address : p?.billing_address;
   if (direct) return String(direct);
@@ -79,6 +82,7 @@ export default function InvoiceCreate() {
   const [partySearch, setPartySearch] = useState('');
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [godownId, setGodownId] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
   const [isInterstate, setIsInterstate] = useState(false);
@@ -109,6 +113,7 @@ export default function InvoiceCreate() {
   useEffect(() => {
     if (!editInvoiceId) {
       hydratedIdRef.current = null;
+      setInvoiceNumber('');
       return;
     }
     if (!existingInv) return;
@@ -132,6 +137,7 @@ export default function InvoiceCreate() {
     setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
     setPartyPhone(String(inv.party_phone || ''));
     setGodownId(inv.godown_id ? String(inv.godown_id) : '');
+    setInvoiceNumber(String(inv.invoice_number || ''));
     const invDate = inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : '';
     setInvoiceDate(invDate || new Date().toISOString().split('T')[0]);
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
@@ -326,6 +332,7 @@ export default function InvoiceCreate() {
       party_id: partyId || undefined,
       party_name: partyName || undefined,
       godown_id: godownId || undefined,
+      invoice_number: invoiceNumber.trim() || undefined,
       invoice_date: invoiceDate,
       due_date: dueDate || undefined,
       is_interstate: isInterstate,
@@ -350,13 +357,19 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, paymentMode, paymentReferenceNumber, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, partyName, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, paymentMode, paymentReferenceNumber, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const handleSubmit = async () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     if (!editInvoiceId && amountPaid > grandTotal) { toast.error('Amount paid cannot exceed invoice total'); return; }
+    const normalizedInvoiceNumber = invoiceNumber.trim();
+    if (editInvoiceId && !normalizedInvoiceNumber) { toast.error('Invoice number is required while editing'); return; }
+    if (normalizedInvoiceNumber && !INVOICE_NUMBER_PATTERN.test(normalizedInvoiceNumber)) {
+      toast.error(INVOICE_NUMBER_HELP);
+      return;
+    }
 
     const itemPayload = items.map((i) => ({
       item_id: i.item_id,
@@ -381,6 +394,7 @@ export default function InvoiceCreate() {
             is_gst_invoice: isGstInvoice,
             pdf_template: pdfTemplate,
             document_theme: documentTheme,
+            invoice_number: normalizedInvoiceNumber,
             party_id: partyId,
             godown_id: godownId || undefined,
             invoice_date: invoiceDate,
@@ -407,6 +421,7 @@ export default function InvoiceCreate() {
         is_gst_invoice: isGstInvoice,
         pdf_template: pdfTemplate,
         document_theme: documentTheme,
+        invoice_number: normalizedInvoiceNumber || undefined,
         party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined,
@@ -509,6 +524,17 @@ export default function InvoiceCreate() {
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-sm">Invoice Info</CardTitle></CardHeader>
           <CardContent className="space-y-3">
+            <div>
+              <Label>Invoice Number</Label>
+              <Input
+                className="mt-1 font-mono"
+                value={invoiceNumber}
+                maxLength={16}
+                placeholder="Auto generated"
+                onChange={(e) => setInvoiceNumber(e.target.value.trim().toUpperCase())}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">{INVOICE_NUMBER_HELP}</p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Invoice Date</Label><Input type="date" className="mt-1" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
               <div><Label>Due Date</Label><Input type="date" className="mt-1" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>

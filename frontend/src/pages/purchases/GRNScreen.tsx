@@ -10,6 +10,9 @@ import { ScanLine } from 'lucide-react';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 
+const BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const BILL_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
+
 export default function GRNScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -27,7 +30,7 @@ export default function GRNScreen() {
 
   /** OCR confirmed → apply bill number and date */
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
-    if (data.invoice_number) setBillNumber(data.invoice_number);
+    if (data.invoice_number) setBillNumber(String(data.invoice_number).trim().toUpperCase().slice(0, 16));
     if (data.bill_date) setBillDate(data.bill_date);
     toast.success('Bill details applied — verify and confirm receipt');
   };
@@ -53,8 +56,13 @@ export default function GRNScreen() {
         toast.error('Enter at least one positive quantity to receive');
         throw new Error('No quantities');
       }
+      const normalizedBillNumber = billNumber.trim();
+      if (normalizedBillNumber && !BILL_NUMBER_PATTERN.test(normalizedBillNumber)) {
+        toast.error(BILL_NUMBER_HELP);
+        throw new Error('Invalid bill number');
+      }
       return api.post(`/purchases/orders/${id}/receive`, {
-        bill_number: billNumber,
+        bill_number: normalizedBillNumber || undefined,
         bill_date: billDate,
         company_bank_account_id: companyBankAccountId || undefined,
         items,
@@ -100,10 +108,12 @@ export default function GRNScreen() {
                 <label className="text-sm font-medium">Supplier Bill Number</label>
                 <Input
                   value={billNumber}
-                  onChange={e => setBillNumber(e.target.value)}
+                  maxLength={16}
+                  onChange={e => setBillNumber(e.target.value.trim().toUpperCase())}
                   placeholder="e.g. INV-2024-001"
                   className="mt-1"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">{BILL_NUMBER_HELP}</p>
               </div>
               <div>
                 <label className="text-sm font-medium">Supplier Bill Date</label>

@@ -44,6 +44,41 @@ function trimOrNull(value: unknown): string | null {
   return s ? s : null;
 }
 
+const INVOICE_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const INVOICE_NUMBER_MESSAGE =
+  'Invoice number must be 1-16 characters, start with A-Z or 1-9, and only contain letters, numbers, / or -.';
+
+function validateInvoiceNumber(value: unknown): string {
+  const s = String(value ?? '').trim();
+  if (!INVOICE_NUMBER_PATTERN.test(s)) {
+    throw new Error(INVOICE_NUMBER_MESSAGE);
+  }
+  return s;
+}
+
+async function assertInvoiceNumberAvailable(
+  db: Queryable,
+  companyId: string,
+  invoiceNumber: string,
+  excludeInvoiceId?: string,
+) {
+  const params: any[] = [companyId, invoiceNumber];
+  let extra = '';
+  if (excludeInvoiceId) {
+    params.push(excludeInvoiceId);
+    extra = ` AND id <> $${params.length}`;
+  }
+  const dup = await db.query(
+    `SELECT id FROM invoices
+     WHERE company_id = $1 AND invoice_number = $2 AND is_deleted = false${extra}
+     LIMIT 1`,
+    params,
+  );
+  if (dup.rows.length) {
+    throw new Error(`Invoice number "${invoiceNumber}" is already used. Please enter a unique invoice number.`);
+  }
+}
+
 async function generateInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
   const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
   const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
@@ -228,7 +263,22 @@ export async function createInvoice(req: Request, res: Response) {
       const isPurchase = rawType === 'purchase';
       const invoiceType = isPurchase ? 'purchase' : 'tax_invoice';
 
-      const invoiceNumber = d.invoice_number || await generateInvoiceNumber(companyId, rawType, d.godown_id || req.user!.godown_id);
+      const requestedInvoiceNumber = trimOrNull(d.invoice_number);
+      let invoiceNumber = '';
+      if (requestedInvoiceNumber) {
+        invoiceNumber = validateInvoiceNumber(requestedInvoiceNumber);
+        await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
+      } else {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          invoiceNumber = validateInvoiceNumber(await generateInvoiceNumber(companyId, rawType, d.godown_id || req.user!.godown_id));
+          try {
+            await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
+            break;
+          } catch (err: any) {
+            if (attempt === 4 || !/already used/i.test(err?.message || '')) throw err;
+          }
+        }
+      }
 
       const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
       let isInterstate = d.is_interstate;
@@ -506,7 +556,7 @@ export async function createInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('createInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to create invoice';
-    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity/i.test(msg) ? 400 : 500;
+    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity|Invoice number/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -662,6 +712,13 @@ export async function updateInvoice(req: Request, res: Response) {
         throw new Error('This invoice type cannot be edited from the sales form.');
       }
 
+      const nextInvoiceNumber = d.invoice_number !== undefined
+        ? validateInvoiceNumber(d.invoice_number)
+        : validateInvoiceNumber(oldInv.invoice_number);
+      if (nextInvoiceNumber !== oldInv.invoice_number) {
+        await assertInvoiceNumberAvailable(client, companyId, nextInvoiceNumber, id);
+      }
+
       const allocRes = await client.query(
         `SELECT 1 FROM payment_allocations pa
          INNER JOIN payments p ON p.id = pa.payment_id
@@ -801,8 +858,9 @@ export async function updateInvoice(req: Request, res: Response) {
           is_gst_invoice = $23,
           company_bank_account_id = $24, bank_label_snapshot = $25, bank_name_snapshot = $26,
           bank_account_number_snapshot = $27, bank_ifsc_snapshot = $28, bank_branch_snapshot = $29, upi_id_snapshot = $30,
+          invoice_number = $31,
           updated_at = NOW()
-        WHERE id = $31 AND company_id = $32`,
+        WHERE id = $32 AND company_id = $33`,
         [
           d.party_id || null,
           d.godown_id || req.user!.godown_id || null,
@@ -834,6 +892,7 @@ export async function updateInvoice(req: Request, res: Response) {
           bankSnap.bank_ifsc_snapshot,
           bankSnap.bank_branch_snapshot,
           bankSnap.upi_id_snapshot,
+          nextInvoiceNumber,
           id,
           companyId,
         ],
@@ -930,7 +989,7 @@ export async function updateInvoice(req: Request, res: Response) {
         await client.query(
           `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
            VALUES ($1, $2, $3, $4, (SELECT balance FROM parties WHERE id = $2), 'invoice', $5, $6, $7)`,
-          [companyId, d.party_id, 'debit', totalsInfo.totalAmount, id, oldInv.invoice_number, req.user!.id],
+          [companyId, d.party_id, 'debit', totalsInfo.totalAmount, id, nextInvoiceNumber, req.user!.id],
         );
       }
 
@@ -943,7 +1002,7 @@ export async function updateInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('updateInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to update invoice';
-    const status = /not found|Cannot edit|Insufficient|No stock row|Invalid quantity|At least one/i.test(msg) ? 400 : 500;
+    const status = /not found|Cannot edit|Insufficient|No stock row|Invalid quantity|At least one|Invoice number/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }

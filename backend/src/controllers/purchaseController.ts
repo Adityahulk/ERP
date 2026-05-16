@@ -8,6 +8,73 @@ import { logAction } from '../lib/auditLog';
 import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
 
 // ── Helpers ───────────────────────────────────────────────────
+const PURCHASE_BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const PURCHASE_BILL_NUMBER_MESSAGE =
+  'Bill number must be 1-16 characters, start with A-Z or 1-9, and only contain letters, numbers, / or -.';
+
+function validatePurchaseBillNumber(value: unknown): string {
+  const s = String(value ?? '').trim();
+  if (!PURCHASE_BILL_NUMBER_PATTERN.test(s)) {
+    throw new Error(PURCHASE_BILL_NUMBER_MESSAGE);
+  }
+  return s;
+}
+
+async function assertPurchaseBillNumberAvailable(
+  db: Queryable,
+  companyId: string,
+  billNumber: string,
+  excludeBillId?: string,
+) {
+  const params: any[] = [companyId, billNumber];
+  let excludeSql = '';
+  if (excludeBillId) {
+    params.push(excludeBillId);
+    excludeSql = ` AND id <> $${params.length}`;
+  }
+  const dup = await db.query(
+    `SELECT id FROM purchase_invoices
+     WHERE company_id = $1 AND bill_number = $2 AND is_deleted = false${excludeSql}
+     LIMIT 1`,
+    params,
+  );
+  if (dup.rows.length) {
+    throw new Error(`Bill number "${billNumber}" is already used. Please enter a unique bill number.`);
+  }
+}
+
+async function resolvePurchaseBillNumber(
+  db: Queryable,
+  companyId: string,
+  requested: unknown,
+  excludeBillId?: string,
+): Promise<string> {
+  const manual = String(requested ?? '').trim();
+  if (manual) {
+    const billNumber = validatePurchaseBillNumber(manual);
+    await assertPurchaseBillNumberAvailable(db, companyId, billNumber, excludeBillId);
+    return billNumber;
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const cntRes = await db.query(
+      `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
+      [companyId],
+    );
+    const seq = parseInt(cntRes.rows[0].count) + 1 + attempt;
+    const yr = new Date().getFullYear().toString().slice(-2);
+    const billNumber = validatePurchaseBillNumber(`BILL/${yr}/${String(seq).padStart(4, '0')}`);
+    try {
+      await assertPurchaseBillNumberAvailable(db, companyId, billNumber, excludeBillId);
+      return billNumber;
+    } catch (err: any) {
+      if (attempt === 4 || !/already used/i.test(err?.message || '')) throw err;
+    }
+  }
+
+  throw new Error('Could not generate a unique bill number');
+}
+
 async function generatePONumber(companyId: string): Promise<string> {
   const prefixRes = await query('SELECT po_prefix FROM companies WHERE id = $1', [companyId]);
   const prefix = prefixRes.rows[0]?.po_prefix || 'PO';
@@ -278,17 +345,7 @@ export async function receiveStock(req: Request, res: Response) {
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
-      // Auto-generate bill number if not supplied by user
-      let grnBillNumber = d.bill_number?.trim() || null;
-      if (!grnBillNumber) {
-        const cntRes = await client.query(
-          `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
-          [companyId],
-        );
-        const seq = parseInt(cntRes.rows[0].count) + 1;
-        const yr = new Date().getFullYear().toString().slice(-2);
-        grnBillNumber = `BILL/${yr}/${String(seq).padStart(4, '0')}`;
-      }
+      const grnBillNumber = await resolvePurchaseBillNumber(client, companyId, d.bill_number);
 
       // 2. Create Purchase Invoice
       const invRes = await client.query(
@@ -425,7 +482,7 @@ export async function receiveStock(req: Request, res: Response) {
       await client.query(
         `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
          VALUES ($1, $2, 'credit', $3, $4, 'purchase_invoice', $5, $6, $7)`,
-        [companyId, po.party_id, invoiceTotals.totalAmount, partyBalanceAfter, invoice.id, `Received GRN Bill ${d.bill_number}`, req.user!.id]
+        [companyId, po.party_id, invoiceTotals.totalAmount, partyBalanceAfter, invoice.id, `Received GRN Bill ${grnBillNumber}`, req.user!.id]
       );
 
       return invoice;
@@ -434,7 +491,9 @@ export async function receiveStock(req: Request, res: Response) {
     res.json(success(result));
   } catch (err: any) {
     console.error('purchaseController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    const msg = err?.message || 'Failed to receive stock';
+    const status = /Bill number|PO not found|Cannot receive|No quantities|not found/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
   }
 }
 
@@ -448,17 +507,7 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
     if (!Array.isArray(d.items) || d.items.length === 0) return res.status(400).json(error('items are required'));
 
     const result = await withTransaction(async (client) => {
-      // Auto-generate bill number if not provided
-      let billNumber = d.bill_number?.trim();
-      if (!billNumber) {
-        const cntRes = await client.query(
-          `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
-          [companyId],
-        );
-        const seq = parseInt(cntRes.rows[0].count) + 1;
-        const yr = new Date().getFullYear().toString().slice(-2);
-        billNumber = `BILL/${yr}/${String(seq).padStart(4, '0')}`;
-      }
+      const billNumber = await resolvePurchaseBillNumber(client, companyId, d.bill_number);
 
       const pRes = await client.query('SELECT state_code FROM parties WHERE id = $1', [d.party_id]);
       if (!pRes.rows.length) throw new Error('Party not found');
@@ -552,7 +601,9 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
     res.status(201).json(success(result));
   } catch (err: any) {
     console.error('createPurchaseInvoiceDirect error:', err.message);
-    res.status(500).json(error(err.message));
+    const msg = err?.message || 'Failed to create bill';
+    const status = /Bill number|party_id|bill_date|items are required|Party not found/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
   }
 }
 
@@ -693,7 +744,9 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
-      const billNumber = (d.bill_number && String(d.bill_number).trim()) || pi.bill_number;
+      const billNumber = d.bill_number !== undefined
+        ? await resolvePurchaseBillNumber(client, companyId, d.bill_number, id)
+        : validatePurchaseBillNumber(pi.bill_number);
 
       const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template;
       const docTheme = ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme;
@@ -818,7 +871,7 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('updatePurchaseInvoice error:', err.message);
     const msg = err?.message || 'Failed to update bill';
-    const status = /not found|Cannot edit|No stock|Party not found|items are required/i.test(msg) ? 400 : 500;
+    const status = /not found|Cannot edit|No stock|Party not found|items are required|Bill number/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }

@@ -20,6 +20,8 @@ const STATUS_COLORS: Record<string, string> = {
   received: 'bg-emerald-100 text-emerald-700',
   cancelled: 'bg-red-100 text-red-600',
 };
+const BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const BILL_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
 
 export default function PurchaseOrdersTab() {
   const qc = useQueryClient();
@@ -113,6 +115,11 @@ export default function PurchaseOrdersTab() {
 
   const handleGenerateBill = () => {
     if (!generateBillFor) return;
+    const normalizedBillNumber = billNumber.trim();
+    if (normalizedBillNumber && !BILL_NUMBER_PATTERN.test(normalizedBillNumber)) {
+      toast.error(BILL_NUMBER_HELP);
+      return;
+    }
     const itemPayload = (generateBillFor.items || [])
       .filter((it: any) => (receivals[it.id] || 0) > 0)
       .map((it: any) => ({
@@ -125,7 +132,7 @@ export default function PurchaseOrdersTab() {
     generateBillMutation.mutate({
       poId: generateBillFor.id,
       payload: {
-        bill_number: billNumber.trim() || undefined,
+        bill_number: normalizedBillNumber || undefined,
         bill_date: billDate,
         company_bank_account_id: receiveBankAccountId || undefined,
         items: itemPayload,
@@ -293,7 +300,14 @@ export default function PurchaseOrdersTab() {
               </div>
               <div>
                 <Label className="text-xs">Vendor bill no. (optional)</Label>
-                <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={billNumber} onChange={e => setBillNumber(e.target.value)} />
+                <Input
+                  className="mt-1 h-9 font-mono text-xs"
+                  placeholder="Auto-generated"
+                  value={billNumber}
+                  maxLength={16}
+                  onChange={e => setBillNumber(e.target.value.trim().toUpperCase())}
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">{BILL_NUMBER_HELP}</p>
               </div>
             </div>
             <BankAccountPicker

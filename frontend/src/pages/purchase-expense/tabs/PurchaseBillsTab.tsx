@@ -15,6 +15,8 @@ import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
+const BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
+const BILL_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
 
 function PaymentBadge({ status }: { status: string }) {
   if (status === 'paid') return <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-700">Paid</span>;
@@ -216,6 +218,12 @@ export default function PurchaseBillsTab() {
   const handleSave = () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
+    const normalizedBillNumber = billNumber.trim();
+    if (editingBillId && !normalizedBillNumber) { toast.error('Bill number is required while editing'); return; }
+    if (normalizedBillNumber && !BILL_NUMBER_PATTERN.test(normalizedBillNumber)) {
+      toast.error(BILL_NUMBER_HELP);
+      return;
+    }
     const payload = buildPayload();
     if (editingBillId) updateBillMutation.mutate({ id: editingBillId, payload });
     else createMutation.mutate(payload);
@@ -409,7 +417,14 @@ export default function PurchaseBillsTab() {
               </div>
               <div>
                 <Label className="text-xs">Vendor bill no. (optional)</Label>
-                <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={billNumber} onChange={e => setBillNumber(e.target.value)} />
+                <Input
+                  className="mt-1 h-9 font-mono text-xs"
+                  placeholder="Auto-generated"
+                  value={billNumber}
+                  maxLength={16}
+                  onChange={e => setBillNumber(e.target.value.trim().toUpperCase())}
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">{BILL_NUMBER_HELP}</p>
               </div>
               <div>
                 <Label className="text-xs">Godown (optional)</Label>
