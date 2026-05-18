@@ -14,6 +14,7 @@ import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 
 export default function PurchaseOrderForm() {
   const navigate = useNavigate();
@@ -87,6 +88,22 @@ export default function PurchaseOrderForm() {
     }
   };
 
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:purchase-order',
+    { partyId, partyName, godownId, expectedDate, notes, items },
+    (draft: any) => {
+      setPartyId(String(draft.partyId || ''));
+      setPartyName(String(draft.partyName || ''));
+      setGodownId(String(draft.godownId || ''));
+      setExpectedDate(String(draft.expectedDate || expectedDate));
+      setNotes(String(draft.notes || ''));
+      setItems(Array.isArray(draft.items) ? draft.items : []);
+    },
+    {
+      shouldSave: (draft) => Boolean(draft.partyId || draft.partyName || draft.notes || draft.items.length),
+    },
+  );
+
   const createPO = useMutation({
     mutationFn: async () => {
       return api.post('/purchases/orders', {
@@ -107,6 +124,7 @@ export default function PurchaseOrderForm() {
     },
     onSuccess: () => {
       toast.success('Purchase order created');
+      clearDraft();
       qc.invalidateQueries({ queryKey: ['purchases'] });
       navigate('/purchases');
     },

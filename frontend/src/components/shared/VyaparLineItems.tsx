@@ -83,7 +83,9 @@ export default function VyaparLineItems({
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
+  const [rowSearch, setRowSearch] = useState<{ index: number; query: string; results: any[]; searching: boolean } | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rowSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lineUnitPriceFromItem = (item: any) => {
     const sp = Number(item.selling_price ?? 0);
@@ -117,26 +119,54 @@ export default function VyaparLineItems({
     }, 250);
   };
 
+  const catalogToLine = (item: any): VyaparLineItem => ({
+    item_id: item.id,
+    name: item.name,
+    description: item.description || '',
+    hsn_code: item.hsn_code || '',
+    item_type: item.item_type,
+    track_inventory: item.track_inventory,
+    unit: item.unit || item.unit_name || 'PCS',
+    quantity: 1,
+    unit_price: lineUnitPriceFromItem(item),
+    discount_amount: 0,
+    gst_rate: Number(item.gst_rate ?? 18),
+    cess_rate: Number(item.cess_rate ?? 0),
+  });
+
   const addFromCatalog = (item: any) => {
     if (items.find((i) => i.item_id === item.id)) return;
-    onChange([
-      ...items,
-      {
-        item_id: item.id,
-        name: item.name,
-        hsn_code: item.hsn_code || '',
-        item_type: item.item_type,
-        track_inventory: item.track_inventory,
-        unit: item.unit || item.unit_name || 'PCS',
-        quantity: 1,
-        unit_price: lineUnitPriceFromItem(item),
-        discount_amount: 0,
-        gst_rate: Number(item.gst_rate ?? 18),
-        cess_rate: Number(item.cess_rate ?? 0),
-      },
-    ]);
+    onChange([...items, catalogToLine(item)]);
     setQuery('');
     setResults([]);
+  };
+
+  const replaceRowFromCatalog = (idx: number, item: any) => {
+    const next = [...items];
+    const existingQty = Number(next[idx]?.quantity) || 1;
+    next[idx] = { ...catalogToLine(item), quantity: existingQty };
+    onChange(next);
+    setRowSearch(null);
+  };
+
+  const runRowSearch = (idx: number, q: string) => {
+    update(idx, { name: q, item_id: undefined });
+    if (rowSearchTimer.current) clearTimeout(rowSearchTimer.current);
+    setRowSearch({ index: idx, query: q, results: [], searching: q.trim().length >= 2 });
+    if (q.trim().length < 2) return;
+    rowSearchTimer.current = setTimeout(async () => {
+      try {
+        if (searchMode === 'invoice') {
+          const { data: res } = await api.post('/invoices/search-items', { q, godown_id: godownId || undefined });
+          setRowSearch({ index: idx, query: q, results: res.data || [], searching: false });
+        } else {
+          const { data: res } = await api.get('/items', { params: { search: q, limit: 20 } });
+          setRowSearch({ index: idx, query: q, results: res.data?.data || res.data || [], searching: false });
+        }
+      } catch {
+        setRowSearch({ index: idx, query: q, results: [], searching: false });
+      }
+    }, 180);
   };
 
   const openQuickAddItem = () => {
@@ -165,6 +195,7 @@ export default function VyaparLineItems({
   const addManualLine = () => {
     const name = query.trim();
     onChange([...items, { ...emptyLine(), name: name || '' }]);
+    setRowSearch({ index: items.length, query: name || '', results: [], searching: false });
     setQuery('');
     setResults([]);
   };
@@ -210,7 +241,12 @@ export default function VyaparLineItems({
               placeholder="Search items or type name to add manually…"
               value={query}
               onChange={(e) => runSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && query.trim() && addManualLine()}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || !query.trim()) return;
+                e.preventDefault();
+                if (results[0]) addFromCatalog(results[0]);
+                else addManualLine();
+              }}
             />
           </div>
           <Button
@@ -246,7 +282,10 @@ export default function VyaparLineItems({
                 key={it.id}
                 type="button"
                 className="w-full text-left px-4 py-2.5 hover:bg-muted text-sm flex items-center justify-between gap-3 border-b last:border-0"
-                onClick={() => addFromCatalog(it)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  addFromCatalog(it);
+                }}
               >
                 <div className="min-w-0">
                   <span className="font-medium">{it.name}</span>
@@ -264,7 +303,10 @@ export default function VyaparLineItems({
               <button
                 type="button"
                 className="w-full text-left px-4 py-3 text-sm text-primary hover:bg-muted"
-                onClick={addManualLine}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  addManualLine();
+                }}
               >
                 + Add "{query}" as new line
               </button>
@@ -282,7 +324,7 @@ export default function VyaparLineItems({
 
       {/* Items Table */}
       {items.length > 0 && (
-        <div className="border rounded-xl overflow-hidden">
+        <div className="border rounded-xl overflow-visible">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/40 border-b">
@@ -305,13 +347,42 @@ export default function VyaparLineItems({
                   <Fragment key={idx}>
                     <tr className="border-b hover:bg-muted/10">
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-1">
+                        <div className="relative flex items-center gap-1">
                           <Input
                             className="h-8 text-sm font-medium min-w-[120px]"
                             value={item.name}
-                            onChange={(e) => update(idx, { name: e.target.value })}
-                            placeholder="Item name"
+                            onFocus={() => setRowSearch({ index: idx, query: item.name || '', results: [], searching: false })}
+                            onChange={(e) => runRowSearch(idx, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return;
+                              if (rowSearch?.index === idx && rowSearch.results[0]) {
+                                e.preventDefault();
+                                replaceRowFromCatalog(idx, rowSearch.results[0]);
+                              }
+                            }}
+                            placeholder="Search item or enter name"
                           />
+                          {rowSearch?.index === idx && (rowSearch.searching || rowSearch.results.length > 0) && (
+                            <div className="absolute left-0 right-7 top-9 z-30 max-h-52 overflow-y-auto rounded-lg border bg-card shadow-xl">
+                              {rowSearch.searching && rowSearch.results.length === 0 && (
+                                <p className="px-3 py-2 text-xs text-muted-foreground">Searching…</p>
+                              )}
+                              {rowSearch.results.map((it: any) => (
+                                <button
+                                  key={it.id}
+                                  type="button"
+                                  className="flex w-full items-center justify-between gap-2 border-b px-3 py-2 text-left text-xs last:border-0 hover:bg-muted"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    replaceRowFromCatalog(idx, it);
+                                  }}
+                                >
+                                  <span className="min-w-0 truncate font-medium">{it.name}</span>
+                                  <span className="shrink-0 text-muted-foreground">{formatMoney(Number(it.unit_price ?? it.selling_price ?? 0))}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           <button
                             type="button"
                             className="p-1 text-muted-foreground hover:text-foreground"
@@ -368,9 +439,10 @@ export default function VyaparLineItems({
                         <button
                           type="button"
                           onClick={() => remove(idx)}
-                          className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Delete line"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
                     </tr>

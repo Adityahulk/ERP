@@ -91,8 +91,8 @@ export function InvoicePreviewWorkspace({
   partyPhone,
   companyName,
 }: Props) {
-  const [template, setTemplate] = useState<InvoicePdfTemplateId>('standard');
-  const [theme, setTheme] = useState<DocumentThemeId>('classic');
+  const [template, setTemplate] = useState<InvoicePdfTemplateId>('monochrome');
+  const [theme, setTheme] = useState<DocumentThemeId>('executive');
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [skipNext, setSkipNext] = useState(() => readSkipInvoicePreview());

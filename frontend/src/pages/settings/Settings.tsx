@@ -45,8 +45,8 @@ export default function Settings() {
   const [upiId, setUpiId] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceTerms, setInvoiceTerms] = useState('');
-  const [invoiceTemplate, setInvoiceTemplate] = useState('standard');
-  const [documentTheme, setDocumentTheme] = useState('classic');
+  const [invoiceTemplate, setInvoiceTemplate] = useState('monochrome');
+  const [documentTheme, setDocumentTheme] = useState('executive');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
   const [itemTerminologyPlural, setItemTerminologyPlural] = useState('Items');
@@ -387,8 +387,8 @@ export default function Settings() {
     setUpiId(company.upi_id || '');
     setInvoicePrefix(company.invoice_prefix || 'INV');
     setInvoiceTerms(company.terms_and_conditions || '');
-    setInvoiceTemplate(company.invoice_pdf_template || 'standard');
-    setDocumentTheme(company.document_theme || 'classic');
+    setInvoiceTemplate(company.invoice_pdf_template || 'monochrome');
+    setDocumentTheme(company.document_theme || 'executive');
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
     setItemTerminologySingular(company.item_terminology || 'Item');
     setItemTerminologyPlural(company.item_terminology_plural || 'Items');

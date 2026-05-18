@@ -13,6 +13,7 @@ import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { useGodowns } from '@/hooks/useStock';
 import MoneyInput from '@/components/transactions/MoneyInput';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import toast from 'react-hot-toast';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
@@ -79,10 +80,37 @@ export default function PurchaseBillsTab() {
     { label: 'Total', value: formatMoney(parseInt(meta.total_amount) || 0), icon: IndianRupee, color: 'text-blue-600 bg-blue-50' },
   ];
 
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:purchase-bill',
+    { partyId, partyName, billDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
+    (draft: any) => {
+      setPartyId(String(draft.partyId || ''));
+      setPartyName(String(draft.partyName || ''));
+      setBillDate(String(draft.billDate || new Date().toISOString().split('T')[0]));
+      setBillNumber(String(draft.billNumber || ''));
+      setGodownId(String(draft.godownId || ''));
+      setIsGst(draft.isGst !== false);
+      setNotes(String(draft.notes || ''));
+      setItems(Array.isArray(draft.items) ? draft.items : []);
+      setCompanyBankAccountId(String(draft.companyBankAccountId || ''));
+      if (draft.partyId || draft.partyName || draft.billNumber || draft.notes || (Array.isArray(draft.items) && draft.items.length)) {
+        setShowForm(true);
+      }
+    },
+    {
+      enabled: !editingBillId,
+      shouldSave: (draft) => Boolean(
+        draft.partyId || draft.partyName || draft.billNumber || draft.notes ||
+        draft.companyBankAccountId || draft.items.length
+      ),
+    },
+  );
+
   const createMutation = useMutation({
     mutationFn: (payload: any) => api.post('/purchases/invoices', payload),
     onSuccess: () => {
       toast.success('Purchase bill created');
+      clearDraft();
       qc.invalidateQueries({ queryKey: ['purchase-bills'] });
       resetForm();
       setEditingBillId(null);
@@ -183,9 +211,11 @@ export default function PurchaseBillsTab() {
   }, [showForm, editingBillId, editBillRes]);
 
   const openNewBill = () => {
-    resetForm();
-    setEditingBillId(null);
-    billHydratedRef.current = null;
+    if (editingBillId) {
+      resetForm();
+      setEditingBillId(null);
+      billHydratedRef.current = null;
+    }
     setShowForm(true);
   };
 
@@ -369,7 +399,7 @@ export default function PurchaseBillsTab() {
         open={showForm}
         onOpenChange={(v) => {
           if (!v) {
-            resetForm();
+            if (editingBillId) resetForm();
             setShowForm(false);
           } else setShowForm(true);
         }}

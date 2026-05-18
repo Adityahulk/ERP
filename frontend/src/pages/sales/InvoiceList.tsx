@@ -192,11 +192,10 @@ export default function InvoiceList() {
                 invoices.map((inv: any) => {
                   const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
                   const isOverdue = inv.due_date && new Date(inv.due_date) < new Date() && (inv.balance_due ?? inv.total_amount) > 0;
-                  const hasPaid = Number(inv.paid_amount ?? 0) > 0;
-                  const canEdit = !inv.irn && inv.status !== 'cancelled' && !hasPaid;
+                  const canEdit = !inv.irn && inv.status !== 'cancelled';
                   const canIRN = !inv.irn && inv.status !== 'cancelled';
                   const canEWB = inv.irn && !inv.ewb_no && inv.status !== 'cancelled';
-                  const canDelete = !inv.irn && inv.einvoice_status !== 'generated' && !hasPaid && inv.status !== 'cancelled';
+                  const canDelete = !inv.irn && inv.einvoice_status !== 'generated' && inv.status !== 'cancelled';
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">

@@ -114,6 +114,51 @@ function multilineHtml(value: unknown): string {
   return escapeHtml(String(value ?? '')).replace(/\r?\n/g, '<br/>');
 }
 
+function stateCodeFromGstin(value: unknown): string {
+  const gstin = String(value || '').trim().toUpperCase();
+  return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
+}
+
+const GST_STATE_NAMES: Record<string, string> = {
+  '01': 'Jammu & Kashmir',
+  '02': 'Himachal Pradesh',
+  '03': 'Punjab',
+  '04': 'Chandigarh',
+  '05': 'Uttarakhand',
+  '06': 'Haryana',
+  '07': 'Delhi',
+  '08': 'Rajasthan',
+  '09': 'Uttar Pradesh',
+  '10': 'Bihar',
+  '11': 'Sikkim',
+  '12': 'Arunachal Pradesh',
+  '13': 'Nagaland',
+  '14': 'Manipur',
+  '15': 'Mizoram',
+  '16': 'Tripura',
+  '17': 'Meghalaya',
+  '18': 'Assam',
+  '19': 'West Bengal',
+  '20': 'Jharkhand',
+  '21': 'Odisha',
+  '22': 'Chhattisgarh',
+  '23': 'Madhya Pradesh',
+  '24': 'Gujarat',
+  '26': 'Dadra & Nagar Haveli and Daman & Diu',
+  '27': 'Maharashtra',
+  '29': 'Karnataka',
+  '30': 'Goa',
+  '31': 'Lakshadweep',
+  '32': 'Kerala',
+  '33': 'Tamil Nadu',
+  '34': 'Puducherry',
+  '35': 'Andaman & Nicobar Islands',
+  '36': 'Telangana',
+  '37': 'Andhra Pradesh',
+  '38': 'Ladakh',
+  '97': 'Other Territory',
+};
+
 function companyAddress(company: any): string {
   const line1 = company.registered_address || company.gstin_address || company.address || '';
   const line2 = [company.city, company.state, company.pincode].filter(Boolean).join(', ');
@@ -137,6 +182,87 @@ function buyerAddress(party: any): string {
   const state = party.billing_state || party.state || '';
   const pincode = party.billing_pincode || party.pincode || '';
   return [party.billing_address, city, state, pincode].filter(Boolean).join(', ');
+}
+
+function normalizeStateCode(value: unknown): string {
+  const raw = String(value || '').trim();
+  const match = raw.match(/\b(\d{2})\b/);
+  return match ? match[1] : raw.slice(0, 2);
+}
+
+function stateLabel(stateCode: unknown, stateName?: unknown): string {
+  const code = normalizeStateCode(stateCode);
+  const explicitName = String(stateName || '').trim().replace(/^\d{2}\s*[-:]\s*/, '');
+  if (!code && !explicitName) return '';
+  const name = GST_STATE_NAMES[code] || explicitName;
+  return code && name ? `${code}-${name}` : (code || name);
+}
+
+function companyStateLabel(company: any): string {
+  const code = stateCodeFromGstin(company?.gstin) || normalizeStateCode(company?.state_code);
+  return stateLabel(code, company?.state);
+}
+
+function partyStateLabel(party: any, gstin?: unknown, fallbackCode?: unknown, fallbackName?: unknown): string {
+  const code = stateCodeFromGstin(gstin) || normalizeStateCode(party?.billing_state_code || party?.state_code || fallbackCode);
+  return stateLabel(code, party?.billing_state || party?.state || fallbackName);
+}
+
+function businessContactBlock(args: {
+  name: unknown;
+  address?: unknown;
+  phone?: unknown;
+  email?: unknown;
+  gstin?: unknown;
+  pan?: unknown;
+  state?: unknown;
+  title?: string;
+  className?: string;
+  compact?: boolean;
+}): string {
+  const rows = [
+    fieldLine('Phone no.', args.phone),
+    fieldLine('Email', args.email),
+    fieldLine('GSTIN', args.gstin, 'mono'),
+    fieldLine('PAN', args.pan, 'mono'),
+    fieldLine('State', args.state),
+  ].join('');
+  return `<div class="business-block ${args.className || ''}">
+    ${args.title ? `<div class="block-title">${escapeHtml(args.title)}</div>` : ''}
+    <div class="business-name">${escapeHtml(String(args.name || '—'))}</div>
+    <div class="business-address">${addressHtml(args.address)}</div>
+    <div class="business-lines">${rows}</div>
+  </div>`;
+}
+
+function companyContactBlock(company: any, options?: { title?: string; className?: string }): string {
+  const name = companyLegalDisplayName(company);
+  const state = companyStateLabel(company);
+  return businessContactBlock({
+    title: options?.title,
+    className: options?.className,
+    name,
+    address: companyAddress(company),
+    phone: company?.phone,
+    email: company?.email,
+    gstin: company?.gstin,
+    pan: company?.pan,
+    state,
+  });
+}
+
+function partyContactBlock(args: {
+  title: string;
+  name: unknown;
+  address?: unknown;
+  phone?: unknown;
+  email?: unknown;
+  gstin?: unknown;
+  pan?: unknown;
+  state?: unknown;
+  className?: string;
+}): string {
+  return businessContactBlock({ ...args, className: args.className, title: args.title });
 }
 
 function bankBlock(company: any): string {
@@ -203,17 +329,12 @@ function invoiceItemRows(items: any[], kind: string): string {
     .map((it, i) => {
       const name = escapeHtml(it.item_name || it.name || 'Item');
       const desc = multilineHtml(it.item_description || it.description || '');
-      const meta = [
-        it.unit ? `Unit: ${it.unit}` : '',
-        Number(it.gst_rate || 0) ? `GST: ${it.gst_rate}%` : '',
-      ].filter(Boolean).join(' · ');
       const tax = Number(it.cgst_amount || 0) + Number(it.sgst_amount || 0) + Number(it.igst_amount || 0);
       return `<tr>
         <td class="idx">${i + 1}</td>
         <td>
           <div class="item-name">${name}</div>
           ${desc ? `<div class="item-desc">${desc}</div>` : ''}
-          ${meta ? `<div class="item-meta">${escapeHtml(meta)}</div>` : ''}
         </td>
         <td class="mono">${escapeHtml(it.hsn_code || '')}</td>
         <td class="right"><b>${fmtQty(it.quantity)}</b></td>
@@ -263,12 +384,52 @@ function buildInvoiceHtml(args: {
   const buyerName = isPurchase ? legalCompanyName : (party?.name || invoice.party_name_snapshot || 'Walk-in Customer');
   const sellerGstin = isPurchase ? (party?.gstin || invoice.party_gstin_snapshot || '') : (company.gstin || '');
   const buyerGstin = isPurchase ? (company.gstin || '') : (party?.gstin || invoice.party_gstin_snapshot || '');
+  const sellerStateCode = stateCodeFromGstin(sellerGstin) || String(company.state_code || '').slice(0, 2);
+  const buyerStateCode = stateCodeFromGstin(buyerGstin) || String(party?.billing_state_code || invoice.place_of_supply || '').slice(0, 2);
+  const supplyStateCode = String(invoice.place_of_supply || buyerStateCode || sellerStateCode || '—').slice(0, 5);
+  const primaryPartyPan = String(isPurchase ? (party?.pan || invoice.party_pan || '') : (party?.pan || invoice.party_pan || '')).trim().toUpperCase();
+  const primaryPartyPhone = invoice.party_phone_snapshot || invoice.party_phone || party?.phone || '';
+  const primaryPartyEmail = invoice.party_email_snapshot || invoice.party_email || party?.email || '';
   const sellerAddr = isPurchase ? (party ? buyerAddress(party) : invoice.billing_address_snapshot || '') : companyAddress(company);
   const buyerAddr = isPurchase ? companyAddress(company) : (party ? buyerAddress(party) : invoice.billing_address_snapshot || '');
   const shipAddr = invoice.shipping_address_snapshot || party?.shipping_address || buyerAddr;
   const primaryPartyName = isPurchase ? sellerName : buyerName;
   const primaryPartyGstin = isPurchase ? sellerGstin : buyerGstin;
   const primaryPartyAddr = isPurchase ? sellerAddr : buyerAddr;
+  const sellerBlock = isPurchase
+    ? partyContactBlock({
+      title: 'Seller',
+      name: sellerName,
+      address: sellerAddr,
+      phone: primaryPartyPhone,
+      email: primaryPartyEmail,
+      gstin: sellerGstin,
+      pan: primaryPartyPan,
+      state: partyStateLabel(party, sellerGstin, sellerStateCode),
+    })
+    : companyContactBlock(company, { title: 'Seller' });
+  const primaryPartyBlock = partyContactBlock({
+    title: isPurchase ? 'Bill From' : 'Bill To',
+    name: primaryPartyName,
+    address: primaryPartyAddr,
+    phone: primaryPartyPhone,
+    email: primaryPartyEmail,
+    gstin: primaryPartyGstin || (isPurchase ? '' : 'URP'),
+    pan: primaryPartyPan,
+    state: isPurchase ? partyStateLabel(party, sellerGstin, sellerStateCode) : partyStateLabel(party, buyerGstin, buyerStateCode),
+  });
+  const shipToBlock = isPurchase
+    ? companyContactBlock(company, { title: 'Bill To' })
+    : partyContactBlock({
+      title: 'Ship To / Place of Supply',
+      name: invoice.ship_to_name || invoice.party_name_snapshot || party?.name || 'Customer',
+      address: shipAddr,
+      phone: primaryPartyPhone,
+      email: primaryPartyEmail,
+      gstin: buyerGstin || 'URP',
+      pan: primaryPartyPan,
+      state: stateLabel(supplyStateCode || buyerStateCode, party?.shipping_state || party?.billing_state || party?.state),
+    });
   const amountWords = escapeHtml(amountToWordsINR(Math.round(Number(invoice.total_amount || 0) / 100)));
   const balanceDue = Number(invoice.balance_due ?? Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)));
   const terms = String(invoice.terms_and_conditions || company.terms_and_conditions || 'Thank you for your business.').trim();
@@ -283,12 +444,14 @@ function buildInvoiceHtml(args: {
       <div><span>Invoice#</span><b>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</b></div>
       <div><span>Invoice Date</span><b>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</b></div>
       <div><span>Due Date</span><b>${formatDocDate(invoice.due_date)}</b></div>
-      <div><span>Supply State Code</span><b>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</b></div>
+      <div><span>Supply State Code</span><b>${escapeHtml(supplyStateCode)}</b></div>
     </div>`;
   const gstSummary = `
     <div class="tax-summary">
       <div>${fieldLine('Seller GSTIN', sellerGstin, 'mono-line')}</div>
       <div>${fieldLine('Buyer GSTIN', buyerGstin, 'mono-line')}</div>
+      <div>${fieldLine('Seller State Code', sellerStateCode || '—', 'mono-line')}</div>
+      <div>${fieldLine('Buyer State Code', buyerStateCode || '—', 'mono-line')}</div>
       <div>${fieldLine('Company Phone', company.phone)}</div>
       <div>${fieldLine('Company Email', company.email)}</div>
     </div>`;
@@ -307,7 +470,8 @@ function buildInvoiceHtml(args: {
     .muted,.item-desc,.item-meta{color:#71717a}.mono,.mono-line{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .logo img{max-width:112px;max-height:66px;object-fit:contain;display:block}.logo-fallback{width:58px;height:58px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900}
     .doc-title{font-size:38px;letter-spacing:.08em;font-weight:300;color:${palette.primary};margin:0}.doc-subtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
-    .company-name,.party-name{font-size:15px;font-weight:800;color:${palette.accent}}.address{color:#52525b}.gst{font-size:10px;margin-top:3px}
+    .company-name,.party-name,.business-name{font-size:15px;font-weight:800;color:${palette.accent}}.address,.business-address{color:#52525b}.gst{font-size:10px;margin-top:3px}
+    .business-block{line-height:1.45}.business-lines{font-size:10px;margin-top:4px;color:#374151}.business-lines .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.block-title{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary};font-weight:800}
     .bill-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.bill-card h3,.info-card h3{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary}}
     .bill-card{border:1px solid #e5e7eb;padding:10px;min-height:88px}.meta-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb}.meta-grid div{padding:7px 9px;border-bottom:1px solid #e5e7eb}.meta-grid div:nth-child(odd){border-right:1px solid #e5e7eb}.meta-grid div:nth-last-child(-n+2){border-bottom:0}.meta-grid span{display:block;color:#71717a;font-size:10px}.meta-grid b{display:block;margin-top:1px}
     table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-desc{white-space:pre-line;margin-top:2px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
@@ -319,25 +483,25 @@ function buildInvoiceHtml(args: {
 
   const standard = `${baseCss}</head><body><main class="page standard">
     <section style="display:grid;grid-template-columns:1fr 1.05fr;gap:26px;align-items:start">
-      <div><div class="logo">${logo}</div><div class="company-name" style="margin-top:12px">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<div class="gst">${[company.phone, company.email].filter(Boolean).map(escapeHtml).join(' · ')}</div></div>
+      <div><div class="logo">${logo}</div><div style="margin-top:12px">${sellerBlock}</div></div>
       <div style="text-align:right"><h1 class="doc-title">${title}</h1><div class="doc-subtitle"># ${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</div></div>
     </section>
-    <section class="bill-grid"><div class="bill-card"><h3>${isPurchase ? 'Bill From' : 'Bill To'}</h3><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}</div><div>${invoiceMeta}</div></section>
-    <section class="bill-grid" style="margin-top:0"><div class="bill-card"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div><div>${gstSummary}</div></section>
+    <section class="bill-grid"><div class="bill-card">${primaryPartyBlock}</div><div>${invoiceMeta}</div></section>
+    <section class="bill-grid" style="margin-top:0"><div class="bill-card">${shipToBlock}</div><div>${gstSummary}</div></section>
     ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
     <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
 
-  const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted{color:#e5e7eb}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
-    <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div><div class="company-name" style="color:#fff">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<div class="muted">${[company.phone, company.email].filter(Boolean).map(escapeHtml).join(' · ')}</div></div></section>
+  const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted,.hero .business-address,.hero .business-lines,.hero .business-name,.hero .block-title{color:#fff!important}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
+    <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>₹${fmtPaise(balanceDue)}</b></section>
-    <section class="simple-body"><div class="bill-grid"><div><div class="party-name">${escapeHtml(primaryPartyName)}</div><div class="address">${addressHtml(primaryPartyAddr)}</div>${fieldLine('GSTIN', primaryPartyGstin, 'gst mono')}<div style="margin-top:24px"><h3>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</h3><div class="address">${addressHtml(isPurchase ? buyerAddr : shipAddr)}</div></div></div>${invoiceMeta}</div>
+    <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}<div style="margin-top:24px">${shipToBlock}</div></div>${invoiceMeta}</div>
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.center{text-align:center}.performa .doc-title{font-size:48px;font-weight:800;color:${palette.primary};line-height:1.05;margin-top:8px}.performa .logo img{margin:0 auto}.performa .logo-fallback{margin:0 auto;width:52px;height:52px;font-size:26px}.performa .rule{height:2px;background:${palette.primary};margin:12px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:6px}.performa table.items{margin-top:12px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb}.performa table.items td{border-bottom:1px solid #e5e7eb}.performa .totals{background:#fff}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary}}</style></head><body><main class="page performa">
-    <section class="center"><div class="logo">${logo}</div><div class="company-name" style="margin-top:10px">${escapeHtml(legalCompanyName)}</div><div class="address">${addressHtml(companyAddress(company))}</div>${fieldLine('GSTIN', company.gstin, 'gst mono')}<div class="gst">${[company.phone, company.email].filter(Boolean).map(escapeHtml).join(' · ')}</div><h1 class="doc-title">${title}</h1></section>
-    <div class="rule"></div><section class="bill-card"><h3>Bill To</h3><div class="party-name">${escapeHtml(buyerName)}</div><div class="address">${addressHtml(buyerAddr)}</div>${fieldLine('GSTIN', buyerGstin, 'gst mono')}<div style="margin-top:10px"><h3>Ship To / Place of Supply</h3><div class="address">${addressHtml(shipAddr)}</div></div></section><div class="rule"></div>
+    <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
+    <div class="rule"></div><section class="bill-card">${primaryPartyBlock}<div style="margin-top:10px">${shipToBlock}</div></section><div class="rule"></div>
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
   </main></body></html>`;
 
@@ -354,21 +518,19 @@ function buildInvoiceHtml(args: {
       <tr>
         <td style="width:18%;text-align:center">${logoSrc ? `<img src="${logoSrc}" style="max-width:86px;max-height:56px;object-fit:contain" />` : ''}</td>
         <td style="width:56%">
-          <div class="company-name">${escapeHtml(legalCompanyName)}</div>
-          <div class="address">${addressHtml(companyAddress(company))}</div>
-          <div class="gst mono">${company.gstin ? `GSTIN: ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · Ph: ${escapeHtml(company.phone)}` : ''}${company.email ? ` · ${escapeHtml(company.email)}` : ''}</div>
+          ${sellerBlock}
         </td>
         <td style="width:26%;text-align:center"><h1 class="doc-title">${title}</h1></td>
       </tr>
     </table>
     <table class="mono-table" style="margin-top:8px">
       <tr>
-        <td style="width:50%"><b>${isPurchase ? 'Bill From' : 'Bill To'}</b><br/><b>${escapeHtml(primaryPartyName)}</b><br/>${addressHtml(primaryPartyAddr)}${primaryPartyGstin ? `<br/><span class="mono">GSTIN: ${escapeHtml(primaryPartyGstin)}</span>` : ''}</td>
-        <td style="width:50%"><b>${isPurchase ? 'Bill To' : 'Ship To / Place of Supply'}</b><br/>${addressHtml(isPurchase ? buyerAddr : shipAddr)}</td>
+        <td style="width:50%">${primaryPartyBlock}</td>
+        <td style="width:50%">${shipToBlock}</td>
       </tr>
     </table>
     <table class="mono-table" style="margin-top:8px">
-      <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(invoice.place_of_supply || company.state_code || '—')}</td></tr>
+      <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(supplyStateCode)}</td></tr>
     </table>
     ${itemTable}
     <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}<div class="info-card"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
@@ -385,9 +547,9 @@ export async function generateInvoicePDF(
   items: any[],
   opts?: { templateOverride?: string },
 ): Promise<Buffer> {
-  const rawKind = String(opts?.templateOverride || invoice.pdf_template || company.invoice_pdf_template || 'standard');
-  const kind = ['standard', 'simple', 'performa', 'monochrome'].includes(rawKind) ? rawKind : 'standard';
-  const docTheme = String(invoice.document_theme || company.document_theme || 'classic');
+  const rawKind = String(opts?.templateOverride || invoice.pdf_template || company.invoice_pdf_template || 'monochrome');
+  const kind = ['standard', 'simple', 'performa', 'monochrome'].includes(rawKind) ? rawKind : 'monochrome';
+  const docTheme = String(invoice.document_theme || company.document_theme || 'executive');
 
   const upi = company.upi_id || invoice.upi_id_snapshot || '';
   let upiQr = '';
@@ -524,10 +686,19 @@ export async function generateEinvoicePdf(
     || (invoice.qr_code_url && (invoice.qr_code_url.startsWith('http') || invoice.qr_code_url.startsWith('data:')) ? invoice.qr_code_url : '')
     || await QRCode.toDataURL(invoice.irn || JSON.stringify({ irn: invoice.irn, no: invoice.invoice_number }), { width: 220, margin: 1 });
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
-  const sellerAddress = companyAddress(company);
   const buyerAddressText = invoice.billing_address_snapshot || buyerAddress(party);
   const primary = String(company.document_primary_color || '#174EA6');
-  const legalCompanyName = companyLegalDisplayName(company);
+  const buyerGstin = invoice.party_gstin_snapshot || party?.gstin || 'URP';
+  const buyerBlock = partyContactBlock({
+    title: 'Bill To',
+    name: invoice.party_name_snapshot || party?.name || 'Customer',
+    address: buyerAddressText,
+    phone: invoice.party_phone_snapshot || invoice.party_phone || party?.phone || '',
+    email: invoice.party_email_snapshot || invoice.party_email || party?.email || '',
+    gstin: buyerGstin,
+    pan: invoice.party_pan || party?.pan || '',
+    state: partyStateLabel(party, buyerGstin, invoice.place_of_supply),
+  });
   const rows = items.map((it, i) => `<tr>
     <td class="center">${i + 1}</td>
     <td><b>${escapeHtml(it.item_name || '')}</b>${it.item_description ? `<div class="muted small">${multilineHtml(it.item_description)}</div>` : ''}</td>
@@ -546,7 +717,7 @@ export async function generateEinvoicePdf(
     .top{display:grid;grid-template-columns:1.3fr .7fr;gap:18px;border-bottom:4px solid ${escapeHtml(primary)};padding-bottom:14px}
     .brand{display:flex;gap:12px;align-items:flex-start}.logo{max-width:82px;max-height:64px;object-fit:contain}.title{text-align:right}
     h1{margin:0;color:${escapeHtml(primary)};font-size:34px;letter-spacing:1px}.muted{color:#667085}.small{font-size:11px}.mono{font-family:"SFMono-Regular",Consolas,monospace}
-    .company{font-size:18px;font-weight:800}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.box{border:1px solid #d9e2ec;border-radius:8px;padding:12px;min-height:96px}
+    .company,.business-name{font-size:18px;font-weight:800}.business-address{color:#667085}.business-lines{font-size:11px;line-height:1.5}.block-title{font-size:12px;text-transform:uppercase;color:${escapeHtml(primary)};font-weight:800;margin-bottom:6px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}.box{border:1px solid #d9e2ec;border-radius:8px;padding:12px;min-height:96px}
     .box h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:${escapeHtml(primary)};letter-spacing:.04em}.kv{display:grid;grid-template-columns:92px 1fr;gap:6px}.irn{word-break:break-all;line-height:1.45}
     .qrbox{display:flex;gap:12px;align-items:center;border:1px solid #d9e2ec;border-radius:8px;padding:10px;margin-top:12px}.qrbox img{width:132px;height:132px;object-fit:contain}
     table{width:100%;border-collapse:collapse;margin-top:14px}th{background:${escapeHtml(primary)};color:#fff;padding:8px;text-align:left;font-size:11px}td{border-bottom:1px solid #e5e7eb;padding:8px;vertical-align:top}
@@ -554,11 +725,11 @@ export async function generateEinvoicePdf(
     .seal{margin-top:12px;padding:10px;border-radius:8px;background:#eef6ff;color:#174a7c}.footer{margin-top:16px;border-top:1px solid #e5e7eb;padding-top:10px;color:#667085}
   </style></head><body>
     <section class="top">
-      <div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}<div><div class="company">${escapeHtml(legalCompanyName)}</div><div class="muted">${addressHtml(sellerAddress)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(company.gstin || '—')}</span>${company.email ? ` · ${escapeHtml(company.email)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div></div></div>
+      <div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}<div>${companyContactBlock(company)}</div></div>
       <div class="title"><h1>e-INVOICE</h1><div class="muted">Government registered tax invoice</div></div>
     </section>
     <section class="grid">
-      <div class="box"><h3>Bill To</h3><b>${escapeHtml(invoice.party_name_snapshot || party?.name || 'Customer')}</b><div class="muted">${addressHtml(buyerAddressText)}</div><div class="small"><b>GSTIN:</b> <span class="mono">${escapeHtml(invoice.party_gstin_snapshot || party?.gstin || 'URP')}</span></div></div>
+      <div class="box">${buyerBlock}</div>
       <div class="box"><h3>Invoice Details</h3><div class="kv"><span>Invoice No</span><b>${escapeHtml(invoice.invoice_number || '')}</b><span>Date</span><b>${formatDocDate(invoice.invoice_date)}</b><span>Ack No</span><b>${escapeHtml(invoice.ack_number || '—')}</b><span>Ack Date</span><b>${escapeHtml(ackDate && !Number.isNaN(ackDate.getTime()) ? ackDate.toLocaleString('en-IN') : String(invoice.ack_date || '—'))}</b></div></div>
     </section>
     <section class="qrbox"><img src="${qr}" alt="Signed QR Code" /><div><h3 style="margin:0 0 6px;color:${escapeHtml(primary)}">IRN</h3><div class="mono irn">${escapeHtml(invoice.irn || '')}</div><div class="seal small">Scan the QR code to verify the signed e-invoice details from IRP.</div></div></section>
@@ -605,7 +776,7 @@ export async function generateQuotationPDF(
     .join('');
 
   const primaryColor = String(company.document_primary_color || '#4F46E5');
-  const theme = String(quotation.document_theme || company.document_theme || 'classic');
+  const theme = String(quotation.document_theme || company.document_theme || 'executive');
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
   const legalCompanyName = companyLegalDisplayName(company);
@@ -615,15 +786,27 @@ export async function generateQuotationPDF(
   const signatureBlock = signatureSrc
     ? `<div style="text-align:right;margin-top:26px"><p style="margin:0 0 6px">For <b>${escapeHtml(legalCompanyName)}</b></p><img src="${signatureSrc}" style="max-height:52px"/><p style="margin:6px 0 0">Authorised Signatory</p></div>`
     : `<div style="text-align:right;margin-top:26px"><p>For <b>${escapeHtml(legalCompanyName)}</b></p><p>Authorised Signatory</p></div>`;
+  const sellerBlock = companyContactBlock(company, { title: 'Seller' });
+  const buyerBlock = partyContactBlock({
+    title: 'Buyer',
+    name: quotation.party_name_override || party?.name || 'Customer',
+    address: buyerAddr,
+    phone: quotation.party_phone_override || party?.phone || '',
+    email: quotation.party_email_override || party?.email || '',
+    gstin: party?.gstin || 'URP',
+    pan: party?.pan || '',
+    state: partyStateLabel(party, party?.gstin),
+  });
 
   let html = `<!doctype html><html><head><meta charset="utf-8" />
   <style>
     body{font-family:Arial,sans-serif;color:#111;padding:16px}
     .row{display:flex;justify-content:space-between;align-items:flex-start}
     .muted{color:#666;font-size:12px}
+    .business-name{font-size:16px;font-weight:800}.business-address{color:#555;font-size:12px;line-height:1.45}.business-lines{font-size:12px;color:#444;line-height:1.5}.block-title{font-size:11px;text-transform:uppercase;color:${escapeHtml(primaryColor)};font-weight:800;margin-bottom:5px}
     h1{font-size:20px;margin:0}
     .header{background:${escapeHtml(primaryColor)};color:#fff;padding:16px 18px;border-radius:8px}
-    .header .muted{color:rgba(255,255,255,.82)}
+    .header .muted,.header .business-name,.header .business-address,.header .business-lines,.header .block-title{color:#fff!important}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
     .box{border:1px solid #ddd;padding:10px;border-radius:8px}
     table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px}
@@ -636,9 +819,7 @@ export async function generateQuotationPDF(
       <div>
         ${logoBlock}
         <h1>Quotation</h1>
-        <p class="muted">${escapeHtml(legalCompanyName)}</p>
-        <p class="muted">${escapeHtml(company.registered_address || '')}</p>
-        <p class="muted">GSTIN ${escapeHtml(company.gstin || '—')} · ${escapeHtml(company.phone || company.email || '—')}</p>
+        <div class="muted">${companyContactBlock(company)}</div>
       </div>
       <div style="text-align:right">
         <p><b>Quote No:</b> ${escapeHtml(quotation.quotation_number || '')}</p>
@@ -648,18 +829,10 @@ export async function generateQuotationPDF(
     </div>
     <div class="grid2">
       <div class="box">
-        <b>Seller</b>
-        <p style="margin:6px 0 0">${escapeHtml(legalCompanyName)}</p>
-        <p class="muted" style="margin:4px 0">${escapeHtml(company.registered_address || '')}</p>
-        <p class="muted" style="margin:4px 0">${escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', '))}</p>
-        <p class="muted" style="margin:4px 0">GSTIN: ${escapeHtml(company.gstin || '—')}</p>
+        ${sellerBlock}
       </div>
       <div class="box">
-        <b>Buyer</b>
-        <p style="margin:6px 0 0">${escapeHtml(quotation.party_name_override || party?.name || 'Customer')}</p>
-        <p class="muted" style="margin:4px 0">${escapeHtml(quotation.party_email_override || party?.email || '')} ${escapeHtml(quotation.party_phone_override || party?.phone || '')}</p>
-        <p class="muted" style="margin:4px 0">${escapeHtml(buyerAddr || '—')}</p>
-        <p class="muted" style="margin:4px 0">GSTIN: ${escapeHtml(party?.gstin || '—')}</p>
+        ${buyerBlock}
       </div>
     </div>
     <table>
@@ -691,6 +864,81 @@ export async function generateQuotationPDF(
   const page = await browser.newPage();
   await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+  await browser.close();
+  return Buffer.from(pdf);
+}
+
+export async function generateDeliveryChallanPDF(
+  challan: any,
+  company: any,
+  items: any[],
+): Promise<Buffer> {
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const legalCompanyName = companyLegalDisplayName(company);
+  const totalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+  const deliveredToBlock = partyContactBlock({
+    title: 'Delivered To',
+    name: challan.party_name_snapshot || challan.party_name || 'Customer',
+    address: challan.party_address_snapshot || challan.party_address || '',
+    phone: challan.party_phone_snapshot || challan.party_phone || '',
+    email: challan.party_email_snapshot || challan.party_email || '',
+    gstin: challan.party_gstin_snapshot || challan.party_gstin || 'URP',
+    pan: challan.party_pan || '',
+    state: partyStateLabel(
+      {
+        billing_state: challan.party_state,
+        billing_state_code: challan.party_state_code,
+      },
+      challan.party_gstin_snapshot || challan.party_gstin,
+    ),
+  });
+  const rows = items.map((it, idx) => `<tr>
+    <td class="center">${idx + 1}</td>
+    <td><b>${escapeHtml(it.item_name || it.name || 'Item')}</b>${it.item_description ? `<div class="muted">${multilineHtml(it.item_description)}</div>` : ''}</td>
+    <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
+    <td class="right">${fmtQty(Number(it.quantity) || 0)}</td>
+    <td class="center">${escapeHtml(it.unit || 'PCS')}</td>
+    <td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td>
+    <td class="right">${fmtPaise(Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)))}</td>
+  </tr>`).join('');
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+    @page{size:A4;margin:10mm}
+    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;font-size:12px;line-height:1.35}
+    .mono{font-family:Consolas,Menlo,monospace}.muted{color:#555}.center{text-align:center}.right{text-align:right}
+    .business-name{font-size:15px;font-weight:800}.business-address{color:#333;line-height:1.45}.business-lines{font-size:11px;line-height:1.45}.block-title{font-size:10px;text-transform:uppercase;color:#555;font-weight:800;margin-bottom:3px}
+    .head{display:grid;grid-template-columns:90px 1fr 170px;border:1px solid #111}
+    .head>div{padding:8px;border-right:1px solid #111}.head>div:last-child{border-right:0}
+    .logo{max-width:74px;max-height:58px;object-fit:contain}.company{text-align:center;font-size:17px;font-weight:800}
+    h1{margin:0;text-align:center;font-size:22px;letter-spacing:.08em}.boxgrid{display:grid;grid-template-columns:1fr 1fr;border-left:1px solid #111;border-right:1px solid #111}
+    .box{padding:8px;border-bottom:1px solid #111}.box:first-child{border-right:1px solid #111}.label{font-size:10px;text-transform:uppercase;color:#555;margin-bottom:3px}
+    table{width:100%;border-collapse:collapse}th,td{border:1px solid #111;padding:6px;vertical-align:top}th{font-weight:700;background:#fff}
+    .meta{display:grid;grid-template-columns:repeat(4,1fr);border-left:1px solid #111}.meta div{padding:7px;border-right:1px solid #111;border-bottom:1px solid #111}
+    .footer{display:grid;grid-template-columns:1fr 230px;gap:14px;margin-top:10px}.sign{border:1px solid #111;min-height:82px;padding:8px;text-align:center}.note{border:1px solid #111;padding:8px;min-height:82px}
+  </style></head><body>
+    <section class="head">
+      <div class="center">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}</div>
+      <div>${companyContactBlock(company)}</div>
+      <div><h1>DELIVERY CHALLAN</h1></div>
+    </section>
+    <section class="meta">
+      <div><span class="label">Challan No.</span><br/><b>${escapeHtml(challan.challan_number || '')}</b></div>
+      <div><span class="label">Date</span><br/><b>${formatDocDate(challan.challan_date)}</b></div>
+      <div><span class="label">Due Date</span><br/><b>${formatDocDate(challan.due_date)}</b></div>
+      <div><span class="label">Status</span><br/><b>${escapeHtml(challan.status || 'open')}</b></div>
+    </section>
+    <section class="boxgrid">
+      <div class="box">${deliveredToBlock}</div>
+      <div class="box"><div class="label">Transport</div><div>Transport: ${escapeHtml(challan.transport_name || '—')}</div><div>Vehicle No.: ${escapeHtml(challan.vehicle_number || '—')}</div><div>LR/Docket No.: ${escapeHtml(challan.lr_number || '—')}</div></div>
+    </section>
+    <table><thead><tr><th class="center">#</th><th>Description of Goods</th><th class="center">HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th><th class="right">Value</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="3" class="right"><b>Total</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td><td></td><td class="right"><b>${fmtPaise(Number(challan.total_amount) || 0)}</b></td></tr></tfoot>
+    </table>
+    <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/><br/><br/>Authorised Signatory</div></section>
+  </body></html>`;
+  const browser = await launchBrowser();
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  const pdf = await page.pdf({ format: 'A4', printBackground: true });
   await browser.close();
   return Buffer.from(pdf);
 }

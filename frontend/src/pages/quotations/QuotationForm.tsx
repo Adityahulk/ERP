@@ -14,6 +14,7 @@ import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, type DocumentThemeId, ty
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 
 export default function QuotationForm() {
   const navigate = useNavigate();
@@ -46,8 +47,8 @@ export default function QuotationForm() {
   // Settings
   const [isGstQuote, setIsGstQuote] = useState(true);
   const [isInterstate, setIsInterstate] = useState(false);
-  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
-  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('monochrome');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('executive');
   const [customerNotes, setCustomerNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
@@ -95,6 +96,42 @@ export default function QuotationForm() {
     setPartySearch(''); setPartyResults([]);
   };
 
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:quotation',
+    {
+      partyId, partyName, godownId, quotationNumber, quotationDate, validUntil,
+      partyNameOverride, partyPhoneOverride, partyEmailOverride,
+      isGstQuote, isInterstate, pdfTemplate, documentTheme,
+      customerNotes, termsAndConditions, internalNotes, showExtras, items,
+    },
+    (draft: any) => {
+      setPartyId(String(draft.partyId || ''));
+      setPartyName(String(draft.partyName || ''));
+      setGodownId(String(draft.godownId || ''));
+      setQuotationNumber(String(draft.quotationNumber || ''));
+      setQuotationDate(String(draft.quotationDate || new Date().toISOString().split('T')[0]));
+      setValidUntil(String(draft.validUntil || validUntil));
+      setPartyNameOverride(String(draft.partyNameOverride || ''));
+      setPartyPhoneOverride(String(draft.partyPhoneOverride || ''));
+      setPartyEmailOverride(String(draft.partyEmailOverride || ''));
+      setIsGstQuote(draft.isGstQuote !== false);
+      setIsInterstate(Boolean(draft.isInterstate));
+      setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === draft.pdfTemplate) ? draft.pdfTemplate : 'monochrome') as InvoicePdfTemplateId);
+      setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === draft.documentTheme) ? draft.documentTheme : 'executive') as DocumentThemeId);
+      setCustomerNotes(String(draft.customerNotes || ''));
+      setTermsAndConditions(String(draft.termsAndConditions || ''));
+      setInternalNotes(String(draft.internalNotes || ''));
+      setShowExtras(Boolean(draft.showExtras));
+      setItems(Array.isArray(draft.items) ? draft.items : []);
+    },
+    {
+      shouldSave: (draft) => Boolean(
+        draft.partyId || draft.partyName || draft.quotationNumber ||
+        draft.customerNotes || draft.termsAndConditions || draft.internalNotes || draft.items.length
+      ),
+    },
+  );
+
   const create = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -128,6 +165,7 @@ export default function QuotationForm() {
     },
     onSuccess: (res) => {
       toast.success('Quotation created');
+      clearDraft();
       qc.invalidateQueries({ queryKey: ['quotations'] });
       const id = (res.data?.data?.id ?? res.data?.id);
       navigate(id ? `/quotations/${id}` : '/quotations');

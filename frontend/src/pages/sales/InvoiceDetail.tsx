@@ -102,21 +102,15 @@ export default function InvoiceDetail() {
 
   const normalizedRole = normalizeRole(user?.role);
   const userRank = ROLE_RANK[normalizedRole] ?? 0;
-  const hasPaidAmount = Number(inv.paid_amount ?? inv.amount_paid ?? 0) > 0;
-  const hasPayments = Array.isArray(inv.payments) && inv.payments.length > 0;
   const canEditInvoice =
     userRank >= ROLE_RANK.manager &&
     !inv.irn &&
-    inv.status !== 'cancelled' &&
-    !hasPaidAmount &&
-    !hasPayments;
+    inv.status !== 'cancelled';
 
   const editBlockReason = inv.irn
     ? 'E-Invoice IRN is generated — cancel the IRN first to edit.'
     : inv.status === 'cancelled'
     ? 'Cancelled invoices cannot be edited.'
-    : hasPaidAmount || hasPayments
-    ? 'Invoice has payments recorded. Reverse all payments to enable editing.'
     : userRank < ROLE_RANK.manager
     ? 'Only managers and above can edit invoices.'
     : '';

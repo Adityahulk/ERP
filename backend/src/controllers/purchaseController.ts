@@ -361,8 +361,8 @@ export async function receiveStock(req: Request, res: Response) {
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
           invoiceTotals.totalAmount, req.user!.id,
-          ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : null,
-          ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : 'classic',
+          ['standard', 'simple', 'performa', 'monochrome'].includes(String(d.pdf_template || '')) ? d.pdf_template : 'monochrome',
+          ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : 'executive',
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -748,8 +748,8 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
         ? await resolvePurchaseBillNumber(client, companyId, d.bill_number, id)
         : validatePurchaseBillNumber(pi.bill_number);
 
-      const pdfTpl = ['standard', 'simple', 'performa'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template;
-      const docTheme = ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme;
+      const pdfTpl = ['standard', 'simple', 'performa', 'monochrome'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template || 'monochrome';
+      const docTheme = ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme || 'executive';
 
       await client.query(
         `UPDATE purchase_invoices SET

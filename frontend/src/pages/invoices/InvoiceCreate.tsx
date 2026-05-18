@@ -30,6 +30,7 @@ import {
 } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import PaymentRowsEditor, { newPaymentEditorRow, type PaymentEditorRow } from '@/components/transactions/PaymentRowsEditor';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -93,8 +94,8 @@ export default function InvoiceCreate() {
   const [placeOfSupply, setPlaceOfSupply] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
-  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
-  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('monochrome');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('executive');
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const [notes, setNotes] = useState('');
@@ -118,12 +119,8 @@ export default function InvoiceCreate() {
     const inv = existingInv as Record<string, unknown>;
     if (String(inv.id) !== editInvoiceId || hydratedIdRef.current === editInvoiceId) return;
 
-    if (
-      inv.irn ||
-      Number(inv.paid_amount ?? inv.amount_paid ?? 0) > 0 ||
-      (Array.isArray(inv.payments) && inv.payments.length > 0)
-    ) {
-      toast.error('This invoice cannot be edited (payments on file or e-invoice IRN).');
+    if (inv.irn) {
+      toast.error('This invoice cannot be edited because e-invoice IRN is generated.');
       navigate(`/sales/${editInvoiceId}`);
       return;
     }
@@ -144,10 +141,10 @@ export default function InvoiceCreate() {
     setExternalDescription(String(inv.external_description || ''));
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
-    const tpl = String(inv.pdf_template || 'standard');
-    setPdfTemplate((['standard', 'simple', 'performa'].includes(tpl) ? tpl : 'standard') as InvoicePdfTemplateId);
-    const th = String(inv.document_theme || 'classic');
-    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'classic') as DocumentThemeId);
+    const tpl = String(inv.pdf_template || 'monochrome');
+    setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === tpl) ? tpl : 'monochrome') as InvoicePdfTemplateId);
+    const th = String(inv.document_theme || 'executive');
+    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'executive') as DocumentThemeId);
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
     setItems(((inv.items as any[]) || []).map((it: any) => ({
       item_id: it.item_id ? String(it.item_id) : undefined,
@@ -289,6 +286,45 @@ export default function InvoiceCreate() {
     [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
+  const draftState = useMemo(() => ({
+    partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate,
+    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate,
+    documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items,
+  }), [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items]);
+
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:sales-invoice',
+    draftState,
+    (draft: any) => {
+      setPartyId(String(draft.partyId || ''));
+      setPartyName(String(draft.partyName || ''));
+      setPartyPhone(String(draft.partyPhone || ''));
+      setGodownId(String(draft.godownId || ''));
+      setInvoiceNumber(String(draft.invoiceNumber || ''));
+      setInvoiceDate(String(draft.invoiceDate || new Date().toISOString().split('T')[0]));
+      setDueDate(String(draft.dueDate || ''));
+      setIsInterstate(Boolean(draft.isInterstate));
+      setPlaceOfSupply(String(draft.placeOfSupply || ''));
+      setShippingAddress(String(draft.shippingAddress || ''));
+      setIsGstInvoice(draft.isGstInvoice !== false);
+      setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === draft.pdfTemplate) ? draft.pdfTemplate : 'monochrome') as InvoicePdfTemplateId);
+      setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === draft.documentTheme) ? draft.documentTheme : 'executive') as DocumentThemeId);
+      setCompanyBankAccountId(String(draft.companyBankAccountId || ''));
+      setNotes(String(draft.notes || ''));
+      setExternalDescription(String(draft.externalDescription || ''));
+      setPaymentRows(Array.isArray(draft.paymentRows) && draft.paymentRows.length ? draft.paymentRows : [newPaymentEditorRow()]);
+      setItems(Array.isArray(draft.items) ? draft.items : []);
+    },
+    {
+      enabled: !editInvoiceId,
+      shouldSave: (draft) => Boolean(
+        draft.partyId || draft.partyName || draft.invoiceNumber || draft.dueDate ||
+        draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
+        draft.paymentRows.some((row) => row.amount > 0 || row.payment_mode !== 'cash')
+      ),
+    },
+  );
+
   const validate = () => {
     if (!partyId) { toast.error('Select a party'); return false; }
     if (items.length === 0) { toast.error('Add at least one item'); return false; }
@@ -365,6 +401,7 @@ export default function InvoiceCreate() {
         if (uploads.length) await Promise.allSettled(uploads);
       }
       toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
+      clearDraft();
       const skipPreview = readSkipInvoicePreview();
       if (newId) navigate(skipPreview ? `/sales/${newId}` : `/sales/${newId}?preview=1`);
       else navigate('/sales');

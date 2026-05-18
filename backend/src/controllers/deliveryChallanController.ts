@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
+import { generateDeliveryChallanPDF } from '../services/pdfService';
 
 async function nextChallanNumber(companyId: string, client: any) {
   const yr = new Date().getFullYear().toString().slice(-2);
@@ -56,7 +57,8 @@ export async function getDeliveryChallan(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const [challanRes, itemsRes] = await Promise.all([
       query(
-        `SELECT c.*, p.name AS party_name, p.phone AS party_phone, p.gstin AS party_gstin, p.billing_address AS party_address,
+        `SELECT c.*, p.name AS party_name, p.phone AS party_phone, p.email AS party_email, p.gstin AS party_gstin, p.pan AS party_pan,
+                p.billing_address AS party_address, p.billing_state AS party_state, p.billing_state_code AS party_state_code,
                 so.so_number
          FROM delivery_challans c
          LEFT JOIN parties p ON p.id = c.party_id
@@ -125,6 +127,35 @@ export async function createDeliveryChallan(req: Request, res: Response) {
 
     res.status(201).json(success(result));
   } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function getDeliveryChallanPDF(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const [companyRes, challanRes, itemsRes] = await Promise.all([
+      query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [companyId]),
+      query(
+        `SELECT c.*, p.name AS party_name, p.phone AS party_phone, p.email AS party_email, p.gstin AS party_gstin, p.pan AS party_pan,
+                p.billing_address AS party_address, p.billing_state AS party_state, p.billing_state_code AS party_state_code
+         FROM delivery_challans c
+         LEFT JOIN parties p ON p.id = c.party_id AND p.company_id = c.company_id
+         WHERE c.id = $1 AND c.company_id = $2 AND c.is_deleted = false`,
+        [id, companyId],
+      ),
+      query('SELECT * FROM delivery_challan_items WHERE challan_id = $1 ORDER BY created_at', [id]),
+    ]);
+    if (!companyRes.rows.length) return res.status(404).json(error('Company not found'));
+    if (!challanRes.rows.length) return res.status(404).json(error('Delivery challan not found'));
+    const pdf = await generateDeliveryChallanPDF(challanRes.rows[0], companyRes.rows[0], itemsRes.rows);
+    const inline = String(req.query.inline || '') === '1';
+    const filename = `${challanRes.rows[0].challan_number || 'delivery-challan'}.pdf`.replace(/[^\w.-]+/g, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
+    res.send(pdf);
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to generate delivery challan PDF'));
+  }
 }
 
 export async function updateChallanStatus(req: Request, res: Response) {

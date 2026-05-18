@@ -11,6 +11,7 @@ import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -49,9 +50,26 @@ export default function JobWorkChallanForm() {
   });
   const godowns = (godownsData as any) ?? [];
 
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:job-work-challan',
+    { form, items },
+    (draft: any) => {
+      if (draft.form && typeof draft.form === 'object') {
+        setForm((prev: any) => ({ ...prev, ...draft.form }));
+      }
+      setItems(Array.isArray(draft.items) ? draft.items : []);
+    },
+    {
+      shouldSave: (draft) => Boolean(
+        draft.form?.party_id || draft.form?.godown_id || draft.form?.transport_details ||
+        draft.form?.vehicle_number || draft.form?.notes || draft.items.length
+      ),
+    },
+  );
+
   const saveMutation = useMutation({
     mutationFn: (data: any) => api.post('/job-work/challans', data),
-    onSuccess: (res) => { toast.success('Challan created'); qc.invalidateQueries({ queryKey: ['jw-challans'] }); navigate(`/job-work/${res.data?.data?.id || ''}`); },
+    onSuccess: (res) => { toast.success('Challan created'); clearDraft(); qc.invalidateQueries({ queryKey: ['jw-challans'] }); navigate(`/job-work/${res.data?.data?.id || ''}`); },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
   });
 

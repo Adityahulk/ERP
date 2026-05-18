@@ -153,7 +153,66 @@ async function resolveDefaultGodownId(db: Queryable, companyId: string, requeste
      LIMIT 1`,
     [companyId],
   );
-  return res.rows[0]?.id || null;
+  if (res.rows[0]?.id) return res.rows[0].id;
+  const created = await db.query(
+    `INSERT INTO godowns (company_id, name, code, is_default, is_active)
+     VALUES ($1, 'Default', 'DEFAULT', true, true)
+     RETURNING id`,
+    [companyId],
+  );
+  return created.rows[0]?.id || null;
+}
+
+async function deductSaleStockAllowNegative(
+  db: Queryable,
+  args: {
+    companyId: string;
+    itemId: string;
+    godownId: string | null;
+    invoiceId: string;
+    quantity: number;
+    userId: string;
+  },
+) {
+  const qty = Number(args.quantity) || 0;
+  if (qty <= 0) throw new Error('Invalid quantity for stock item');
+  if (!args.godownId) {
+    throw new Error('Create or select a godown before selling inventory-tracked items.');
+  }
+
+  await db.query(
+    `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+     VALUES ($1, $2, $3, 0, 0)
+     ON CONFLICT (item_id, godown_id) DO NOTHING`,
+    [args.companyId, args.itemId, args.godownId],
+  );
+
+  await db.query(
+    `UPDATE item_stock
+     SET quantity = quantity - $1::numeric
+     WHERE company_id = $2 AND item_id = $3 AND godown_id = $4`,
+    [qty, args.companyId, args.itemId, args.godownId],
+  );
+
+  const balRes = await db.query(
+    'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
+    [args.itemId, args.godownId, args.companyId],
+  );
+
+  await db.query(
+    `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
+     VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7, $8)`,
+    [
+      args.companyId,
+      args.itemId,
+      args.godownId,
+      args.invoiceId,
+      -qty,
+      balRes.rows[0]?.quantity || 0,
+      'Sale invoice stock deduction; negative stock allowed',
+      args.userId,
+    ],
+  );
 }
 
 async function resolveInvoiceGstContext(
@@ -466,8 +525,8 @@ export async function createInvoice(req: Request, res: Response) {
           d.external_description || null,
           d.terms_and_conditions || null,
           req.user!.id,
-          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : null,
-          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'classic',
+          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : 'monochrome',
+          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'executive',
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -534,45 +593,14 @@ export async function createInvoice(req: Request, res: Response) {
           if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
 
           if (itemRes.rows[0].track_inventory) {
-            if (!godownId) {
-              throw new Error(`Select a godown before selling stock item "${itemRes.rows[0].name}"`);
-            }
-            const stockRes = await client.query(
-              `SELECT quantity, reserved_quantity
-               FROM item_stock
-               WHERE item_id = $1 AND godown_id = $2 AND company_id = $3
-               FOR UPDATE`,
-              [item.item_id, godownId, companyId]
-            );
-
-            if (!stockRes.rows.length) {
-              throw new Error(`No stock row found for "${itemRes.rows[0].name}" in the selected godown`);
-            }
-
-            const qty = Number(item.quantity) || 0;
-            const available = Number(stockRes.rows[0].quantity || 0) - Number(stockRes.rows[0].reserved_quantity || 0);
-            if (qty <= 0) throw new Error(`Invalid quantity for "${itemRes.rows[0].name}"`);
-            if (available < qty) {
-              throw new Error(`Insufficient stock for "${itemRes.rows[0].name}". Available: ${available}, requested: ${qty}`);
-            }
-
-            await client.query(
-              `UPDATE item_stock
-               SET quantity = quantity - $1::numeric
-               WHERE item_id = $2 AND godown_id = $3 AND company_id = $4`,
-              [qty, item.item_id, godownId, companyId]
-            );
-
-            const balRes = await client.query(
-              'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
-              [item.item_id, godownId, companyId]
-            );
-
-            await client.query(
-              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, created_by)
-               VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7)`,
-              [companyId, item.item_id, godownId, invoice.id, -qty, balRes.rows[0]?.quantity || 0, req.user!.id]
-            );
+            await deductSaleStockAllowNegative(client, {
+              companyId,
+              itemId: item.item_id,
+              godownId,
+              invoiceId: invoice.id,
+              quantity: item.quantity,
+              userId: req.user!.id,
+            });
           }
         }
       }
@@ -724,6 +752,7 @@ export async function getInvoice(req: Request, res: Response) {
               COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
               COALESCE(i.party_email_snapshot, p.email) as party_email,
               COALESCE(i.party_gstin_snapshot, p.gstin) as party_gstin,
+              p.pan as party_pan,
               COALESCE(i.billing_address_snapshot, p.billing_address) as party_billing_address,
               p.billing_city as party_city,
               p.billing_state as party_state,
@@ -814,16 +843,6 @@ export async function updateInvoice(req: Request, res: Response) {
       if (nextInvoiceNumber !== oldInv.invoice_number) {
         await assertInvoiceNumberAvailable(client, companyId, nextInvoiceNumber, id);
       }
-
-      const allocRes = await client.query(
-        `SELECT 1 FROM payment_allocations pa
-         INNER JOIN payments p ON p.id = pa.payment_id
-         WHERE pa.invoice_id = $1 AND p.company_id = $2 AND p.is_deleted = false
-         LIMIT 1`,
-        [id, companyId],
-      );
-      if (allocRes.rows.length) throw new Error('Cannot edit an invoice that has payments recorded');
-      if (Number(oldInv.paid_amount || 0) > 0) throw new Error('Cannot edit an invoice with an amount paid');
 
       await backupInvoiceSnapshot(client, companyId, id, 'before_update_invoice', req.user!.id);
 
@@ -930,8 +949,9 @@ export async function updateInvoice(req: Request, res: Response) {
       const pdfTpl = ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : oldInv.pdf_template;
       const docTheme = ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any)
         ? d.document_theme
-        : oldInv.document_theme || 'classic';
+        : oldInv.document_theme || 'executive';
       const updatedGodownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
+      const updatedPaymentStatus = paymentStatusFor(totalsInfo.totalAmount, Number(oldInv.paid_amount || 0));
 
       await client.query(
         `UPDATE invoices SET
@@ -940,7 +960,7 @@ export async function updateInvoice(req: Request, res: Response) {
           billing_address_snapshot = $11, shipping_address_snapshot = $12,
           subtotal = $13, discount_amount = $14, taxable_amount = $15,
           cgst_amount = $16, sgst_amount = $17, igst_amount = $18, cess_amount = $19, round_off = $20, total_amount = $21,
-          payment_status = 'unpaid', notes = $22, external_description = $23, pdf_template = $24, document_theme = $25,
+          payment_status = $37, notes = $22, external_description = $23, pdf_template = $24, document_theme = $25,
           is_gst_invoice = $26,
           company_bank_account_id = $27, bank_label_snapshot = $28, bank_name_snapshot = $29,
           bank_account_number_snapshot = $30, bank_ifsc_snapshot = $31, bank_branch_snapshot = $32, upi_id_snapshot = $33,
@@ -984,6 +1004,7 @@ export async function updateInvoice(req: Request, res: Response) {
           nextInvoiceNumber,
           id,
           companyId,
+          updatedPaymentStatus,
         ],
       );
 
@@ -1040,32 +1061,14 @@ export async function updateInvoice(req: Request, res: Response) {
           );
           if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
           if (itemRes.rows[0].track_inventory) {
-            if (!godownId) throw new Error(`Select a godown before selling stock item "${itemRes.rows[0].name}"`);
-            const stockRes = await client.query(
-              `SELECT quantity, reserved_quantity FROM item_stock
-               WHERE item_id = $1 AND godown_id = $2 AND company_id = $3 FOR UPDATE`,
-              [item.item_id, godownId, companyId],
-            );
-            if (!stockRes.rows.length) throw new Error(`No stock row found for "${itemRes.rows[0].name}" in the selected godown`);
-            const qty = Number(item.quantity) || 0;
-            const available = Number(stockRes.rows[0].quantity || 0) - Number(stockRes.rows[0].reserved_quantity || 0);
-            if (qty <= 0) throw new Error(`Invalid quantity for "${itemRes.rows[0].name}"`);
-            if (available < qty) {
-              throw new Error(`Insufficient stock for "${itemRes.rows[0].name}". Available: ${available}, requested: ${qty}`);
-            }
-            await client.query(
-              `UPDATE item_stock SET quantity = quantity - $1::numeric WHERE item_id = $2 AND godown_id = $3 AND company_id = $4`,
-              [qty, item.item_id, godownId, companyId],
-            );
-            const balRes = await client.query(
-              'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
-              [item.item_id, godownId, companyId],
-            );
-            await client.query(
-              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, created_by)
-               VALUES ($1, $2, $3, 'sale', 'invoice', $4, $5, $6, $7)`,
-              [companyId, item.item_id, godownId, id, -qty, balRes.rows[0]?.quantity || 0, req.user!.id],
-            );
+            await deductSaleStockAllowNegative(client, {
+              companyId,
+              itemId: item.item_id,
+              godownId,
+              invoiceId: id,
+              quantity: item.quantity,
+              userId: req.user!.id,
+            });
           }
         }
       }
@@ -1218,7 +1221,6 @@ export async function deleteInvoice(req: Request, res: Response) {
       if (!invRes.rows.length) throw new Error('Invoice not found');
       const inv = invRes.rows[0];
       if (inv.irn) throw new Error('This invoice has an active IRN. Cancel e-invoice before deleting.');
-      if (Number(inv.paid_amount || 0) > 0) throw new Error('Cannot delete an invoice that has payments recorded.');
 
       await backupInvoiceSnapshot(client, companyId, id, 'delete_invoice', req.user!.id);
 
@@ -1372,9 +1374,9 @@ export async function previewInvoicePdf(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body || {};
-    const templateRaw = String(d.template || 'standard');
-    const template = ALLOWED_PDF_TEMPLATES.includes(templateRaw as any) ? templateRaw : 'standard';
-    const theme = ALLOWED_DOCUMENT_THEMES.includes(String(d.theme || '') as any) ? String(d.theme) : 'classic';
+    const templateRaw = String(d.template || 'monochrome');
+    const template = ALLOWED_PDF_TEMPLATES.includes(templateRaw as any) ? templateRaw : 'monochrome';
+    const theme = ALLOWED_DOCUMENT_THEMES.includes(String(d.theme || '') as any) ? String(d.theme) : 'executive';
 
     if (!Array.isArray(d.items) || d.items.length === 0) {
       return res.status(400).json(error('At least one line item is required'));
@@ -1451,9 +1453,15 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
 
     const posRow = d.party_id
-      ? await query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
+      ? await query(`SELECT gstin, billing_state_code, state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
       : { rows: [{}] };
-    const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
+    const placeOfSupply = (
+      explicitPlaceOfSupply ||
+      stateCodeFromGstin(posRow.rows[0]?.gstin) ||
+      posRow.rows[0]?.billing_state_code ||
+      posRow.rows[0]?.state_code ||
+      ''
+    ).toString().slice(0, 5) || null;
 
     const partySnap = party
       ? {

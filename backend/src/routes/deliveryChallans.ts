@@ -7,6 +7,7 @@ router.use(verifyToken);
 
 router.get('/', ctrl.listDeliveryChallans);
 router.post('/', ctrl.createDeliveryChallan);
+router.get('/:id/pdf', ctrl.getDeliveryChallanPDF);
 router.get('/:id', ctrl.getDeliveryChallan);
 router.patch('/:id/status', ctrl.updateChallanStatus);
 router.post('/:id/convert', ctrl.convertChallanToInvoice);

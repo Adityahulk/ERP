@@ -31,6 +31,95 @@ function rupees(value: unknown): string {
   return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const GST_STATE_NAMES: Record<string, string> = {
+  '01': 'Jammu & Kashmir',
+  '02': 'Himachal Pradesh',
+  '03': 'Punjab',
+  '04': 'Chandigarh',
+  '05': 'Uttarakhand',
+  '06': 'Haryana',
+  '07': 'Delhi',
+  '08': 'Rajasthan',
+  '09': 'Uttar Pradesh',
+  '10': 'Bihar',
+  '11': 'Sikkim',
+  '12': 'Arunachal Pradesh',
+  '13': 'Nagaland',
+  '14': 'Manipur',
+  '15': 'Mizoram',
+  '16': 'Tripura',
+  '17': 'Meghalaya',
+  '18': 'Assam',
+  '19': 'West Bengal',
+  '20': 'Jharkhand',
+  '21': 'Odisha',
+  '22': 'Chhattisgarh',
+  '23': 'Madhya Pradesh',
+  '24': 'Gujarat',
+  '26': 'Dadra & Nagar Haveli and Daman & Diu',
+  '27': 'Maharashtra',
+  '29': 'Karnataka',
+  '30': 'Goa',
+  '31': 'Lakshadweep',
+  '32': 'Kerala',
+  '33': 'Tamil Nadu',
+  '34': 'Puducherry',
+  '35': 'Andaman & Nicobar Islands',
+  '36': 'Telangana',
+  '37': 'Andhra Pradesh',
+  '38': 'Ladakh',
+  '97': 'Other Territory',
+};
+
+function stateCodeFromGstin(value: unknown): string {
+  const gstin = String(value || '').trim().toUpperCase();
+  return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
+}
+
+function stateLabel(codeOrGstin: unknown, stateName?: unknown): string {
+  const gstCode = stateCodeFromGstin(codeOrGstin);
+  const raw = String(codeOrGstin || '').trim();
+  const code = gstCode || (raw.match(/\b(\d{2})\b/)?.[1] || '');
+  const cleanName = String(stateName || '').trim().replace(/^\d{2}\s*[-:]\s*/, '');
+  const name = GST_STATE_NAMES[code] || cleanName;
+  return code && name ? `${code}-${name}` : (code || name);
+}
+
+function addressHtml(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '—';
+  return raw.split(/\n|,\s*/).map((part) => part.trim()).filter(Boolean).map(esc).join('<br/>');
+}
+
+function fieldLine(label: string, value: unknown): string {
+  const v = String(value || '').trim();
+  return v ? `<div><b>${esc(label)}:</b> ${esc(v)}</div>` : '';
+}
+
+function contactBlock(args: {
+  title: string;
+  name: unknown;
+  address?: unknown;
+  phone?: unknown;
+  email?: unknown;
+  gstin?: unknown;
+  pan?: unknown;
+  state?: unknown;
+}): string {
+  return `<div class="contact-block">
+    <div class="label">${esc(args.title)}</div>
+    <div class="value">${esc(args.name || '—')}</div>
+    <div class="muted">${addressHtml(args.address)}</div>
+    <div class="contact-lines">
+      ${fieldLine('Phone no.', args.phone)}
+      ${fieldLine('Email', args.email)}
+      ${fieldLine('GSTIN', args.gstin)}
+      ${fieldLine('PAN', args.pan)}
+      ${fieldLine('State', args.state)}
+    </div>
+  </div>`;
+}
+
 function stockQuantity(value: unknown, itemName: string): number {
   const qty = Number(value);
   if (!Number.isFinite(qty) || qty <= 0) return 0;
@@ -182,9 +271,10 @@ export async function downloadChallanPdf(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const [companyRes, challanRes, itemsRes] = await Promise.all([
-      query('SELECT name, address, gstin, phone, email FROM companies WHERE id = $1', [companyId]),
+      query('SELECT * FROM companies WHERE id = $1', [companyId]),
       query(
-        `SELECT jw.*, p.name as party_name, p.gstin, p.billing_address, g.name as godown_name
+        `SELECT jw.*, p.name as party_name, p.gstin, p.pan, p.phone as party_phone, p.email as party_email,
+                p.billing_address, p.billing_state, p.billing_state_code, g.name as godown_name
          FROM job_work_challans jw
          LEFT JOIN parties p ON jw.party_id = p.id
          LEFT JOIN godowns g ON jw.godown_id = g.id
@@ -199,6 +289,31 @@ export async function downloadChallanPdf(req: Request, res: Response) {
     const challan = challanRes.rows[0];
     const items = itemsRes.rows;
     const title = challan.challan_type === 'outward' ? 'Job Work Outward Challan' : 'Job Work Inward Challan';
+    const companyName = company.legal_name || company.gstin_legal_name || company.name || 'Company';
+    const companyAddress = [
+      company.registered_address || company.gstin_address || company.address,
+      [company.city, company.state, company.pincode].filter(Boolean).join(', '),
+    ].filter(Boolean).join(', ');
+    const sellerBlock = contactBlock({
+      title: 'Seller',
+      name: companyName,
+      address: companyAddress,
+      phone: company.phone,
+      email: company.email,
+      gstin: company.gstin,
+      pan: company.pan,
+      state: stateLabel(company.gstin || company.state_code, company.state),
+    });
+    const partyBlock = contactBlock({
+      title: 'Job Worker / Party',
+      name: challan.party_name_snapshot || challan.party_name,
+      address: challan.billing_address,
+      phone: challan.party_phone,
+      email: challan.party_email,
+      gstin: challan.party_gstin_snapshot || challan.gstin,
+      pan: challan.pan,
+      state: stateLabel(challan.party_gstin_snapshot || challan.gstin || challan.billing_state_code, challan.billing_state),
+    });
     const rows = items.map((item: any, idx: number) => `
       <tr>
         <td>${idx + 1}</td>
@@ -218,17 +333,18 @@ export async function downloadChallanPdf(req: Request, res: Response) {
       h1{margin:0;color:#3730a3;font-size:26px}.company{font-size:20px;font-weight:800}.muted{color:#64748b;font-size:12px;line-height:1.5}
       .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}.box{border:1px solid #e2e8f0;border-radius:8px;padding:12px}
       .label{font-size:11px;text-transform:uppercase;color:#64748b;font-weight:700;margin-bottom:4px}.value{font-size:14px;font-weight:700}
+      .contact-lines{font-size:12px;color:#334155;line-height:1.5;margin-top:4px}
       table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#4f46e5;color:white;text-align:left;padding:9px;font-size:12px}
       td{border:1px solid #e2e8f0;padding:8px;font-size:12px;vertical-align:top}.num{text-align:right;font-variant-numeric:tabular-nums}
       .summary{margin-left:auto;margin-top:16px;width:280px}.summary div{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0}
       .note{margin-top:22px;font-size:12px;color:#475569}.sign{margin-top:46px;text-align:right;font-size:12px}
     </style></head><body>
       <section class="top">
-        <div><div class="company">${esc(company.name || 'Company')}</div><div class="muted">${esc(company.address || '')}</div><div class="muted">${company.gstin ? `GSTIN: ${esc(company.gstin)}` : ''}</div></div>
+        <div>${sellerBlock}</div>
         <div style="text-align:right"><h1>${esc(title)}</h1><div class="value">${esc(challan.challan_number)}</div><div class="muted">${new Date(challan.challan_date).toLocaleDateString('en-IN')}</div></div>
       </section>
       <section class="grid">
-        <div class="box"><div class="label">Job Worker / Party</div><div class="value">${esc(challan.party_name_snapshot || challan.party_name)}</div><div class="muted">${esc(challan.billing_address || '')}</div><div class="muted">${challan.party_gstin_snapshot || challan.gstin ? `GSTIN: ${esc(challan.party_gstin_snapshot || challan.gstin)}` : ''}</div></div>
+        <div class="box">${partyBlock}</div>
         <div class="box"><div class="label">Movement Details</div><div class="muted">Type: ${esc(challan.challan_type)}</div><div class="muted">Godown: ${esc(challan.godown_name || '-')}</div><div class="muted">Return due: ${challan.return_due_date ? new Date(challan.return_due_date).toLocaleDateString('en-IN') : '-'}</div><div class="muted">Vehicle: ${esc(challan.vehicle_number || '-')}</div></div>
       </section>
       <table><thead><tr><th>#</th><th>Material</th><th>Unit</th><th>Sent</th><th>Received</th><th>Rejected</th><th>Wastage</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>

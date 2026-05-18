@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Truck, UserPlus } from 'lucide-react';
+import { Download, Eye, Plus, Truck, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
@@ -116,6 +116,31 @@ export default function DeliveryChallansTab() {
     });
   };
 
+  const openChallanPdf = async (id: string, challanNumber?: string, inline = false) => {
+    const t = toast.loading(inline ? 'Opening challan…' : 'Preparing PDF…');
+    try {
+      const res = await api.get(`/sales/challans/${id}/pdf`, {
+        params: inline ? { inline: 1 } : undefined,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      if (inline) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${challanNumber || 'delivery-challan'}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+      toast.success(inline ? 'Preview opened' : 'Download started', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not generate challan PDF', { id: t });
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -135,7 +160,7 @@ export default function DeliveryChallansTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Due Date</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
-              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-40">Action</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-56">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -164,6 +189,12 @@ export default function DeliveryChallansTab() {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-right flex justify-end gap-1.5">
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Preview delivery challan" onClick={() => openChallanPdf(c.id, c.challan_number, true)}>
+                    <Eye className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download delivery challan" onClick={() => openChallanPdf(c.id, c.challan_number)}>
+                    <Download className="w-4 h-4" />
+                  </Button>
                   {c.status === 'open' && (
                     <Button size="sm" variant="outline" className="h-7 text-xs px-2"
                       onClick={() => statusMut.mutate({ id: c.id, status: 'dispatched' })}>

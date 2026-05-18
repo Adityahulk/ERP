@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Plus, Search, Receipt } from 'lucide-react';
 import MoneyInput from '@/components/transactions/MoneyInput';
+import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
@@ -52,6 +53,21 @@ export default function ExpenseList() {
   });
   const u = (f: string, v: any) => setForm((p: any) => ({ ...p, [f]: v }));
 
+  const { clearDraft } = useTransactionDraft(
+    'bizflow:draft:expense',
+    { showForm, form },
+    (draft: any) => {
+      if (draft.form && typeof draft.form === 'object') setForm((prev: any) => ({ ...prev, ...draft.form }));
+      if (draft.showForm || draft.form?.category || draft.form?.amount || draft.form?.vendor_name || draft.form?.description) setShowForm(true);
+    },
+    {
+      shouldSave: (draft) => Boolean(
+        draft.showForm || draft.form?.category || draft.form?.amount || draft.form?.vendor_name ||
+        draft.form?.vendor_gstin || draft.form?.description
+      ),
+    },
+  );
+
   const gstPreview = useMemo(() => {
     const paise = Math.round((Number(form.amount) || 0) * 100);
     const buyer = stateCodeFromGstin(company?.gstin) || '';
@@ -70,6 +86,7 @@ export default function ExpenseList() {
         amount_includes_gst: !!form.amount_includes_gst,
       });
       toast.success('Expense added');
+      clearDraft();
       setShowForm(false);
       setForm({
         expense_date: new Date().toISOString().split('T')[0],
