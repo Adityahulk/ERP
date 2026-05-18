@@ -12,6 +12,7 @@ import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { useGodowns } from '@/hooks/useStock';
+import MoneyInput from '@/components/transactions/MoneyInput';
 import toast from 'react-hot-toast';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
@@ -492,8 +493,7 @@ export default function PurchaseBillsTab() {
             <p className="text-sm text-muted-foreground">Bill: {showPayDialog.billNo} · Balance: {formatMoney(showPayDialog.balance)}</p>
             <div>
               <Label className="text-xs">Amount (₹) *</Label>
-              <Input type="number" className="mt-1 tabular-nums" min={0.01} step={0.01}
-                value={payAmount} onChange={e => setPayAmount(e.target.value)} />
+              <MoneyInput className="mt-1" value={Math.round((parseFloat(payAmount || '0') || 0) * 100)} onChange={(paise) => setPayAmount(String(paise / 100))} />
             </div>
             <div>
               <Label className="text-xs">Payment Mode</Label>

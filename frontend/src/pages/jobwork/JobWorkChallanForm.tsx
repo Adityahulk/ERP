@@ -8,6 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { ArrowLeft, Plus, X, Wrench, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import MoneyInput from '@/components/transactions/MoneyInput';
+import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
+import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -82,9 +85,13 @@ export default function JobWorkChallanForm() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 animate-in slide-in-from-bottom-4 duration-500">
-      <Button variant="ghost" className="mb-4 gap-2 text-slate-600" onClick={() => navigate('/job-work')}><ArrowLeft className="w-4 h-4" /> Back</Button>
-      <h1 className="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2"><Wrench className="w-7 h-7 text-indigo-600" /> New Job Work Challan</h1>
+    <TransactionPageShell className="max-w-6xl">
+      <TransactionHeader
+        title="New Job Work Challan"
+        description="Send materials to a job worker or record processed goods received back."
+        left={<Button variant="ghost" size="icon" onClick={() => navigate('/job-work')}><ArrowLeft className="w-5 h-5" /></Button>}
+        actions={<Wrench className="w-5 h-5 text-indigo-600" />}
+      />
 
       {/* Challan Type */}
       <Card className="mb-6"><CardContent className="p-6">
@@ -134,8 +141,8 @@ export default function JobWorkChallanForm() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div><Label>Transport Details</Label><Input className="mt-1" value={form.transport_details} onChange={e => setForm({ ...form, transport_details: e.target.value })} /></div>
           <div><Label>Vehicle Number</Label><Input className="mt-1" value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></div>
-          <div><Label>Labour Charges (₹)</Label><Input type="number" min={0} step={0.01} className="mt-1" value={form.labour_charges || ''} onChange={e => setForm({ ...form, labour_charges: parseFloat(e.target.value) || 0 })} /></div>
-          <div><Label>Other Charges (₹)</Label><Input type="number" min={0} step={0.01} className="mt-1" value={form.other_charges || ''} onChange={e => setForm({ ...form, other_charges: parseFloat(e.target.value) || 0 })} /></div>
+          <div><Label>Labour Charges (₹)</Label><MoneyInput className="mt-1" value={Math.round((form.labour_charges || 0) * 100)} onChange={paise => setForm({ ...form, labour_charges: paise / 100 })} /></div>
+          <div><Label>Other Charges (₹)</Label><MoneyInput className="mt-1" value={Math.round((form.other_charges || 0) * 100)} onChange={paise => setForm({ ...form, other_charges: paise / 100 })} /></div>
         </div>
         {form.challan_type === 'outward' && (
           <div className="flex items-center gap-3 p-3 rounded-lg border bg-amber-50 border-amber-200">
@@ -165,13 +172,10 @@ export default function JobWorkChallanForm() {
               <div className="col-span-2">{i === 0 && <Label className="text-xs">Quantity</Label>}<Input type="number" min={0.01} step={0.01} className="mt-1" value={item.quantity || ''} onChange={e => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} /></div>
               <div className="col-span-2">
                 {i === 0 && <Label className="text-xs">Unit Price (₹)</Label>}
-                <Input 
-                  type="number" 
-                  min={0} 
-                  step={0.01}
+                <MoneyInput
                   className="mt-1 tabular-nums" 
-                  value={(item.unit_price / 100).toFixed(2)} 
-                  onChange={e => updateItem(i, 'unit_price', Math.round((parseFloat(e.target.value) || 0) * 100))} 
+                  value={item.unit_price || 0}
+                  onChange={paise => updateItem(i, 'unit_price', paise)}
                 />
               </div>
               <div className="col-span-2">{i === 0 && <Label className="text-xs">HSN/SAC</Label>}<Input className="mt-1" value={item.hsn_code || ''} onChange={e => updateItem(i, 'hsn_code', e.target.value)} /></div>
@@ -199,11 +203,16 @@ export default function JobWorkChallanForm() {
         )}
       </CardContent></Card>
 
-      <div className="flex gap-3 justify-end">
-        <Button variant="outline" onClick={() => navigate('/job-work')}>Cancel</Button>
-        <Button loading={saveMutation.isPending} onClick={handleSave}>Create Challan</Button>
+      <div className="sticky bottom-0 z-20 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
+        <DocumentActionsBar
+          onCancel={() => navigate('/job-work')}
+          onSave={handleSave}
+          canSave={!!form.party_id && items.length > 0}
+          saving={saveMutation.isPending}
+          saveLabel="Create Challan"
+        />
       </div>
       <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={selectParty} />
-    </div>
+    </TransactionPageShell>
   );
 }

@@ -12,6 +12,8 @@ import { ArrowLeft, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, type DocumentThemeId, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
+import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 
 export default function QuotationForm() {
   const navigate = useNavigate();
@@ -136,17 +138,13 @@ export default function QuotationForm() {
   const canSave = items.length > 0 && !!quotationDate;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-12">
+    <TransactionPageShell className="max-w-5xl">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}>
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">New Quotation</h1>
-          <p className="text-sm text-muted-foreground">Send a price offer before raising an invoice</p>
-        </div>
-      </div>
+      <TransactionHeader
+        title="New Quotation"
+        description="Send a price offer before raising an invoice."
+        left={<Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}><ArrowLeft className="w-5 h-5" /></Button>}
+      />
 
       {/* Party + Doc Info side by side */}
       <div className="grid md:grid-cols-2 gap-4">
@@ -321,16 +319,14 @@ export default function QuotationForm() {
       )}
 
       {/* Actions */}
-      <div className="flex gap-3 justify-end flex-wrap pb-6">
-        <Button type="button" variant="outline" onClick={() => navigate('/quotations')}>Cancel</Button>
-        <Button
-          onClick={() => create.mutate()}
-          disabled={!canSave}
-          loading={create.isPending}
-          className="gap-1.5"
-        >
-          Save Quotation
-        </Button>
+      <div className="sticky bottom-0 z-20 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
+        <DocumentActionsBar
+          onCancel={() => navigate('/quotations')}
+          onSave={() => create.mutate()}
+          canSave={canSave}
+          saving={create.isPending}
+          saveLabel="Save Quotation"
+        />
       </div>
 
       <QuickAddPartySheet
@@ -342,6 +338,6 @@ export default function QuotationForm() {
           qc.invalidateQueries({ queryKey: ['parties'] });
         }}
       />
-    </div>
+    </TransactionPageShell>
   );
 }

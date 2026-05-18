@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDate, formatMoney, rupeesToPaise } from '@/lib/formatters';
 import { QuickAddBankAccountSheet } from '@/components/company/QuickAddBankAccountSheet';
+import MoneyInput from '@/components/transactions/MoneyInput';
 
 type CashBankSummary = {
   cash_in_hand: number;
@@ -384,7 +385,7 @@ export default function AccountingDashboard() {
                 </div>
                 <div>
                   <Label>Amount (₹)</Label>
-                  <Input className="mt-1" inputMode="decimal" value={adjustAmount} onChange={(e) => setAdjustAmount(e.target.value)} />
+                  <MoneyInput className="mt-1" value={rupeesToPaise(adjustAmount || '0')} onChange={(paise) => setAdjustAmount(String(paise / 100))} />
                 </div>
                 <div>
                   <Label>Reference</Label>
@@ -480,7 +481,7 @@ export default function AccountingDashboard() {
                     </div>
                     <div>
                       <Label>Opening amount (₹)</Label>
-                      <Input className="mt-1" inputMode="decimal" value={loanForm.principal_amount} onChange={(e) => setLoanForm((f) => ({ ...f, principal_amount: e.target.value }))} />
+                      <MoneyInput className="mt-1" value={rupeesToPaise(loanForm.principal_amount || '0')} onChange={(paise) => setLoanForm((f) => ({ ...f, principal_amount: String(paise / 100) }))} />
                     </div>
                     <div>
                       <Label>Interest %</Label>
@@ -532,7 +533,7 @@ export default function AccountingDashboard() {
                               <option value="interest">Interest</option>
                               <option value="adjustment">Adjustment</option>
                             </select>
-                            <Input inputMode="decimal" placeholder="Amount ₹" value={tx.amount} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, amount: e.target.value } }))} />
+                            <MoneyInput placeholder="Amount ₹" value={rupeesToPaise(tx.amount || '0')} onChange={(paise) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, amount: String(paise / 100) } }))} />
                             <Input placeholder="Reference" value={tx.reference_number} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, reference_number: e.target.value } }))} />
                             <Input placeholder="Notes" value={tx.notes} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, notes: e.target.value } }))} />
                             <Button loading={loanTxMutation.isPending && loanTxMutation.variables?.id === loan.id} onClick={() => saveLoanTx(loan.id)}>Record</Button>
@@ -584,7 +585,7 @@ export default function AccountingDashboard() {
               </div>
               <div className="rounded-md border p-3 space-y-3">
                 <p className="text-sm font-semibold">Record Payment</p>
-                <Input inputMode="decimal" placeholder="Amount in rupees" value={receiptAmount} onChange={(e) => setReceiptAmount(e.target.value)} />
+                <MoneyInput placeholder="Amount in rupees" value={rupeesToPaise(receiptAmount || '0')} onChange={(paise) => setReceiptAmount(String(paise / 100))} />
                 <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={receiptMode} onChange={(e) => setReceiptMode(e.target.value)}>
                   {paymentModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>

@@ -17,6 +17,7 @@ import { GST_RATE_OPTIONS } from '@/lib/gstRates';
 import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
 import api from '@/lib/api';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
+import MoneyInput from '@/components/transactions/MoneyInput';
 
 export interface VyaparLineItem {
   item_id?: string;
@@ -332,23 +333,19 @@ export default function VyaparLineItems({
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <Input
-                          type="number"
+                        <MoneyInput
                           className="h-8 text-right w-28 tabular-nums"
-                          min={0}
-                          step="0.01"
-                          value={(item.unit_price / 100).toFixed(2)}
-                          onChange={(e) => update(idx, { unit_price: Math.round((parseFloat(e.target.value) || 0) * 100) })}
+                          placeholder="0"
+                          value={item.unit_price}
+                          onChange={(unit_price) => update(idx, { unit_price })}
                         />
                       </td>
                       <td className="px-3 py-2 hidden sm:table-cell">
-                        <Input
-                          type="number"
+                        <MoneyInput
                           className="h-8 text-right w-24 tabular-nums"
-                          min={0}
-                          step="0.01"
-                          value={(item.discount_amount / 100).toFixed(2)}
-                          onChange={(e) => update(idx, { discount_amount: Math.round((parseFloat(e.target.value) || 0) * 100) })}
+                          placeholder="0"
+                          value={item.discount_amount}
+                          onChange={(discount_amount) => update(idx, { discount_amount })}
                         />
                       </td>
                       {isGst && (
@@ -431,13 +428,11 @@ export default function VyaparLineItems({
                             {/* Mobile: disc & gst in expanded row */}
                             <div className="flex items-center gap-2 sm:hidden">
                               <span className="text-muted-foreground w-16">Disc (₹)</span>
-                              <Input
-                                type="number"
+                              <MoneyInput
                                 className="h-7 w-24 text-xs"
-                                min={0}
-                                step="0.01"
-                                value={(item.discount_amount / 100).toFixed(2)}
-                                onChange={(e) => update(idx, { discount_amount: Math.round((parseFloat(e.target.value) || 0) * 100) })}
+                                placeholder="0"
+                                value={item.discount_amount}
+                                onChange={(discount_amount) => update(idx, { discount_amount })}
                               />
                             </div>
                             {isGst && (

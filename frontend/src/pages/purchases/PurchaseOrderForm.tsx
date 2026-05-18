@@ -12,6 +12,8 @@ import { ArrowLeft, ScanLine, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
+import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 
 export default function PurchaseOrderForm() {
   const navigate = useNavigate();
@@ -114,23 +116,14 @@ export default function PurchaseOrderForm() {
   const canSave = !!partyId && !!godownId && items.length > 0;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-12">
+    <TransactionPageShell className="max-w-5xl">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold">New Purchase Order</h1>
-            <p className="text-sm text-muted-foreground">Select party and add items to order</p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
-          <ScanLine className="w-4 h-4" />
-          Scan Supplier Quote
-        </Button>
-      </div>
+      <TransactionHeader
+        title="New Purchase Order"
+        description="Select party and add items to order."
+        left={<Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}><ArrowLeft className="w-5 h-5" /></Button>}
+        actions={<Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}><ScanLine className="w-4 h-4" /> Scan Supplier Quote</Button>}
+      />
 
       {/* Supplier + Doc Info */}
       <div className="grid md:grid-cols-2 gap-4">
@@ -233,15 +226,14 @@ export default function PurchaseOrderForm() {
       </Card>
 
       {/* Actions */}
-      <div className="flex gap-3 justify-end flex-wrap pb-6">
-        <Button type="button" variant="outline" onClick={() => navigate('/purchases')}>Cancel</Button>
-        <Button
-          onClick={() => createPO.mutate()}
-          disabled={!canSave}
-          loading={createPO.isPending}
-        >
-          Save Purchase Order
-        </Button>
+      <div className="sticky bottom-0 z-20 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
+        <DocumentActionsBar
+          onCancel={() => navigate('/purchases')}
+          onSave={() => createPO.mutate()}
+          canSave={canSave}
+          saving={createPO.isPending}
+          saveLabel="Save Purchase Order"
+        />
       </div>
 
       <QuickAddPartySheet
@@ -260,6 +252,6 @@ export default function PurchaseOrderForm() {
         context="Supplier Quotation / Invoice"
         onConfirm={handleOcrConfirm}
       />
-    </div>
+    </TransactionPageShell>
   );
 }

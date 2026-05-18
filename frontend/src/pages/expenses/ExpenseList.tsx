@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Plus, Search, Receipt } from 'lucide-react';
+import MoneyInput from '@/components/transactions/MoneyInput';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
@@ -154,7 +155,7 @@ export default function ExpenseList() {
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div><Label>Amount (₹) *</Label><Input type="number" className="mt-1 tabular-nums text-lg" min={0.01} step={0.01} value={form.amount || ''} onChange={e => u('amount', parseFloat(e.target.value) || 0)} />
+            <div><Label>Amount (₹) *</Label><MoneyInput className="mt-1 text-lg" value={Math.round((Number(form.amount) || 0) * 100)} onChange={paise => u('amount', paise / 100)} />
               <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
                 <input type="checkbox" checked={!!form.amount_includes_gst} onChange={e => u('amount_includes_gst', e.target.checked)} className="rounded border" />
                 Amount is bill total (GST included). Leave off if you enter taxable value before GST.
