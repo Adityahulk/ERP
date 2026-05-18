@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye, MessageCircle, Mail } from 'lucide-react';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -102,6 +102,22 @@ export default function QuotationDetail() {
     }
   };
 
+  const shareQuotation = async (mode: 'whatsapp' | 'email') => {
+    if (!id) return;
+    try {
+      const res = await api.post(`/quotations/${id}/${mode}`, {});
+      const url = res.data?.data?.url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      const msg = e.response?.data?.error || 'Share failed';
+      const value = window.prompt(msg);
+      if (!value) return;
+      const res = await api.post(`/quotations/${id}/${mode}`, mode === 'whatsapp' ? { phone: value } : { email: value });
+      const url = res.data?.data?.url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-12 flex justify-center">
@@ -141,6 +157,14 @@ export default function QuotationDetail() {
           <Button variant="outline" size="sm" onClick={downloadPdf} loading={pdfLoading} className="gap-1.5">
             <Download className="w-4 h-4" />
             Download PDF
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => shareQuotation('whatsapp')} className="gap-1.5">
+            <MessageCircle className="w-4 h-4" />
+            WhatsApp
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => shareQuotation('email')} className="gap-1.5">
+            <Mail className="w-4 h-4" />
+            Email
           </Button>
           {alreadyConverted && quote.converted_to_invoice_id && (
             <Button size="sm" variant="outline" className="gap-1.5 text-violet-600 border-violet-200" onClick={() => navigate(`/sales/${quote.converted_to_invoice_id}`)}>

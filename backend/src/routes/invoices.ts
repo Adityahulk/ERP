@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { verifyToken } from '../middleware/auth';
 import { requireMinRole } from '../middleware/role';
 import * as ctrl from '../controllers/invoiceController';
+import { uploadInvoiceAttachment } from '../services/fileUpload';
 
 const router = Router();
 router.use(verifyToken);
@@ -20,6 +21,7 @@ router.get('/:id/einvoice/pdf', ctrl.getEinvoicePdf);
 router.post('/:id/ewaybill/generate', requireMinRole('accountant'), ctrl.generateEwayBill);
 router.post('/:id/ewaybill/cancel', requireMinRole('company_admin'), ctrl.cancelEwayBill);
 router.post('/:id/payment', ctrl.recordPayment);
+router.post('/:id/attachments', uploadInvoiceAttachment, ctrl.addInvoiceAttachment);
 
 router.patch('/:id', requireMinRole('manager'), ctrl.updateInvoice);
 router.get('/:id', ctrl.getInvoice);

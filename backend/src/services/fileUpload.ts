@@ -67,6 +67,12 @@ export const uploadBill = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 }).single('bill');
 
+/** Invoice attachment upload: /uploads/invoice-attachments/ — max 10MB */
+export const uploadInvoiceAttachment = multer({
+  storage: makeStorage('invoice-attachments'),
+  limits: { fileSize: 10 * 1024 * 1024 },
+}).single('file');
+
 /** Employee document upload: /uploads/employees/ — max 10MB */
 export const uploadEmployeeDocument = multer({
   storage: makeStorage('employees'),

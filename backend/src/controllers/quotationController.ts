@@ -105,6 +105,30 @@ function calculateLine(item: QuotationItemInput, isInterstate: boolean) {
   };
 }
 
+async function getQuotationShareRow(id: string, companyId: string) {
+  const result = await query(
+    `SELECT q.*, p.name AS party_name, p.phone AS party_phone, p.email AS party_email,
+            c.name AS company_name, c.phone AS company_phone, c.email AS company_email
+     FROM quotations q
+     LEFT JOIN parties p ON p.id = q.party_id AND p.company_id = q.company_id AND p.is_deleted = false
+     LEFT JOIN companies c ON c.id = q.company_id
+     WHERE q.id = $1 AND q.company_id = $2 AND q.is_deleted = false`,
+    [id, companyId],
+  );
+  return result.rows[0] || null;
+}
+
+function quotationShareMessage(row: any) {
+  const company = row.company_name || 'our company';
+  const party = row.party_name_override || row.party_name || 'there';
+  return [
+    `Hello ${party},`,
+    `Please find quotation ${row.quotation_number} from ${company}.`,
+    `Amount: Rs ${(Number(row.total_amount || 0) / 100).toFixed(2)}`,
+    row.valid_until ? `Valid until: ${new Date(row.valid_until).toLocaleDateString('en-IN')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
 export async function createQuotation(req: Request, res: Response) {
   try {
     const d = req.body;
@@ -275,6 +299,33 @@ export async function getQuotation(req: Request, res: Response) {
     res.json(success({ ...result.rows[0], items: itemsRes.rows }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
+  }
+}
+
+export async function shareQuotationWhatsApp(req: Request, res: Response) {
+  try {
+    const row = await getQuotationShareRow(req.params.id, req.user!.company_id);
+    if (!row) return res.status(404).json(error('Quotation not found'));
+    const phone = String(req.body?.phone || row.party_phone_override || row.party_phone || '').replace(/\D/g, '');
+    if (phone.length < 10) return res.status(400).json(error('Enter a mobile number to share this quotation on WhatsApp.'));
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(quotationShareMessage(row))}`;
+    res.json(success({ url, phone }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to prepare WhatsApp share'));
+  }
+}
+
+export async function shareQuotationEmail(req: Request, res: Response) {
+  try {
+    const row = await getQuotationShareRow(req.params.id, req.user!.company_id);
+    if (!row) return res.status(404).json(error('Quotation not found'));
+    const emailTo = trimOrNull(req.body?.email) || row.party_email_override || row.party_email;
+    if (!emailTo) return res.status(400).json(error('Enter an email address to share this quotation.'));
+    const subject = `Quotation ${row.quotation_number}`;
+    const body = quotationShareMessage(row);
+    res.json(success({ url: `mailto:${encodeURIComponent(emailTo)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, email: emailTo }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to prepare email share'));
   }
 }
 

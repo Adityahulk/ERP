@@ -93,6 +93,7 @@ export function useCreateInvoice() {
       qc.invalidateQueries({ queryKey: ['parties'] });
       qc.invalidateQueries({ queryKey: ['stock'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['accounting'] });
     },
   });
 }
@@ -108,6 +109,7 @@ export function useUpdateInvoice() {
       qc.invalidateQueries({ queryKey: ['parties'] });
       qc.invalidateQueries({ queryKey: ['stock'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['accounting'] });
     },
   });
 }
@@ -121,6 +123,7 @@ export function useCancelInvoice() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['parties'] });
       qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['accounting'] });
     },
   });
 }
@@ -141,6 +144,7 @@ export function useCreatePayment() {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['parties'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['accounting'] });
     },
   });
 }

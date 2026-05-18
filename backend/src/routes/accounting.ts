@@ -19,6 +19,9 @@ router.post('/journal-entries/:id/reverse', requireMinRole('accountant'), ctrl.r
 router.get('/cash-bank/summary', ctrl.getCashBankSummary);
 router.get('/cash-bank/transactions', ctrl.getCashBankTransactions);
 router.post('/cash-bank/adjustment', requireMinRole('manager'), ctrl.createCashBankAdjustment);
+router.get('/cash-bank/loans', ctrl.listLoanAccounts);
+router.post('/cash-bank/loans', requireMinRole('manager'), ctrl.createLoanAccount);
+router.post('/cash-bank/loans/:id/transactions', requireMinRole('manager'), ctrl.recordLoanTransaction);
 
 router.get('/accounts/:id/ledger', ctrl.getLedger);
 

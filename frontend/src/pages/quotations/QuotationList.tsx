@@ -4,7 +4,7 @@ import api from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, Send, FileCheck, Eye, Download } from 'lucide-react';
+import { Plus, Loader2, Send, FileCheck, Eye, Download, MessageCircle, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function QuotationList() {
@@ -70,6 +70,27 @@ export default function QuotationList() {
     }
   };
 
+  const shareQuotation = async (id: string, mode: 'whatsapp' | 'email') => {
+    try {
+      const res = await api.post(`/quotations/${id}/${mode}`, {});
+      const url = res.data?.data?.url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      const msg = e.response?.data?.error || 'Share failed';
+      if (mode === 'whatsapp') {
+        const phone = window.prompt(msg);
+        if (!phone) return;
+        const res = await api.post(`/quotations/${id}/whatsapp`, { phone });
+        if (res.data?.data?.url) window.open(res.data.data.url, '_blank', 'noopener,noreferrer');
+      } else {
+        const email = window.prompt(msg);
+        if (!email) return;
+        const res = await api.post(`/quotations/${id}/email`, { email });
+        if (res.data?.data?.url) window.open(res.data.data.url, '_blank', 'noopener,noreferrer');
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -132,6 +153,14 @@ export default function QuotationList() {
                       <Button variant="ghost" size="sm" className="h-8" onClick={() => downloadPdf(q.id, q.quotation_number)}>
                         <Download className="w-3.5 h-3.5 mr-1" />
                         PDF
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-8" onClick={() => shareQuotation(q.id, 'whatsapp')}>
+                        <MessageCircle className="w-3.5 h-3.5 mr-1" />
+                        WhatsApp
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-8" onClick={() => shareQuotation(q.id, 'email')}>
+                        <Mail className="w-3.5 h-3.5 mr-1" />
+                        Email
                       </Button>
                       {q.status === 'draft' && (
                         <Button

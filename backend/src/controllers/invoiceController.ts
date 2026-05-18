@@ -22,6 +22,7 @@ import {
   resolveCompanyRowForInvoicePdf,
   type Queryable,
 } from '../lib/bankAccountSnapshots';
+import { getUploadUrl } from '../services/fileUpload';
 
 const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa', 'monochrome'] as const;
 const ALLOWED_DOCUMENT_THEMES = [
@@ -134,6 +135,95 @@ function invoiceLineName(item: any): string {
   const text = String(value ?? '').trim();
   if (text) return text;
   return item.is_text_row ? ' ' : 'Item';
+}
+
+function stateCodeFromGstin(value: unknown): string {
+  const gstin = String(value || '').trim().toUpperCase();
+  return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
+}
+
+async function resolveDefaultGodownId(db: Queryable, companyId: string, requested?: unknown, userGodownId?: string | null): Promise<string | null> {
+  const requestedId = trimOrNull(requested);
+  if (requestedId) return requestedId;
+  if (userGodownId) return userGodownId;
+  const res = await db.query(
+    `SELECT id FROM godowns
+     WHERE company_id = $1 AND is_deleted = false AND is_active = true
+     ORDER BY is_default DESC, created_at ASC
+     LIMIT 1`,
+    [companyId],
+  );
+  return res.rows[0]?.id || null;
+}
+
+async function resolveInvoiceGstContext(
+  db: Queryable,
+  companyId: string,
+  partyId: unknown,
+  explicitPlaceOfSupply: string,
+  requestedIsInterstate: unknown,
+): Promise<{ placeOfSupply: string | null; isInterstate: boolean }> {
+  const cRes = await db.query('SELECT state_code, gstin FROM companies WHERE id = $1', [companyId]);
+  const companyState = stateCodeFromGstin(cRes.rows[0]?.gstin) || String(cRes.rows[0]?.state_code || '').slice(0, 2);
+
+  let partyState = '';
+  if (partyId) {
+    const pRes = await db.query(
+      `SELECT gstin, billing_state_code, state_code
+       FROM parties
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [partyId, companyId],
+    );
+    partyState =
+      stateCodeFromGstin(pRes.rows[0]?.gstin) ||
+      String(pRes.rows[0]?.billing_state_code || pRes.rows[0]?.state_code || '').slice(0, 2);
+  }
+
+  const placeOfSupply = (explicitPlaceOfSupply || partyState || '').slice(0, 5) || null;
+  if (companyState && placeOfSupply) {
+    return { placeOfSupply, isInterstate: determineGSTType(companyState, placeOfSupply) === 'inter' };
+  }
+  return { placeOfSupply, isInterstate: Boolean(requestedIsInterstate) };
+}
+
+function normalizeInvoicePayments(d: any, totalAmount: number) {
+  const rows = Array.isArray(d.payments) && d.payments.length
+    ? d.payments
+    : Number(d.amount_paid || 0) > 0
+      ? [{
+          amount: d.amount_paid,
+          payment_mode: d.payment_mode || 'cash',
+          reference_number: d.payment_reference_number || d.reference_number,
+          cheque_number: d.cheque_number,
+          company_bank_account_id: d.company_bank_account_id,
+        }]
+      : [];
+
+  const normalized = rows
+    .map((row: any) => {
+      const paymentMode = String(row.payment_mode || row.type || 'cash').trim().toLowerCase();
+      const amount = Math.round(Number(row.amount) || 0);
+      return {
+        payment_mode: paymentMode,
+        amount,
+        reference_number: trimOrNull(row.reference_number),
+        cheque_number: trimOrNull(row.cheque_number),
+        instrument_date: trimOrNull(row.instrument_date),
+        company_bank_account_id: trimOrNull(row.company_bank_account_id),
+        notes: trimOrNull(row.notes),
+      };
+    })
+    .filter((row: any) => row.payment_mode !== 'credit' && row.amount > 0);
+
+  const paidAmount = normalized.reduce((sum: number, row: any) => sum + row.amount, 0);
+  if (paidAmount < 0) throw new Error('Amount paid cannot be negative');
+  if (paidAmount > totalAmount) throw new Error('Amount paid cannot exceed invoice total');
+  for (const row of normalized) {
+    if (row.payment_mode === 'cheque' && !row.cheque_number && !row.reference_number) {
+      throw new Error('Cheque number is required for cheque payments');
+    }
+  }
+  return { payments: normalized, paidAmount };
 }
 
 async function backupInvoiceSnapshot(client: any, companyId: string, invoiceId: string, action: string, createdBy: string) {
@@ -262,6 +352,7 @@ export async function createInvoice(req: Request, res: Response) {
       const rawType = d.invoice_type === 'non_gst' ? 'sale' : (d.invoice_type || 'tax_invoice');
       const isPurchase = rawType === 'purchase';
       const invoiceType = isPurchase ? 'purchase' : 'tax_invoice';
+      const godownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
 
       const requestedInvoiceNumber = trimOrNull(d.invoice_number);
       let invoiceNumber = '';
@@ -270,7 +361,7 @@ export async function createInvoice(req: Request, res: Response) {
         await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
       } else {
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          invoiceNumber = validateInvoiceNumber(await generateInvoiceNumber(companyId, rawType, d.godown_id || req.user!.godown_id));
+          invoiceNumber = validateInvoiceNumber(await generateInvoiceNumber(companyId, rawType, godownId));
           try {
             await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
             break;
@@ -281,19 +372,8 @@ export async function createInvoice(req: Request, res: Response) {
       }
 
       const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
-      let isInterstate = d.is_interstate;
-      if (explicitPlaceOfSupply) {
-        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        isInterstate = determineGSTType(cRes.rows[0]?.state_code, explicitPlaceOfSupply) === 'inter';
-      } else if (isInterstate === undefined && d.party_id) {
-        const pRes = await client.query(
-          'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-          [d.party_id, companyId]
-        );
-        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        isInterstate = determineGSTType(cRes.rows[0]?.state_code, pRes.rows[0]?.billing_state_code) === 'inter';
-      }
-      isInterstate = Boolean(isInterstate);
+      const gstContext = await resolveInvoiceGstContext(client, companyId, d.party_id, explicitPlaceOfSupply, d.is_interstate);
+      const isInterstate = gstContext.isInterstate;
 
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
@@ -304,25 +384,23 @@ export async function createInvoice(req: Request, res: Response) {
         invDisc,
       );
 
-      const amountPaid = Math.round(Number(d.amount_paid) || 0);
-      if (amountPaid < 0) throw new Error('Amount paid cannot be negative');
-      if (amountPaid > totalsInfo.totalAmount) throw new Error('Amount paid cannot exceed invoice total');
-      let paymentStatus = 'unpaid';
-      if (amountPaid >= totalsInfo.totalAmount) paymentStatus = 'paid';
-      else if (amountPaid > 0) paymentStatus = 'partial';
+      const { payments: paymentRows, paidAmount: amountPaid } = normalizeInvoicePayments(d, totalsInfo.totalAmount);
+      const paymentStatus = paymentStatusFor(totalsInfo.totalAmount, amountPaid);
 
       const status = 'confirmed';
 
-      let partySnap: { name?: string; gstin?: string; bill?: string; ship?: string } = {};
+      let partySnap: { name?: string; gstin?: string; bill?: string; ship?: string; phone?: string | null; email?: string | null } = {};
       if (d.party_id) {
         const pr = await client.query(
-          `SELECT name, gstin, billing_address, shipping_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          `SELECT name, gstin, phone, email, billing_address, shipping_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
           [d.party_id, companyId]
         );
         if (pr.rows[0]) {
           partySnap = {
             name: pr.rows[0].name,
             gstin: pr.rows[0].gstin,
+            phone: trimOrNull(d.party_phone) || pr.rows[0].phone || null,
+            email: trimOrNull(d.party_email) || pr.rows[0].email || null,
             bill: pr.rows[0].billing_address,
             ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
@@ -338,10 +416,7 @@ export async function createInvoice(req: Request, res: Response) {
       const einvOn = compEinv.rows[0]?.einvoice_enabled && compEinv.rows[0]?.einvoice_turnover_above_5cr;
       const einvoiceStatus = einvOn ? 'pending' : 'not_applicable';
 
-      const posRow = d.party_id
-        ? await client.query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
-        : { rows: [{}] };
-      const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
+      const placeOfSupply = gstContext.placeOfSupply;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
@@ -349,26 +424,28 @@ export async function createInvoice(req: Request, res: Response) {
         `INSERT INTO invoices (
           company_id, invoice_number, invoice_type, party_id, godown_id,
           invoice_date, due_date, is_interstate, place_of_supply,
-          party_name_snapshot, party_gstin_snapshot, billing_address_snapshot, shipping_address_snapshot,
+          party_name_snapshot, party_gstin_snapshot, party_phone_snapshot, party_email_snapshot, billing_address_snapshot, shipping_address_snapshot,
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, terms_and_conditions, created_by, pdf_template, document_theme,
+          notes, external_description, terms_and_conditions, created_by, pdf_template, document_theme,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,
-          $33,$34,$35,$36,$37,$38,$39
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+          $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,
+          $35,$36,$37,$38,$39,$40,$41,$42
         ) RETURNING *`,
         [
-          companyId, invoiceNumber, invoiceType, d.party_id || null, d.godown_id || req.user!.godown_id,
+          companyId, invoiceNumber, invoiceType, d.party_id || null, godownId,
           d.invoice_date || new Date().toISOString().split('T')[0],
           d.due_date || null,
           isInterstate,
           placeOfSupply,
           partySnap.name || null,
           partySnap.gstin || null,
+          partySnap.phone || null,
+          partySnap.email || null,
           partySnap.bill || null,
           partySnap.ship || null,
           totalsInfo.subtotal,
@@ -382,10 +459,11 @@ export async function createInvoice(req: Request, res: Response) {
           totalsInfo.totalAmount,
           amountPaid,
           paymentStatus,
-          d.payment_mode || null,
+          paymentRows[0]?.payment_mode || d.payment_mode || null,
           status,
           einvoiceStatus,
           d.notes || null,
+          d.external_description || null,
           d.terms_and_conditions || null,
           req.user!.id,
           ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : null,
@@ -401,7 +479,6 @@ export async function createInvoice(req: Request, res: Response) {
       );
 
       const invoice = invRes.rows[0];
-      const godownId = d.godown_id || req.user!.godown_id;
 
       for (let i = 0; i < d.items.length; i++) {
         const item = d.items[i];
@@ -447,7 +524,7 @@ export async function createInvoice(req: Request, res: Response) {
           ]
         );
 
-        if (item.item_id && godownId && !isPurchase) {
+        if (item.item_id && !isPurchase) {
           const itemRes = await client.query(
             `SELECT name, track_inventory
              FROM items
@@ -457,6 +534,9 @@ export async function createInvoice(req: Request, res: Response) {
           if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
 
           if (itemRes.rows[0].track_inventory) {
+            if (!godownId) {
+              throw new Error(`Select a godown before selling stock item "${itemRes.rows[0].name}"`);
+            }
             const stockRes = await client.query(
               `SELECT quantity, reserved_quantity
                FROM item_stock
@@ -520,32 +600,37 @@ export async function createInvoice(req: Request, res: Response) {
         }
       }
 
-      if (amountPaid > 0) {
+      for (const row of paymentRows) {
         const payRes = await client.query(
           `INSERT INTO payments (
              company_id, payment_type, payment_number, payment_date, party_id, amount,
-             payment_mode, reference_number, company_bank_account_id, cheque_number, notes, created_by
+             payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date,
+             clearance_status, notes, payment_source, source_id, source_label, created_by
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'invoice', $14, $15, $16) RETURNING id`,
           [
             companyId,
             isPurchase ? 'outgoing' : 'incoming',
-            `PAY-${Date.now()}`,
+            `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             invoice.invoice_date,
             d.party_id || null,
-            amountPaid,
-            d.payment_mode || 'cash',
-            d.payment_reference_number || d.reference_number || null,
-            d.company_bank_account_id || null,
-            d.payment_mode === 'cheque' ? d.payment_reference_number || d.cheque_number || null : null,
-            `Payment on ${invoice.invoice_number}`,
+            row.amount,
+            row.payment_mode || 'cash',
+            row.reference_number || null,
+            row.company_bank_account_id || null,
+            row.cheque_number || (row.payment_mode === 'cheque' ? row.reference_number || null : null),
+            row.instrument_date || null,
+            row.payment_mode === 'cheque' ? 'pending' : 'cleared',
+            row.notes || `Payment on ${invoice.invoice_number}`,
+            invoice.id,
+            invoice.invoice_number,
             req.user!.id,
           ]
         );
         await client.query(
           `INSERT INTO payment_allocations (payment_id, invoice_id, amount)
            VALUES ($1, $2, $3)`,
-          [payRes.rows[0].id, invoice.id, amountPaid]
+          [payRes.rows[0].id, invoice.id, row.amount]
         );
       }
 
@@ -596,7 +681,9 @@ export async function listInvoices(req: Request, res: Response) {
     const total = parseInt(countRes.rows[0].count);
 
     const result = await query(
-      `SELECT i.*, p.name as party_name, p.phone as party_phone
+      `SELECT i.*, COALESCE(i.party_name_snapshot, p.name) as party_name,
+              COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
+              COALESCE(i.party_email_snapshot, p.email) as party_email
        FROM invoices i LEFT JOIN parties p ON i.party_id = p.id
        WHERE ${where} ORDER BY i.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, limit, offset]
@@ -634,7 +721,8 @@ export async function getInvoice(req: Request, res: Response) {
       `SELECT i.*,
               i.paid_amount as amount_paid,
               p.name as party_name,
-              p.phone as party_phone,
+              COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
+              COALESCE(i.party_email_snapshot, p.email) as party_email,
               COALESCE(i.party_gstin_snapshot, p.gstin) as party_gstin,
               COALESCE(i.billing_address_snapshot, p.billing_address) as party_billing_address,
               p.billing_city as party_city,
@@ -675,11 +763,19 @@ export async function getInvoice(req: Request, res: Response) {
        ORDER BY p.payment_date DESC`,
       [id, req.user!.company_id]
     );
+    const attRes = await query(
+      `SELECT *
+       FROM invoice_attachments
+       WHERE invoice_id = $1 AND company_id = $2 AND is_deleted = false
+       ORDER BY created_at DESC`,
+      [id, req.user!.company_id],
+    );
 
     res.json(success({
       ...row,
       items: itemsRes.rows,
       payments: payRes.rows,
+      attachments: attRes.rows,
     }));
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
@@ -742,19 +838,8 @@ export async function updateInvoice(req: Request, res: Response) {
       );
 
       const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
-      let isInterstate = d.is_interstate;
-      if (explicitPlaceOfSupply) {
-        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        isInterstate = determineGSTType(cRes.rows[0]?.state_code, explicitPlaceOfSupply) === 'inter';
-      } else if (isInterstate === undefined && d.party_id) {
-        const pRes = await client.query(
-          'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-          [d.party_id, companyId],
-        );
-        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        isInterstate = determineGSTType(cRes.rows[0]?.state_code, pRes.rows[0]?.billing_state_code) === 'inter';
-      }
-      isInterstate = Boolean(isInterstate);
+      const gstContext = await resolveInvoiceGstContext(client, companyId, d.party_id, explicitPlaceOfSupply, d.is_interstate);
+      const isInterstate = gstContext.isInterstate;
 
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
@@ -818,16 +903,18 @@ export async function updateInvoice(req: Request, res: Response) {
 
       await client.query(`DELETE FROM invoice_items WHERE invoice_id = $1 AND company_id = $2`, [id, companyId]);
 
-      let partySnap: { name?: string; gstin?: string; bill?: string; ship?: string } = {};
+      let partySnap: { name?: string; gstin?: string; bill?: string; ship?: string; phone?: string | null; email?: string | null } = {};
       if (d.party_id) {
         const pr = await client.query(
-          `SELECT name, gstin, billing_address, shipping_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          `SELECT name, gstin, phone, email, billing_address, shipping_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
           [d.party_id, companyId],
         );
         if (pr.rows[0]) {
           partySnap = {
             name: pr.rows[0].name,
             gstin: pr.rows[0].gstin,
+            phone: trimOrNull(d.party_phone) || pr.rows[0].phone || null,
+            email: trimOrNull(d.party_email) || pr.rows[0].email || null,
             bill: pr.rows[0].billing_address,
             ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
@@ -836,10 +923,7 @@ export async function updateInvoice(req: Request, res: Response) {
         partySnap.ship = trimOrNull(d.shipping_address) || undefined;
       }
 
-      const posRow = d.party_id
-        ? await client.query(`SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
-        : { rows: [{}] };
-      const placeOfSupply = (explicitPlaceOfSupply || posRow.rows[0]?.billing_state_code || '').toString().slice(0, 5) || null;
+      const placeOfSupply = gstContext.placeOfSupply;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
@@ -847,29 +931,33 @@ export async function updateInvoice(req: Request, res: Response) {
       const docTheme = ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any)
         ? d.document_theme
         : oldInv.document_theme || 'classic';
+      const updatedGodownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
 
       await client.query(
         `UPDATE invoices SET
           party_id = $1, godown_id = $2, invoice_date = $3, due_date = $4, is_interstate = $5, place_of_supply = $6,
-          party_name_snapshot = $7, party_gstin_snapshot = $8, billing_address_snapshot = $9, shipping_address_snapshot = $10,
-          subtotal = $11, discount_amount = $12, taxable_amount = $13,
-          cgst_amount = $14, sgst_amount = $15, igst_amount = $16, cess_amount = $17, round_off = $18, total_amount = $19,
-          payment_status = 'unpaid', notes = $20, pdf_template = $21, document_theme = $22,
-          is_gst_invoice = $23,
-          company_bank_account_id = $24, bank_label_snapshot = $25, bank_name_snapshot = $26,
-          bank_account_number_snapshot = $27, bank_ifsc_snapshot = $28, bank_branch_snapshot = $29, upi_id_snapshot = $30,
-          invoice_number = $31,
+          party_name_snapshot = $7, party_gstin_snapshot = $8, party_phone_snapshot = $9, party_email_snapshot = $10,
+          billing_address_snapshot = $11, shipping_address_snapshot = $12,
+          subtotal = $13, discount_amount = $14, taxable_amount = $15,
+          cgst_amount = $16, sgst_amount = $17, igst_amount = $18, cess_amount = $19, round_off = $20, total_amount = $21,
+          payment_status = 'unpaid', notes = $22, external_description = $23, pdf_template = $24, document_theme = $25,
+          is_gst_invoice = $26,
+          company_bank_account_id = $27, bank_label_snapshot = $28, bank_name_snapshot = $29,
+          bank_account_number_snapshot = $30, bank_ifsc_snapshot = $31, bank_branch_snapshot = $32, upi_id_snapshot = $33,
+          invoice_number = $34,
           updated_at = NOW()
-        WHERE id = $32 AND company_id = $33`,
+        WHERE id = $35 AND company_id = $36`,
         [
           d.party_id || null,
-          d.godown_id || req.user!.godown_id || null,
+          updatedGodownId,
           d.invoice_date || oldInv.invoice_date,
           d.due_date ?? oldInv.due_date,
           isInterstate,
           placeOfSupply,
           partySnap.name || null,
           partySnap.gstin || null,
+          partySnap.phone || null,
+          partySnap.email || null,
           partySnap.bill || null,
           partySnap.ship || null,
           totalsInfo.subtotal,
@@ -882,6 +970,7 @@ export async function updateInvoice(req: Request, res: Response) {
           totalsInfo.roundOff,
           totalsInfo.totalAmount,
           d.notes ?? oldInv.notes,
+          d.external_description ?? oldInv.external_description,
           pdfTpl,
           docTheme,
           isGstInvoice,
@@ -898,7 +987,7 @@ export async function updateInvoice(req: Request, res: Response) {
         ],
       );
 
-      const godownId = d.godown_id || req.user!.godown_id;
+      const godownId = updatedGodownId;
       for (let i = 0; i < d.items.length; i++) {
         const item = d.items[i];
         const lineGst = mapLineForGst({
@@ -944,13 +1033,14 @@ export async function updateInvoice(req: Request, res: Response) {
           ],
         );
 
-        if (item.item_id && godownId) {
+        if (item.item_id) {
           const itemRes = await client.query(
             `SELECT name, track_inventory FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
             [item.item_id, companyId],
           );
           if (!itemRes.rows.length) throw new Error(`Item not found for line ${i + 1}`);
           if (itemRes.rows[0].track_inventory) {
+            if (!godownId) throw new Error(`Select a godown before selling stock item "${itemRes.rows[0].name}"`);
             const stockRes = await client.query(
               `SELECT quantity, reserved_quantity FROM item_stock
                WHERE item_id = $1 AND godown_id = $2 AND company_id = $3 FOR UPDATE`,
@@ -1798,6 +1888,46 @@ export async function getEinvoicePdf(req: Request, res: Response) {
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));
+  }
+}
+
+export async function addInvoiceAttachment(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { id } = req.params;
+    const invRes = await query(
+      `SELECT id FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+
+    const fileUrl = req.file ? getUploadUrl(req.file.path) : null;
+    const attachmentType = trimOrNull(req.body?.attachment_type) || (fileUrl ? 'document' : 'description');
+    const description = trimOrNull(req.body?.description);
+    if (!fileUrl && !description) return res.status(400).json(error('Upload a file or add a description'));
+
+    const saved = await query(
+      `INSERT INTO invoice_attachments (
+         company_id, invoice_id, attachment_type, file_url, original_name,
+         description, mime_type, file_size, created_by
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        companyId,
+        id,
+        attachmentType,
+        fileUrl,
+        req.file?.originalname || null,
+        description,
+        req.file?.mimetype || null,
+        req.file?.size || null,
+        req.user!.id,
+      ],
+    );
+    res.status(201).json(success(saved.rows[0]));
+  } catch (err: any) {
+    console.error('addInvoiceAttachment error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message || 'Failed to save invoice attachment'));
   }
 }
 

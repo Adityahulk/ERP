@@ -16,6 +16,24 @@ import api from '@/lib/api';
 import toast from 'react-hot-toast';
 import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 
+interface OcrCandidate<T> {
+  value: T;
+  confidence: number;
+  source: string;
+  reason: string;
+}
+
+interface OcrItemCandidate {
+  description: string;
+  hsn_code: string | null;
+  quantity: number | null;
+  unit: string | null;
+  rate_paise: number | null;
+  amount_paise: number | null;
+  confidence: number;
+  source: string;
+}
+
 export interface OcrResult {
   invoice_number: string | null;
   bill_date: string | null;         // YYYY-MM-DD
@@ -29,6 +47,23 @@ export interface OcrResult {
   party_match_confidence?: number;
   party_match_reason?: string | null;
   matched_party?: any | null;
+  document_type?: string;
+  confidence?: number;
+  warnings?: string[];
+  fields?: {
+    invoice_number?: OcrCandidate<string> | null;
+    bill_date?: OcrCandidate<string> | null;
+    party_name?: OcrCandidate<string> | null;
+    supplier_gstin?: OcrCandidate<string> | null;
+    total_amount_paise?: OcrCandidate<number> | null;
+  };
+  candidates?: {
+    invoice_numbers?: OcrCandidate<string>[];
+    dates?: OcrCandidate<string>[];
+    gstins?: OcrCandidate<string>[];
+    totals?: OcrCandidate<number>[];
+  };
+  items?: OcrItemCandidate[];
 }
 
 interface FieldState {
@@ -142,6 +177,9 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
   };
 
   const upd = (k: keyof FieldState, v: string) => setFields(f => ({ ...f, [k]: v }));
+  const confidenceLabel = (value?: number) => `${Math.round((value || 0) * 100)}%`;
+  const fieldConfidence = (key: keyof NonNullable<OcrResult['fields']>) => result?.fields?.[key]?.confidence;
+  const fieldSource = (key: keyof NonNullable<OcrResult['fields']>) => result?.fields?.[key]?.source;
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
@@ -192,8 +230,30 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               {previewFile?.isImage ? <ImageIcon className="w-4 h-4 shrink-0" /> : <FileText className="w-4 h-4 shrink-0" />}
               Scanned: <span className="truncate">{previewFile?.name}</span>
-              <button className="ml-auto text-xs underline shrink-0" onClick={resetState}>Rescan</button>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                {result.confidence != null && (
+                  <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs text-emerald-800">
+                    {confidenceLabel(result.confidence)}
+                  </span>
+                )}
+                <button className="text-xs underline" onClick={resetState}>Rescan</button>
+              </div>
             </div>
+            {(result.document_type || result.warnings?.length) && (
+              <div className="rounded-lg border bg-slate-50 p-3 space-y-2">
+                {result.document_type && (
+                  <div className="text-xs text-slate-600">
+                    Document type: <span className="font-semibold capitalize">{result.document_type.replace(/_/g, ' ')}</span>
+                  </div>
+                )}
+                {result.warnings?.map((w, idx) => (
+                  <div key={idx} className="flex gap-2 text-xs text-amber-700">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{w}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Editable extracted fields */}
             <div className="space-y-3">
@@ -206,30 +266,67 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
               )}
 
               <div>
-                <Label className="text-xs">Bill / Invoice Number</Label>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>Bill / Invoice Number</span>
+                  {fieldConfidence('invoice_number') != null && <span className="text-muted-foreground">{confidenceLabel(fieldConfidence('invoice_number'))}</span>}
+                </Label>
                 <Input className="mt-1" value={fields.invoice_number} onChange={e => upd('invoice_number', e.target.value)} placeholder="Not detected — enter manually" />
+                {fieldSource('invoice_number') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('invoice_number')}</p>}
               </div>
 
               <div>
-                <Label className="text-xs">Bill Date</Label>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>Bill Date</span>
+                  {fieldConfidence('bill_date') != null && <span className="text-muted-foreground">{confidenceLabel(fieldConfidence('bill_date'))}</span>}
+                </Label>
                 <Input className="mt-1" type="date" value={fields.bill_date} onChange={e => upd('bill_date', e.target.value)} />
+                {fieldSource('bill_date') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('bill_date')}</p>}
               </div>
 
               <div>
-                <Label className="text-xs">Party / Supplier Name</Label>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>Party / Supplier Name</span>
+                  {fieldConfidence('party_name') != null && <span className="text-muted-foreground">{confidenceLabel(fieldConfidence('party_name'))}</span>}
+                </Label>
                 <Input className="mt-1" value={fields.party_name} onChange={e => upd('party_name', e.target.value)} placeholder="Not detected" />
+                {fieldSource('party_name') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('party_name')}</p>}
               </div>
 
               <div>
-                <Label className="text-xs">GSTIN</Label>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>GSTIN</span>
+                  {fieldConfidence('supplier_gstin') != null && <span className="text-muted-foreground">{confidenceLabel(fieldConfidence('supplier_gstin'))}</span>}
+                </Label>
                 <Input className="mt-1 font-mono text-xs" value={fields.supplier_gstin} onChange={e => upd('supplier_gstin', e.target.value.toUpperCase())} placeholder="e.g. 27AABCU9603R1ZM" />
+                {fieldSource('supplier_gstin') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('supplier_gstin')}</p>}
               </div>
 
               <div>
-                <Label className="text-xs">Total Amount (₹)</Label>
+                <Label className="text-xs flex items-center justify-between">
+                  <span>Total Amount (₹)</span>
+                  {fieldConfidence('total_amount_paise') != null && <span className="text-muted-foreground">{confidenceLabel(fieldConfidence('total_amount_paise'))}</span>}
+                </Label>
                 <Input className="mt-1" type="number" step="0.01" value={fields.total_amount_rupees} onChange={e => upd('total_amount_rupees', e.target.value)} placeholder="0.00" />
+                {fieldSource('total_amount_paise') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('total_amount_paise')}</p>}
               </div>
             </div>
+            {result.items && result.items.length > 0 && (
+              <details className="rounded-lg border">
+                <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 flex items-center gap-2 select-none">
+                  <FileText className="w-4 h-4" /> Possible item rows ({result.items.length})
+                </summary>
+                <div className="max-h-56 overflow-y-auto divide-y">
+                  {result.items.slice(0, 12).map((item, idx) => (
+                    <div key={idx} className="px-4 py-2 text-xs">
+                      <div className="font-medium text-slate-700">{item.description}</div>
+                      <div className="text-muted-foreground">
+                        {item.hsn_code ? `HSN/SAC ${item.hsn_code}` : 'No HSN'} · Qty {item.quantity ?? '-'} {item.unit || ''} · Amount {item.amount_paise ? `₹${paiseToRupees(item.amount_paise).toFixed(2)}` : '-'} · {confidenceLabel(item.confidence)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
 
             {/* Raw lines preview (collapsed) */}
             {result.raw_lines.length > 0 && (

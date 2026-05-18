@@ -615,3 +615,133 @@ export async function createCashBankAdjustment(req: Request, res: Response) {
     res.status(400).json(error(err.message));
   }
 }
+
+export async function listLoanAccounts(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const loans = await query(
+      `SELECT la.*,
+              COALESCE((
+                SELECT json_agg(t ORDER BY t.transaction_date DESC, t.created_at DESC)
+                FROM (
+                  SELECT *
+                  FROM loan_transactions lt
+                  WHERE lt.loan_account_id = la.id AND lt.company_id = la.company_id
+                  ORDER BY lt.transaction_date DESC, lt.created_at DESC
+                  LIMIT 20
+                ) t
+              ), '[]'::json) AS transactions
+       FROM loan_accounts la
+       WHERE la.company_id = $1 AND la.is_deleted = false
+       ORDER BY la.is_active DESC, la.created_at DESC`,
+      [companyId],
+    );
+    res.json(success(loans.rows));
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to load loan accounts'));
+  }
+}
+
+export async function createLoanAccount(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const accountName = String(d.account_name || '').trim();
+    if (!accountName) return res.status(400).json(error('Loan account name is required'));
+    const principal = Math.round(Number(d.principal_amount) || 0);
+    if (principal < 0) return res.status(400).json(error('Opening loan amount cannot be negative'));
+
+    const result = await withTransaction(async (client) => {
+      const loan = await client.query(
+        `INSERT INTO loan_accounts (
+           company_id, account_name, lender_name, principal_amount, current_balance,
+           interest_rate, notes, created_by
+         ) VALUES ($1,$2,$3,$4,$4,$5,$6,$7)
+         RETURNING *`,
+        [
+          companyId,
+          accountName,
+          String(d.lender_name || '').trim() || null,
+          principal,
+          Number(d.interest_rate) || 0,
+          String(d.notes || '').trim() || null,
+          req.user!.id,
+        ],
+      );
+      if (principal > 0) {
+        await client.query(
+          `INSERT INTO loan_transactions (
+             company_id, loan_account_id, transaction_type, amount,
+             transaction_date, reference_number, notes, created_by
+           ) VALUES ($1,$2,'disbursement',$3,$4,$5,$6,$7)`,
+          [
+            companyId,
+            loan.rows[0].id,
+            principal,
+            d.transaction_date || new Date().toISOString().split('T')[0],
+            String(d.reference_number || '').trim() || null,
+            'Opening loan balance',
+            req.user!.id,
+          ],
+        );
+      }
+      return loan.rows[0];
+    });
+    res.status(201).json(success(result));
+  } catch (err: any) {
+    res.status(400).json(error(err.message || 'Failed to create loan account'));
+  }
+}
+
+export async function recordLoanTransaction(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { id } = req.params;
+    const d = req.body || {};
+    const type = String(d.transaction_type || '').trim();
+    if (!['disbursement', 'repayment', 'interest', 'adjustment'].includes(type)) {
+      return res.status(400).json(error('Invalid loan transaction type'));
+    }
+    const amount = Math.round(Number(d.amount) || 0);
+    if (amount <= 0) return res.status(400).json(error('Enter a valid amount'));
+
+    const result = await withTransaction(async (client) => {
+      const loan = await client.query(
+        `SELECT * FROM loan_accounts
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!loan.rows.length) throw new Error('Loan account not found');
+      const delta = ['disbursement', 'interest'].includes(type) ? amount : -amount;
+      const nextBalance = Math.max(0, Number(loan.rows[0].current_balance || 0) + delta);
+      const tx = await client.query(
+        `INSERT INTO loan_transactions (
+           company_id, loan_account_id, transaction_type, amount,
+           transaction_date, reference_number, notes, created_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING *`,
+        [
+          companyId,
+          id,
+          type,
+          amount,
+          d.transaction_date || new Date().toISOString().split('T')[0],
+          String(d.reference_number || '').trim() || null,
+          String(d.notes || '').trim() || null,
+          req.user!.id,
+        ],
+      );
+      await client.query(
+        `UPDATE loan_accounts
+         SET current_balance = $1, is_active = $2, updated_at = NOW()
+         WHERE id = $3 AND company_id = $4`,
+        [nextBalance, nextBalance > 0, id, companyId],
+      );
+      return tx.rows[0];
+    });
+    res.status(201).json(success(result));
+  } catch (err: any) {
+    res.status(400).json(error(err.message || 'Failed to record loan transaction'));
+  }
+}

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine, PackagePlus } from 'lucide-react';
+import { ArrowLeft, Trash2, Search, Eye, UserPlus, ScanLine, PackagePlus, Plus, Paperclip } from 'lucide-react';
 import { DOCUMENT_THEME_OPTIONS, InvoicePreviewWorkspace, readSkipInvoicePreview, type DocumentThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { INVOICE_PDF_TEMPLATES, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
@@ -24,6 +24,16 @@ interface LineItem {
   unit?: string;
   quantity: number; unit_price: number; gst_rate: number;
   discount_percent: number; cess_rate: number;
+}
+
+interface PaymentRow {
+  id: string;
+  payment_mode: string;
+  amount: number;
+  company_bank_account_id?: string;
+  reference_number?: string;
+  cheque_number?: string;
+  instrument_date?: string;
 }
 
 const GST_STATE_OPTIONS = [
@@ -63,6 +73,15 @@ function formatEditableRupees(paise: number) {
   return paiseToRupees(paise).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
+function newPaymentRow(): PaymentRow {
+  return { id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, payment_mode: 'cash', amount: 0 };
+}
+
+function gstStateFromGstin(value?: string | null) {
+  const gstin = String(value || '').trim().toUpperCase();
+  return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: routeParamId } = useParams();
@@ -92,7 +111,9 @@ export default function InvoiceCreate() {
   const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('standard');
   const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('classic');
   const [notes, setNotes] = useState('');
-  const [amountPaid, setAmountPaid] = useState(0);
+  const [externalDescription, setExternalDescription] = useState('');
+  const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([newPaymentRow()]);
+  const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [items, setItems] = useState<LineItem[]>([]);
   const [itemSearch, setItemSearch] = useState('');
   const [itemResults, setItemResults] = useState<any[]>([]);
@@ -104,8 +125,6 @@ export default function InvoiceCreate() {
   const [partySearchLoading, setPartySearchLoading] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
-  const [paymentMode, setPaymentMode] = useState('cash');
-  const [paymentReferenceNumber, setPaymentReferenceNumber] = useState('');
   const [moneyDrafts, setMoneyDrafts] = useState<Record<string, string>>({});
 
   const hydratedIdRef = useRef<string | null>(null);
@@ -145,7 +164,9 @@ export default function InvoiceCreate() {
     setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
-    setAmountPaid(0);
+    setExternalDescription(String(inv.external_description || ''));
+    setPaymentRows([newPaymentRow()]);
+    setInvoiceFiles([]);
     const tpl = String(inv.pdf_template || 'standard');
     setPdfTemplate((['standard', 'simple', 'performa'].includes(tpl) ? tpl : 'standard') as InvoicePdfTemplateId);
     const th = String(inv.document_theme || 'classic');
@@ -240,8 +261,8 @@ export default function InvoiceCreate() {
     setShippingAddress(partyFullAddress(p, 'shipping') || partyFullAddress(p, 'billing'));
     setPartySearch('');
     setPartyResults([]);
-    const companyStateCode = String((company as any)?.state_code || '').trim();
-    const partyStateCode = String(p.billing_state_code || p.state_code || '').trim();
+    const companyStateCode = gstStateFromGstin((company as any)?.gstin) || String((company as any)?.state_code || '').trim();
+    const partyStateCode = gstStateFromGstin(p.gstin) || String(p.billing_state_code || p.state_code || '').trim();
     if (!placeOfSupply && companyStateCode && partyStateCode) {
       setIsInterstate(companyStateCode !== partyStateCode);
     }
@@ -249,7 +270,7 @@ export default function InvoiceCreate() {
 
   const updatePlaceOfSupply = (value: string) => {
     setPlaceOfSupply(value);
-    const companyStateCode = String((company as any)?.state_code || '').trim();
+    const companyStateCode = gstStateFromGstin((company as any)?.gstin) || String((company as any)?.state_code || '').trim();
     if (value && companyStateCode) setIsInterstate(companyStateCode !== value);
   };
 
@@ -313,6 +334,14 @@ export default function InvoiceCreate() {
       : formatEditableRupees(paise)
   );
 
+  const updatePaymentRow = (id: string, patch: Partial<PaymentRow>) => {
+    setPaymentRows((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  const removePaymentRow = (id: string) => {
+    setPaymentRows((rows) => (rows.length <= 1 ? [{ ...newPaymentRow() }] : rows.filter((row) => row.id !== id)));
+  };
+
   // Calculations
   const calcLine = (item: LineItem) => {
     const lineTotal = item.quantity * item.unit_price;
@@ -327,6 +356,9 @@ export default function InvoiceCreate() {
   const totalTax = items.reduce((s, i) => s + calcLine(i).gst, 0);
   const totalCess = items.reduce((s, i) => s + calcLine(i).cess, 0);
   const grandTotal = subtotal + totalTax + totalCess;
+  const amountPaid = paymentRows
+    .filter((row) => row.payment_mode !== 'credit')
+    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
   const balanceDue = grandTotal - amountPaid;
 
   const draftPreviewPayload = useMemo(
@@ -344,10 +376,11 @@ export default function InvoiceCreate() {
       is_interstate: isInterstate,
       place_of_supply: placeOfSupply || undefined,
       shipping_address: shippingAddress.trim() || undefined,
+      party_phone: partyPhone || undefined,
       notes: notes || undefined,
+      external_description: externalDescription || undefined,
       amount_paid: amountPaid,
-      payment_mode: amountPaid > 0 ? paymentMode : undefined,
-      payment_reference_number: amountPaid > 0 ? paymentReferenceNumber || undefined : undefined,
+      payments: paymentRows,
       company_bank_account_id: companyBankAccountId || undefined,
       items: items.map((i) => ({
         item_id: i.item_id,
@@ -363,7 +396,7 @@ export default function InvoiceCreate() {
         cess_rate: i.cess_rate,
       })),
     }),
-    [partyId, partyName, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, amountPaid, paymentMode, paymentReferenceNumber, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const handleSubmit = async () => {
@@ -374,6 +407,20 @@ export default function InvoiceCreate() {
     if (editInvoiceId && !normalizedInvoiceNumber) { toast.error('Invoice number is required while editing'); return; }
     if (normalizedInvoiceNumber && !INVOICE_NUMBER_PATTERN.test(normalizedInvoiceNumber)) {
       toast.error(INVOICE_NUMBER_HELP);
+      return;
+    }
+    const paymentPayload = paymentRows
+      .filter((row) => row.payment_mode !== 'credit' && Number(row.amount) > 0)
+      .map((row) => ({
+        payment_mode: row.payment_mode,
+        amount: row.amount,
+        company_bank_account_id: row.company_bank_account_id || companyBankAccountId || undefined,
+        reference_number: row.reference_number || undefined,
+        cheque_number: row.cheque_number || undefined,
+        instrument_date: row.instrument_date || undefined,
+      }));
+    if (!editInvoiceId && paymentPayload.some((row) => row.payment_mode === 'cheque' && !row.cheque_number && !row.reference_number)) {
+      toast.error('Enter cheque number for cheque payment');
       return;
     }
 
@@ -408,7 +455,9 @@ export default function InvoiceCreate() {
             is_interstate: isInterstate,
             place_of_supply: placeOfSupply || undefined,
             shipping_address: shippingAddress.trim() || undefined,
+            party_phone: partyPhone || undefined,
             notes,
+            external_description: externalDescription || undefined,
             company_bank_account_id: companyBankAccountId || undefined,
             items: itemPayload,
           },
@@ -431,16 +480,36 @@ export default function InvoiceCreate() {
         party_id: partyId, godown_id: godownId || undefined,
         invoice_date: invoiceDate, due_date: dueDate || undefined,
         is_interstate: isInterstate, place_of_supply: placeOfSupply || undefined,
-        shipping_address: shippingAddress.trim() || undefined, notes,
+        shipping_address: shippingAddress.trim() || undefined,
+        party_phone: partyPhone || undefined,
+        notes,
+        external_description: externalDescription || undefined,
         amount_paid: amountPaid,
-        payment_mode: amountPaid > 0 ? paymentMode : undefined,
-        payment_reference_number: amountPaid > 0 ? paymentReferenceNumber || undefined : undefined,
+        payments: paymentPayload,
         company_bank_account_id: companyBankAccountId || undefined,
         items: itemPayload,
       });
       const inv = (res as any)?.data ?? res;
-      toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
       const newId = inv?.id;
+      if (newId) {
+        const uploads: Promise<any>[] = [];
+        if (externalDescription.trim()) {
+          const fd = new FormData();
+          fd.append('attachment_type', 'description');
+          fd.append('description', externalDescription.trim());
+          uploads.push(api.post(`/invoices/${newId}/attachments`, fd));
+        }
+        invoiceFiles.forEach((file) => {
+          const fd = new FormData();
+          fd.append('attachment_type', file.type.startsWith('image/') ? 'image' : 'document');
+          fd.append('file', file);
+          uploads.push(api.post(`/invoices/${newId}/attachments`, fd));
+        });
+        if (uploads.length) {
+          await Promise.allSettled(uploads);
+        }
+      }
+      toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
       const skipPreview = readSkipInvoicePreview();
       if (newId) navigate(skipPreview ? `/sales/${newId}` : `/sales/${newId}?preview=1`);
       else navigate('/sales');
@@ -524,6 +593,18 @@ export default function InvoiceCreate() {
                 </>
               )}
             </div>
+            {partyId && (
+              <div>
+                <Label>Phone No. on this invoice</Label>
+                <Input
+                  className="mt-1"
+                  value={partyPhone}
+                  inputMode="tel"
+                  onChange={(e) => setPartyPhone(e.target.value)}
+                  placeholder="Enter mobile number for this invoice"
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -732,45 +813,105 @@ export default function InvoiceCreate() {
             <div className="flex justify-between border-t pt-2 text-lg font-bold"><span>Total</span><span className="tabular-nums">{formatMoney(grandTotal)}</span></div>
             {!editInvoiceId && (
               <>
-                <div className="pt-2">
-                  <Label>Amount Paid (₹)</Label>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    className="mt-1 tabular-nums"
-                    placeholder="0"
-                    value={moneyValue('amount-paid', amountPaid)}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onBlur={() => clearMoneyDraft('amount-paid')}
-                    onChange={e => setMoneyDraft('amount-paid', e.target.value, setAmountPaid)}
-                  />
+                <div className="pt-3 space-y-3 border-t">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label>Payment Types</Label>
+                    <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={() => setPaymentRows((rows) => [...rows, newPaymentRow()])}>
+                      <Plus className="h-3.5 w-3.5" /> Add
+                    </Button>
+                  </div>
+                  {paymentRows.map((row, idx) => (
+                    <div key={row.id} className="rounded-md border p-3 space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-xs">Type</Label>
+                          <select
+                            className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                            value={row.payment_mode}
+                            onChange={(e) => updatePaymentRow(row.id, { payment_mode: e.target.value })}
+                          >
+                            <option value="cash">Cash</option>
+                            <option value="upi">UPI / Online</option>
+                            <option value="bank_transfer">NEFT / Bank Transfer</option>
+                            <option value="cheque">Cheque</option>
+                            <option value="card">Card</option>
+                            <option value="credit">Credit / Balance</option>
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Amount (₹)</Label>
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            className="mt-1 tabular-nums"
+                            placeholder="0"
+                            value={moneyValue(`payment-${row.id}-amount`, row.amount)}
+                            disabled={row.payment_mode === 'credit'}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onBlur={() => clearMoneyDraft(`payment-${row.id}-amount`)}
+                            onChange={e => setMoneyDraft(`payment-${row.id}-amount`, e.target.value, (paise) => updatePaymentRow(row.id, { amount: paise }))}
+                          />
+                        </div>
+                      </div>
+                      {['upi', 'bank_transfer', 'cheque', 'card'].includes(row.payment_mode) && (
+                        <BankAccountPicker
+                          value={row.company_bank_account_id || companyBankAccountId}
+                          onChange={(id) => updatePaymentRow(row.id, { company_bank_account_id: id })}
+                          className="pt-1"
+                        />
+                      )}
+                      {row.payment_mode !== 'cash' && row.payment_mode !== 'credit' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">{row.payment_mode === 'cheque' ? 'Cheque No.' : 'Reference No.'}</Label>
+                            <Input
+                              className="mt-1"
+                              value={row.payment_mode === 'cheque' ? row.cheque_number || '' : row.reference_number || ''}
+                              onChange={(e) => updatePaymentRow(row.id, row.payment_mode === 'cheque' ? { cheque_number: e.target.value } : { reference_number: e.target.value })}
+                            />
+                          </div>
+                          {row.payment_mode === 'cheque' && (
+                            <div>
+                              <Label className="text-xs">Cheque Date</Label>
+                              <Input type="date" className="mt-1" value={row.instrument_date || ''} onChange={(e) => updatePaymentRow(row.id, { instrument_date: e.target.value })} />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Payment {idx + 1}</span>
+                        <button type="button" className="text-destructive hover:underline" onClick={() => removePaymentRow(row.id)}>Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-medium">
+                    <span>Received</span>
+                    <span className="tabular-nums">{formatMoney(amountPaid)}</span>
+                  </div>
                 </div>
                 {balanceDue > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>Balance Due</span><span className="tabular-nums">{formatMoney(balanceDue)}</span></div>}
-                {amountPaid > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                    <div>
-                      <Label>Payment Type</Label>
-                      <select
-                        className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
-                        value={paymentMode}
-                        onChange={(e) => setPaymentMode(e.target.value)}
-                      >
-                        <option value="cash">Cash</option>
-                        <option value="upi">UPI / Online</option>
-                        <option value="bank_transfer">NEFT / Bank Transfer</option>
-                        <option value="cheque">Cheque</option>
-                        <option value="card">Card</option>
-                      </select>
-                    </div>
-                    <div>
-                      <Label>{paymentMode === 'cheque' ? 'Cheque No.' : 'Reference No.'}</Label>
-                      <Input className="mt-1" value={paymentReferenceNumber} onChange={(e) => setPaymentReferenceNumber(e.target.value)} placeholder="Optional" />
-                    </div>
-                  </div>
-                )}
               </>
             )}
 
+            <div>
+              <Label>Description / Work Details</Label>
+              <textarea rows={3} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-y" value={externalDescription} onChange={e => setExternalDescription(e.target.value)} placeholder="Optional description saved with this invoice" />
+            </div>
+            {!editInvoiceId && (
+              <div>
+                <Label>Images / Documents</Label>
+                <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground hover:bg-muted/40">
+                  <Paperclip className="h-4 w-4" />
+                  <span>{invoiceFiles.length ? `${invoiceFiles.length} file(s) selected` : 'Attach files'}</span>
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => setInvoiceFiles(Array.from(e.target.files || []))}
+                  />
+                </label>
+              </div>
+            )}
             <div><Label>Notes</Label><textarea rows={2} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" value={notes} onChange={e => setNotes(e.target.value)} /></div>
           </div>
         </div>

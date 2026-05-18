@@ -33,6 +33,26 @@ const MONTHS: Record<string, string> = {
   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 };
 
+type OcrDocumentType = 'purchase_bill' | 'sales_invoice' | 'quotation' | 'delivery_challan' | 'unknown';
+
+interface OcrCandidate<T> {
+  value: T;
+  confidence: number;
+  source: string;
+  reason: string;
+}
+
+interface OcrItemCandidate {
+  description: string;
+  hsn_code: string | null;
+  quantity: number | null;
+  unit: string | null;
+  rate_paise: number | null;
+  amount_paise: number | null;
+  confidence: number;
+  source: string;
+}
+
 /** Normalise a raw date string into YYYY-MM-DD */
 function parseRawDate(raw: string): string | null {
   raw = raw.trim();
@@ -64,6 +84,14 @@ function parseRawDate(raw: string): string | null {
   return null;
 }
 
+function clampConfidence(value: number): number {
+  return Math.max(0, Math.min(1, Math.round(value * 100) / 100));
+}
+
+function pickBest<T>(candidates: OcrCandidate<T>[]): OcrCandidate<T> | null {
+  return candidates.length ? [...candidates].sort((a, b) => b.confidence - a.confidence)[0] : null;
+}
+
 function normalizeOcrText(text: string): string {
   return String(text || '')
     .replace(/\r/g, '\n')
@@ -75,6 +103,15 @@ function normalizeOcrText(text: string): string {
     .map(line => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .join('\n');
+}
+
+function detectDocumentType(text: string, context: string): OcrDocumentType {
+  const hay = `${context}\n${text}`.toLowerCase();
+  if (/quotation|estimate|proforma/.test(hay)) return 'quotation';
+  if (/delivery\s*challan|dispatch\s*challan/.test(hay)) return 'delivery_challan';
+  if (/purchase|supplier|vendor|grn|bill\s*from|billed\s*by/.test(hay)) return 'purchase_bill';
+  if (/sales|customer|buyer|bill\s*to|tax\s*invoice/.test(hay)) return 'sales_invoice';
+  return 'unknown';
 }
 
 /** Pull the first date that appears after a date keyword. Falls back to any date in the text. */
@@ -97,6 +134,37 @@ function extractDate(text: string): string | null {
   return null;
 }
 
+function extractDateCandidates(text: string, lines: string[]): OcrCandidate<string>[] {
+  const out: OcrCandidate<string>[] = [];
+  const seen = new Set<string>();
+  const patterns = [
+    {
+      re: /(?:invoice\s*date|bill\s*date|date\s*of\s*invoice|dated?)\s*[:\-]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})/gi,
+      score: 0.92,
+      reason: 'date_label',
+    },
+    {
+      re: /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})\b/gi,
+      score: 0.62,
+      reason: 'standalone_date',
+    },
+  ];
+  for (const { re, score, reason } of patterns) {
+    for (const match of text.matchAll(re)) {
+      const raw = match[1];
+      const parsed = parseRawDate(raw);
+      if (!parsed || seen.has(parsed)) continue;
+      seen.add(parsed);
+      const source = lines.find(l => l.includes(raw)) || raw;
+      const dt = new Date(`${parsed}T00:00:00`);
+      const now = new Date();
+      const tooFuture = dt.getTime() > now.getTime() + 366 * 24 * 60 * 60 * 1000;
+      out.push({ value: parsed, confidence: clampConfidence(score - (tooFuture ? 0.25 : 0)), source, reason });
+    }
+  }
+  return out.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
+}
+
 /** Pull invoice / bill number */
 function extractInvoiceNumber(lines: string[]): string | null {
   const patterns = [
@@ -110,6 +178,43 @@ function extractInvoiceNumber(lines: string[]): string | null {
     }
   }
   return null;
+}
+
+function normalizeDocumentNumber(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9/-]/g, '').slice(0, 24);
+}
+
+function extractInvoiceNumberCandidates(lines: string[]): OcrCandidate<string>[] {
+  const out: OcrCandidate<string>[] = [];
+  const seen = new Set<string>();
+  const patterns = [
+    { re: /(?:invoice\s*no|invoice\s*number|inv\s*no|bill\s*no|bill\s*number|voucher\s*no|receipt\s*no)[\.:\s#-]*([A-Z0-9][A-Z0-9\-\/]{1,24})/i, score: 0.94, reason: 'strong_label' },
+    { re: /(?:doc\s*no|document\s*no|ref\s*no|reference\s*no)[\.:\s#-]*([A-Z0-9][A-Z0-9\-\/]{2,24})/i, score: 0.78, reason: 'reference_label' },
+    { re: /(?:^|[\s:])(?:no|#)\s*[:\.]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i, score: 0.48, reason: 'weak_number_label' },
+  ];
+  for (const line of lines.slice(0, 80)) {
+    if (/gstin|phone|mobile|fssai|pan|state\s*code/i.test(line)) continue;
+    for (const pat of patterns) {
+      const m = line.match(pat.re);
+      const val = m?.[1] ? normalizeDocumentNumber(m[1]) : '';
+      if (!val || val.length < 2 || seen.has(val)) continue;
+      if (/^\d{10,}$/.test(val) || GSTIN_RE.test(val)) {
+        GSTIN_RE.lastIndex = 0;
+        continue;
+      }
+      GSTIN_RE.lastIndex = 0;
+      seen.add(val);
+      out.push({ value: val, confidence: pat.score, source: line, reason: pat.reason });
+    }
+  }
+  return out.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
+}
+
+function parseAmountToPaise(raw: string): number | null {
+  const cleaned = raw.replace(/[^\d.]/g, '');
+  const v = parseFloat(cleaned);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return Math.round(v * 100);
 }
 
 /** Extract largest "total" amount in paise */
@@ -128,6 +233,40 @@ function extractTotal(lines: string[]): number | null {
     }
   }
   return null;
+}
+
+function extractTotalCandidates(lines: string[]): OcrCandidate<number>[] {
+  const out: OcrCandidate<number>[] = [];
+  const seen = new Set<number>();
+  const labels = [
+    { re: /(?:grand\s*total|amount\s*payable|total\s*payable|net\s*amount|invoice\s*total|bill\s*total)[^\d₹]*[₹\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.96, reason: 'grand_total_label' },
+    { re: /(?:total\s*amount|total\s*value|total\s*due)[^\d₹]*[₹\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.84, reason: 'total_label' },
+    { re: /^total\s*[:\-]?\s*[₹\s]*([\d,]+(?:\.\d{1,2})?)\s*$/i, score: 0.78, reason: 'plain_total_line' },
+  ];
+  lines.forEach((line, idx) => {
+    for (const label of labels) {
+      const m = line.match(label.re);
+      const paise = m?.[1] ? parseAmountToPaise(m[1]) : null;
+      if (!paise || seen.has(paise)) continue;
+      seen.add(paise);
+      const bottomBoost = idx > lines.length * 0.55 ? 0.05 : 0;
+      out.push({ value: paise, confidence: clampConfidence(label.score + bottomBoost), source: line, reason: label.reason });
+    }
+  });
+  if (!out.length) {
+    const bottom = lines.slice(Math.max(0, lines.length - 20));
+    for (const line of bottom) {
+      if (/tax|cgst|sgst|igst|rate|qty|discount/i.test(line)) continue;
+      const matches = [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([\d,]+\.\d{2}|[\d,]{4,})/gi)];
+      for (const m of matches) {
+        const paise = parseAmountToPaise(m[1]);
+        if (!paise || seen.has(paise)) continue;
+        seen.add(paise);
+        out.push({ value: paise, confidence: 0.42, source: line, reason: 'large_amount_near_bottom' });
+      }
+    }
+  }
+  return out.sort((a, b) => b.confidence - a.confidence || b.value - a.value).slice(0, 6);
 }
 
 function normalizeName(value: unknown): string {
@@ -229,6 +368,19 @@ function choosePartyGstin(lines: string[], gstins: string[], ownGstin: string, c
     }
   }
   return best;
+}
+
+function extractGstinCandidates(lines: string[], ownGstin: string, context: string): OcrCandidate<string>[] {
+  const all = [...new Set(lines.join('\n').match(GSTIN_RE)?.map(g => g.toUpperCase()) || [])];
+  GSTIN_RE.lastIndex = 0;
+  return all.map(gstin => {
+    if (gstin === ownGstin) {
+      return { value: gstin, confidence: 0.2, source: lines.find(l => l.toUpperCase().includes(gstin)) || gstin, reason: 'own_company_gstin' };
+    }
+    const selected = choosePartyGstin(lines, all, ownGstin, context);
+    const source = lines.find(l => l.toUpperCase().includes(gstin)) || gstin;
+    return { value: gstin, confidence: gstin === selected ? 0.9 : 0.55, source, reason: gstin === selected ? 'context_role_match' : 'other_gstin' };
+  }).sort((a, b) => b.confidence - a.confidence);
 }
 
 function extractSectionName(lines: string[], context: string, opts: { ownCompanyName?: string | null } = {}): string | null {
@@ -339,23 +491,110 @@ async function findExistingParty(companyId: string, extracted: { party_name?: st
   return best && score >= 0.62 ? { party: best, confidence: score, reason: 'name_fuzzy' } : null;
 }
 
+function extractItemCandidates(lines: string[]): OcrItemCandidate[] {
+  const itemRows: OcrItemCandidate[] = [];
+  const headerWords = /\b(description|particulars|item|goods|service|hsn|sac|qty|quantity|rate|amount)\b/i;
+  let tableStarted = false;
+  for (const line of lines) {
+    if (headerWords.test(line) && /\b(qty|quantity|amount|rate|hsn|sac)\b/i.test(line)) {
+      tableStarted = true;
+      continue;
+    }
+    if (!tableStarted && itemRows.length === 0) continue;
+    if (/^(sub\s*total|total|grand\s*total|cgst|sgst|igst|round\s*off|terms|bank|amount\s*in\s*words)/i.test(line)) {
+      if (itemRows.length) break;
+      continue;
+    }
+    const hsn = line.match(/\b(\d{4,8})\b/)?.[1] || null;
+    const amounts = [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([\d,]+\.\d{1,2}|[\d,]{2,})/gi)]
+      .map(m => parseAmountToPaise(m[1]))
+      .filter((v): v is number => !!v);
+    if (!hsn && amounts.length < 2) continue;
+
+    const amount = amounts.length ? amounts[amounts.length - 1] : null;
+    const rate = amounts.length >= 2 ? amounts[amounts.length - 2] : null;
+    const qtyMatch = line.match(/\b(\d+(?:\.\d{1,3})?)\s*(pcs|nos|kg|kgs|gms|ltr|mtr|sqft|sq\.ft|unit|units|hrs|hour|box|bag)?\b/i);
+    const quantity = qtyMatch ? Number(qtyMatch[1]) : null;
+    const unit = qtyMatch?.[2]?.toUpperCase() || null;
+    const description = line
+      .replace(/\b\d{4,8}\b/g, ' ')
+      .replace(/(?:₹|rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?/gi, ' ')
+      .replace(/\b(qty|rate|amount|pcs|nos|kg|kgs|gms|ltr|mtr|sqft|unit|units)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (description.length < 2) continue;
+    itemRows.push({
+      description: description.slice(0, 160),
+      hsn_code: hsn,
+      quantity,
+      unit,
+      rate_paise: rate,
+      amount_paise: amount,
+      confidence: clampConfidence((hsn ? 0.25 : 0) + (amount ? 0.25 : 0) + (rate ? 0.2 : 0) + (quantity ? 0.15 : 0) + 0.1),
+      source: line,
+    });
+    if (itemRows.length >= 30) break;
+  }
+  return itemRows;
+}
+
+function buildWarnings(args: {
+  docType: OcrDocumentType;
+  invoiceNumber: string | null;
+  billDate: string | null;
+  partyName: string | null;
+  supplierGstin: string | null;
+  ownGstin: string;
+  totalAmountPaise: number | null;
+  items: OcrItemCandidate[];
+  matchConfidence: number;
+}): string[] {
+  const warnings: string[] = [];
+  if (!args.invoiceNumber) warnings.push('Invoice / bill number was not confidently detected.');
+  if (!args.billDate) warnings.push('Bill date was not confidently detected.');
+  if (!args.partyName && !args.supplierGstin) warnings.push('Party name/GSTIN was not confidently detected.');
+  if (args.supplierGstin && args.supplierGstin === args.ownGstin) warnings.push('Detected GSTIN matches your own company GSTIN; party was not auto-selected from it.');
+  if (!args.totalAmountPaise) warnings.push('Total amount was not confidently detected.');
+  if (args.matchConfidence > 0 && args.matchConfidence < 0.85) warnings.push('Party match is based on name similarity. Please verify before applying.');
+  const itemTotal = args.items.reduce((sum, item) => sum + (item.amount_paise || 0), 0);
+  if (args.totalAmountPaise && itemTotal > 0 && Math.abs(itemTotal - args.totalAmountPaise) > Math.max(100, args.totalAmountPaise * 0.05)) {
+    warnings.push('Detected item total does not match bill total. Please verify line items.');
+  }
+  if (args.docType === 'unknown') warnings.push('Document type was not clear; extraction was done conservatively.');
+  return warnings;
+}
+
 /** Master extractor: works on any text blob */
 async function extractInvoiceData(rawText: string, companyId: string, opts: { ownCompanyName?: string | null; ownGstin?: string | null; context?: string } = {}) {
   const text = normalizeOcrText(rawText);
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const documentType = detectDocumentType(text, opts.context || '');
 
   const gstins = [...text.matchAll(GSTIN_RE)].map(m => m[1].toUpperCase());
   const uniqueGstins = [...new Set(gstins)];
   const ownGstin = String(opts.ownGstin || '').toUpperCase();
+  const context = opts.context || documentType;
   const partyGstins = ownGstin ? uniqueGstins.filter(g => g !== ownGstin) : uniqueGstins;
-  const supplierGstin = choosePartyGstin(lines, uniqueGstins, ownGstin, opts.context || '') ?? partyGstins[0] ?? uniqueGstins[0] ?? null;
+  const gstinCandidates = extractGstinCandidates(lines, ownGstin, context);
+  const dateCandidates = extractDateCandidates(text, lines);
+  const numberCandidates = extractInvoiceNumberCandidates(lines);
+  const totalCandidates = extractTotalCandidates(lines);
+  const itemCandidates = extractItemCandidates(lines);
+  const supplierGstin = pickBest(gstinCandidates.filter(c => c.value !== ownGstin))?.value
+    ?? choosePartyGstin(lines, uniqueGstins, ownGstin, context)
+    ?? partyGstins[0]
+    ?? uniqueGstins[0]
+    ?? null;
+  const bestDate = pickBest(dateCandidates);
+  const bestNumber = pickBest(numberCandidates);
+  const bestTotal = pickBest(totalCandidates);
   const base = {
-    invoice_number: extractInvoiceNumber(lines),
-    bill_date: extractDate(text),
-    party_name: extractPartyName(lines, { ...opts, supplierGstin }),
+    invoice_number: bestNumber?.value ?? extractInvoiceNumber(lines),
+    bill_date: bestDate?.value ?? extractDate(text),
+    party_name: extractPartyName(lines, { ...opts, supplierGstin, context }),
     supplier_gstin: supplierGstin,
     buyer_gstin: ownGstin || partyGstins[1] || uniqueGstins[1] || null,
-    total_amount_paise: extractTotal(lines),
+    total_amount_paise: bestTotal?.value ?? extractTotal(lines),
     raw_lines: lines.slice(0, 60),
   };
 
@@ -363,9 +602,44 @@ async function extractInvoiceData(rawText: string, companyId: string, opts: { ow
   if (match?.party) {
     base.party_name = match.party.name || base.party_name;
   }
+  const warnings = buildWarnings({
+    docType: documentType,
+    invoiceNumber: base.invoice_number,
+    billDate: base.bill_date,
+    partyName: base.party_name,
+    supplierGstin: base.supplier_gstin,
+    ownGstin,
+    totalAmountPaise: base.total_amount_paise,
+    items: itemCandidates,
+    matchConfidence: match?.confidence ?? 0,
+  });
 
   return {
     ...base,
+    document_type: documentType,
+    confidence: clampConfidence(
+      ((bestNumber?.confidence || 0) + (bestDate?.confidence || 0) + (bestTotal?.confidence || 0) + (match?.confidence || 0)) / 4,
+    ),
+    fields: {
+      invoice_number: bestNumber,
+      bill_date: bestDate,
+      party_name: base.party_name ? {
+        value: base.party_name,
+        confidence: clampConfidence(match?.confidence ?? (base.supplier_gstin ? 0.74 : 0.55)),
+        source: match?.reason === 'gstin_exact' ? String(base.supplier_gstin) : (lines.find(l => normalizeName(l).includes(normalizeName(base.party_name))) || base.party_name),
+        reason: match?.reason || (base.supplier_gstin ? 'near_party_gstin' : 'name_candidate'),
+      } : null,
+      supplier_gstin: pickBest(gstinCandidates.filter(c => c.value === base.supplier_gstin)) || null,
+      total_amount_paise: bestTotal,
+    },
+    candidates: {
+      invoice_numbers: numberCandidates,
+      dates: dateCandidates,
+      gstins: gstinCandidates,
+      totals: totalCandidates,
+    },
+    items: itemCandidates,
+    warnings,
     matched_party_id: match?.party?.id ?? null,
     matched_party_name: match?.party?.name ?? null,
     party_match_confidence: match?.confidence ?? 0,

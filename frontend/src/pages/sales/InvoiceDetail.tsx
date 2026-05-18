@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeRole } from '@/lib/roles';
@@ -21,6 +21,7 @@ import {
   useGenerateEwayBill,
   useInvoice,
 } from '@/hooks/useBusiness';
+import { getApiBaseURL } from '@/lib/api';
 
 const ROLE_RANK: Record<string, number> = {
   staff: 1,
@@ -224,6 +225,8 @@ export default function InvoiceDetail() {
   const ewbStatus = inv.eway_bill_status as string | undefined;
   const hasActiveEwb = !!inv.eway_bill_no && ewbStatus !== 'cancelled';
   const ewbWasCancelled = !!inv.eway_bill_no && ewbStatus === 'cancelled';
+  const uploadsBase = getApiBaseURL().replace(/\/api$/, '');
+  const attachmentUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase}${url || ''}`);
 
   const printReceipt = async () => {
     const w = localStorage.getItem('bizflow_printer_type');
@@ -535,6 +538,42 @@ Thank you.
             </div>
           </CardContent>
         </Card>
+
+        {(inv.external_description || (inv.attachments || []).length > 0) && (
+          <Card className="md:col-span-2">
+            <CardHeader className="pb-3 border-b">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Paperclip className="h-4 w-4" /> Description & Attachments
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3">
+              {inv.external_description && (
+                <div className="rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                  {inv.external_description}
+                </div>
+              )}
+              {(inv.attachments || []).length > 0 && (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {(inv.attachments || []).map((att: any) => (
+                    <a
+                      key={att.id}
+                      href={attachmentUrl(att.file_url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm hover:bg-muted/40"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{att.original_name || att.attachment_type || 'Attachment'}</p>
+                        {att.description && <p className="text-xs text-muted-foreground truncate">{att.description}</p>}
+                      </div>
+                      <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    </a>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <div className="space-y-6">
           <Card>

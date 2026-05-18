@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Building2, CalendarDays, ChevronsUpDown, FileText, Plus, Printer, Search, WalletCards } from 'lucide-react';
+import { Building2, CalendarDays, ChevronsUpDown, FileText, Landmark, Plus, Printer, ReceiptText, Search, WalletCards } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDate, formatMoney, rupeesToPaise } from '@/lib/formatters';
+import { QuickAddBankAccountSheet } from '@/components/company/QuickAddBankAccountSheet';
 
 type CashBankSummary = {
   cash_in_hand: number;
@@ -41,7 +42,9 @@ function unwrapRows(body: any) {
 export default function AccountingDashboard() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'cash-bank' | 'party-ledger'>('cash-bank');
+  const [cashBankView, setCashBankView] = useState<'banks' | 'cash' | 'cheques' | 'loans'>('banks');
   const [selectedBankId, setSelectedBankId] = useState<string>('cash');
+  const [addBankOpen, setAddBankOpen] = useState(false);
   const [adjustType, setAdjustType] = useState<'bank_deposit' | 'bank_withdrawal'>('bank_deposit');
   const [adjustAmount, setAdjustAmount] = useState('');
   const [adjustRef, setAdjustRef] = useState('');
@@ -55,10 +58,17 @@ export default function AccountingDashboard() {
   const [receiptAmount, setReceiptAmount] = useState('');
   const [receiptMode, setReceiptMode] = useState('cash');
   const [receiptRef, setReceiptRef] = useState('');
+  const [loanForm, setLoanForm] = useState({ account_name: '', lender_name: '', principal_amount: '', interest_rate: '', reference_number: '', notes: '' });
+  const [loanTx, setLoanTx] = useState<Record<string, { transaction_type: string; amount: string; reference_number: string; notes: string }>>({});
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['accounting', 'cash-bank', 'summary'],
     queryFn: async () => (await api.get('/accounting/cash-bank/summary')).data?.data as CashBankSummary,
+  });
+
+  const { data: loanAccounts = [], isLoading: loansLoading } = useQuery({
+    queryKey: ['accounting', 'cash-bank', 'loans'],
+    queryFn: async () => (await api.get('/accounting/cash-bank/loans')).data?.data || [],
   });
 
   const { data: statement, isLoading: statementLoading } = useQuery({
@@ -89,6 +99,26 @@ export default function AccountingDashboard() {
       qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Could not save cash/bank entry'),
+  });
+
+  const createLoanMutation = useMutation({
+    mutationFn: (payload: any) => api.post('/accounting/cash-bank/loans', payload),
+    onSuccess: () => {
+      toast.success('Loan account added');
+      setLoanForm({ account_name: '', lender_name: '', principal_amount: '', interest_rate: '', reference_number: '', notes: '' });
+      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank', 'loans'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not add loan account'),
+  });
+
+  const loanTxMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.post(`/accounting/cash-bank/loans/${id}/transactions`, payload),
+    onSuccess: (_res, vars) => {
+      toast.success('Loan transaction recorded');
+      setLoanTx((state) => ({ ...state, [vars.id]: { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' } }));
+      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank', 'loans'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not record loan transaction'),
   });
 
   const receiptMutation = useMutation({
@@ -129,6 +159,38 @@ export default function AccountingDashboard() {
       amount: rupeesToPaise(adjustAmount),
       reference_number: adjustRef || undefined,
       notes: adjustNotes || undefined,
+    });
+  };
+
+  const saveLoan = () => {
+    if (!loanForm.account_name.trim()) {
+      toast.error('Enter loan account name');
+      return;
+    }
+    createLoanMutation.mutate({
+      account_name: loanForm.account_name.trim(),
+      lender_name: loanForm.lender_name.trim() || undefined,
+      principal_amount: rupeesToPaise(loanForm.principal_amount || '0'),
+      interest_rate: Number(loanForm.interest_rate || 0),
+      reference_number: loanForm.reference_number.trim() || undefined,
+      notes: loanForm.notes.trim() || undefined,
+    });
+  };
+
+  const saveLoanTx = (loanId: string) => {
+    const tx = loanTx[loanId] || { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' };
+    if (!tx.amount || Number(tx.amount) <= 0) {
+      toast.error('Enter loan transaction amount');
+      return;
+    }
+    loanTxMutation.mutate({
+      id: loanId,
+      payload: {
+        transaction_type: tx.transaction_type || 'repayment',
+        amount: rupeesToPaise(tx.amount),
+        reference_number: tx.reference_number || undefined,
+        notes: tx.notes || undefined,
+      },
     });
   };
 
@@ -201,14 +263,27 @@ export default function AccountingDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
           <Card className="overflow-hidden">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Accounts</CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base">Cash & Bank</CardTitle>
+                <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setAddBankOpen(true)}>
+                  <Plus className="h-3.5 w-3.5" /> Add Bank
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {isLoading ? (
                 <div className="p-6 text-sm text-muted-foreground">Loading accounts...</div>
               ) : (
                 <div className="divide-y">
-                  <button type="button" onClick={() => setSelectedBankId('cash')} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${selectedBankId === 'cash' ? 'bg-muted' : ''}`}>
+                  <button type="button" onClick={() => { setCashBankView('banks'); setSelectedBankId((summary?.bank_accounts || [])[0]?.id || 'unassigned'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'banks' ? 'bg-muted' : ''}`}>
+                    <Building2 className="h-5 w-5 text-blue-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Bank Accounts</p>
+                      <p className="text-xs text-muted-foreground">NEFT, UPI, card, cheque and bank ledger</p>
+                    </div>
+                    <span className="text-xs font-semibold">{(summary?.bank_accounts || []).length}</span>
+                  </button>
+                  <button type="button" onClick={() => { setCashBankView('cash'); setSelectedBankId('cash'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'cash' ? 'bg-muted' : ''}`}>
                     <WalletCards className="h-5 w-5 text-emerald-600" />
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">Cash in Hand</p>
@@ -216,33 +291,84 @@ export default function AccountingDashboard() {
                     </div>
                     <span className="font-semibold tabular-nums">{formatMoney(summary?.cash_in_hand || 0)}</span>
                   </button>
-                  {(summary?.bank_accounts || []).map((b: any) => (
-                    <button key={b.id} type="button" onClick={() => setSelectedBankId(b.id)} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${selectedBankId === b.id ? 'bg-muted' : ''}`}>
-                      <Building2 className="h-5 w-5 text-blue-600" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold truncate">{b.account_label || b.bank_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{b.bank_name} {b.account_number ? `- ${b.account_number}` : ''}</p>
-                      </div>
-                      <span className="font-semibold tabular-nums">{formatMoney(Number(b.balance || 0))}</span>
-                    </button>
-                  ))}
-                  {Number(summary?.unassigned_bank_balance || 0) !== 0 && (
-                    <button type="button" onClick={() => setSelectedBankId('unassigned')} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${selectedBankId === 'unassigned' ? 'bg-muted' : ''}`}>
-                      <Banknote className="h-5 w-5 text-slate-600" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold">Unassigned Bank/UPI</p>
-                        <p className="text-xs text-muted-foreground">Payments without selected bank</p>
-                      </div>
-                      <span className="font-semibold tabular-nums">{formatMoney(summary?.unassigned_bank_balance || 0)}</span>
-                    </button>
-                  )}
+                  <button type="button" onClick={() => { setCashBankView('cheques'); setSelectedBankId('cheques'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'cheques' ? 'bg-muted' : ''}`}>
+                    <ReceiptText className="h-5 w-5 text-amber-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Cheques</p>
+                      <p className="text-xs text-muted-foreground">Cheque number, party and clearance view</p>
+                    </div>
+                    <span className="text-xs font-semibold">{(summary?.cheques || []).length}</span>
+                  </button>
+                  <button type="button" onClick={() => { setCashBankView('loans'); setSelectedBankId('loans'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'loans' ? 'bg-muted' : ''}`}>
+                    <Landmark className="h-5 w-5 text-violet-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Loan Accounts</p>
+                      <p className="text-xs text-muted-foreground">Opening loan, repayments and balance</p>
+                    </div>
+                    <span className="text-xs font-semibold">{loanAccounts.length}</span>
+                  </button>
                 </div>
               )}
             </CardContent>
           </Card>
 
           <div className="space-y-5">
-            <Card>
+            {cashBankView === 'banks' && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Bank Accounts</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {(summary?.bank_accounts || []).length === 0 ? (
+                    <div className="rounded-md border border-dashed p-8 text-center">
+                      <p className="text-sm text-muted-foreground">No bank account saved yet.</p>
+                      <Button className="mt-3 gap-2" size="sm" onClick={() => setAddBankOpen(true)}>
+                        <Plus className="h-4 w-4" /> Add Bank Account
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {(summary?.bank_accounts || []).map((b: any) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setSelectedBankId(b.id)}
+                          className={`rounded-lg border p-4 text-left hover:bg-muted/40 ${selectedBankId === b.id ? 'border-primary bg-primary/5' : ''}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold">{b.account_label || b.bank_name || 'Bank account'}</p>
+                              <p className="text-xs text-muted-foreground">{b.bank_name || 'Bank'}{b.account_number ? ` - ${b.account_number}` : ''}</p>
+                              {b.ifsc && <p className="mt-1 text-xs font-mono text-muted-foreground">IFSC {b.ifsc}</p>}
+                              {b.upi_id && <p className="text-xs text-muted-foreground">{b.upi_id}</p>}
+                            </div>
+                            <span className="font-bold tabular-nums">{formatMoney(Number(b.balance || 0))}</span>
+                          </div>
+                        </button>
+                      ))}
+                      {Number(summary?.unassigned_bank_balance || 0) !== 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBankId('unassigned')}
+                          className={`rounded-lg border p-4 text-left hover:bg-muted/40 ${selectedBankId === 'unassigned' ? 'border-primary bg-primary/5' : ''}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold">Unassigned Bank/UPI</p>
+                              <p className="text-xs text-muted-foreground">Payments where no bank account was selected</p>
+                            </div>
+                            <span className="font-bold tabular-nums">{formatMoney(summary?.unassigned_bank_balance || 0)}</span>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {(cashBankView === 'banks' || cashBankView === 'cash') && (
+              <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <ChevronsUpDown className="h-4 w-4" /> Deposit / Withdraw
@@ -274,9 +400,11 @@ export default function AccountingDashboard() {
                   </Button>
                 </div>
               </CardContent>
-            </Card>
+              </Card>
+            )}
 
-            <Card>
+            {(cashBankView === 'banks' || cashBankView === 'cash') && (
+              <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Transactions</CardTitle>
               </CardHeader>
@@ -311,9 +439,11 @@ export default function AccountingDashboard() {
                   </tbody>
                 </table>
               </CardContent>
-            </Card>
+              </Card>
+            )}
 
-            <Card>
+            {cashBankView === 'cheques' && (
+              <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Cheques</CardTitle>
               </CardHeader>
@@ -330,7 +460,90 @@ export default function AccountingDashboard() {
                   </div>
                 ))}
               </CardContent>
-            </Card>
+              </Card>
+            )}
+
+            {cashBankView === 'loans' && (
+              <>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Add Loan Account</CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <Label>Account name</Label>
+                      <Input className="mt-1" value={loanForm.account_name} onChange={(e) => setLoanForm((f) => ({ ...f, account_name: e.target.value }))} placeholder="Business loan / OD" />
+                    </div>
+                    <div>
+                      <Label>Lender</Label>
+                      <Input className="mt-1" value={loanForm.lender_name} onChange={(e) => setLoanForm((f) => ({ ...f, lender_name: e.target.value }))} placeholder="Bank / person" />
+                    </div>
+                    <div>
+                      <Label>Opening amount (₹)</Label>
+                      <Input className="mt-1" inputMode="decimal" value={loanForm.principal_amount} onChange={(e) => setLoanForm((f) => ({ ...f, principal_amount: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label>Interest %</Label>
+                      <Input className="mt-1" inputMode="decimal" value={loanForm.interest_rate} onChange={(e) => setLoanForm((f) => ({ ...f, interest_rate: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label>Reference</Label>
+                      <Input className="mt-1" value={loanForm.reference_number} onChange={(e) => setLoanForm((f) => ({ ...f, reference_number: e.target.value }))} />
+                    </div>
+                    <div>
+                      <Label>Notes</Label>
+                      <Input className="mt-1" value={loanForm.notes} onChange={(e) => setLoanForm((f) => ({ ...f, notes: e.target.value }))} />
+                    </div>
+                    <div className="md:col-span-3 flex justify-end">
+                      <Button className="gap-2" loading={createLoanMutation.isPending} onClick={saveLoan}>
+                        <Plus className="h-4 w-4" /> Save Loan Account
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Loan Accounts</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {loansLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading loans...</p>
+                    ) : loanAccounts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No loan account recorded.</p>
+                    ) : loanAccounts.map((loan: any) => {
+                      const tx = loanTx[loan.id] || { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' };
+                      return (
+                        <div key={loan.id} className="rounded-lg border p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold">{loan.account_name}</p>
+                              <p className="text-xs text-muted-foreground">{loan.lender_name || 'Loan account'}{Number(loan.interest_rate || 0) ? ` • ${loan.interest_rate}%` : ''}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-muted-foreground">Outstanding</p>
+                              <p className="font-bold tabular-nums">{formatMoney(Number(loan.current_balance || 0))}</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-2">
+                            <select className="h-9 rounded-md border bg-background px-2 text-sm" value={tx.transaction_type} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, transaction_type: e.target.value } }))}>
+                              <option value="repayment">Repayment</option>
+                              <option value="disbursement">New Disbursement</option>
+                              <option value="interest">Interest</option>
+                              <option value="adjustment">Adjustment</option>
+                            </select>
+                            <Input inputMode="decimal" placeholder="Amount ₹" value={tx.amount} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, amount: e.target.value } }))} />
+                            <Input placeholder="Reference" value={tx.reference_number} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, reference_number: e.target.value } }))} />
+                            <Input placeholder="Notes" value={tx.notes} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, notes: e.target.value } }))} />
+                            <Button loading={loanTxMutation.isPending && loanTxMutation.variables?.id === loan.id} onClick={() => saveLoanTx(loan.id)}>Record</Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -450,6 +663,18 @@ export default function AccountingDashboard() {
           </Card>
         </div>
       )}
+      <QuickAddBankAccountSheet
+        open={addBankOpen}
+        onOpenChange={setAddBankOpen}
+        onCreated={(row) => {
+          qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] });
+          const id = String((row as any)?.id || '');
+          if (id) {
+            setCashBankView('banks');
+            setSelectedBankId(id);
+          }
+        }}
+      />
     </div>
   );
 }
