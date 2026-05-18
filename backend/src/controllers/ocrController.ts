@@ -165,49 +165,167 @@ function extractDateCandidates(text: string, lines: string[]): OcrCandidate<stri
   return out.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
 }
 
-/** Pull invoice / bill number */
-function extractInvoiceNumber(lines: string[]): string | null {
-  const patterns = [
-    /(?:invoice\s*no|bill\s*no|inv\s*no|invoice\s*number|bill\s*number|voucher\s*no|receipt\s*no)[\.:\s#]*([A-Z0-9][A-Z0-9\-\/]{1,24})/i,
-    /(?:^|[\s:])(?:no|#)\s*[:\.]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  ];
-  for (const line of lines) {
-    for (const pat of patterns) {
-      const m = line.match(pat);
-      if (m?.[1] && m[1].length >= 2) return m[1].trim();
-    }
+const DOC_NUMBER_STOP_RE = /\b(?:date|dated|invoice\s*date|bill\s*date|due\s*date|gstin|gst\s*no|pan|cin|fssai|state\s*code|place\s*of\s*supply|phone|mobile|email|amount|total|taxable|vehicle|eway|e-way|irn|ack|hsn|sac|qty|quantity|rate|info|details|type)\b/i;
+const DOC_NUMBER_CONTEXT_RE = /\b(?:tax\s*)?(?:invoice|inv|bill|voucher|receipt|document|doc|credit\s*note|debit\s*note)\b/i;
+const DOC_NUMBER_BAD_LINE_RE = /\b(?:gstin|gst\s*no|phone|mobile|email|fssai|pan|cin|state\s*code|place\s*of\s*supply|hsn|sac|qty|quantity|rate|amount|total|taxable|cgst|sgst|igst|eway|e-way|irn|ack|vehicle|pincode|pin\s*code)\b/i;
+const DOC_NUMBER_BLACKLIST = new Set([
+  'NO', 'NUM', 'NUMBER', 'DATE', 'DATED', 'INVOICE', 'INV', 'BILL', 'TAX', 'GSTIN', 'GST',
+  'ORIGINAL', 'DUPLICATE', 'TRIPLICATE', 'COPY', 'HSN', 'SAC', 'PAN', 'CIN', 'IRN', 'ACK',
+  'TO', 'FROM', 'BY', 'SHIP', 'BILLTO', 'BILLFROM', 'INFO', 'DETAILS', 'TYPE',
+]);
+
+function normalizeDocumentNumber(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[\\|_]+/g, '-')
+    .replace(/[^A-Z0-9/.-]/g, '')
+    .replace(/\.+/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/\/{2,}/g, '/')
+    .replace(/^[./-]+|[./-]+$/g, '')
+    .slice(0, 24);
+}
+
+function trimAfterNextField(raw: string): string {
+  const idx = raw.search(DOC_NUMBER_STOP_RE);
+  return idx >= 0 ? raw.slice(0, idx) : raw;
+}
+
+function looksLikeGstin(value: string): boolean {
+  GSTIN_RE.lastIndex = 0;
+  const ok = GSTIN_RE.test(value);
+  GSTIN_RE.lastIndex = 0;
+  return ok;
+}
+
+function isDateLikeToken(value: string): boolean {
+  if (parseRawDate(value)) return true;
+  return /^\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?$/.test(value)
+    || /^\d{4}[./-]\d{1,2}[./-]\d{1,2}$/.test(value);
+}
+
+function sanitizeDocumentNumberSegment(raw: string): string | null {
+  const withoutFieldTail = trimAfterNextField(raw)
+    .replace(/^(?:no|number|num|#)\s*[:#.\-]*/i, '')
+    .replace(/^[\s:#.\-]+/, '')
+    .trim();
+  const tokens = withoutFieldTail.match(/[A-Z0-9][A-Z0-9/.\-]{0,31}/gi) || [];
+  for (const token of tokens) {
+    const value = normalizeDocumentNumber(token);
+    if (value && !DOC_NUMBER_BLACKLIST.has(value)) return value;
   }
   return null;
 }
 
-function normalizeDocumentNumber(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9/-]/g, '').slice(0, 24);
+function isBadDocumentNumberCandidate(value: string, source: string, strongLabel: boolean): boolean {
+  const v = normalizeDocumentNumber(value);
+  if (!v) return true;
+  if (DOC_NUMBER_BLACKLIST.has(v)) return true;
+  if (!strongLabel && v.length < 2) return true;
+  if (v.length > 24) return true;
+  if (looksLikeGstin(v)) return true;
+  if (isDateLikeToken(v)) return true;
+  if (/^\d{10,}$/.test(v)) return true; // phone, e-way, ack, UPI, long serials
+  if (/^\d{6}$/.test(v) && /\b(pin|pincode|address|state)\b/i.test(source)) return true;
+  if (/^\d{4,8}$/.test(v) && /\b(hsn|sac|item|description|qty|quantity|rate|amount)\b/i.test(source)) return true;
+  if (/^\d{1,2}$/.test(v) && /\b(state\s*code|gstin|hsn|sac|sl\.?\s*no|sr\.?\s*no|serial)\b/i.test(source)) return true;
+  if (/^\d+(?:\.\d+)?$/.test(v) && /\b(amount|total|taxable|cgst|sgst|igst|rate|qty|quantity|discount)\b/i.test(source)) return true;
+  if (!/[A-Z0-9]/.test(v)) return true;
+  return false;
+}
+
+function addDocumentNumberCandidate(
+  out: OcrCandidate<string>[],
+  seen: Set<string>,
+  raw: string,
+  source: string,
+  confidence: number,
+  reason: string,
+  strongLabel: boolean,
+) {
+  const value = sanitizeDocumentNumberSegment(raw);
+  if (!value || seen.has(value)) return;
+  if (isBadDocumentNumberCandidate(value, source, strongLabel)) return;
+  seen.add(value);
+  out.push({ value, confidence: clampConfidence(confidence), source, reason });
+}
+
+function labelOnlyDocumentNumberLine(line: string): boolean {
+  return /^(?:tax\s*)?(?:invoice|inv|bill|voucher|receipt|document|doc|credit\s*note|debit\s*note)\s*(?:number|no\.?|#)\s*[:#.\-]*$/i.test(line.trim());
 }
 
 function extractInvoiceNumberCandidates(lines: string[]): OcrCandidate<string>[] {
   const out: OcrCandidate<string>[] = [];
   const seen = new Set<string>();
-  const patterns = [
-    { re: /(?:invoice\s*no|invoice\s*number|inv\s*no|bill\s*no|bill\s*number|voucher\s*no|receipt\s*no)[\.:\s#-]*([A-Z0-9][A-Z0-9\-\/]{1,24})/i, score: 0.94, reason: 'strong_label' },
-    { re: /(?:doc\s*no|document\s*no|ref\s*no|reference\s*no)[\.:\s#-]*([A-Z0-9][A-Z0-9\-\/]{2,24})/i, score: 0.78, reason: 'reference_label' },
-    { re: /(?:^|[\s:])(?:no|#)\s*[:\.]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i, score: 0.48, reason: 'weak_number_label' },
+  const scanLines = lines.slice(0, 120);
+  const strongInlinePatterns = [
+    {
+      re: /\b(?:tax\s*)?invoice\s*(?:number|no\.?|#)?\s*[:#.\-]?\s*(.+)$/i,
+      score: 0.97,
+      reason: 'invoice_label_inline',
+    },
+    {
+      re: /\binv\.?\s*(?:number|no\.?|#)?\s*[:#.\-]?\s*(.+)$/i,
+      score: 0.95,
+      reason: 'inv_label_inline',
+    },
+    {
+      re: /\b(?:bill|voucher|receipt)\s*(?:number|no\.?|#)?\s*[:#.\-]?\s*(.+)$/i,
+      score: 0.9,
+      reason: 'bill_label_inline',
+    },
+    {
+      re: /\b(?:credit\s*note|debit\s*note|document|doc)\s*(?:number|no\.?|#)?\s*[:#.\-]?\s*(.+)$/i,
+      score: 0.78,
+      reason: 'document_label_inline',
+    },
   ];
-  for (const line of lines.slice(0, 80)) {
-    if (/gstin|phone|mobile|fssai|pan|state\s*code/i.test(line)) continue;
-    for (const pat of patterns) {
-      const m = line.match(pat.re);
-      const val = m?.[1] ? normalizeDocumentNumber(m[1]) : '';
-      if (!val || val.length < 2 || seen.has(val)) continue;
-      if (/^\d{10,}$/.test(val) || GSTIN_RE.test(val)) {
-        GSTIN_RE.lastIndex = 0;
-        continue;
+
+  scanLines.forEach((line, idx) => {
+    const hasDocContext = DOC_NUMBER_CONTEXT_RE.test(line);
+    if (/\bbill\s*(?:to|from)\b/i.test(line)) return;
+    for (const pat of strongInlinePatterns) {
+      const match = line.match(pat.re);
+      if (!match?.[1]) continue;
+      if (match[1].trimStart().search(DOC_NUMBER_STOP_RE) === 0 || /\b(?:invoice|bill|due)\s*date\b/i.test(line)) continue;
+      addDocumentNumberCandidate(out, seen, match[1], line, pat.score + (idx < 35 ? 0.02 : -0.04), pat.reason, true);
+
+      const parsedSameLine = sanitizeDocumentNumberSegment(match[1]);
+      if (parsedSameLine) continue;
+      for (let next = idx + 1; next <= Math.min(scanLines.length - 1, idx + 2); next++) {
+        const nextLine = scanLines[next];
+        if (!nextLine || DOC_NUMBER_BAD_LINE_RE.test(nextLine)) continue;
+        addDocumentNumberCandidate(out, seen, nextLine, `${line} ${nextLine}`, pat.score - 0.08, `${pat.reason}_next_line`, true);
       }
-      GSTIN_RE.lastIndex = 0;
-      seen.add(val);
-      out.push({ value: val, confidence: pat.score, source: line, reason: pat.reason });
     }
-  }
-  return out.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
+
+    if (labelOnlyDocumentNumberLine(line)) {
+      for (let next = idx + 1; next <= Math.min(scanLines.length - 1, idx + 3); next++) {
+        const nextLine = scanLines[next];
+        if (!nextLine || DOC_NUMBER_BAD_LINE_RE.test(nextLine)) continue;
+        addDocumentNumberCandidate(out, seen, nextLine, `${line} ${nextLine}`, idx < 40 ? 0.9 : 0.78, 'label_only_next_line', true);
+        if (out.some(c => c.source === `${line} ${nextLine}`)) break;
+      }
+    }
+
+    const nearby = scanLines.slice(Math.max(0, idx - 2), Math.min(scanLines.length, idx + 3)).join(' ');
+    if (idx < 45 && (hasDocContext || DOC_NUMBER_CONTEXT_RE.test(nearby))) {
+      const weak = line.match(/(?:^|[\s(])(?:no\.?|#)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9/.\-]{1,23})\b/i);
+      if (weak?.[1]) {
+        addDocumentNumberCandidate(out, seen, weak[1], line, 0.58, 'weak_number_near_invoice_context', false);
+      }
+    }
+  });
+
+  return out
+    .sort((a, b) => b.confidence - a.confidence || a.value.length - b.value.length)
+    .slice(0, 8);
+}
+
+/** Pull invoice / bill number */
+function extractInvoiceNumber(lines: string[]): string | null {
+  return pickBest(extractInvoiceNumberCandidates(lines))?.value || null;
 }
 
 function parseAmountToPaise(raw: string): number | null {
