@@ -228,9 +228,10 @@ export default function VyaparLineItems({
     },
     { subtotal: 0, tax: 0, cess: 0, total: 0 },
   );
+  const tableColumnCount = isGst ? 7 : 6;
 
   return (
-    <div className="space-y-3">
+    <div className="max-w-full space-y-3">
       {/* Search / Add Row */}
       <div className="relative">
         <div className="flex gap-2 flex-wrap">
@@ -324,8 +325,17 @@ export default function VyaparLineItems({
 
       {/* Items Table */}
       {items.length > 0 && (
-        <div className="border rounded-xl overflow-visible">
-          <table className="w-full text-sm">
+        <div className="max-w-full overflow-x-auto rounded-xl border">
+          <table className="w-full min-w-[760px] table-fixed text-sm">
+            <colgroup>
+              <col className="w-[26%]" />
+              <col className="w-[92px]" />
+              <col className="w-[120px]" />
+              <col className="hidden w-[110px] sm:table-column" />
+              {isGst && <col className="hidden w-[92px] sm:table-column" />}
+              <col className="w-[132px]" />
+              <col className="w-[48px]" />
+            </colgroup>
             <thead>
               <tr className="bg-muted/40 border-b">
                 <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Item</th>
@@ -347,23 +357,33 @@ export default function VyaparLineItems({
                   <Fragment key={idx}>
                     <tr className="border-b hover:bg-muted/10">
                       <td className="px-3 py-2">
-                        <div className="relative flex items-center gap-1">
-                          <Input
-                            className="h-8 text-sm font-medium min-w-[120px]"
-                            value={item.name}
-                            onFocus={() => setRowSearch({ index: idx, query: item.name || '', results: [], searching: false })}
-                            onChange={(e) => runRowSearch(idx, e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'Enter') return;
-                              if (rowSearch?.index === idx && rowSearch.results[0]) {
-                                e.preventDefault();
-                                replaceRowFromCatalog(idx, rowSearch.results[0]);
-                              }
-                            }}
-                            placeholder="Search item or enter name"
-                          />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1">
+                            <Input
+                              className="h-8 min-w-0 text-sm font-medium"
+                              value={item.name}
+                              onFocus={() => setRowSearch({ index: idx, query: item.name || '', results: [], searching: false })}
+                              onChange={(e) => runRowSearch(idx, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return;
+                                if (rowSearch?.index === idx && rowSearch.results[0]) {
+                                  e.preventDefault();
+                                  replaceRowFromCatalog(idx, rowSearch.results[0]);
+                                }
+                              }}
+                              placeholder="Search item or enter name"
+                            />
+                            <button
+                              type="button"
+                              className="p-1 text-muted-foreground hover:text-foreground"
+                              onClick={() => toggleExpand(idx)}
+                              title={expanded ? 'Collapse' : 'More options'}
+                            >
+                              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
                           {rowSearch?.index === idx && (rowSearch.searching || rowSearch.results.length > 0) && (
-                            <div className="absolute left-0 right-7 top-9 z-30 max-h-52 overflow-y-auto rounded-lg border bg-card shadow-xl">
+                            <div className="mt-1 max-h-52 overflow-y-auto rounded-lg border bg-card shadow-xl">
                               {rowSearch.searching && rowSearch.results.length === 0 && (
                                 <p className="px-3 py-2 text-xs text-muted-foreground">Searching…</p>
                               )}
@@ -383,20 +403,12 @@ export default function VyaparLineItems({
                               ))}
                             </div>
                           )}
-                          <button
-                            type="button"
-                            className="p-1 text-muted-foreground hover:text-foreground"
-                            onClick={() => toggleExpand(idx)}
-                            title={expanded ? 'Collapse' : 'More options'}
-                          >
-                            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                          </button>
                         </div>
                       </td>
                       <td className="px-3 py-2">
                         <Input
                           type="number"
-                          className="h-8 text-right w-20 tabular-nums"
+                          className="h-8 w-full text-right tabular-nums"
                           min={0}
                           step="0.001"
                           value={item.quantity}
@@ -405,7 +417,7 @@ export default function VyaparLineItems({
                       </td>
                       <td className="px-3 py-2">
                         <MoneyInput
-                          className="h-8 text-right w-28 tabular-nums"
+                          className="h-8 w-full text-right tabular-nums"
                           placeholder="0"
                           value={item.unit_price}
                           onChange={(unit_price) => update(idx, { unit_price })}
@@ -413,7 +425,7 @@ export default function VyaparLineItems({
                       </td>
                       <td className="px-3 py-2 hidden sm:table-cell">
                         <MoneyInput
-                          className="h-8 text-right w-24 tabular-nums"
+                          className="h-8 w-full text-right tabular-nums"
                           placeholder="0"
                           value={item.discount_amount}
                           onChange={(discount_amount) => update(idx, { discount_amount })}
@@ -422,7 +434,7 @@ export default function VyaparLineItems({
                       {isGst && (
                         <td className="px-3 py-2 hidden sm:table-cell">
                           <select
-                            className="h-8 w-20 rounded-md border bg-transparent text-sm text-right px-2 tabular-nums"
+                            className="h-8 w-full rounded-md border bg-transparent px-2 text-right text-sm tabular-nums"
                             value={item.gst_rate}
                             onChange={(e) => update(idx, { gst_rate: parseInt(e.target.value) })}
                           >
@@ -432,14 +444,14 @@ export default function VyaparLineItems({
                           </select>
                         </td>
                       )}
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total)}
                       </td>
                       <td className="px-3 py-2">
                         <button
                           type="button"
                           onClick={() => remove(idx)}
-                          className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                           title="Delete line"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -450,13 +462,13 @@ export default function VyaparLineItems({
                     {/* Expanded row for extra fields */}
                     {expanded && (
                       <tr className="bg-muted/20 border-b">
-                        <td colSpan={7} className="px-4 py-3">
-                          <div className="flex flex-wrap gap-3 text-xs">
+                        <td colSpan={tableColumnCount} className="px-4 py-3">
+                          <div className="grid min-w-0 grid-cols-1 gap-3 text-xs sm:grid-cols-[170px_120px_1fr_90px]">
                             {showHsn && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-16">{item.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</span>
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">{item.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</span>
                                 <Input
-                                  className="h-7 w-28 text-xs font-mono"
+                                  className="h-8 w-full text-xs font-mono"
                                   value={item.hsn_code || ''}
                                   onChange={(e) => update(idx, { hsn_code: e.target.value })}
                                   placeholder={item.item_type === 'service' ? 'SAC' : 'HSN'}
@@ -464,10 +476,10 @@ export default function VyaparLineItems({
                               </div>
                             )}
                             {showUnit && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-8">Unit</span>
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">Unit</span>
                                 <Input
-                                  className="h-7 w-20 text-xs"
+                                  className="h-8 w-full text-xs"
                                   value={item.unit || ''}
                                   onChange={(e) => update(idx, { unit: e.target.value })}
                                   placeholder="PCS"
@@ -475,10 +487,10 @@ export default function VyaparLineItems({
                               </div>
                             )}
                             {showDescription && (
-                              <div className="flex items-center gap-2 flex-1">
-                                <span className="text-muted-foreground w-16">Description</span>
-                                <Input
-                                  className="h-7 flex-1 text-xs"
+                              <div className="min-w-0 sm:col-span-1">
+                                <span className="mb-1 block text-muted-foreground">Description</span>
+                                <textarea
+                                  className="min-h-[38px] w-full resize-y rounded-md border bg-background px-3 py-2 text-xs leading-5 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                   value={item.description || ''}
                                   onChange={(e) => update(idx, { description: e.target.value })}
                                   placeholder="Optional description"
@@ -486,11 +498,11 @@ export default function VyaparLineItems({
                               </div>
                             )}
                             {isGst && showCess && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-muted-foreground w-12">Cess %</span>
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">Cess %</span>
                                 <Input
                                   type="number"
-                                  className="h-7 w-16 text-xs"
+                                  className="h-8 w-full text-xs"
                                   min={0}
                                   value={item.cess_rate || 0}
                                   onChange={(e) => update(idx, { cess_rate: parseFloat(e.target.value) || 0 })}
@@ -498,20 +510,20 @@ export default function VyaparLineItems({
                               </div>
                             )}
                             {/* Mobile: disc & gst in expanded row */}
-                            <div className="flex items-center gap-2 sm:hidden">
-                              <span className="text-muted-foreground w-16">Disc (₹)</span>
+                            <div className="min-w-0 sm:hidden">
+                              <span className="mb-1 block text-muted-foreground">Disc (₹)</span>
                               <MoneyInput
-                                className="h-7 w-24 text-xs"
+                                className="h-8 w-full text-xs"
                                 placeholder="0"
                                 value={item.discount_amount}
                                 onChange={(discount_amount) => update(idx, { discount_amount })}
                               />
                             </div>
                             {isGst && (
-                              <div className="flex items-center gap-2 sm:hidden">
-                                <span className="text-muted-foreground w-12">GST %</span>
+                              <div className="min-w-0 sm:hidden">
+                                <span className="mb-1 block text-muted-foreground">GST %</span>
                                 <select
-                                  className="h-7 w-20 rounded border bg-transparent text-xs px-2"
+                                  className="h-8 w-full rounded border bg-transparent px-2 text-xs"
                                   value={item.gst_rate}
                                   onChange={(e) => update(idx, { gst_rate: parseInt(e.target.value) })}
                                 >

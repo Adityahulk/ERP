@@ -898,8 +898,6 @@ export async function generateDeliveryChallanPDF(
     <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
     <td class="right">${fmtQty(Number(it.quantity) || 0)}</td>
     <td class="center">${escapeHtml(it.unit || 'PCS')}</td>
-    <td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td>
-    <td class="right">${fmtPaise(Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)))}</td>
   </tr>`).join('');
   const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
     @page{size:A4;margin:10mm}
@@ -913,7 +911,8 @@ export async function generateDeliveryChallanPDF(
     .box{padding:8px;border-bottom:1px solid #111}.box:first-child{border-right:1px solid #111}.label{font-size:10px;text-transform:uppercase;color:#555;margin-bottom:3px}
     table{width:100%;border-collapse:collapse}th,td{border:1px solid #111;padding:6px;vertical-align:top}th{font-weight:700;background:#fff}
     .meta{display:grid;grid-template-columns:repeat(4,1fr);border-left:1px solid #111}.meta div{padding:7px;border-right:1px solid #111;border-bottom:1px solid #111}
-    .footer{display:grid;grid-template-columns:1fr 230px;gap:14px;margin-top:10px}.sign{border:1px solid #111;min-height:82px;padding:8px;text-align:center}.note{border:1px solid #111;padding:8px;min-height:82px}
+    .footer{display:grid;grid-template-columns:1fr 220px 220px;gap:10px;margin-top:10px}.sign{border:1px solid #111;min-height:86px;padding:8px;text-align:center}.note{border:1px solid #111;padding:8px;min-height:86px}
+    .declaration{margin-top:10px;border:1px solid #111;padding:8px;font-size:11px;line-height:1.45}
   </style></head><body>
     <section class="head">
       <div class="center">${logoSrc ? `<img class="logo" src="${logoSrc}" />` : ''}</div>
@@ -930,10 +929,11 @@ export async function generateDeliveryChallanPDF(
       <div class="box">${deliveredToBlock}</div>
       <div class="box"><div class="label">Transport</div><div>Transport: ${escapeHtml(challan.transport_name || '—')}</div><div>Vehicle No.: ${escapeHtml(challan.vehicle_number || '—')}</div><div>LR/Docket No.: ${escapeHtml(challan.lr_number || '—')}</div></div>
     </section>
-    <table><thead><tr><th class="center">#</th><th>Description of Goods</th><th class="center">HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th><th class="right">Value</th></tr></thead><tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="3" class="right"><b>Total</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td><td></td><td class="right"><b>${fmtPaise(Number(challan.total_amount) || 0)}</b></td></tr></tfoot>
+    <table><thead><tr><th class="center" style="width:44px">#</th><th>Description of Goods</th><th class="center" style="width:110px">HSN/SAC</th><th class="right" style="width:92px">Qty</th><th class="center" style="width:90px">Unit</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="3" class="right"><b>Total Quantity</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td></tr></tfoot>
     </table>
-    <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/><br/><br/>Authorised Signatory</div></section>
+    <section class="declaration">This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.</section>
+    <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/><br/><br/>Authorised Signatory</div></section>
   </body></html>`;
   const browser = await launchBrowser();
   const page = await browser.newPage();
