@@ -96,7 +96,7 @@ export default function QuotationForm() {
     setPartySearch(''); setPartyResults([]);
   };
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:quotation',
     {
       partyId, partyName, godownId, quotationNumber, quotationDate, validUntil,
@@ -131,6 +131,21 @@ export default function QuotationForm() {
       ),
     },
   );
+
+  const saveCurrentDraft = () => {
+    if (saveDraft()) toast.success('Draft saved');
+    else toast.error('Add some quotation details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const create = useMutation({
     mutationFn: async () => {
@@ -182,6 +197,13 @@ export default function QuotationForm() {
         title="New Quotation"
         description="Send a price offer before raising an invoice."
         left={<Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}><ArrowLeft className="w-5 h-5" /></Button>}
+        actions={(
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+            {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+          </div>
+        )}
       />
 
       {/* Party + Doc Info side by side */}

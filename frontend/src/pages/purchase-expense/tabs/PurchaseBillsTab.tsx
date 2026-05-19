@@ -80,7 +80,7 @@ export default function PurchaseBillsTab() {
     { label: 'Total', value: formatMoney(parseInt(meta.total_amount) || 0), icon: IndianRupee, color: 'text-blue-600 bg-blue-50' },
   ];
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:purchase-bill',
     { partyId, partyName, billDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
     (draft: any) => {
@@ -105,6 +105,21 @@ export default function PurchaseBillsTab() {
       ),
     },
   );
+
+  const saveCurrentDraft = () => {
+    if (saveDraft()) toast.success('Purchase bill draft saved');
+    else toast.error('Add purchase bill details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Purchase bill draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const createMutation = useMutation({
     mutationFn: (payload: any) => api.post('/purchases/invoices', payload),
@@ -321,7 +336,12 @@ export default function PurchaseBillsTab() {
             {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap gap-2">
+          {hasDraft && !editingBillId && (
+            <Button size="sm" variant="outline" onClick={loadSavedDraft}>
+              Open draft
+            </Button>
+          )}
           <Button size="sm" className="gap-1.5" onClick={openNewBill}>
             <Plus className="w-4 h-4" /> Add Purchase
           </Button>
@@ -408,6 +428,13 @@ export default function PurchaseBillsTab() {
           <SheetHeader className="mb-5">
             <SheetTitle>{editingBillId ? 'Edit Purchase Bill' : 'Add Purchase Bill'}</SheetTitle>
           </SheetHeader>
+          {!editingBillId && (
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+              <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+              {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+            </div>
+          )}
           {editingBillId && editBillLoading && (
             <p className="text-sm text-muted-foreground mb-4">Loading bill…</p>
           )}

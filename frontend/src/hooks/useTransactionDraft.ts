@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Options<T> = {
   enabled?: boolean;
   shouldSave?: (value: T) => boolean;
-  delayMs?: number;
 };
 
 export function useTransactionDraft<T>(
@@ -12,65 +11,64 @@ export function useTransactionDraft<T>(
   restore: (value: T) => void,
   options: Options<T> = {},
 ) {
-  const { enabled = true, shouldSave = () => true, delayMs = 300 } = options;
-  const hydratedRef = useRef(false);
+  const { enabled = true, shouldSave = () => true } = options;
   const shouldSaveRef = useRef(shouldSave);
   const valueJson = useMemo(() => JSON.stringify(value), [value]);
-  const valueJsonRef = useRef(valueJson);
+  const [hasDraft, setHasDraft] = useState(false);
 
   useEffect(() => {
     shouldSaveRef.current = shouldSave;
   }, [shouldSave]);
 
   useEffect(() => {
-    valueJsonRef.current = valueJson;
-  }, [valueJson]);
-
-  const persist = (json: string) => {
-    try {
-      const parsed = JSON.parse(json) as T;
-      if (shouldSaveRef.current(parsed)) localStorage.setItem(key, json);
-      else localStorage.removeItem(key);
-    } catch {
-      /* Ignore quota/private-mode failures. */
+    if (!enabled) {
+      setHasDraft(false);
+      return;
     }
-  };
+    try {
+      setHasDraft(Boolean(localStorage.getItem(key)));
+    } catch {
+      setHasDraft(false);
+    }
+  }, [enabled, key]);
 
-  useEffect(() => {
-    if (!enabled || hydratedRef.current) return;
-    hydratedRef.current = true;
+  const saveDraft = useCallback(() => {
+    if (!enabled) return false;
+    try {
+      const parsed = JSON.parse(valueJson) as T;
+      if (!shouldSaveRef.current(parsed)) {
+        localStorage.removeItem(key);
+        setHasDraft(false);
+        return false;
+      }
+      localStorage.setItem(key, valueJson);
+      setHasDraft(true);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [enabled, key, valueJson]);
+
+  const loadDraft = useCallback(() => {
+    if (!enabled) return false;
     try {
       const raw = localStorage.getItem(key);
-      if (raw) restore(JSON.parse(raw) as T);
+      if (!raw) return false;
+      restore(JSON.parse(raw) as T);
+      return true;
     } catch {
-      /* Ignore corrupt or unavailable local storage. */
+      return false;
     }
   }, [enabled, key, restore]);
 
-  useEffect(() => {
-    if (!enabled || !hydratedRef.current) return;
-    const timer = window.setTimeout(() => {
-      persist(valueJson);
-    }, delayMs);
-    return () => window.clearTimeout(timer);
-  }, [delayMs, enabled, key, valueJson]);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-    const flush = () => {
-      if (hydratedRef.current) persist(valueJsonRef.current);
-    };
-    window.addEventListener('pagehide', flush);
-    return () => {
-      flush();
-      window.removeEventListener('pagehide', flush);
-    };
-  }, [enabled, key]);
-
   return {
+    hasDraft,
+    saveDraft,
+    loadDraft,
     clearDraft: () => {
       try {
         localStorage.removeItem(key);
+        setHasDraft(false);
       } catch {
         /* ignore */
       }

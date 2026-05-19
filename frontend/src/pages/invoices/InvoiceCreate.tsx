@@ -292,7 +292,7 @@ export default function InvoiceCreate() {
     documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items,
   }), [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items]);
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
     draftState,
     (draft: any) => {
@@ -324,6 +324,22 @@ export default function InvoiceCreate() {
       ),
     },
   );
+
+  const saveCurrentDraft = () => {
+    const ok = saveDraft();
+    if (ok) toast.success('Draft saved');
+    else toast.error('Add some details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const validate = () => {
     if (!partyId) { toast.error('Select a party'); return false; }
@@ -472,9 +488,18 @@ export default function InvoiceCreate() {
         description="Create a sale with customer, items, payment and printable invoice details."
         left={<Button variant="ghost" size="icon" onClick={() => navigate(cancelTo)}><ArrowLeft className="h-5 w-5" /></Button>}
         actions={
-          <Button variant="outline" size="sm" className="gap-1.5" disabled={!!editInvoiceId} onClick={() => setOcrOpen(true)}>
-            <ScanLine className="h-4 w-4" /> Scan
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {!editInvoiceId && (
+              <>
+                <Button variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+                <Button variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+                {hasDraft && <Button variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+              </>
+            )}
+            <Button variant="outline" size="sm" className="gap-1.5" disabled={!!editInvoiceId} onClick={() => setOcrOpen(true)}>
+              <ScanLine className="h-4 w-4" /> Scan
+            </Button>
+          </div>
         }
       />
 

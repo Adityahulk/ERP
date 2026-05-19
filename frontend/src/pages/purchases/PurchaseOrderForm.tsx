@@ -88,7 +88,7 @@ export default function PurchaseOrderForm() {
     }
   };
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:purchase-order',
     { partyId, partyName, godownId, expectedDate, notes, items },
     (draft: any) => {
@@ -103,6 +103,21 @@ export default function PurchaseOrderForm() {
       shouldSave: (draft) => Boolean(draft.partyId || draft.partyName || draft.notes || draft.items.length),
     },
   );
+
+  const saveCurrentDraft = () => {
+    if (saveDraft()) toast.success('Draft saved');
+    else toast.error('Add some purchase order details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const createPO = useMutation({
     mutationFn: async () => {
@@ -140,7 +155,14 @@ export default function PurchaseOrderForm() {
         title="New Purchase Order"
         description="Select party and add items to order."
         left={<Button variant="ghost" size="icon" onClick={() => navigate('/purchases')}><ArrowLeft className="w-5 h-5" /></Button>}
-        actions={<Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}><ScanLine className="w-4 h-4" /> Scan Supplier Quote</Button>}
+        actions={(
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+            {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+            <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}><ScanLine className="w-4 h-4" /> Scan Supplier Quote</Button>
+          </div>
+        )}
       />
 
       {/* Supplier + Doc Info */}

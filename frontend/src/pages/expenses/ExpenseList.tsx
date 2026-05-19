@@ -53,7 +53,7 @@ export default function ExpenseList() {
   });
   const u = (f: string, v: any) => setForm((p: any) => ({ ...p, [f]: v }));
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:expense',
     { showForm, form },
     (draft: any) => {
@@ -67,6 +67,21 @@ export default function ExpenseList() {
       ),
     },
   );
+
+  const saveCurrentDraft = () => {
+    if (saveDraft()) toast.success('Expense draft saved');
+    else toast.error('Add expense details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Expense draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const gstPreview = useMemo(() => {
     const paise = Math.round((Number(form.amount) || 0) * 100);
@@ -101,7 +116,10 @@ export default function ExpenseList() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div><h1 className="text-2xl font-bold">Expenses</h1><p className="text-muted-foreground text-sm">Track business expenses</p></div>
-        <Button size="sm" onClick={() => setShowForm(true)}><Plus className="w-4 h-4 mr-1" />Add Expense</Button>
+        <div className="flex flex-wrap gap-2">
+          {hasDraft && <Button size="sm" variant="outline" onClick={loadSavedDraft}>Open draft</Button>}
+          <Button size="sm" onClick={() => setShowForm(true)}><Plus className="w-4 h-4 mr-1" />Add Expense</Button>
+        </div>
       </div>
 
       {/* Category breakdown */}
@@ -165,6 +183,11 @@ export default function ExpenseList() {
       {/* Create Expense Sheet */}
       <Sheet open={showForm} onOpenChange={setShowForm}>
         <SheetContent><SheetHeader className="mb-6"><SheetTitle>Add Expense</SheetTitle></SheetHeader>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+            {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+          </div>
           <div className="space-y-4">
             <div><Label>Category *</Label>
               <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.category || ''} onChange={e => u('category', e.target.value)}>

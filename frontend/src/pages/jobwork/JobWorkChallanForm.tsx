@@ -50,7 +50,7 @@ export default function JobWorkChallanForm() {
   });
   const godowns = (godownsData as any) ?? [];
 
-  const { clearDraft } = useTransactionDraft(
+  const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:job-work-challan',
     { form, items },
     (draft: any) => {
@@ -66,6 +66,21 @@ export default function JobWorkChallanForm() {
       ),
     },
   );
+
+  const saveCurrentDraft = () => {
+    if (saveDraft()) toast.success('Draft saved');
+    else toast.error('Add challan details before saving a draft');
+  };
+
+  const loadSavedDraft = () => {
+    if (loadDraft()) toast.success('Draft loaded');
+    else toast.error('No saved draft found');
+  };
+
+  const clearSavedDraft = () => {
+    clearDraft();
+    toast.success('Draft cleared');
+  };
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => api.post('/job-work/challans', data),
@@ -108,7 +123,14 @@ export default function JobWorkChallanForm() {
         title="New Job Work Challan"
         description="Send materials to a job worker or record processed goods received back."
         left={<Button variant="ghost" size="icon" onClick={() => navigate('/job-work')}><ArrowLeft className="w-5 h-5" /></Button>}
-        actions={<Wrench className="w-5 h-5 text-indigo-600" />}
+        actions={(
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
+            <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
+            {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+            <Wrench className="w-5 h-5 text-indigo-600" />
+          </div>
+        )}
       />
 
       {/* Challan Type */}
