@@ -711,8 +711,11 @@ export async function listInvoices(req: Request, res: Response) {
     const result = await query(
       `SELECT i.*, COALESCE(i.party_name_snapshot, p.name) as party_name,
               COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
-              COALESCE(i.party_email_snapshot, p.email) as party_email
+              COALESCE(i.party_email_snapshot, p.email) as party_email,
+              dc.id AS delivery_challan_id,
+              dc.challan_number AS delivery_challan_number
        FROM invoices i LEFT JOIN parties p ON i.party_id = p.id
+       LEFT JOIN delivery_challans dc ON dc.invoice_id = i.id AND dc.company_id = i.company_id AND dc.is_deleted = false
        WHERE ${where} ORDER BY i.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, limit, offset]
     );
@@ -765,10 +768,13 @@ export async function getInvoice(req: Request, res: Response) {
               COALESCE(i.bank_ifsc_snapshot, c.bank_ifsc) as bank_ifsc,
               COALESCE(i.bank_branch_snapshot, c.bank_branch) as bank_branch,
               COALESCE(i.upi_id_snapshot, c.upi_id) as upi_id,
+              dc.id AS delivery_challan_id,
+              dc.challan_number AS delivery_challan_number,
               c.einvoice_enabled, c.einvoice_turnover_above_5cr
        FROM invoices i
        LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id AND p.is_deleted = false
        LEFT JOIN companies c ON c.id = i.company_id
+       LEFT JOIN delivery_challans dc ON dc.invoice_id = i.id AND dc.company_id = i.company_id AND dc.is_deleted = false
        WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false`,
       [id, req.user!.company_id]
     );
@@ -831,7 +837,7 @@ export async function updateInvoice(req: Request, res: Response) {
       const oldInv = invRes.rows[0];
 
       if (oldInv.status === 'cancelled') throw new Error('Cannot edit a cancelled invoice');
-      if (oldInv.irn) throw new Error('Cannot edit an invoice with an e-invoice IRN. Cancel the IRN first.');
+      if (oldInv.irn && oldInv.einvoice_status === 'generated') throw new Error('Cannot edit an invoice with an active e-invoice IRN. Cancel the IRN first.');
       if (oldInv.invoice_type === 'purchase') throw new Error('Purchase bills are edited under Purchases, not here.');
       if (!['sale', 'tax_invoice'].includes(String(oldInv.invoice_type || ''))) {
         throw new Error('This invoice type cannot be edited from the sales form.');
@@ -1118,7 +1124,7 @@ export async function cancelInvoice(req: Request, res: Response) {
 
       if (inv.status === 'cancelled') throw new Error('Invoice is already cancelled');
       if (Number(inv.paid_amount || 0) > 0) throw new Error('Cannot cancel an invoice that has payments recorded');
-      if (inv.irn) throw new Error('Cancel e-invoice IRN before cancelling this invoice');
+      if (inv.irn && inv.einvoice_status === 'generated') throw new Error('Cancel e-invoice IRN before cancelling this invoice');
 
       const itemsRes = await client.query(
         `SELECT ii.*, it.name AS item_master_name, it.track_inventory
@@ -1220,7 +1226,7 @@ export async function deleteInvoice(req: Request, res: Response) {
       );
       if (!invRes.rows.length) throw new Error('Invoice not found');
       const inv = invRes.rows[0];
-      if (inv.irn) throw new Error('This invoice has an active IRN. Cancel e-invoice before deleting.');
+      if (inv.irn && inv.einvoice_status === 'generated') throw new Error('This invoice has an active IRN. Cancel e-invoice before deleting.');
 
       await backupInvoiceSnapshot(client, companyId, id, 'delete_invoice', req.user!.id);
 
@@ -1883,6 +1889,9 @@ export async function getEinvoicePdf(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const invRes = await query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`, [id, companyId]);
     if (!invRes.rows.length) return res.status(404).send('Not found');
+    if (!invRes.rows[0].irn || invRes.rows[0].einvoice_status !== 'generated') {
+      return res.status(400).json(error('This invoice does not have an active e-invoice IRN.'));
+    }
     const companyRes = await query('SELECT * FROM companies WHERE id = $1', [companyId]);
     const itemsRes = await query(`SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2`, [id, companyId]);
     const partyRes = invRes.rows[0].party_id

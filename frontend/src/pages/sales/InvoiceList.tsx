@@ -90,6 +90,25 @@ export default function InvoiceList() {
     }
   }, []);
 
+  const openDeliveryChallanPdf = useCallback(async (inv: any) => {
+    if (!inv.delivery_challan_id) {
+      toast.error('No delivery challan is linked to this invoice.');
+      return;
+    }
+    const t = toast.loading('Opening delivery challan…');
+    try {
+      const res = await api.get(`/sales/challans/${inv.delivery_challan_id}/pdf`, {
+        params: { inline: 1 },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success('Delivery challan preview opened', { id: t });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Could not open delivery challan', { id: t });
+    }
+  }, []);
+
   const deleteInvoice = useCallback(async (inv: any) => {
     const ok = window.confirm(`Delete invoice ${inv.invoice_number}? This removes it from active records.`);
     if (!ok) return;
@@ -192,10 +211,11 @@ export default function InvoiceList() {
                 invoices.map((inv: any) => {
                   const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
                   const isOverdue = inv.due_date && new Date(inv.due_date) < new Date() && (inv.balance_due ?? inv.total_amount) > 0;
-                  const canEdit = !inv.irn && inv.status !== 'cancelled';
-                  const canIRN = !inv.irn && inv.status !== 'cancelled';
-                  const canEWB = inv.irn && !inv.ewb_no && inv.status !== 'cancelled';
-                  const canDelete = !inv.irn && inv.einvoice_status !== 'generated' && inv.status !== 'cancelled';
+                  const hasActiveIrn = !!inv.irn && inv.einvoice_status === 'generated';
+                  const canEdit = !hasActiveIrn && inv.status !== 'cancelled';
+                  const canIRN = !hasActiveIrn && inv.status !== 'cancelled';
+                  const canEWB = hasActiveIrn && !inv.ewb_no && inv.status !== 'cancelled';
+                  const canDelete = !hasActiveIrn && inv.status !== 'cancelled';
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
@@ -204,7 +224,8 @@ export default function InvoiceList() {
                         <button onClick={() => navigate(`/sales/${inv.id}`)} className="text-primary hover:underline">
                           {inv.invoice_number}
                         </button>
-                        {inv.irn && <span className="ml-1 text-xs text-emerald-600 font-semibold">IRN</span>}
+                        {hasActiveIrn && <span className="ml-1 text-xs text-emerald-600 font-semibold">IRN</span>}
+                        {inv.irn && inv.einvoice_status === 'cancelled' && <span className="ml-1 text-xs text-slate-500 font-semibold">IRN cancelled</span>}
                         {inv.ewb_no && <span className="ml-1 text-xs text-blue-600 font-semibold">EWB</span>}
                       </td>
                       <td className="py-3 px-4">
@@ -278,7 +299,12 @@ export default function InvoiceList() {
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); generatePDF(inv.id, inv.invoice_number); }}>
                                 <Download className="h-4 w-4" /> Download invoice PDF
                               </button>
-                              {inv.irn && (
+                              {inv.delivery_challan_id && (
+                                <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); openDeliveryChallanPdf(inv); }}>
+                                  <Truck className="h-4 w-4" /> Preview delivery challan
+                                </button>
+                              )}
+                              {hasActiveIrn && (
                                 <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); downloadEinvoicePdf(inv); }}>
                                   <FileCheck className="h-4 w-4" /> Download e-Invoice PDF
                                 </button>

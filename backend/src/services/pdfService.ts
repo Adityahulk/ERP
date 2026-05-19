@@ -466,7 +466,7 @@ function buildInvoiceHtml(args: {
     @page{size:A4;margin:8mm}
     *{box-sizing:border-box}
     body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}
-    .page{min-height:281mm;padding:8px 14px;position:relative}
+    .page{padding:8px 14px;position:relative}
     .muted,.item-desc,.item-meta{color:#71717a}.mono,.mono-line{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .logo img{max-width:112px;max-height:66px;object-fit:contain;display:block}.logo-fallback{width:58px;height:58px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900}
     .doc-title{font-size:38px;letter-spacing:.08em;font-weight:300;color:${palette.primary};margin:0}.doc-subtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
@@ -478,7 +478,7 @@ function buildInvoiceHtml(args: {
     .lower{display:grid;grid-template-columns:1fr 330px;gap:18px;margin-top:10px}.totals{background:${palette.soft};padding:9px 12px}.total-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0}.grand{font-size:14px;border-top:2px solid #d4d4d8;margin-top:3px;padding-top:8px}.due{margin:8px -12px -9px;padding:9px 12px;background:${palette.primary};color:#fff;font-size:14px;font-weight:900}
     .info-card{border:1px solid #e5e7eb;padding:10px;margin-bottom:8px}.bank-card{line-height:1.55}.tax-summary{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-top:6px;color:#52525b}.tax-summary span{color:#71717a}
     .note-block{margin-top:10px;color:#52525b}.note-block h3{font-size:13px;color:#111827;margin:0 0 3px}.signature-card{text-align:right;margin-top:10px;break-inside:avoid}.signature-card img{max-height:48px;max-width:160px;object-fit:contain}.signature-line{height:34px;border-bottom:1px solid #9ca3af;margin-left:auto;width:160px}.qr-card{display:inline-flex;gap:8px;align-items:center;border:1px solid #e5e7eb;padding:6px;margin-top:6px}.qr-card img{width:70px;height:70px}.einv{font-size:9px;border:1px dashed ${palette.primary};padding:6px;margin-top:6px;word-break:break-all}.einv img{width:76px;height:76px}
-    .footer-line{position:absolute;left:14px;right:14px;bottom:6px;border-top:1px solid #e5e7eb;padding-top:5px;color:#71717a;font-size:9px}
+    .lower{break-inside:avoid}.footer-line{margin-top:10px;border-top:1px solid #e5e7eb;padding-top:5px;color:#71717a;font-size:9px}
   </style>`;
 
   const standard = `${baseCss}</head><body><main class="page standard">
@@ -499,7 +499,7 @@ function buildInvoiceHtml(args: {
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;
 
-  const performa = `${baseCss}<style>.center{text-align:center}.performa .doc-title{font-size:48px;font-weight:800;color:${palette.primary};line-height:1.05;margin-top:8px}.performa .logo img{margin:0 auto}.performa .logo-fallback{margin:0 auto;width:52px;height:52px;font-size:26px}.performa .rule{height:2px;background:${palette.primary};margin:12px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:6px}.performa table.items{margin-top:12px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb}.performa table.items td{border-bottom:1px solid #e5e7eb}.performa .totals{background:#fff}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary}}</style></head><body><main class="page performa">
+  const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-height:54px}.performa .logo-fallback{margin:0 auto;width:48px;height:48px;font-size:24px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
     <div class="rule"></div><section class="bill-card">${primaryPartyBlock}<div style="margin-top:10px">${shipToBlock}</div></section><div class="rule"></div>
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
@@ -559,7 +559,7 @@ export async function generateInvoicePDF(
   }
 
   let einvBlock = '';
-  if (kind !== 'performa' && invoice.irn) {
+  if (kind !== 'performa' && invoice.irn && invoice.einvoice_status === 'generated') {
     let qrSrc = '';
     if (invoice.qr_code_url) {
       if (invoice.qr_code_url.startsWith('/uploads')) {
@@ -874,7 +874,11 @@ export async function generateDeliveryChallanPDF(
   items: any[],
 ): Promise<Buffer> {
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
   const legalCompanyName = companyLegalDisplayName(company);
+  const signature = signatureSrc
+    ? `<img src="${signatureSrc}" style="max-height:42px;max-width:150px;object-fit:contain;margin-top:10px" alt="Signature" />`
+    : '<br/><br/>';
   const totalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
   const deliveredToBlock = partyContactBlock({
     title: 'Delivered To',
@@ -933,7 +937,7 @@ export async function generateDeliveryChallanPDF(
       <tfoot><tr><td colspan="3" class="right"><b>Total Quantity</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td></tr></tfoot>
     </table>
     <section class="declaration">This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.</section>
-    <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/><br/><br/>Authorised Signatory</div></section>
+    <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/>${signature}<br/>Authorised Signatory</div></section>
   </body></html>`;
   const browser = await launchBrowser();
   const page = await browser.newPage();

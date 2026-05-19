@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { formatMoney, formatDate } from '@/lib/formatters';
+import { formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -110,8 +110,8 @@ export default function DeliveryChallansTab() {
       status: 'open',
       items: items.map(it => ({
         item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
-        unit: it.unit, quantity: it.quantity, unit_price: it.unit_price,
-        gst_rate: it.gst_rate, discount_amount: it.discount_amount || 0,
+        unit: it.unit, quantity: it.quantity, unit_price: 0,
+        gst_rate: 0, discount_amount: 0,
       })),
     });
   };
@@ -158,15 +158,14 @@ export default function DeliveryChallansTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Challan No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Due Date</th>
-              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-56">Action</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && challans.length === 0 && (
-              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
                 <Truck className="w-10 h-10 mx-auto mb-2 opacity-30" />No delivery challans yet.
               </td></tr>
             )}
@@ -182,7 +181,6 @@ export default function DeliveryChallansTab() {
                     </span>
                   ) : '—'}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-medium">{formatMoney(parseInt(c.total_amount)||0)}</td>
                 <td className="px-4 py-2.5 text-center">
                   <span className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize ${STATUS_COLORS[c.status] || 'bg-slate-100 text-slate-500'}`}>
                     {c.status}
@@ -276,7 +274,7 @@ export default function DeliveryChallansTab() {
             </div>
             <div>
               <Label className="text-xs mb-2 block">Items</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn showUnit />
+              <VyaparLineItems items={items} onChange={setItems} isGst={false} searchMode="catalog" showHsn showUnit showPricing={false} />
             </div>
             <div>
               <Label className="text-xs">Notes</Label>

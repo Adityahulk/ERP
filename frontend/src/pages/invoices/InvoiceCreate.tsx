@@ -119,8 +119,8 @@ export default function InvoiceCreate() {
     const inv = existingInv as Record<string, unknown>;
     if (String(inv.id) !== editInvoiceId || hydratedIdRef.current === editInvoiceId) return;
 
-    if (inv.irn) {
-      toast.error('This invoice cannot be edited because e-invoice IRN is generated.');
+    if (inv.irn && inv.einvoice_status === 'generated') {
+      toast.error('This invoice cannot be edited because active e-invoice IRN is generated.');
       navigate(`/sales/${editInvoiceId}`);
       return;
     }

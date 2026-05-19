@@ -48,6 +48,7 @@ interface Props {
   showUnit?: boolean;
   showDescription?: boolean;
   showCess?: boolean;
+  showPricing?: boolean;
 }
 
 const GST_OPTIONS = GST_RATE_OPTIONS;
@@ -76,6 +77,7 @@ export default function VyaparLineItems({
   showUnit = false,
   showDescription = false,
   showCess = false,
+  showPricing = true,
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
@@ -228,7 +230,7 @@ export default function VyaparLineItems({
     },
     { subtotal: 0, tax: 0, cess: 0, total: 0 },
   );
-  const tableColumnCount = isGst ? 7 : 6;
+  const tableColumnCount = 3 + (!showPricing && showUnit ? 1 : 0) + (showPricing ? 3 : 0) + (showPricing && isGst ? 1 : 0);
 
   return (
     <div className="max-w-full space-y-3">
@@ -326,26 +328,30 @@ export default function VyaparLineItems({
       {/* Items Table */}
       {items.length > 0 && (
         <div className="max-w-full overflow-x-auto rounded-xl border">
-          <table className="w-full min-w-[760px] table-fixed text-sm">
+          <table className={`w-full table-fixed text-sm ${showPricing ? 'min-w-[760px]' : 'min-w-[520px]'}`}>
             <colgroup>
-              <col className="w-[26%]" />
+              <col className={showPricing ? 'w-[26%]' : 'w-[44%]'} />
               <col className="w-[92px]" />
-              <col className="w-[120px]" />
-              <col className="hidden w-[110px] sm:table-column" />
-              {isGst && <col className="hidden w-[92px] sm:table-column" />}
-              <col className="w-[132px]" />
+              {showUnit && !showPricing && <col className="w-[92px]" />}
+              {showPricing && <col className="w-[120px]" />}
+              {showPricing && <col className="hidden w-[110px] sm:table-column" />}
+              {showPricing && isGst && <col className="hidden w-[92px] sm:table-column" />}
+              {showPricing && <col className="w-[132px]" />}
               <col className="w-[48px]" />
             </colgroup>
             <thead>
               <tr className="bg-muted/40 border-b">
                 <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Item</th>
                 <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20">Qty</th>
-                <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Rate (₹)</th>
-                <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24 hidden sm:table-cell">Disc (₹)</th>
-                {isGst && (
+                {showUnit && !showPricing && (
+                  <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Unit</th>
+                )}
+                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Rate (₹)</th>}
+                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24 hidden sm:table-cell">Disc (₹)</th>}
+                {showPricing && isGst && (
                   <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20 hidden sm:table-cell">GST %</th>
                 )}
-                <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24">Total</th>
+                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24">Total</th>}
                 <th className="w-10"></th>
               </tr>
             </thead>
@@ -415,23 +421,33 @@ export default function VyaparLineItems({
                           onChange={(e) => update(idx, { quantity: parseFloat(e.target.value) || 0 })}
                         />
                       </td>
-                      <td className="px-3 py-2">
+                      {showUnit && !showPricing && (
+                        <td className="px-3 py-2">
+                          <Input
+                            className="h-8 w-full text-sm"
+                            value={item.unit || ''}
+                            onChange={(e) => update(idx, { unit: e.target.value })}
+                            placeholder="PCS"
+                          />
+                        </td>
+                      )}
+                      {showPricing && <td className="px-3 py-2">
                         <MoneyInput
                           className="h-8 w-full text-right tabular-nums"
                           placeholder="0"
                           value={item.unit_price}
                           onChange={(unit_price) => update(idx, { unit_price })}
                         />
-                      </td>
-                      <td className="px-3 py-2 hidden sm:table-cell">
+                      </td>}
+                      {showPricing && <td className="px-3 py-2 hidden sm:table-cell">
                         <MoneyInput
                           className="h-8 w-full text-right tabular-nums"
                           placeholder="0"
                           value={item.discount_amount}
                           onChange={(discount_amount) => update(idx, { discount_amount })}
                         />
-                      </td>
-                      {isGst && (
+                      </td>}
+                      {showPricing && isGst && (
                         <td className="px-3 py-2 hidden sm:table-cell">
                           <select
                             className="h-8 w-full rounded-md border bg-transparent px-2 text-right text-sm tabular-nums"
@@ -444,9 +460,9 @@ export default function VyaparLineItems({
                           </select>
                         </td>
                       )}
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
+                      {showPricing && <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total)}
-                      </td>
+                      </td>}
                       <td className="px-3 py-2">
                         <button
                           type="button"
@@ -475,7 +491,7 @@ export default function VyaparLineItems({
                                 />
                               </div>
                             )}
-                            {showUnit && (
+                            {showUnit && showPricing && (
                               <div className="min-w-0">
                                 <span className="mb-1 block text-muted-foreground">Unit</span>
                                 <Input
@@ -510,7 +526,7 @@ export default function VyaparLineItems({
                               </div>
                             )}
                             {/* Mobile: disc & gst in expanded row */}
-                            <div className="min-w-0 sm:hidden">
+                            {showPricing && <div className="min-w-0 sm:hidden">
                               <span className="mb-1 block text-muted-foreground">Disc (₹)</span>
                               <MoneyInput
                                 className="h-8 w-full text-xs"
@@ -518,8 +534,8 @@ export default function VyaparLineItems({
                                 value={item.discount_amount}
                                 onChange={(discount_amount) => update(idx, { discount_amount })}
                               />
-                            </div>
-                            {isGst && (
+                            </div>}
+                            {showPricing && isGst && (
                               <div className="min-w-0 sm:hidden">
                                 <span className="mb-1 block text-muted-foreground">GST %</span>
                                 <select
@@ -532,7 +548,7 @@ export default function VyaparLineItems({
                               </div>
                             )}
                           </div>
-                          {isGst && (
+                          {showPricing && isGst && (
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
                               Taxable: {formatMoney(c.taxable)} · GST: {formatMoney(c.gst)}
                               {isInterstate ? ' (IGST)' : ' (CGST + SGST)'}
@@ -556,7 +572,7 @@ export default function VyaparLineItems({
       )}
 
       {/* Totals */}
-      {items.length > 0 && (
+      {items.length > 0 && showPricing && (
         <div className="flex justify-end">
           <div className="w-full max-w-xs space-y-1.5 text-sm bg-muted/30 rounded-xl px-4 py-3 border">
             <div className="flex justify-between text-muted-foreground">

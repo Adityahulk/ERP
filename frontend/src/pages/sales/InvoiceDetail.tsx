@@ -104,10 +104,10 @@ export default function InvoiceDetail() {
   const userRank = ROLE_RANK[normalizedRole] ?? 0;
   const canEditInvoice =
     userRank >= ROLE_RANK.manager &&
-    !inv.irn &&
+    !(inv.irn && inv.einvoice_status === 'generated') &&
     inv.status !== 'cancelled';
 
-  const editBlockReason = inv.irn
+  const editBlockReason = inv.irn && inv.einvoice_status === 'generated'
     ? 'E-Invoice IRN is generated — cancel the IRN first to edit.'
     : inv.status === 'cancelled'
     ? 'Cancelled invoices cannot be edited.'
@@ -414,7 +414,7 @@ Thank you.
           >
             <Send className="h-4 w-4 mr-2" /> WhatsApp
           </Button>
-          {inv.irn && (
+          {inv.irn && inv.einvoice_status === 'generated' && (
             <Button variant="outline" size="sm" onClick={downloadEinvoicePdf} loading={einvPdfLoading}>
               <FileDown className="h-4 w-4 mr-2" /> e-Invoice PDF
             </Button>
@@ -583,7 +583,7 @@ Thank you.
                   {einvLabel}
                 </Badge>
               </div>
-              {inv.irn ? (
+              {inv.irn && einvStatus === 'generated' ? (
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">IRN</p>

@@ -34,6 +34,7 @@ export default function Settings() {
   const [companyCity, setCompanyCity] = useState('');
   const [companyState, setCompanyState] = useState('');
   const [companyPincode, setCompanyPincode] = useState('');
+  const [companyPhone, setCompanyPhone] = useState('');
   const [companyEmail, setCompanyEmail] = useState('');
   const [businessType, setBusinessType] = useState('');
   const [businessCategory, setBusinessCategory] = useState('');
@@ -368,6 +369,7 @@ export default function Settings() {
     setCompanyCity(company.city || '');
     setCompanyState(company.state || '');
     setCompanyPincode(company.pincode || '');
+    setCompanyPhone(company.phone || '');
     setCompanyEmail(company.email || '');
     setBusinessType(company.business_type || '');
     setBusinessCategory(company.business_category || '');
@@ -403,6 +405,7 @@ export default function Settings() {
         registered_address: registeredAddress.trim() || null,
         city: companyCity.trim() || null,
         pincode: companyPincode.trim() || null,
+        phone: companyPhone.trim() || null,
         email: companyEmail.trim() || null,
         business_type: businessType || null,
         business_category: businessCategory.trim() || null,
@@ -706,9 +709,15 @@ export default function Settings() {
                                <Input value={companyPincode} onChange={(e) => setCompanyPincode(e.target.value)} className="mt-1" maxLength={10} />
                              </div>
                            </div>
-                           <div>
-                              <label className="text-sm font-medium text-slate-700">Email ID</label>
-                             <Input value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)} className="mt-1" type="email" />
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                             <div>
+                                <label className="text-sm font-medium text-slate-700">Phone No.</label>
+                               <Input value={companyPhone} onChange={(e) => setCompanyPhone(e.target.value)} className="mt-1" inputMode="tel" placeholder="Company phone number" />
+                             </div>
+                             <div>
+                                <label className="text-sm font-medium text-slate-700">Email ID</label>
+                               <Input value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)} className="mt-1" type="email" />
+                             </div>
                            </div>
                            <div>
                               <label className="text-sm font-medium text-slate-700">Business Type</label>
