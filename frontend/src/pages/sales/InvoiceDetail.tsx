@@ -49,6 +49,7 @@ export default function InvoiceDetail() {
   const [printLoading, setPrintLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
+  const [invoiceCancelLoading, setInvoiceCancelLoading] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [ewbOpen, setEwbOpen] = useState(false);
   const [ewbCancelOpen, setEwbCancelOpen] = useState(false);
@@ -119,6 +120,11 @@ export default function InvoiceDetail() {
   const canGenEinv = canGenEinvRole && !!company?.einvoice_enabled;
   const canGenEwb = canGenEinvRole;
   const canCancelEwb = normalizedRole === 'admin' || normalizedRole === 'super_admin';
+  const canCancelInvoice =
+    userRank >= ROLE_RANK.manager &&
+    inv.status !== 'cancelled' &&
+    !(inv.irn && inv.einvoice_status === 'generated') &&
+    Number(inv.paid_amount || 0) === 0;
 
   const einvStatus = inv.einvoice_status || 'not_applicable';
   const einvLabel =
@@ -163,6 +169,22 @@ export default function InvoiceDetail() {
       refetch();
     } catch (e: any) {
       toast.error(e.response?.data?.error || e.message || 'Failed', { id: t });
+    }
+  };
+
+  const handleCancelInvoice = async () => {
+    const ok = window.confirm(`Cancel invoice ${inv.invoice_number}? It will remain visible as cancelled and stock/party effects will be reversed where applicable.`);
+    if (!ok) return;
+    setInvoiceCancelLoading(true);
+    const t = toast.loading('Cancelling invoice…');
+    try {
+      await api.patch(`/invoices/${id}/cancel`);
+      toast.success('Invoice cancelled', { id: t });
+      refetch();
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || e.message || 'Failed to cancel invoice', { id: t });
+    } finally {
+      setInvoiceCancelLoading(false);
     }
   };
 
@@ -414,6 +436,26 @@ Thank you.
           >
             <Send className="h-4 w-4 mr-2" /> WhatsApp
           </Button>
+          {userRank >= ROLE_RANK.manager && inv.status !== 'cancelled' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50"
+              disabled={!canCancelInvoice || invoiceCancelLoading}
+              title={
+                canCancelInvoice
+                  ? 'Cancel this invoice'
+                  : inv.irn && inv.einvoice_status === 'generated'
+                    ? 'Cancel IRN before cancelling invoice'
+                    : Number(inv.paid_amount || 0) > 0
+                      ? 'Invoices with payments cannot be cancelled'
+                      : 'Cannot cancel this invoice'
+              }
+              onClick={handleCancelInvoice}
+            >
+              <Ban className="h-4 w-4" /> Cancel Invoice
+            </Button>
+          )}
           {inv.irn && inv.einvoice_status === 'generated' && (
             <Button variant="outline" size="sm" onClick={downloadEinvoicePdf} loading={einvPdfLoading}>
               <FileDown className="h-4 w-4 mr-2" /> e-Invoice PDF

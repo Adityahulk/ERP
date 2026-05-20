@@ -293,7 +293,7 @@ function addressHtml(value: unknown): string {
   const raw = String(value || '').trim();
   if (!raw) return '<span class="muted">—</span>';
   return raw
-    .split(/\n|,\s*/)
+    .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => escapeHtml(line))
@@ -386,6 +386,8 @@ function buildInvoiceHtml(args: {
   const buyerGstin = isPurchase ? (company.gstin || '') : (party?.gstin || invoice.party_gstin_snapshot || '');
   const sellerStateCode = stateCodeFromGstin(sellerGstin) || String(company.state_code || '').slice(0, 2);
   const buyerStateCode = stateCodeFromGstin(buyerGstin) || String(party?.billing_state_code || invoice.place_of_supply || '').slice(0, 2);
+  const hasExplicitPlaceOfSupply = Boolean(String(invoice.place_of_supply || '').trim());
+  const hasExplicitShipTo = Boolean(String(invoice.shipping_address_snapshot || '').trim());
   const supplyStateCode = String(invoice.place_of_supply || buyerStateCode || sellerStateCode || '—').slice(0, 5);
   const primaryPartyPan = String(isPurchase ? (party?.pan || invoice.party_pan || '') : (party?.pan || invoice.party_pan || '')).trim().toUpperCase();
   const primaryPartyPhone = invoice.party_phone_snapshot || invoice.party_phone || party?.phone || '';
@@ -398,7 +400,7 @@ function buildInvoiceHtml(args: {
   const primaryPartyAddr = isPurchase ? sellerAddr : buyerAddr;
   const sellerBlock = isPurchase
     ? partyContactBlock({
-      title: 'Seller',
+      title: '',
       name: sellerName,
       address: sellerAddr,
       phone: primaryPartyPhone,
@@ -407,7 +409,7 @@ function buildInvoiceHtml(args: {
       pan: primaryPartyPan,
       state: partyStateLabel(party, sellerGstin, sellerStateCode),
     })
-    : companyContactBlock(company, { title: 'Seller' });
+    : companyContactBlock(company);
   const primaryPartyBlock = partyContactBlock({
     title: isPurchase ? 'Bill From' : 'Bill To',
     name: primaryPartyName,
@@ -421,7 +423,7 @@ function buildInvoiceHtml(args: {
   const shipToBlock = isPurchase
     ? companyContactBlock(company, { title: 'Bill To' })
     : partyContactBlock({
-      title: 'Ship To / Place of Supply',
+      title: hasExplicitPlaceOfSupply ? 'Ship To / Place of Supply' : 'Ship To',
       name: invoice.ship_to_name || invoice.party_name_snapshot || party?.name || 'Customer',
       address: shipAddr,
       phone: primaryPartyPhone,
@@ -430,6 +432,7 @@ function buildInvoiceHtml(args: {
       pan: primaryPartyPan,
       state: stateLabel(supplyStateCode || buyerStateCode, party?.shipping_state || party?.billing_state || party?.state),
     });
+  const shouldShowShipToBlock = isPurchase || hasExplicitShipTo || hasExplicitPlaceOfSupply;
   const amountWords = escapeHtml(amountToWordsINR(Math.round(Number(invoice.total_amount || 0) / 100)));
   const balanceDue = Number(invoice.balance_due ?? Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)));
   const terms = String(invoice.terms_and_conditions || company.terms_and_conditions || 'Thank you for your business.').trim();
@@ -455,6 +458,9 @@ function buildInvoiceHtml(args: {
       <div>${fieldLine('Company Phone', company.phone)}</div>
       <div>${fieldLine('Company Email', company.email)}</div>
     </div>`;
+  const shipToSection = shouldShowShipToBlock
+    ? `<section class="bill-grid" style="margin-top:0"><div class="bill-card">${shipToBlock}</div><div>${gstSummary}</div></section>`
+    : `<section style="margin-top:0">${gstSummary}</section>`;
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
   const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>Authorised Signatory</p></div>`;
   const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
@@ -468,7 +474,7 @@ function buildInvoiceHtml(args: {
     body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}
     .page{padding:8px 14px;position:relative}
     .muted,.item-desc,.item-meta{color:#71717a}.mono,.mono-line{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    .logo img{max-width:112px;max-height:66px;object-fit:contain;display:block}.logo-fallback{width:58px;height:58px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900}
+    .logo img{max-width:150px;max-height:88px;object-fit:contain;display:block}.logo-fallback{width:68px;height:68px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900}
     .doc-title{font-size:38px;letter-spacing:.08em;font-weight:300;color:${palette.primary};margin:0}.doc-subtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
     .company-name,.party-name,.business-name{font-size:15px;font-weight:800;color:${palette.accent}}.address,.business-address{color:#52525b}.gst{font-size:10px;margin-top:3px}
     .business-block{line-height:1.45}.business-lines{font-size:10px;margin-top:4px;color:#374151}.business-lines .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.block-title{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary};font-weight:800}
@@ -487,7 +493,7 @@ function buildInvoiceHtml(args: {
       <div style="text-align:right"><h1 class="doc-title">${title}</h1><div class="doc-subtitle"># ${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</div></div>
     </section>
     <section class="bill-grid"><div class="bill-card">${primaryPartyBlock}</div><div>${invoiceMeta}</div></section>
-    <section class="bill-grid" style="margin-top:0"><div class="bill-card">${shipToBlock}</div><div>${gstSummary}</div></section>
+    ${shipToSection}
     ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
     <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
@@ -495,13 +501,13 @@ function buildInvoiceHtml(args: {
   const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted,.hero .business-address,.hero .business-lines,.hero .business-name,.hero .block-title{color:#fff!important}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>₹${fmtPaise(balanceDue)}</b></section>
-    <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}<div style="margin-top:24px">${shipToBlock}</div></div>${invoiceMeta}</div>
+    <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:24px">${shipToBlock}</div>` : ''}</div>${invoiceMeta}</div>
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;
 
-  const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-height:54px}.performa .logo-fallback{margin:0 auto;width:48px;height:48px;font-size:24px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
+  const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-width:150px;max-height:82px}.performa .logo-fallback{margin:0 auto;width:64px;height:64px;font-size:30px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
-    <div class="rule"></div><section class="bill-card">${primaryPartyBlock}<div style="margin-top:10px">${shipToBlock}</div></section><div class="rule"></div>
+    <div class="rule"></div><section class="bill-card">${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:10px">${shipToBlock}</div>` : ''}</section><div class="rule"></div>
     ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
   </main></body></html>`;
 
@@ -516,8 +522,8 @@ function buildInvoiceHtml(args: {
   </style></head><body><main class="page monochrome">
     <table class="mono-table">
       <tr>
-        <td style="width:18%;text-align:center">${logoSrc ? `<img src="${logoSrc}" style="max-width:86px;max-height:56px;object-fit:contain" />` : ''}</td>
-        <td style="width:56%">
+        <td style="width:22%;text-align:center">${logoSrc ? `<img src="${logoSrc}" style="max-width:128px;max-height:78px;object-fit:contain" />` : ''}</td>
+        <td style="width:52%">
           ${sellerBlock}
         </td>
         <td style="width:26%;text-align:center"><h1 class="doc-title">${title}</h1></td>
@@ -525,8 +531,8 @@ function buildInvoiceHtml(args: {
     </table>
     <table class="mono-table" style="margin-top:8px">
       <tr>
-        <td style="width:50%">${primaryPartyBlock}</td>
-        <td style="width:50%">${shipToBlock}</td>
+        <td style="width:${shouldShowShipToBlock ? '50%' : '100%'}">${primaryPartyBlock}</td>
+        ${shouldShowShipToBlock ? `<td style="width:50%">${shipToBlock}</td>` : ''}
       </tr>
     </table>
     <table class="mono-table" style="margin-top:8px">

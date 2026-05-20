@@ -230,6 +230,7 @@ export default function InvoiceCreate() {
   };
 
   const totals = useMemo(() => computeTotals(items, isGstInvoice), [items, isGstInvoice]);
+  const effectivePartyName = partyId ? partyName.trim() : (partySearch.trim() || partyName.trim());
   const amountPaid = paymentRows
     .filter((row) => row.payment_mode !== 'credit')
     .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
@@ -267,7 +268,7 @@ export default function InvoiceCreate() {
       pdf_template: pdfTemplate,
       document_theme: documentTheme,
       party_id: partyId || undefined,
-      party_name: partyName || undefined,
+      party_name: effectivePartyName || undefined,
       godown_id: godownId || undefined,
       invoice_number: invoiceNumber.trim() || undefined,
       invoice_date: invoiceDate,
@@ -283,14 +284,14 @@ export default function InvoiceCreate() {
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     }),
-    [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const draftState = useMemo(() => ({
-    partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate,
+    partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate,
     isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate,
     documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items,
-  }), [partyId, partyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items]);
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
@@ -298,6 +299,7 @@ export default function InvoiceCreate() {
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
       setPartyName(String(draft.partyName || ''));
+      setPartySearch(String(draft.partySearch || ''));
       setPartyPhone(String(draft.partyPhone || ''));
       setGodownId(String(draft.godownId || ''));
       setInvoiceNumber(String(draft.invoiceNumber || ''));
@@ -318,7 +320,7 @@ export default function InvoiceCreate() {
     {
       enabled: !editInvoiceId,
       shouldSave: (draft) => Boolean(
-        draft.partyId || draft.partyName || draft.invoiceNumber || draft.dueDate ||
+        draft.partyId || draft.partyName || draft.partySearch || draft.invoiceNumber || draft.dueDate ||
         draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
         draft.paymentRows.some((row) => row.amount > 0 || row.payment_mode !== 'cash')
       ),
@@ -342,8 +344,9 @@ export default function InvoiceCreate() {
   };
 
   const validate = () => {
-    if (!partyId) { toast.error('Select a party'); return false; }
+    if (!effectivePartyName) { toast.error('Enter or select a party name'); return false; }
     if (items.length === 0) { toast.error('Add at least one item'); return false; }
+    if (items.some((item) => !String(item.name || '').trim())) { toast.error('Every line needs an item name'); return false; }
     if (!editInvoiceId && amountPaid > totals.total) { toast.error('Amount paid cannot exceed invoice total'); return false; }
     const normalizedInvoiceNumber = invoiceNumber.trim();
     if (editInvoiceId && !normalizedInvoiceNumber) { toast.error('Invoice number is required while editing'); return false; }
@@ -367,7 +370,8 @@ export default function InvoiceCreate() {
       pdf_template: pdfTemplate,
       document_theme: documentTheme,
       invoice_number: normalizedInvoiceNumber || undefined,
-      party_id: partyId,
+      party_id: partyId || undefined,
+      party_name: effectivePartyName,
       godown_id: godownId || undefined,
       invoice_date: invoiceDate,
       due_date: dueDate || undefined,
@@ -426,7 +430,7 @@ export default function InvoiceCreate() {
     }
   };
 
-  const canSave = !!partyId && items.length > 0;
+  const canSave = !!effectivePartyName && items.some((item) => String(item.name || '').trim());
   const saving = createMutation.isPending || updateMutation.isPending;
   const cancelTo = editInvoiceId ? `/sales/${editInvoiceId}` : '/sales';
 
@@ -535,17 +539,15 @@ export default function InvoiceCreate() {
                   </div>
                   {partySearch.length >= 2 && !partySearchLoading && partyResults.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      No matches. <button type="button" className="font-medium text-primary hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>Add “{partySearch.trim()}”</button>
+                      No matches. This name can still be used on the invoice, or <button type="button" className="font-medium text-primary hover:underline" onClick={() => { setQuickAddDefaultName(partySearch.trim()); setQuickAddOpen(true); }}>save “{partySearch.trim()}” as party</button>.
                     </p>
                   )}
                 </>
               )}
-              {partyId && (
-                <div>
-                  <Label className="text-xs">Phone No. on this invoice</Label>
-                  <Input className="mt-1" value={partyPhone} inputMode="tel" onChange={(e) => setPartyPhone(e.target.value)} placeholder="Mobile number for this invoice" />
-                </div>
-              )}
+              <div>
+                <Label className="text-xs">Phone No. on this invoice</Label>
+                <Input className="mt-1" value={partyPhone} inputMode="tel" onChange={(e) => setPartyPhone(e.target.value)} placeholder="Mobile number for this invoice" />
+              </div>
             </div>
           </TransactionSection>
 
@@ -679,7 +681,7 @@ export default function InvoiceCreate() {
           invoiceNumber: invoiceNumber || 'PREVIEW',
           invoiceDate,
           totalAmountPaise: totals.total,
-          partyName: partyName || 'Customer',
+          partyName: effectivePartyName || 'Customer',
         }}
         partyPhone={partyPhone}
         companyName={company?.name}

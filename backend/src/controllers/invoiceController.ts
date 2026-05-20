@@ -464,8 +464,17 @@ export async function createInvoice(req: Request, res: Response) {
             ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
         }
-      } else if (trimOrNull(d.shipping_address)) {
-        partySnap.ship = trimOrNull(d.shipping_address) || undefined;
+      } else {
+        const manualPartyName = trimOrNull(d.party_name) || trimOrNull(d.party_name_snapshot);
+        const manualShipping = trimOrNull(d.shipping_address);
+        const manualBilling = trimOrNull(d.billing_address) || manualShipping;
+        partySnap = {
+          name: manualPartyName || undefined,
+          phone: trimOrNull(d.party_phone),
+          email: trimOrNull(d.party_email),
+          bill: manualBilling || undefined,
+          ship: manualShipping || manualBilling || undefined,
+        };
       }
 
       const compEinv = await client.query(
@@ -944,8 +953,17 @@ export async function updateInvoice(req: Request, res: Response) {
             ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
           };
         }
-      } else if (trimOrNull(d.shipping_address)) {
-        partySnap.ship = trimOrNull(d.shipping_address) || undefined;
+      } else {
+        const manualPartyName = trimOrNull(d.party_name) || trimOrNull(d.party_name_snapshot);
+        const manualShipping = trimOrNull(d.shipping_address);
+        const manualBilling = trimOrNull(d.billing_address) || manualShipping;
+        partySnap = {
+          name: manualPartyName || undefined,
+          phone: trimOrNull(d.party_phone),
+          email: trimOrNull(d.party_email),
+          bill: manualBilling || undefined,
+          ship: manualShipping || manualBilling || undefined,
+        };
       }
 
       const placeOfSupply = gstContext.placeOfSupply;
@@ -1192,7 +1210,6 @@ export async function cancelInvoice(req: Request, res: Response) {
       await client.query(
         `UPDATE invoices
          SET status = 'cancelled',
-             is_deleted = true,
              payment_status = CASE WHEN paid_amount > 0 THEN payment_status ELSE 'unpaid' END,
              updated_at = NOW()
          WHERE id = $1 AND company_id = $2`,

@@ -61,6 +61,30 @@ function calcLine(item: VyaparLineItem, isGst: boolean) {
   return { gross, taxable, gst, cess, total: taxable + gst + cess };
 }
 
+function gstMultiplier(item: VyaparLineItem, isGst: boolean) {
+  return isGst ? 1 + (Number(item.gst_rate) || 0) / 100 : 1;
+}
+
+function priceWithGst(item: VyaparLineItem, isGst: boolean) {
+  return Math.round((Number(item.unit_price) || 0) * gstMultiplier(item, isGst));
+}
+
+function discountedPriceWithGst(item: VyaparLineItem, isGst: boolean) {
+  const qty = Math.max(Number(item.quantity) || 1, 1);
+  const discountPerUnit = (Number(item.discount_amount) || 0) / qty;
+  return Math.round(Math.max(0, (Number(item.unit_price) || 0) - discountPerUnit) * gstMultiplier(item, isGst));
+}
+
+function discountPercent(item: VyaparLineItem) {
+  const gross = (Number(item.unit_price) || 0) * (Number(item.quantity) || 0);
+  if (gross <= 0) return 0;
+  return Math.max(0, Math.min(100, ((Number(item.discount_amount) || 0) / gross) * 100));
+}
+
+function priceExcludingGst(inclusivePaise: number, item: VyaparLineItem, isGst: boolean) {
+  return Math.max(0, Math.round((Number(inclusivePaise) || 0) / gstMultiplier(item, isGst)));
+}
+
 function emptyLine(): VyaparLineItem {
   return { name: '', quantity: 1, unit_price: 0, discount_amount: 0, gst_rate: 18 };
 }
@@ -208,6 +232,34 @@ export default function VyaparLineItems({
     onChange(next);
   };
 
+  const updateSellingPriceWithGst = (idx: number, priceInclGst: number) => {
+    const current = items[idx];
+    const oldPct = discountPercent(current);
+    const unitPrice = priceExcludingGst(priceInclGst, current, isGst);
+    const quantity = Number(current.quantity) || 0;
+    update(idx, {
+      unit_price: unitPrice,
+      discount_amount: Math.round((unitPrice * quantity * oldPct) / 100),
+    });
+  };
+
+  const updateDiscountedPriceWithGst = (idx: number, priceInclGst: number) => {
+    const current = items[idx];
+    const qty = Math.max(Number(current.quantity) || 1, 1);
+    const discountedBase = priceExcludingGst(priceInclGst, current, isGst);
+    update(idx, {
+      discount_amount: Math.max(0, Math.round(((Number(current.unit_price) || 0) - discountedBase) * qty)),
+    });
+  };
+
+  const updateDiscountPercent = (idx: number, pct: number) => {
+    const current = items[idx];
+    const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
+    update(idx, {
+      discount_amount: Math.round(((Number(current.unit_price) || 0) * (Number(current.quantity) || 0) * safePct) / 100),
+    });
+  };
+
   const remove = (idx: number) => onChange(items.filter((_, i) => i !== idx));
 
   const toggleExpand = (idx: number) => {
@@ -230,8 +282,6 @@ export default function VyaparLineItems({
     },
     { subtotal: 0, tax: 0, cess: 0, total: 0 },
   );
-  const tableColumnCount = 3 + (!showPricing && showUnit ? 1 : 0) + (showPricing ? 3 : 0) + (showPricing && isGst ? 1 : 0);
-
   return (
     <div className="max-w-full space-y-3">
       {/* Search / Add Row */}
@@ -337,7 +387,7 @@ export default function VyaparLineItems({
               {showPricing && <col className="hidden w-[110px] sm:table-column" />}
               {showPricing && isGst && <col className="hidden w-[92px] sm:table-column" />}
               {showPricing && <col className="w-[132px]" />}
-              <col className="w-[48px]" />
+              <col className="w-[56px]" />
             </colgroup>
             <thead>
               <tr className="bg-muted/40 border-b">
@@ -352,7 +402,7 @@ export default function VyaparLineItems({
                   <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20 hidden sm:table-cell">GST %</th>
                 )}
                 {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24">Total</th>}
-                <th className="w-10"></th>
+                <th className="sticky right-0 z-10 w-12 bg-muted/40"></th>
               </tr>
             </thead>
             <tbody>
@@ -463,7 +513,7 @@ export default function VyaparLineItems({
                       {showPricing && <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total)}
                       </td>}
-                      <td className="px-3 py-2">
+                      <td className="sticky right-0 z-10 bg-card px-2 py-2 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
                         <button
                           type="button"
                           onClick={() => remove(idx)}
@@ -478,7 +528,44 @@ export default function VyaparLineItems({
                     {/* Expanded row for extra fields */}
                     {expanded && (
                       <tr className="bg-muted/20 border-b">
-                        <td colSpan={tableColumnCount} className="px-4 py-3">
+                        <td colSpan={99} className="px-4 py-3">
+                          {showPricing && isGst && (
+                            <div className="mb-3 grid min-w-0 grid-cols-1 gap-3 rounded-lg border bg-background/70 p-3 text-xs sm:grid-cols-3">
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">Selling price with GST</span>
+                                <MoneyInput
+                                  className="h-8 w-full text-xs"
+                                  placeholder="0"
+                                  value={priceWithGst(item, isGst)}
+                                  onChange={(value) => updateSellingPriceWithGst(idx, value)}
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">Discounted price with GST</span>
+                                <MoneyInput
+                                  className="h-8 w-full text-xs"
+                                  placeholder="0"
+                                  value={discountedPriceWithGst(item, isGst)}
+                                  onChange={(value) => updateDiscountedPriceWithGst(idx, value)}
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">Discount %</span>
+                                <Input
+                                  type="number"
+                                  className="h-8 w-full text-xs"
+                                  min={0}
+                                  max={100}
+                                  step="0.01"
+                                  value={Number(discountPercent(item).toFixed(2))}
+                                  onChange={(e) => updateDiscountPercent(idx, parseFloat(e.target.value))}
+                                />
+                              </div>
+                              <p className="text-[10px] text-muted-foreground sm:col-span-3">
+                                Enter any two values. The remaining price or discount is recalculated for this line.
+                              </p>
+                            </div>
+                          )}
                           <div className="grid min-w-0 grid-cols-1 gap-3 text-xs sm:grid-cols-[170px_120px_1fr_90px]">
                             {showHsn && (
                               <div className="min-w-0">

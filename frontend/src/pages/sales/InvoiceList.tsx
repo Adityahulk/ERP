@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2 } from 'lucide-react';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2, Ban } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 
@@ -123,6 +123,20 @@ export default function InvoiceList() {
     }
   }, [queryClient]);
 
+  const cancelInvoice = useCallback(async (inv: any) => {
+    const ok = window.confirm(`Cancel invoice ${inv.invoice_number}? This will keep the invoice visible as cancelled and reverse stock/party effects where applicable.`);
+    if (!ok) return;
+    const t = toast.loading('Cancelling invoice…');
+    try {
+      await api.patch(`/invoices/${inv.id}/cancel`);
+      toast.success('Invoice cancelled', { id: t });
+      setMenuInvoiceId(null);
+      queryClient.invalidateQueries({ queryKey: ['salesInvoices'] });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to cancel invoice', { id: t });
+    }
+  }, [queryClient]);
+
   const statusColors: Record<string, string> = {
     paid: 'bg-emerald-100 text-emerald-700',
     partial: 'bg-amber-100 text-amber-700',
@@ -216,6 +230,7 @@ export default function InvoiceList() {
                   const canIRN = !hasActiveIrn && inv.status !== 'cancelled';
                   const canEWB = hasActiveIrn && !inv.ewb_no && inv.status !== 'cancelled';
                   const canDelete = !hasActiveIrn && inv.status !== 'cancelled';
+                  const canCancel = !hasActiveIrn && inv.status !== 'cancelled' && Number(inv.paid_amount || 0) === 0;
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
@@ -275,6 +290,17 @@ export default function InvoiceList() {
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
+                          {canCancel && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => cancelInvoice(inv)}
+                              title="Cancel invoice"
+                              className="text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                            >
+                              <Ban className="h-4 w-4" />
+                            </Button>
+                          )}
 
                           <Button
                             variant="ghost"
@@ -321,6 +347,9 @@ export default function InvoiceList() {
                               </button>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEWB} onClick={() => { setMenuInvoiceId(null); if (canEWB) navigate(`/sales/${inv.id}?tab=ewb`); }}>
                                 <Truck className="h-4 w-4" /> Generate E-Way Bill
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-40" disabled={!canCancel} onClick={() => { if (canCancel) cancelInvoice(inv); }}>
+                                <Ban className="h-4 w-4" /> Cancel invoice
                               </button>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-40" disabled={!canDelete} onClick={() => { if (canDelete) deleteInvoice(inv); }}>
                                 <Trash2 className="h-4 w-4" /> Delete invoice
