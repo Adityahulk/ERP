@@ -885,7 +885,22 @@ export async function generateDeliveryChallanPDF(
   const signature = signatureSrc
     ? `<img src="${signatureSrc}" style="max-height:42px;max-width:150px;object-fit:contain;margin-top:10px" alt="Signature" />`
     : '<br/><br/>';
+  const showPricing = company.delivery_challan_show_pricing === true;
   const totalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+  const totals = items.reduce(
+    (acc, it) => {
+      const qty = Number(it.quantity) || 0;
+      const unitPrice = Number(it.unit_price) || 0;
+      const discount = Number(it.discount_amount) || 0;
+      const taxable = Math.max(0, Math.round(qty * unitPrice) - discount);
+      const gst = Math.round((taxable * (Number(it.gst_rate) || 0)) / 100);
+      acc.taxable += taxable;
+      acc.gst += gst;
+      acc.total += taxable + gst;
+      return acc;
+    },
+    { taxable: 0, gst: 0, total: 0 },
+  );
   const deliveredToBlock = partyContactBlock({
     title: 'Delivered To',
     name: challan.party_name_snapshot || challan.party_name || 'Customer',
@@ -908,7 +923,17 @@ export async function generateDeliveryChallanPDF(
     <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
     <td class="right">${fmtQty(Number(it.quantity) || 0)}</td>
     <td class="center">${escapeHtml(it.unit || 'PCS')}</td>
+    ${showPricing ? `<td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td><td class="right">${Number(it.gst_rate || 0).toFixed(2)}%</td><td class="right">${fmtPaise(Math.max(0, Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)) - (Number(it.discount_amount) || 0)))}</td>` : ''}
   </tr>`).join('');
+  const pricingHead = showPricing
+    ? '<th class="right" style="width:90px">Rate</th><th class="right" style="width:76px">GST %</th><th class="right" style="width:105px">Taxable</th>'
+    : '';
+  const totalColspan = showPricing ? 6 : 3;
+  const totalsFooter = showPricing
+    ? `<tr><td colspan="${totalColspan}" class="right"><b>Total Taxable</b></td><td class="right"><b>${fmtPaise(totals.taxable)}</b></td></tr>
+       <tr><td colspan="${totalColspan}" class="right"><b>Total GST</b></td><td class="right"><b>${fmtPaise(totals.gst)}</b></td></tr>
+       <tr><td colspan="${totalColspan}" class="right"><b>Total Value</b></td><td class="right"><b>${fmtPaise(totals.total)}</b></td></tr>`
+    : `<tr><td colspan="3" class="right"><b>Total Quantity</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td></tr>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
     @page{size:A4;margin:10mm}
     *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;font-size:12px;line-height:1.35}
@@ -939,10 +964,10 @@ export async function generateDeliveryChallanPDF(
       <div class="box">${deliveredToBlock}</div>
       <div class="box"><div class="label">Transport</div><div>Transport: ${escapeHtml(challan.transport_name || '—')}</div><div>Vehicle No.: ${escapeHtml(challan.vehicle_number || '—')}</div><div>LR/Docket No.: ${escapeHtml(challan.lr_number || '—')}</div></div>
     </section>
-    <table><thead><tr><th class="center" style="width:44px">#</th><th>Description of Goods</th><th class="center" style="width:110px">HSN/SAC</th><th class="right" style="width:92px">Qty</th><th class="center" style="width:90px">Unit</th></tr></thead><tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="3" class="right"><b>Total Quantity</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td></tr></tfoot>
+    <table><thead><tr><th class="center" style="width:44px">#</th><th>Description of Goods</th><th class="center" style="width:110px">HSN/SAC</th><th class="right" style="width:92px">Qty</th><th class="center" style="width:90px">Unit</th>${pricingHead}</tr></thead><tbody>${rows}</tbody>
+      <tfoot>${totalsFooter}</tfoot>
     </table>
-    <section class="declaration">This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.</section>
+    <section class="declaration">${showPricing ? 'This delivery challan is issued for movement/delivery of goods only. Pricing and GST details are shown for reference and this document is not a tax invoice.' : 'This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.'}</section>
     <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/>${signature}<br/>Authorised Signatory</div></section>
   </body></html>`;
   const browser = await launchBrowser();

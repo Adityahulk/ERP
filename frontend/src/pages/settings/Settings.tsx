@@ -49,6 +49,7 @@ export default function Settings() {
   const [invoiceTemplate, setInvoiceTemplate] = useState('monochrome');
   const [documentTheme, setDocumentTheme] = useState('executive');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
+  const [deliveryChallanShowPricing, setDeliveryChallanShowPricing] = useState(false);
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
   const [itemTerminologyPlural, setItemTerminologyPlural] = useState('Items');
   const [defaultGstRate, setDefaultGstRate] = useState('18');
@@ -392,6 +393,7 @@ export default function Settings() {
     setInvoiceTemplate(company.invoice_pdf_template || 'monochrome');
     setDocumentTheme(company.document_theme || 'executive');
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
+    setDeliveryChallanShowPricing(!!company.delivery_challan_show_pricing);
     setItemTerminologySingular(company.item_terminology || 'Item');
     setItemTerminologyPlural(company.item_terminology_plural || 'Items');
     setDefaultGstRate(String(company.default_gst_rate ?? 18));
@@ -473,6 +475,7 @@ export default function Settings() {
         invoice_pdf_template: invoiceTemplate,
         document_theme: documentTheme,
         document_primary_color: documentPrimaryColor || '#4F46E5',
+        delivery_challan_show_pricing: deliveryChallanShowPricing,
       });
       toast.success('Invoice preferences saved');
     } catch (e: any) {
@@ -1186,6 +1189,18 @@ export default function Settings() {
                               <div className="mt-1 flex gap-2">
                                  <input type="color" className="h-10 w-12 rounded border bg-white p-1" value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} />
                                  <Input value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} className="font-mono" />
+                              </div>
+                           </div>
+                        </div>
+                        <div className="border-t pt-6 space-y-3 max-w-md">
+                           <h3 className="font-semibold">Delivery Challan</h3>
+                           <div className="rounded-lg border bg-slate-50 p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                 <div>
+                                    <p className="text-sm font-medium text-slate-800">Show pricing and GST details</p>
+                                    <p className="mt-1 text-xs text-slate-500">When enabled, delivery challan PDFs include rate, GST %, taxable value and totals. Keep it off for movement-only challans.</p>
+                                 </div>
+                                 <Switch checked={deliveryChallanShowPricing} onCheckedChange={setDeliveryChallanShowPricing} />
                               </div>
                            </div>
                         </div>
