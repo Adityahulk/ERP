@@ -21,7 +21,7 @@ export default function JobWorkChallanForm() {
     challan_type: 'outward', party_id: '', godown_id: '',
     challan_date: new Date().toISOString().split('T')[0],
     is_capital_goods: false, transport_details: '', vehicle_number: '',
-    labour_charges: 0, other_charges: 0, notes: '',
+    labour_charges: 0, other_charges: 0, notes: '', service_only: false,
   });
   const [items, setItems] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -62,7 +62,9 @@ export default function JobWorkChallanForm() {
     {
       shouldSave: (draft) => Boolean(
         draft.form?.party_id || draft.form?.godown_id || draft.form?.transport_details ||
-        draft.form?.vehicle_number || draft.form?.notes || draft.items.length
+        draft.form?.vehicle_number || draft.form?.notes || draft.form?.service_only ||
+        Number(draft.form?.labour_charges || 0) > 0 || Number(draft.form?.other_charges || 0) > 0 ||
+        draft.items.length
       ),
     },
   );
@@ -101,10 +103,24 @@ export default function JobWorkChallanForm() {
 
   const totalMaterialValue = items.reduce((s, i) => s + (i.unit_price || 0) * (i.quantity || 0), 0);
   const fmtAmt = (v: number) => `₹${((v || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+  const isServiceOnly = !!form.service_only;
+  const hasServiceDetails = Boolean(
+    Number(form.labour_charges || 0) > 0 ||
+    Number(form.other_charges || 0) > 0 ||
+    String(form.notes || '').trim()
+  );
+  const hasValidMaterialRows = items.length > 0 && items.every(i => i.item_id);
+  const canSave = !!form.party_id && (hasValidMaterialRows || (isServiceOnly && hasServiceDetails));
 
   const handleSave = () => {
     if (!form.party_id) { toast.error('Select a job worker'); return; }
-    if (!items.length || items.some(i => !i.item_id)) { toast.error('Add items'); return; }
+    if (isServiceOnly) {
+      if (items.length && items.some(i => !i.item_id)) { toast.error('Select material for every material row'); return; }
+      if (!items.length && !hasServiceDetails) { toast.error('Add service charges or notes for service-only job work'); return; }
+    } else if (!items.length || items.some(i => !i.item_id)) {
+      toast.error('Add materials or enable service-only job work');
+      return;
+    }
     saveMutation.mutate({
       ...form,
       labour_charges: Math.round((form.labour_charges || 0) * 100),
@@ -184,6 +200,13 @@ export default function JobWorkChallanForm() {
           <div><Label>Labour Charges (₹)</Label><MoneyInput className="mt-1" value={Math.round((form.labour_charges || 0) * 100)} onChange={paise => setForm({ ...form, labour_charges: paise / 100 })} /></div>
           <div><Label>Other Charges (₹)</Label><MoneyInput className="mt-1" value={Math.round((form.other_charges || 0) * 100)} onChange={paise => setForm({ ...form, other_charges: paise / 100 })} /></div>
         </div>
+        <div className="flex items-center gap-3 p-3 rounded-lg border bg-indigo-50 border-indigo-100">
+          <Switch checked={isServiceOnly} onCheckedChange={v => setForm({ ...form, service_only: v })} />
+          <div>
+            <p className="text-sm font-medium text-slate-900">Service-only job work</p>
+            <p className="text-xs text-slate-500">Use this when no material is sent or received. Add labour/service charges or notes describing the service.</p>
+          </div>
+        </div>
         {form.challan_type === 'outward' && (
           <div className="flex items-center gap-3 p-3 rounded-lg border bg-amber-50 border-amber-200">
             <Switch checked={form.is_capital_goods} onCheckedChange={v => setForm({ ...form, is_capital_goods: v })} />
@@ -196,10 +219,19 @@ export default function JobWorkChallanForm() {
       {/* Items */}
       <Card className="mb-6"><CardContent className="p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-bold text-slate-900">Materials</h2>
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Materials {isServiceOnly && <span className="text-xs font-medium text-slate-400">(optional)</span>}</h2>
+            {isServiceOnly && <p className="text-xs text-slate-500">Leave empty for service-only work, or add materials if there is also material movement.</p>}
+          </div>
           <Button variant="outline" size="sm" className="gap-1" onClick={addItem}><Plus className="w-3 h-3" /> Add Material</Button>
         </div>
-        {items.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Add materials being {form.challan_type === 'outward' ? 'sent out' : 'received back'}</p>}
+        {items.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-6">
+            {isServiceOnly
+              ? 'No material movement will be recorded for this service job.'
+              : `Add materials being ${form.challan_type === 'outward' ? 'sent out' : 'received back'}`}
+          </p>
+        )}
         <div className="space-y-3">
           {items.map((item, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-end p-3 bg-slate-50 rounded-lg">
@@ -225,7 +257,7 @@ export default function JobWorkChallanForm() {
           ))}
         </div>
 
-        {items.length > 0 && (
+        {(items.length > 0 || isServiceOnly) && (
           <div className="mt-6 space-y-2 border-t pt-4">
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-500">Total Material Value (Not taxed on challan)</span>
@@ -247,7 +279,7 @@ export default function JobWorkChallanForm() {
         <DocumentActionsBar
           onCancel={() => navigate('/job-work')}
           onSave={handleSave}
-          canSave={!!form.party_id && items.length > 0}
+          canSave={canSave}
           saving={saveMutation.isPending}
           saveLabel="Create Challan"
         />

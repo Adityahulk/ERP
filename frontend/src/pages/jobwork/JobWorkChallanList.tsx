@@ -45,7 +45,7 @@ export default function JobWorkChallanList() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Wrench className="w-7 h-7 text-indigo-600" /> Job Work Challans</h1>
-          <p className="text-slate-500 text-sm mt-1">Track materials sent to and received from job workers</p>
+          <p className="text-slate-500 text-sm mt-1">Track material movement and service-only job work with job workers</p>
         </div>
         <Button className="gap-2" onClick={() => navigate('/job-work/new')}><Plus className="w-4 h-4" /> New Challan</Button>
       </div>

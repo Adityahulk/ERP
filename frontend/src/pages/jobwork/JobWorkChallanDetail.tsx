@@ -25,7 +25,14 @@ export default function JobWorkChallanDetail() {
     queryFn: () => api.get(`/job-work/challans/${id}`).then(r => r.data?.data ?? r.data),
   });
 
-  const sendMut = useMutation({ mutationFn: () => api.post(`/job-work/challans/${id}/send`), onSuccess: () => { toast.success('Challan sent — stock deducted'); qc.invalidateQueries({ queryKey: ['jw-challan', id] }); }, onError: (e: any) => toast.error(e.response?.data?.error || 'Failed') });
+  const sendMut = useMutation({
+    mutationFn: () => api.post(`/job-work/challans/${id}/send`),
+    onSuccess: (res) => {
+      toast.success(res.data?.data?.message || 'Challan sent');
+      qc.invalidateQueries({ queryKey: ['jw-challan', id] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
+  });
   const cancelMut = useMutation({ mutationFn: () => api.post(`/job-work/challans/${id}/cancel`), onSuccess: () => { toast.success('Challan cancelled'); qc.invalidateQueries({ queryKey: ['jw-challan', id] }); }, onError: (e: any) => toast.error(e.response?.data?.error || 'Failed') });
   const receiveMut = useMutation({
     mutationFn: (data: any) => api.post(`/job-work/challans/${id}/receive`, data),
@@ -51,7 +58,10 @@ export default function JobWorkChallanDetail() {
   };
 
   const startReceive = () => {
-    if (!challan?.items) return;
+    if (!challan?.items?.length) {
+      toast.error('No material rows to receive for this service job');
+      return;
+    }
     setReceiveItems(challan.items.map((i: any) => ({
       challan_item_id: i.id, item_name: i.item_name,
       max_receivable: Number(i.quantity_sent) - Number(i.quantity_received) - Number(i.quantity_rejected) - Number(i.wastage),
@@ -65,6 +75,7 @@ export default function JobWorkChallanDetail() {
 
   const fmtAmt = (v: number) => `₹${((v || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
   const isOverdue = challan.challan_type === 'outward' && challan.return_due_date && !challan.is_returned && challan.status !== 'cancelled' && challan.status !== 'returned' && new Date(challan.return_due_date) < new Date();
+  const hasMaterialRows = (challan.items || []).length > 0;
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 animate-in slide-in-from-bottom-4 duration-500">
@@ -95,9 +106,11 @@ export default function JobWorkChallanDetail() {
       <div className="flex gap-2 mb-6 flex-wrap">
         <Button variant="outline" onClick={downloadPdf} className="gap-2"><Download className="w-4 h-4" /> Download PDF</Button>
         {challan.status === 'draft' && challan.challan_type === 'outward' && (
-          <Button onClick={() => sendMut.mutate()} loading={sendMut.isPending} className="gap-2"><Send className="w-4 h-4" /> Send to Job Worker</Button>
+          <Button onClick={() => sendMut.mutate()} loading={sendMut.isPending} className="gap-2">
+            <Send className="w-4 h-4" /> {hasMaterialRows ? 'Send to Job Worker' : 'Start Service Job'}
+          </Button>
         )}
-        {['sent', 'partial_return'].includes(challan.status) && challan.challan_type === 'outward' && (
+        {hasMaterialRows && ['sent', 'partial_return'].includes(challan.status) && challan.challan_type === 'outward' && (
           <Button onClick={startReceive} className="gap-2 bg-emerald-600 hover:bg-emerald-700"><ArrowDownLeft className="w-4 h-4" /> Receive Materials</Button>
         )}
         {challan.status === 'draft' && (
@@ -151,39 +164,46 @@ export default function JobWorkChallanDetail() {
 
       {/* Items Table */}
       <Card><CardContent className="p-0">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-50 border-b"><tr>
-            <th className="px-4 py-3 font-semibold text-slate-600">#</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">Material</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">HSN/SAC</th>
-            <th className="px-4 py-3 font-semibold text-slate-600 text-right">Sent</th>
-            <th className="px-4 py-3 font-semibold text-slate-600 text-right">Received</th>
-            <th className="px-4 py-3 font-semibold text-slate-600 text-right">Rejected</th>
-            <th className="px-4 py-3 font-semibold text-slate-600 text-right">Wastage</th>
-            <th className="px-4 py-3 font-semibold text-slate-600 text-right">Value</th>
-            <th className="px-4 py-3 font-semibold text-slate-600">Status</th>
-          </tr></thead>
-          <tbody className="divide-y">
-            {(challan.items || []).map((item: any, i: number) => {
-              const pending = Number(item.quantity_sent) - Number(item.quantity_received) - Number(item.quantity_rejected) - Number(item.wastage);
-              return (
-                <tr key={item.id}>
-                  <td className="px-4 py-3 text-slate-400">{i + 1}</td>
-                  <td className="px-4 py-3 font-medium">{item.item_name}</td>
-                  <td className="px-4 py-3 text-slate-500">{item.hsn_code || '—'}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{Number(item.quantity_sent)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-emerald-600">{Number(item.quantity_received)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-red-500">{Number(item.quantity_rejected)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-amber-500">{Number(item.wastage)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium">{fmtAmt(item.total_value)}</td>
-                  <td className="px-4 py-3">
-                    {pending <= 0 ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <span className="text-xs text-amber-600">{pending} pending</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {hasMaterialRows ? (
+          <table className="w-full text-sm text-left">
+            <thead className="bg-slate-50 border-b"><tr>
+              <th className="px-4 py-3 font-semibold text-slate-600">#</th>
+              <th className="px-4 py-3 font-semibold text-slate-600">Material</th>
+              <th className="px-4 py-3 font-semibold text-slate-600">HSN/SAC</th>
+              <th className="px-4 py-3 font-semibold text-slate-600 text-right">Sent</th>
+              <th className="px-4 py-3 font-semibold text-slate-600 text-right">Received</th>
+              <th className="px-4 py-3 font-semibold text-slate-600 text-right">Rejected</th>
+              <th className="px-4 py-3 font-semibold text-slate-600 text-right">Wastage</th>
+              <th className="px-4 py-3 font-semibold text-slate-600 text-right">Value</th>
+              <th className="px-4 py-3 font-semibold text-slate-600">Status</th>
+            </tr></thead>
+            <tbody className="divide-y">
+              {(challan.items || []).map((item: any, i: number) => {
+                const pending = Number(item.quantity_sent) - Number(item.quantity_received) - Number(item.quantity_rejected) - Number(item.wastage);
+                return (
+                  <tr key={item.id}>
+                    <td className="px-4 py-3 text-slate-400">{i + 1}</td>
+                    <td className="px-4 py-3 font-medium">{item.item_name}</td>
+                    <td className="px-4 py-3 text-slate-500">{item.hsn_code || '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{Number(item.quantity_sent)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-emerald-600">{Number(item.quantity_received)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-red-500">{Number(item.quantity_rejected)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-amber-500">{Number(item.wastage)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums font-medium">{fmtAmt(item.total_value)}</td>
+                    <td className="px-4 py-3">
+                      {pending <= 0 ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <span className="text-xs text-amber-600">{pending} pending</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div className="p-6 text-center">
+            <p className="font-semibold text-slate-800">Service-only job work</p>
+            <p className="mt-1 text-sm text-slate-500">No materials were added, so this challan will not create stock movement or material receipt entries.</p>
+          </div>
+        )}
       </CardContent></Card>
     </div>
   );

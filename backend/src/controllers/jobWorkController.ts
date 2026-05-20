@@ -135,12 +135,21 @@ export async function createChallan(req: Request, res: Response) {
     const companyId = req.user!.company_id; const d = req.body;
     if (!d.party_id) return res.status(400).json(error('Job worker party is required'));
     if (!d.challan_type || !['outward', 'inward'].includes(d.challan_type)) return res.status(400).json(error('Challan type must be outward or inward'));
-    if (!Array.isArray(d.items) || !d.items.length) return res.status(400).json(error('Items are required'));
+    const items = Array.isArray(d.items) ? d.items : [];
+    const hasServiceDetails = Boolean(
+      Math.round(Number(d.labour_charges) || 0) > 0 ||
+      Math.round(Number(d.other_charges) || 0) > 0 ||
+      String(d.notes || '').trim()
+    );
+    if (!items.length && !hasServiceDetails) {
+      return res.status(400).json(error('Add materials or service work details before creating the job challan'));
+    }
+    if (items.some((item: any) => !item.item_id)) return res.status(400).json(error('Select material for every material row'));
 
     const result = await withTransaction(async (client) => {
       const challanNumber = await generateChallanNumber(companyId, d.challan_type);
 
-      const pRes = await client.query('SELECT name, gstin FROM parties WHERE id = $1', [d.party_id]);
+      const pRes = await client.query('SELECT name, gstin FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false', [d.party_id, companyId]);
       if (!pRes.rows.length) throw new Error('Party not found');
 
       // GST Section 143: auto-calculate return due date
@@ -152,7 +161,7 @@ export async function createChallan(req: Request, res: Response) {
 
       // Calculate total material value
       let totalMaterialValue = 0;
-      for (const item of d.items) {
+      for (const item of items) {
         const qty = d.challan_type === 'outward' ? Number(item.quantity_sent || item.quantity) : Number(item.quantity_received || item.quantity);
         totalMaterialValue += Math.round((Number(item.unit_price) || 0) * qty);
       }
@@ -182,9 +191,10 @@ export async function createChallan(req: Request, res: Response) {
       );
       const challan = challanRes.rows[0];
 
-      for (let i = 0; i < d.items.length; i++) {
-        const item = d.items[i];
-        const iRes = await client.query('SELECT name, hsn_code FROM items WHERE id = $1', [item.item_id]);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const iRes = await client.query('SELECT name, hsn_code FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false', [item.item_id, companyId]);
+        if (!iRes.rows.length) throw new Error('Material item not found');
         await client.query(
           `INSERT INTO job_work_challan_items (
             challan_id, item_id, item_name, hsn_code, unit, quantity_sent, quantity_received,
@@ -314,7 +324,7 @@ export async function downloadChallanPdf(req: Request, res: Response) {
       pan: challan.pan,
       state: stateLabel(challan.party_gstin_snapshot || challan.gstin || challan.billing_state_code, challan.billing_state),
     });
-    const rows = items.map((item: any, idx: number) => `
+    const materialRows = items.map((item: any, idx: number) => `
       <tr>
         <td>${idx + 1}</td>
         <td><b>${esc(item.item_name)}</b>${item.hsn_code ? `<div class="muted">HSN: ${esc(item.hsn_code)}</div>` : ''}</td>
@@ -326,6 +336,13 @@ export async function downloadChallanPdf(req: Request, res: Response) {
         <td class="num">${rupees(item.total_value)}</td>
       </tr>
     `).join('');
+    const rows = materialRows || `
+      <tr>
+        <td colspan="8" class="empty-row">
+          Service-only job work. No material movement is recorded on this challan.
+        </td>
+      </tr>
+    `;
 
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       @page{size:A4;margin:14mm} body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0}
@@ -336,6 +353,7 @@ export async function downloadChallanPdf(req: Request, res: Response) {
       .contact-lines{font-size:12px;color:#334155;line-height:1.5;margin-top:4px}
       table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#4f46e5;color:white;text-align:left;padding:9px;font-size:12px}
       td{border:1px solid #e2e8f0;padding:8px;font-size:12px;vertical-align:top}.num{text-align:right;font-variant-numeric:tabular-nums}
+      .empty-row{text-align:center;color:#64748b;padding:18px;font-style:italic}
       .summary{margin-left:auto;margin-top:16px;width:280px}.summary div{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e2e8f0}
       .note{margin-top:22px;font-size:12px;color:#475569}.sign{margin-top:46px;text-align:right;font-size:12px}
     </style></head><body>
@@ -379,10 +397,11 @@ export async function sendChallan(req: Request, res: Response) {
       if (!challanRes.rows.length) throw new Error('Outward challan not found or not in draft status');
       const challan = challanRes.rows[0];
       const godownId = challan.godown_id;
+      const itemsRes = await client.query('SELECT * FROM job_work_challan_items WHERE challan_id = $1', [challan.id]);
+      let deductedStock = false;
 
       // Reduce stock for materials being sent out
       if (godownId) {
-        const itemsRes = await client.query('SELECT * FROM job_work_challan_items WHERE challan_id = $1', [challan.id]);
         for (const item of itemsRes.rows) {
           if (!item.item_id || !item.quantity_sent) continue;
           const sentQty = stockQuantity(item.quantity_sent, item.item_name || 'item');
@@ -395,6 +414,7 @@ export async function sendChallan(req: Request, res: Response) {
           if (available < sentQty) throw new Error(`Insufficient stock for "${item.item_name}": available ${available}, need ${sentQty}`);
           await client.query('UPDATE item_stock SET quantity = quantity - $1 WHERE item_id = $2 AND godown_id = $3 AND company_id = $4',
             [sentQty, item.item_id, godownId, companyId]);
+          deductedStock = true;
           const balRes = await client.query('SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2', [item.item_id, godownId]);
           await client.query(
             `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
@@ -406,7 +426,10 @@ export async function sendChallan(req: Request, res: Response) {
       }
 
       await client.query("UPDATE job_work_challans SET status = 'sent' WHERE id = $1", [challan.id]);
-      return { message: 'Challan sent — materials deducted from stock' };
+      const hasMaterialRows = itemsRes.rows.some((item: any) => item.item_id && Number(item.quantity_sent || 0) > 0);
+      if (!hasMaterialRows) return { message: 'Service job started — no material stock deducted' };
+      if (!godownId) return { message: 'Challan sent — no godown selected, stock was not deducted' };
+      return { message: deductedStock ? 'Challan sent — materials deducted from stock' : 'Challan sent' };
     });
     res.json(success(result));
   } catch (err: any) { res.status(400).json(error(err.message)); }
