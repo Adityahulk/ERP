@@ -591,6 +591,246 @@ export async function generateInvoicePDF(
   return Buffer.from(pdf);
 }
 
+export const BULK_SALES_INVOICE_DEFAULT_COLUMNS = [
+  'serial_no',
+  'item_name',
+  'billing_date',
+  'quantity',
+  'unit',
+  'unit_price',
+  'gst_rate',
+  'amount',
+] as const;
+
+export const BULK_SALES_INVOICE_ALLOWED_COLUMNS = [
+  'serial_no',
+  'invoice_number',
+  'billing_date',
+  'item_name',
+  'item_description',
+  'hsn_code',
+  'quantity',
+  'unit',
+  'unit_price',
+  'discount_amount',
+  'taxable_amount',
+  'gst_rate',
+  'cgst_amount',
+  'sgst_amount',
+  'igst_amount',
+  'cess_amount',
+  'amount',
+  'payment_status',
+] as const;
+
+const BULK_COLUMN_LABELS: Record<string, string> = {
+  serial_no: '#',
+  invoice_number: 'Invoice No.',
+  billing_date: 'Billing Date',
+  item_name: 'Item name',
+  item_description: 'Description',
+  hsn_code: 'HSN/SAC',
+  quantity: 'Qty',
+  unit: 'Unit',
+  unit_price: 'Rate',
+  discount_amount: 'Discount',
+  taxable_amount: 'Taxable',
+  gst_rate: 'GST %',
+  cgst_amount: 'CGST',
+  sgst_amount: 'SGST',
+  igst_amount: 'IGST',
+  cess_amount: 'Cess',
+  amount: 'Amount',
+  payment_status: 'Status',
+};
+
+const BULK_MONEY_COLUMNS = new Set([
+  'unit_price',
+  'discount_amount',
+  'taxable_amount',
+  'cgst_amount',
+  'sgst_amount',
+  'igst_amount',
+  'cess_amount',
+  'amount',
+]);
+
+const BULK_NUMERIC_COLUMNS = new Set([
+  'serial_no',
+  'quantity',
+  'unit_price',
+  'discount_amount',
+  'taxable_amount',
+  'gst_rate',
+  'cgst_amount',
+  'sgst_amount',
+  'igst_amount',
+  'cess_amount',
+  'amount',
+]);
+
+function normalizeBulkSalesColumns(input: unknown): string[] {
+  const allowed = new Set<string>(BULK_SALES_INVOICE_ALLOWED_COLUMNS as readonly string[]);
+  const raw = Array.isArray(input) ? input : [];
+  const picked = raw.map((c) => String(c || '').trim()).filter((c) => allowed.has(c));
+  const uniq = Array.from(new Set(picked));
+  return uniq.length ? uniq : [...BULK_SALES_INVOICE_DEFAULT_COLUMNS];
+}
+
+function bulkCellValue(row: any, column: string, serial: number): string {
+  if (column === 'serial_no') return String(serial);
+  if (column === 'billing_date') return formatDocDate(row.invoice_date);
+  if (column === 'amount') return fmtPaise(Number(row.total_amount || 0));
+  if (column === 'unit_price') return fmtPaise(Number(row.unit_price || 0));
+  if (BULK_MONEY_COLUMNS.has(column)) return fmtPaise(Number(row[column] || 0));
+  if (column === 'quantity') return fmtQty(row.quantity);
+  if (column === 'gst_rate') return `${Number(row.gst_rate || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`;
+  if (column === 'payment_status') return String(row.payment_status || '').replace(/_/g, ' ');
+  return String(row[column] ?? '');
+}
+
+export async function generateBulkSalesInvoicePDF(args: {
+  company: any;
+  party: any;
+  rows: any[];
+  columns: unknown;
+  fromDate: string;
+  toDate: string;
+}): Promise<Buffer> {
+  const { company, party, rows, fromDate, toDate } = args;
+  const columns = normalizeBulkSalesColumns(args.columns);
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  const totalAmount = rows.reduce((sum, r) => sum + Number(r.total_amount || 0), 0);
+  const totalTaxable = rows.reduce((sum, r) => sum + Number(r.taxable_amount || 0), 0);
+  const totalCgst = rows.reduce((sum, r) => sum + Number(r.cgst_amount || 0), 0);
+  const totalSgst = rows.reduce((sum, r) => sum + Number(r.sgst_amount || 0), 0);
+  const totalIgst = rows.reduce((sum, r) => sum + Number(r.igst_amount || 0), 0);
+  const totalDiscount = rows.reduce((sum, r) => sum + Number(r.discount_amount || 0), 0);
+  const totalQty = rows.reduce((sum, r) => sum + Number(r.quantity || 0), 0);
+
+  let upiQr = '';
+  if (company.upi_id) {
+    const upiPayload = `upi://pay?pa=${encodeURIComponent(company.upi_id)}&pn=${encodeURIComponent(companyLegalDisplayName(company))}&am=${(totalAmount / 100).toFixed(2)}&cu=INR`;
+    upiQr = await QRCode.toDataURL(upiPayload, { width: 160, margin: 1 });
+  }
+
+  const tableHead = columns
+    .map((col) => `<th class="${BULK_NUMERIC_COLUMNS.has(col) ? 'num' : ''}">${escapeHtml(BULK_COLUMN_LABELS[col] || col)}</th>`)
+    .join('');
+  const tableRows = rows
+    .map((row, idx) => {
+      const cells = columns
+        .map((col) => {
+          const value = bulkCellValue(row, col, idx + 1);
+          const cls = BULK_NUMERIC_COLUMNS.has(col) ? 'num' : '';
+          const content = col === 'item_name'
+            ? `<b>${escapeHtml(value)}</b>`
+            : col === 'item_description'
+              ? multilineHtml(value)
+              : escapeHtml(value);
+          return `<td class="${cls}">${content}</td>`;
+        })
+        .join('');
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  const qtyTotalCell = columns.includes('quantity') ? `<div><span>Total Qty</span><b>${fmtQty(totalQty)}</b></div>` : '';
+  const discountCell = totalDiscount > 0 ? `<div><span>Discount</span><b>${fmtPaise(totalDiscount)}</b></div>` : '';
+  const taxCells = [
+    totalCgst > 0 ? `<div><span>CGST</span><b>${fmtPaise(totalCgst)}</b></div>` : '',
+    totalSgst > 0 ? `<div><span>SGST</span><b>${fmtPaise(totalSgst)}</b></div>` : '',
+    totalIgst > 0 ? `<div><span>IGST</span><b>${fmtPaise(totalIgst)}</b></div>` : '',
+  ].join('');
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    @page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;font-size:11px}
+    .header{display:grid;grid-template-columns:1fr 82px;gap:18px;align-items:start;border-bottom:2px solid #111;padding-bottom:8px}
+    .company-name{font-size:23px;font-weight:900;letter-spacing:.01em}.company-lines{margin-top:4px;line-height:1.45}.company-lines div span{font-weight:700}
+    .logo{width:72px;height:72px;object-fit:contain;margin-left:auto}.title{text-align:center;color:#6b2a0d;font-size:18px;font-weight:900;margin:14px 0 18px}
+    .meta{display:grid;grid-template-columns:1fr 240px;gap:20px;margin-bottom:14px}.block-title{font-weight:800;margin-bottom:8px}.party-name{font-weight:900;font-size:13px;margin-bottom:7px}.muted{color:#4b5563;line-height:1.45}
+    .details{text-align:right;line-height:1.8}.details b{display:block;margin-bottom:2px}.range{font-weight:700}
+    table{width:100%;border-collapse:collapse;page-break-inside:auto}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid;page-break-after:auto}
+    th{background:#6b2a0d;color:#fff;text-align:left;padding:7px 6px;font-size:10px;vertical-align:bottom}td{border-bottom:1px solid #9ca3af;padding:5px 6px;vertical-align:top;line-height:1.25}
+    .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.wrap{white-space:normal}.footer{display:grid;grid-template-columns:1fr 310px;gap:24px;margin-top:14px;page-break-inside:avoid}
+    .totals{font-size:11px}.totals div{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #9ca3af;padding:5px 0}.totals .grand{font-weight:900;font-size:12px;border-bottom:2px solid #111}
+    .words{font-size:10.5px;line-height:1.5}.terms{margin-top:10px;font-size:10.5px;line-height:1.45}.bank-sign{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px;page-break-inside:avoid}
+    .qr{width:88px;height:88px;object-fit:contain}.bank h3{font-size:11px;margin:0 0 6px}.sign{text-align:center}.sign img{max-width:120px;max-height:54px;object-fit:contain}.sign-line{font-weight:800;margin-top:8px}
+  </style></head><body>
+    <section class="header">
+      <div>
+        <div class="company-name">${escapeHtml(companyLegalDisplayName(company))}</div>
+        <div class="company-lines">
+          <div>${escapeHtml(companyAddress(company))}</div>
+          ${fieldLine('Phone no.', company.phone)}
+          ${fieldLine('Email', company.email)}
+          ${fieldLine('GSTIN', company.gstin, 'mono')}
+          ${fieldLine('State', companyStateLabel(company))}
+        </div>
+      </div>
+      <div>${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Logo"/>` : ''}</div>
+    </section>
+    <h1 class="title">Tax Invoice</h1>
+    <section class="meta">
+      <div>
+        <div class="block-title">Bill To</div>
+        <div class="party-name">${escapeHtml(party?.name || 'Customer')}</div>
+        <div class="muted">
+          ${addressHtml(buyerAddress(party))}
+          ${fieldLine('Contact No.', party?.phone)}
+          ${fieldLine('Email', party?.email)}
+          ${fieldLine('GSTIN', party?.gstin)}
+          ${fieldLine('PAN', party?.pan)}
+          ${fieldLine('State', partyStateLabel(party, party?.gstin))}
+        </div>
+      </div>
+      <div class="details">
+        <b>Invoice Details</b>
+        <div class="range">Period: ${escapeHtml(formatDocDate(fromDate))} to ${escapeHtml(formatDocDate(toDate))}</div>
+        <div>Generated: ${escapeHtml(formatDocDate(new Date().toISOString()))}</div>
+        <div>Total lines: ${rows.length}</div>
+      </div>
+    </section>
+    <table>
+      <thead><tr>${tableHead}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <section class="footer">
+      <div>
+        <div class="words"><b>Invoice Amount in Words:</b> ${escapeHtml(amountToWordsINR(totalAmount))}</div>
+        <div class="terms"><b>Terms and Conditions</b><br/>${multilineHtml(company.terms_and_conditions || 'Thank you for your business.')}</div>
+      </div>
+      <div class="totals">
+        ${qtyTotalCell}
+        ${discountCell}
+        <div><span>Taxable</span><b>${fmtPaise(totalTaxable)}</b></div>
+        ${taxCells}
+        <div class="grand"><span>Total</span><b>₹ ${fmtPaise(totalAmount)}</b></div>
+      </div>
+    </section>
+    <section class="bank-sign">
+      <div class="bank">
+        <h3>Bank Details</h3>
+        ${upiQr ? `<img class="qr" src="${upiQr}" alt="UPI QR"/>` : ''}
+        <div class="muted">${bankBlock(company)}</div>
+      </div>
+      <div class="sign">
+        <div>For : ${escapeHtml(companyLegalDisplayName(company))}</div>
+        <div style="height:42px;margin-top:18px">${signatureSrc ? `<img src="${signatureSrc}" alt="Signature"/>` : ''}</div>
+        <div class="sign-line">Authorized Signatory</div>
+      </div>
+    </section>
+  </body></html>`;
+
+  const browser = await launchBrowser();
+  const page = await browser.newPage();
+  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+  await browser.close();
+  return Buffer.from(pdf);
+}
+
 export async function generateThermalReceipt(
   invoice: any,
   company: any,

@@ -12,6 +12,7 @@ router.post('/scan-barcode', ctrl.scanBarcode);
 router.get('/', ctrl.listInvoices);
 router.post('/', ctrl.createInvoice);
 router.post('/preview-pdf', ctrl.previewInvoicePdf);
+router.post('/bulk-sales-pdf', ctrl.getBulkSalesInvoicePDF);
 
 router.get('/:id/pdf', ctrl.getInvoicePDF);
 router.post('/:id/whatsapp', ctrl.sendWhatsApp);

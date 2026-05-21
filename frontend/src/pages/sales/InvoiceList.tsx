@@ -1,25 +1,85 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2, Ban } from 'lucide-react';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Switch } from '@/components/ui/switch';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2, Ban, Files } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
+import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
+
+const BULK_COLUMN_OPTIONS = [
+  { id: 'serial_no', label: '#' },
+  { id: 'invoice_number', label: 'Invoice No.' },
+  { id: 'billing_date', label: 'Billing Date' },
+  { id: 'item_name', label: 'Item name' },
+  { id: 'item_description', label: 'Description' },
+  { id: 'hsn_code', label: 'HSN/SAC' },
+  { id: 'quantity', label: 'Qty' },
+  { id: 'unit', label: 'Unit' },
+  { id: 'unit_price', label: 'Rate' },
+  { id: 'discount_amount', label: 'Discount' },
+  { id: 'taxable_amount', label: 'Taxable' },
+  { id: 'gst_rate', label: 'GST %' },
+  { id: 'cgst_amount', label: 'CGST' },
+  { id: 'sgst_amount', label: 'SGST' },
+  { id: 'igst_amount', label: 'IGST' },
+  { id: 'cess_amount', label: 'Cess' },
+  { id: 'amount', label: 'Amount' },
+  { id: 'payment_status', label: 'Payment Status' },
+] as const;
+
+const DEFAULT_BULK_COLUMNS = ['serial_no', 'item_name', 'billing_date', 'quantity', 'unit', 'unit_price', 'gst_rate', 'amount'];
+
+function defaultRange() {
+  const to = new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const from = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  return { from, to };
+}
+
+function sanitizeBulkColumns(value: unknown): string[] {
+  const allowed = new Set<string>(BULK_COLUMN_OPTIONS.map((c) => c.id));
+  const raw = Array.isArray(value) ? value : [];
+  const cols = raw.map((v) => String(v || '')).filter((v) => allowed.has(v));
+  return cols.length ? Array.from(new Set(cols)) : [...DEFAULT_BULK_COLUMNS];
+}
 
 export default function InvoiceList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: company } = useCompany();
+  const updateCompany = useUpdateCompany();
+  const initialRange = defaultRange();
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [irnLoadingId, setIrnLoadingId] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<any | null>(null);
   const [menuInvoiceId, setMenuInvoiceId] = useState<string | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPartySearch, setBulkPartySearch] = useState('');
+  const [bulkPartyId, setBulkPartyId] = useState('');
+  const [bulkFromDate, setBulkFromDate] = useState(initialRange.from);
+  const [bulkToDate, setBulkToDate] = useState(initialRange.to);
+  const [bulkColumns, setBulkColumns] = useState<string[]>(DEFAULT_BULK_COLUMNS);
+  const [bulkLoading, setBulkLoading] = useState<'preview' | 'download' | null>(null);
+
+  const companyDefaultBulkColumns = useMemo(
+    () => sanitizeBulkColumns((company as any)?.bulk_sales_invoice_columns),
+    [company],
+  );
+
+  useEffect(() => {
+    if (bulkOpen) setBulkColumns(companyDefaultBulkColumns);
+  }, [bulkOpen, companyDefaultBulkColumns]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['salesInvoices', tab, search],
@@ -35,6 +95,14 @@ export default function InvoiceList() {
       return res.data;
     }
   });
+
+  const { data: partiesData, isLoading: bulkPartiesLoading } = useQuery({
+    queryKey: ['bulk-sales-parties', bulkPartySearch],
+    enabled: bulkOpen,
+    queryFn: () => api.get('/parties/search', { params: { q: bulkPartySearch } }).then((r) => r.data?.data ?? r.data),
+  });
+  const bulkParties: any[] = Array.isArray(partiesData) ? partiesData : [];
+  const selectedBulkParty = bulkParties.find((p) => p.id === bulkPartyId);
 
   const generatePDF = useCallback(async (id: string, number: string) => {
     setPdfLoadingId(id);
@@ -56,6 +124,74 @@ export default function InvoiceList() {
       setPdfLoadingId(null);
     }
   }, []);
+
+  const toggleBulkColumn = useCallback((id: string, enabled: boolean) => {
+    setBulkColumns((current) => {
+      if (enabled) {
+        if (current.includes(id)) return current;
+        return [...current, id];
+      }
+      const next = current.filter((c) => c !== id);
+      return next.length ? next : current;
+    });
+  }, []);
+
+  const saveBulkDefaults = useCallback(async () => {
+    try {
+      await updateCompany.mutateAsync({ bulk_sales_invoice_columns: bulkColumns });
+      toast.success('Bulk invoice columns saved as default');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to save default columns');
+    }
+  }, [bulkColumns, updateCompany]);
+
+  const generateBulkInvoicePdf = useCallback(async (mode: 'preview' | 'download') => {
+    if (!bulkPartyId) { toast.error('Select a party'); return; }
+    if (!bulkFromDate || !bulkToDate) { toast.error('Select from and to dates'); return; }
+    if (bulkFromDate > bulkToDate) { toast.error('From date must be on or before to date'); return; }
+    setBulkLoading(mode);
+    const t = toast.loading(mode === 'preview' ? 'Preparing preview…' : 'Preparing bulk invoice…');
+    try {
+      const res = await api.post('/invoices/bulk-sales-pdf', {
+        party_id: bulkPartyId,
+        from_date: bulkFromDate,
+        to_date: bulkToDate,
+        columns: bulkColumns,
+        inline: mode === 'preview',
+      }, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      if (mode === 'preview') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        toast.success('Bulk invoice preview opened', { id: t });
+        setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+      } else {
+        const safeName = String(selectedBulkParty?.name || 'party').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `bulk-sales-${safeName}-${bulkFromDate}-${bulkToDate}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        toast.success('Bulk invoice download started', { id: t });
+      }
+    } catch (err: any) {
+      if (err?.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          toast.error(parsed.error || parsed.message || 'Failed to generate bulk invoice', { id: t });
+        } catch {
+          toast.error('Failed to generate bulk invoice', { id: t });
+        }
+      } else {
+        toast.error(err?.response?.data?.error || 'Failed to generate bulk invoice', { id: t });
+      }
+    } finally {
+      setBulkLoading(null);
+    }
+  }, [bulkColumns, bulkFromDate, bulkPartyId, bulkToDate, selectedBulkParty]);
 
   const generateIRN = useCallback(async (id: string) => {
     setIrnLoadingId(id);
@@ -195,6 +331,9 @@ export default function InvoiceList() {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search invoice or party..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
+          <Button variant="outline" onClick={() => setBulkOpen(true)} className="gap-2">
+            <Files className="h-4 w-4" /> Bulk Invoice
+          </Button>
           <Button onClick={() => navigate('/sales/new')} className="gap-2">
             <Plus className="h-4 w-4" /> Add Sales
           </Button>
@@ -366,6 +505,93 @@ export default function InvoiceList() {
           </table>
         </div>
       </Card>
+
+      <Sheet open={bulkOpen} onOpenChange={setBulkOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl">
+          <SheetHeader>
+            <SheetTitle>Bulk Sales Invoice</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6 space-y-6">
+            <div className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-600">
+              Creates a printable party-wise PDF from existing sales in the selected date range. This does not create a new invoice or change ledger, stock, payments, IRN, or E-Way Bill records.
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Label>Party</Label>
+                <Input
+                  className="mt-1"
+                  placeholder="Search party..."
+                  value={bulkPartySearch}
+                  onChange={(e) => setBulkPartySearch(e.target.value)}
+                />
+                <select
+                  className="mt-2 h-10 w-full rounded-md border bg-white px-3 text-sm"
+                  value={bulkPartyId}
+                  onChange={(e) => setBulkPartyId(e.target.value)}
+                >
+                  <option value="">{bulkPartiesLoading ? 'Loading parties...' : 'Select party'}</option>
+                  {bulkParties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.phone ? ` (${p.phone})` : ''}{p.gstin ? ` - ${p.gstin}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>From date</Label>
+                <Input type="date" className="mt-1" value={bulkFromDate} onChange={(e) => setBulkFromDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>To date</Label>
+                <Input type="date" className="mt-1" value={bulkToDate} onChange={(e) => setBulkToDate(e.target.value)} />
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Columns</h3>
+                  <p className="text-xs text-muted-foreground">Enabled columns appear in this order in the PDF.</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setBulkColumns([...DEFAULT_BULK_COLUMNS])}>
+                  Reset
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {BULK_COLUMN_OPTIONS.map((col) => {
+                  const checked = bulkColumns.includes(col.id);
+                  const required = bulkColumns.length === 1 && checked;
+                  return (
+                    <div key={col.id} className="flex items-center justify-between gap-3 rounded-md border bg-white p-3">
+                      <span className="text-sm font-medium">{col.label}</span>
+                      <Switch
+                        checked={checked}
+                        disabled={required}
+                        onCheckedChange={(v) => toggleBulkColumn(col.id, v)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 -mx-6 border-t bg-background/95 px-6 py-4 backdrop-blur">
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" onClick={saveBulkDefaults} loading={updateCompany.isPending}>
+                  Save as default columns
+                </Button>
+                <Button type="button" variant="outline" className="gap-2" onClick={() => generateBulkInvoicePdf('preview')} loading={bulkLoading === 'preview'}>
+                  <Eye className="h-4 w-4" /> Preview PDF
+                </Button>
+                <Button type="button" className="gap-2" onClick={() => generateBulkInvoicePdf('download')} loading={bulkLoading === 'download'}>
+                  <Download className="h-4 w-4" /> Download PDF
+                </Button>
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <InvoicePreviewWorkspace
         open={!!previewInvoice}
