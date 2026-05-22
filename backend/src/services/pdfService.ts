@@ -1132,14 +1132,11 @@ export async function generateDeliveryChallanPDF(
       const qty = Number(it.quantity) || 0;
       const unitPrice = Number(it.unit_price) || 0;
       const discount = Number(it.discount_amount) || 0;
-      const taxable = Math.max(0, Math.round(qty * unitPrice) - discount);
-      const gst = Math.round((taxable * (Number(it.gst_rate) || 0)) / 100);
-      acc.taxable += taxable;
-      acc.gst += gst;
-      acc.total += taxable + gst;
+      const amount = Math.max(0, Math.round(qty * unitPrice) - discount);
+      acc.total += amount;
       return acc;
     },
-    { taxable: 0, gst: 0, total: 0 },
+    { total: 0 },
   );
   const deliveredToBlock = partyContactBlock({
     title: 'Delivered To',
@@ -1163,16 +1160,14 @@ export async function generateDeliveryChallanPDF(
     <td class="mono center">${escapeHtml(it.hsn_code || '—')}</td>
     <td class="right">${fmtQty(Number(it.quantity) || 0)}</td>
     <td class="center">${escapeHtml(it.unit || 'PCS')}</td>
-    ${showPricing ? `<td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td><td class="right">${Number(it.gst_rate || 0).toFixed(2)}%</td><td class="right">${fmtPaise(Math.max(0, Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)) - (Number(it.discount_amount) || 0)))}</td>` : ''}
+    ${showPricing ? `<td class="right">${fmtPaise(Number(it.unit_price) || 0)}</td><td class="right">${fmtPaise(Number(it.discount_amount) || 0)}</td><td class="right">${fmtPaise(Math.max(0, Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)) - (Number(it.discount_amount) || 0)))}</td>` : ''}
   </tr>`).join('');
   const pricingHead = showPricing
-    ? '<th class="right" style="width:90px">Rate</th><th class="right" style="width:76px">GST %</th><th class="right" style="width:105px">Taxable</th>'
+    ? '<th class="right" style="width:90px">Rate</th><th class="right" style="width:88px">Discount</th><th class="right" style="width:105px">Amount</th>'
     : '';
-  const totalColspan = showPricing ? 6 : 3;
+  const totalColspan = showPricing ? 7 : 3;
   const totalsFooter = showPricing
-    ? `<tr><td colspan="${totalColspan}" class="right"><b>Total Taxable</b></td><td class="right"><b>${fmtPaise(totals.taxable)}</b></td></tr>
-       <tr><td colspan="${totalColspan}" class="right"><b>Total GST</b></td><td class="right"><b>${fmtPaise(totals.gst)}</b></td></tr>
-       <tr><td colspan="${totalColspan}" class="right"><b>Total Value</b></td><td class="right"><b>${fmtPaise(totals.total)}</b></td></tr>`
+    ? `<tr><td colspan="${totalColspan}" class="right"><b>Total Value</b></td><td class="right"><b>${fmtPaise(totals.total)}</b></td></tr>`
     : `<tr><td colspan="3" class="right"><b>Total Quantity</b></td><td class="right"><b>${fmtQty(totalQty)}</b></td><td></td></tr>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
     @page{size:A4;margin:10mm}
@@ -1207,7 +1202,7 @@ export async function generateDeliveryChallanPDF(
     <table><thead><tr><th class="center" style="width:44px">#</th><th>Description of Goods</th><th class="center" style="width:110px">HSN/SAC</th><th class="right" style="width:92px">Qty</th><th class="center" style="width:90px">Unit</th>${pricingHead}</tr></thead><tbody>${rows}</tbody>
       <tfoot>${totalsFooter}</tfoot>
     </table>
-    <section class="declaration">${showPricing ? 'This delivery challan is issued for movement/delivery of goods only. Pricing and GST details are shown for reference and this document is not a tax invoice.' : 'This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.'}</section>
+    <section class="declaration">${showPricing ? 'This delivery challan is issued for movement/delivery of goods only. Pricing is shown only as reference value and this document is not a tax invoice.' : 'This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.'}</section>
     <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/>${signature}<br/>Authorised Signatory</div></section>
   </body></html>`;
   const browser = await launchBrowser();

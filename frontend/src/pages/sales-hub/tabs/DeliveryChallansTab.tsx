@@ -7,8 +7,7 @@ import { useCompany } from '@/hooks/useBusiness';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Download, Eye, Plus, Truck, UserPlus } from 'lucide-react';
+import { Download, Eye, Pencil, Plus, Trash2, Truck, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
@@ -21,14 +20,38 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'bg-red-100 text-red-600',
 };
 
+type FormMode = 'list' | 'create' | 'edit';
+
+function todayIso() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function toLineItem(row: any): VyaparLineItem {
+  return {
+    item_id: row.item_id || undefined,
+    name: row.item_name || row.name || 'Item',
+    description: row.item_description || row.description || '',
+    hsn_code: row.hsn_code || '',
+    item_type: row.item_type,
+    track_inventory: row.track_inventory,
+    unit: row.unit || 'PCS',
+    quantity: Number(row.quantity) || 1,
+    unit_price: Math.max(0, Math.round(Number(row.unit_price) || 0)),
+    discount_amount: Math.max(0, Math.round(Number(row.discount_amount) || 0)),
+    gst_rate: 0,
+    cess_rate: 0,
+  };
+}
+
 export default function DeliveryChallansTab() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: company } = useCompany();
   const showChallanPricing = !!company?.delivery_challan_show_pricing;
-  const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState<FormMode>('list');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [convertDialog, setConvertDialog] = useState<any>(null);
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [invoiceDate, setInvoiceDate] = useState(todayIso());
   const [invoiceNumber, setInvoiceNumber] = useState('');
 
   const [partyId, setPartyId] = useState('');
@@ -36,7 +59,7 @@ export default function DeliveryChallansTab() {
   const [partySearch, setPartySearch] = useState('');
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [challanDate, setChallanDate] = useState(new Date().toISOString().split('T')[0]);
+  const [challanDate, setChallanDate] = useState(todayIso());
   const [dueDate, setDueDate] = useState('');
   const [transportName, setTransportName] = useState('');
   const [vehicleNumber, setVehicleNumber] = useState('');
@@ -50,14 +73,104 @@ export default function DeliveryChallansTab() {
   });
   const challans = (data as any)?.data?.data || [];
 
+  const resetForm = () => {
+    setPartyId('');
+    setPartyName('');
+    setPartySearch('');
+    setPartyResults([]);
+    setNotes('');
+    setTransportName('');
+    setVehicleNumber('');
+    setLrNumber('');
+    setDueDate('');
+    setItems([]);
+    setChallanDate(todayIso());
+    setEditingId(null);
+  };
+
+  const closeForm = () => {
+    resetForm();
+    setFormMode('list');
+  };
+
+  const startCreate = () => {
+    resetForm();
+    setFormMode('create');
+  };
+
+  const searchCustomers = async (q: string) => {
+    setPartySearch(q);
+    if (q.length < 2) { setPartyResults([]); return; }
+    try {
+      const { data: res } = await api.get('/parties/search', { params: { q } });
+      setPartyResults(res.data || []);
+    } catch {
+      setPartyResults([]);
+    }
+  };
+
+  const selectCustomer = (p: any) => {
+    setPartyId(p.id);
+    setPartyName(p.name);
+    setPartySearch('');
+    setPartyResults([]);
+  };
+
+  const clearCustomer = () => {
+    setPartyId('');
+    setPartyName('');
+    setPartySearch('');
+    setPartyResults([]);
+  };
+
+  const payloadFromForm = () => ({
+    party_id: partyId,
+    challan_date: challanDate,
+    due_date: dueDate || undefined,
+    transport_name: transportName.trim() || undefined,
+    vehicle_number: vehicleNumber.trim() || undefined,
+    lr_number: lrNumber.trim() || undefined,
+    notes: notes.trim() || undefined,
+    status: 'open',
+    items: items.map(it => ({
+      item_id: it.item_id,
+      item_name: it.name,
+      hsn_code: it.hsn_code,
+      unit: it.unit,
+      quantity: Number(it.quantity) || 0,
+      unit_price: showChallanPricing ? Math.max(0, Math.round(Number(it.unit_price || 0))) : 0,
+      gst_rate: 0,
+      discount_amount: showChallanPricing ? Math.max(0, Math.round(Number(it.discount_amount || 0))) : 0,
+    })),
+  });
+
   const createMut = useMutation({
     mutationFn: (payload: any) => api.post('/sales/challans', payload),
     onSuccess: () => {
       toast.success('Delivery challan created');
       qc.invalidateQueries({ queryKey: ['delivery-challans'] });
-      resetForm(); setShowForm(false);
+      closeForm();
     },
-    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to create challan'),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.patch(`/sales/challans/${id}`, payload),
+    onSuccess: () => {
+      toast.success('Delivery challan updated');
+      qc.invalidateQueries({ queryKey: ['delivery-challans'] });
+      closeForm();
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to update challan'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/sales/challans/${id}`),
+    onSuccess: () => {
+      toast.success('Delivery challan deleted');
+      qc.invalidateQueries({ queryKey: ['delivery-challans'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to delete challan'),
   });
 
   const convertMut = useMutation({
@@ -83,46 +196,52 @@ export default function DeliveryChallansTab() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
-  const searchCustomers = async (q: string) => {
-    setPartySearch(q);
-    if (q.length < 2) { setPartyResults([]); return; }
+  const startEdit = async (row: any) => {
+    if (row.status === 'converted') {
+      toast.error('Converted challans cannot be edited');
+      return;
+    }
+    const t = toast.loading('Loading challan...');
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
-      setPartyResults(res.data || []);
-    } catch { setPartyResults([]); }
+      const res = await api.get(`/sales/challans/${row.id}`);
+      const challan = res.data?.data;
+      setEditingId(challan.id);
+      setPartyId(challan.party_id || '');
+      setPartyName(challan.party_name_snapshot || challan.party_name || '');
+      setChallanDate(String(challan.challan_date || todayIso()).slice(0, 10));
+      setDueDate(challan.due_date ? String(challan.due_date).slice(0, 10) : '');
+      setTransportName(challan.transport_name || '');
+      setVehicleNumber(challan.vehicle_number || '');
+      setLrNumber(challan.lr_number || '');
+      setNotes(challan.notes || '');
+      setItems((challan.items || []).map(toLineItem));
+      setFormMode('edit');
+      toast.dismiss(t);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not load challan', { id: t });
+    }
   };
 
-  const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
-  const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
-  const resetForm = () => {
-    clearCustomer(); setNotes(''); setTransportName(''); setVehicleNumber(''); setLrNumber(''); setDueDate(''); setItems([]);
-    setChallanDate(new Date().toISOString().split('T')[0]);
-  };
-
-  const handleCreate = () => {
+  const saveForm = () => {
     if (!partyId) { toast.error('Select a party'); return; }
-    if (items.length === 0) { toast.error('Add at least one item'); return; }
-    createMut.mutate({
-      party_id: partyId,
-      challan_date: challanDate,
-      due_date: dueDate || undefined,
-      transport_name: transportName.trim() || undefined,
-      vehicle_number: vehicleNumber.trim() || undefined,
-      lr_number: lrNumber.trim() || undefined,
-      notes: notes.trim() || undefined,
-      status: 'open',
-      items: items.map(it => ({
-        item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
-        unit: it.unit, quantity: it.quantity,
-        unit_price: showChallanPricing ? Math.max(0, Math.round(Number(it.unit_price || 0))) : 0,
-        gst_rate: showChallanPricing ? Math.max(0, Number(it.gst_rate || 0)) : 0,
-        discount_amount: showChallanPricing ? Math.max(0, Math.round(Number(it.discount_amount || 0))) : 0,
-      })),
-    });
+    if (!items.length) { toast.error('Add at least one item'); return; }
+    const payload = payloadFromForm();
+    if (formMode === 'edit' && editingId) updateMut.mutate({ id: editingId, payload });
+    else createMut.mutate(payload);
+  };
+
+  const confirmDelete = (row: any) => {
+    if (row.status === 'converted') {
+      toast.error('Converted challans cannot be deleted');
+      return;
+    }
+    if (window.confirm(`Delete delivery challan ${row.challan_number}?`)) {
+      deleteMut.mutate(row.id);
+    }
   };
 
   const openChallanPdf = async (id: string, challanNumber?: string, inline = false) => {
-    const t = toast.loading(inline ? 'Opening challan…' : 'Preparing PDF…');
+    const t = toast.loading(inline ? 'Opening challan...' : 'Preparing PDF...');
     try {
       const res = await api.get(`/sales/challans/${id}/pdf`, {
         params: inline ? { inline: 1 } : undefined,
@@ -146,173 +265,222 @@ export default function DeliveryChallansTab() {
     }
   };
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Track goods dispatched. Convert to invoice when payment is due.</p>
-        <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
-          <Plus className="w-4 h-4" /> Add Delivery Challan
-        </Button>
-      </div>
+  if (formMode !== 'list') {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">
+              {formMode === 'edit' ? 'Edit Delivery Challan' : 'New Delivery Challan'}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Enter dispatch details and item movement in one full-width form.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={closeForm}>Back</Button>
+            <Button type="button" loading={createMut.isPending || updateMut.isPending} onClick={saveForm}>
+              {formMode === 'edit' ? 'Update Challan' : 'Save Challan'}
+            </Button>
+          </div>
+        </div>
 
-      <div className="border rounded-xl bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/40">
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Challan No.</th>
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Due Date</th>
-              <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
-              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-56">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
-            {!isLoading && challans.length === 0 && (
-              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
-                <Truck className="w-10 h-10 mx-auto mb-2 opacity-30" />No delivery challans yet.
-              </td></tr>
-            )}
-            {challans.map((c: any) => (
-              <tr key={c.id} className="border-b hover:bg-muted/20">
-                <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(c.challan_date)}</td>
-                <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{c.challan_number}</td>
-                <td className="px-4 py-2.5 font-medium">{c.party_name_snapshot || c.party_name || '—'}</td>
-                <td className="px-4 py-2.5 text-muted-foreground text-xs hidden lg:table-cell">
-                  {c.due_date ? (
-                    <span className={new Date(c.due_date) < new Date() && c.status !== 'converted' ? 'text-red-500 font-medium' : ''}>
-                      {formatDate(c.due_date)}{new Date(c.due_date) < new Date() && c.status !== 'converted' ? ' · Overdue' : ''}
-                    </span>
-                  ) : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  <span className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize ${STATUS_COLORS[c.status] || 'bg-slate-100 text-slate-500'}`}>
-                    {c.status}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-right flex justify-end gap-1.5">
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Preview delivery challan" onClick={() => openChallanPdf(c.id, c.challan_number, true)}>
-                    <Eye className="w-4 h-4" />
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download delivery challan" onClick={() => openChallanPdf(c.id, c.challan_number)}>
-                    <Download className="w-4 h-4" />
-                  </Button>
-                  {c.status === 'open' && (
-                    <Button size="sm" variant="outline" className="h-7 text-xs px-2"
-                      onClick={() => statusMut.mutate({ id: c.id, status: 'dispatched' })}>
-                      Dispatch
-                    </Button>
-                  )}
-                  {(c.status === 'open' || c.status === 'dispatched' || c.status === 'delivered') && (
-                    <Button size="sm" className="h-7 text-xs px-3 bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => { setConvertDialog(c); setInvoiceDate(new Date().toISOString().split('T')[0]); setInvoiceNumber(''); }}>
-                      Convert to Sale
-                    </Button>
-                  )}
-                  {c.status === 'converted' && c.invoice_id && (
-                    <Button size="sm" variant="outline" className="h-7 text-xs px-2"
-                      onClick={() => navigate(`/sales/${c.invoice_id}`)}>
-                      View Invoice
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add Challan Sheet */}
-      <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
-        <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
-          <SheetHeader className="mb-5"><SheetTitle>New Delivery Challan</SheetTitle></SheetHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-xs">Party *</Label>
-              {partyId ? (
-                <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
-                  <span className="font-medium text-sm">{partyName}</span>
-                  <button type="button" className="text-xs text-primary hover:underline" onClick={clearCustomer}>Change</button>
-                </div>
-              ) : (
-                <div className="mt-1 flex gap-2">
-                  <div className="relative flex-1">
-                    <Input placeholder="Search party…" value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
-                    {partyResults.length > 0 && (
-                      <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                        {partyResults.map((p: any) => (
-                          <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm" onClick={() => selectCustomer(p)}>
-                            {p.name}
-                          </button>
-                        ))}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-5 min-w-0">
+            <section className="rounded-xl border bg-card p-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <Label className="text-xs">Party *</Label>
+                  {partyId ? (
+                    <div className="mt-1 flex items-center justify-between rounded-lg border bg-muted/30 p-2">
+                      <span className="font-medium text-sm">{partyName || 'Selected party'}</span>
+                      <button type="button" className="text-xs text-primary hover:underline" onClick={clearCustomer}>Change</button>
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex gap-2">
+                      <div className="relative flex-1">
+                        <Input placeholder="Search party..." value={partySearch} onChange={e => searchCustomers(e.target.value)} className="h-9" />
+                        {partyResults.length > 0 && (
+                          <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border bg-card shadow-lg">
+                            {partyResults.map((p: any) => (
+                              <button key={p.id} type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => selectCustomer(p)}>
+                                {p.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>
-                    <UserPlus className="w-4 h-4" />
-                  </Button>
+                      <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>
+                        <UserPlus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Challan Date</Label>
-                <Input type="date" className="mt-1 h-9" value={challanDate} onChange={e => setChallanDate(e.target.value)} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Challan Date</Label>
+                    <Input type="date" className="mt-1 h-9" value={challanDate} onChange={e => setChallanDate(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Due Date</Label>
+                    <Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                  </div>
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">Due Date (optional)</Label>
-                <Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+            </section>
+
+            <section className="rounded-xl border bg-card p-4">
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold">Items</h3>
+                <p className="text-xs text-muted-foreground">
+                  {showChallanPricing
+                    ? 'Pricing is plain reference pricing only. GST and tax are never added to delivery challans.'
+                    : 'Pricing is disabled in company settings, so this challan will only show movement details.'}
+                </p>
               </div>
-              <div>
-                <Label className="text-xs">Transport / Courier</Label>
-                <Input className="mt-1 h-9" placeholder="e.g. DTDC, own vehicle" value={transportName} onChange={e => setTransportName(e.target.value)} />
-              </div>
-              <div>
-                <Label className="text-xs">Vehicle No.</Label>
-                <Input className="mt-1 h-9 uppercase font-mono" placeholder="MH12AB1234" value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value.toUpperCase())} />
-              </div>
-              <div className="col-span-2">
-                <Label className="text-xs">LR / Docket No.</Label>
-                <Input className="mt-1 h-9 font-mono" placeholder="Lorry receipt number" value={lrNumber} onChange={e => setLrNumber(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs mb-2 block">Items</Label>
-              <p className="mb-2 text-xs text-muted-foreground">
-                {showChallanPricing
-                  ? 'Pricing is enabled for delivery challans. Rate, discount and GST will be saved and shown on the PDF.'
-                  : 'Pricing is disabled in company settings, so this challan will only show item movement details.'}
-              </p>
               <VyaparLineItems
                 items={items}
-                onChange={setItems}
-                isGst={showChallanPricing}
+                onChange={(next) => setItems(next.map((it) => ({ ...it, gst_rate: 0, cess_rate: 0 })))}
+                isGst={false}
                 searchMode="catalog"
                 showHsn
                 showUnit
                 showPricing={showChallanPricing}
               />
-            </div>
-            <div>
-              <Label className="text-xs">Notes</Label>
-              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-            </div>
-            <div className="flex gap-3 pt-3 border-t">
-              <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
-              <Button className="flex-1" loading={createMut.isPending} onClick={handleCreate} disabled={!partyId || items.length === 0}>
-                Save Challan
-              </Button>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
+            </section>
 
-      {/* Convert to Invoice dialog */}
+            <section className="rounded-xl border bg-card p-4">
+              <h3 className="mb-3 text-sm font-semibold">Transport & Notes</h3>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <Label className="text-xs">Transport / Courier</Label>
+                  <Input className="mt-1 h-9" placeholder="e.g. DTDC, own vehicle" value={transportName} onChange={e => setTransportName(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Vehicle No.</Label>
+                  <Input className="mt-1 h-9 uppercase font-mono" placeholder="MH12AB1234" value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value.toUpperCase())} />
+                </div>
+                <div>
+                  <Label className="text-xs">LR / Docket No.</Label>
+                  <Input className="mt-1 h-9 font-mono" placeholder="Receipt number" value={lrNumber} onChange={e => setLrNumber(e.target.value)} />
+                </div>
+              </div>
+              <div className="mt-3">
+                <Label className="text-xs">Notes</Label>
+                <textarea className="mt-1 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+            </section>
+          </div>
+
+          <aside className="min-w-0 xl:sticky xl:top-[76px] xl:self-start">
+            <div className="rounded-xl border bg-card p-4 shadow-sm">
+              <h3 className="text-sm font-semibold">Summary</h3>
+              <div className="mt-3 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Party</span><span className="max-w-[160px] truncate font-medium">{partyName || 'Not selected'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Items</span><span className="font-medium">{items.length}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Pricing</span><span className="font-medium">{showChallanPricing ? 'Enabled' : 'Hidden'}</span></div>
+              </div>
+              <div className="mt-4 flex flex-col gap-2">
+                <Button loading={createMut.isPending || updateMut.isPending} onClick={saveForm}>
+                  {formMode === 'edit' ? 'Update Challan' : 'Save Challan'}
+                </Button>
+                <Button variant="outline" onClick={closeForm}>Cancel</Button>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectCustomer(row)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">Track goods dispatched. Convert to invoice when payment is due.</p>
+        <Button size="sm" className="gap-1.5" onClick={startCreate}>
+          <Plus className="h-4 w-4" /> Add Delivery Challan
+        </Button>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/40">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Date</th>
+              <th className="hidden px-4 py-2.5 text-left text-xs font-medium text-muted-foreground md:table-cell">Challan No.</th>
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Party</th>
+              <th className="hidden px-4 py-2.5 text-left text-xs font-medium text-muted-foreground lg:table-cell">Due Date</th>
+              <th className="px-4 py-2.5 text-center text-xs font-medium text-muted-foreground">Status</th>
+              <th className="w-72 px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading...</td></tr>}
+            {!isLoading && challans.length === 0 && (
+              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
+                <Truck className="mx-auto mb-2 h-10 w-10 opacity-30" />No delivery challans yet.
+              </td></tr>
+            )}
+            {challans.map((c: any) => {
+              const canModify = c.status !== 'converted';
+              return (
+                <tr key={c.id} className="border-b hover:bg-muted/20">
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(c.challan_date)}</td>
+                  <td className="hidden px-4 py-2.5 font-mono text-xs md:table-cell">{c.challan_number}</td>
+                  <td className="px-4 py-2.5 font-medium">{c.party_name_snapshot || c.party_name || '-'}</td>
+                  <td className="hidden px-4 py-2.5 text-xs text-muted-foreground lg:table-cell">
+                    {c.due_date ? formatDate(c.due_date) : '-'}
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className={`rounded px-2 py-0.5 text-[11px] font-medium capitalize ${STATUS_COLORS[c.status] || 'bg-slate-100 text-slate-500'}`}>
+                      {c.status}
+                    </span>
+                  </td>
+                  <td className="flex justify-end gap-1.5 px-4 py-2.5 text-right">
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Preview" onClick={() => openChallanPdf(c.id, c.challan_number, true)}>
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download" onClick={() => openChallanPdf(c.id, c.challan_number)}>
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    {canModify && (
+                      <>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Edit" onClick={() => startEdit(c)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive" title="Delete" onClick={() => confirmDelete(c)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                    {c.status === 'open' && (
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => statusMut.mutate({ id: c.id, status: 'dispatched' })}>
+                        Dispatch
+                      </Button>
+                    )}
+                    {canModify && (
+                      <Button size="sm" className="h-7 bg-emerald-600 px-3 text-xs hover:bg-emerald-700" onClick={() => { setConvertDialog(c); setInvoiceDate(todayIso()); setInvoiceNumber(''); }}>
+                        Convert
+                      </Button>
+                    )}
+                    {c.status === 'converted' && c.invoice_id && (
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => navigate(`/sales/${c.invoice_id}`)}>
+                        View Invoice
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
       {convertDialog && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-card rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-            <h3 className="font-bold text-lg">Convert to Sale Invoice</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm space-y-4 rounded-xl bg-card p-6 shadow-2xl">
+            <h3 className="text-lg font-bold">Convert to Sale Invoice</h3>
             <p className="text-sm text-muted-foreground">
               Challan <span className="font-mono font-medium">{convertDialog.challan_number}</span> · {convertDialog.party_name_snapshot}
             </p>
@@ -324,11 +492,11 @@ export default function DeliveryChallansTab() {
               <Label className="text-xs">Invoice No. (optional)</Label>
               <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} />
             </div>
-            <div className="flex gap-3 pt-2 border-t">
+            <div className="flex gap-3 border-t pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setConvertDialog(null)}>Cancel</Button>
               <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" loading={convertMut.isPending}
                 onClick={() => convertMut.mutate({ id: convertDialog.id, invoice_date: invoiceDate, invoice_number: invoiceNumber || undefined })}>
-                Confirm & Create Invoice
+                Confirm
               </Button>
             </div>
           </div>

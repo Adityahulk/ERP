@@ -125,7 +125,7 @@ function SidebarNavigation({
   onNavLinkClick,
 }: SidebarNavProps) {
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
+    <div className="sidebar-scrollbar flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
       {groups.map((group, idx) => {
         const groupKey = group.label;
         const needsMoreToggle = group.items.length > NAV_GROUP_VISIBLE_COUNT;

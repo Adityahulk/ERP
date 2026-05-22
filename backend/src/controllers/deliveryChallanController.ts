@@ -16,19 +16,17 @@ async function nextChallanNumber(companyId: string, client: any) {
 function normalizeChallanItemAmount(it: any) {
   const quantity = Number(it.quantity) || 0;
   const unitPrice = Math.max(0, Math.round(Number(it.unit_price) || 0));
-  const gstRate = Math.max(0, Number(it.gst_rate) || 0);
   const discountAmount = Math.max(0, Math.round(Number(it.discount_amount) || 0));
   const grossAmount = Math.round(quantity * unitPrice);
-  const taxableAmount = Math.max(0, grossAmount - discountAmount);
-  const gstAmount = Math.round((taxableAmount * gstRate) / 100);
+  const totalAmount = Math.max(0, grossAmount - discountAmount);
   return {
     quantity,
     unitPrice,
-    gstRate,
+    gstRate: 0,
     discountAmount,
-    taxableAmount,
-    gstAmount,
-    totalAmount: taxableAmount + gstAmount,
+    taxableAmount: totalAmount,
+    gstAmount: 0,
+    totalAmount,
   };
 }
 
@@ -141,7 +139,7 @@ export async function createDeliveryChallan(req: Request, res: Response) {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [challanId, it.item_id || null, it.so_item_id || null,
            it.item_name || it.name, it.hsn_code || null, it.unit || null,
-           amount.quantity, amount.unitPrice, amount.gstRate, amount.discountAmount],
+           amount.quantity, amount.unitPrice, 0, amount.discountAmount],
         );
       }
       return challanRes.rows[0];
@@ -149,6 +147,121 @@ export async function createDeliveryChallan(req: Request, res: Response) {
 
     res.status(201).json(success(result));
   } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function updateDeliveryChallan(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const d = req.body;
+    const inputItems = Array.isArray(d.items) ? d.items : [];
+    if (!inputItems.length) return res.status(400).json(error('At least one item required'));
+
+    const result = await withTransaction(async (client) => {
+      const existing = await client.query(
+        `SELECT * FROM delivery_challans
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!existing.rows.length) throw new Error('Delivery challan not found');
+      if (existing.rows[0].status === 'converted') {
+        throw new Error('Converted delivery challans cannot be edited. Edit the linked invoice if needed.');
+      }
+
+      const partySnap = d.party_id
+        ? await client.query(
+            `SELECT name, gstin, billing_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+            [d.party_id, companyId],
+          )
+        : { rows: [] };
+      const party = partySnap.rows[0];
+      const totalAmount = inputItems.reduce(
+        (sum: number, it: any) => sum + normalizeChallanItemAmount(it).totalAmount,
+        0,
+      );
+
+      const challanRes = await client.query(
+        `UPDATE delivery_challans SET
+           party_id = $1,
+           challan_date = $2,
+           due_date = $3,
+           transport_name = $4,
+           vehicle_number = $5,
+           lr_number = $6,
+           notes = $7,
+           total_amount = $8,
+           party_name_snapshot = $9,
+           party_gstin_snapshot = $10,
+           party_address_snapshot = $11
+         WHERE id = $12 AND company_id = $13 AND is_deleted = false
+         RETURNING *`,
+        [
+          d.party_id || null,
+          d.challan_date || existing.rows[0].challan_date,
+          d.due_date || null,
+          d.transport_name || null,
+          d.vehicle_number || null,
+          d.lr_number || null,
+          d.notes || null,
+          totalAmount,
+          party?.name || d.party_name || existing.rows[0].party_name_snapshot || null,
+          party?.gstin || null,
+          party?.billing_address || null,
+          id,
+          companyId,
+        ],
+      );
+
+      await client.query('DELETE FROM delivery_challan_items WHERE challan_id = $1', [id]);
+      for (const it of inputItems) {
+        const amount = normalizeChallanItemAmount(it);
+        await client.query(
+          `INSERT INTO delivery_challan_items
+             (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9)`,
+          [
+            id,
+            it.item_id || null,
+            it.so_item_id || null,
+            it.item_name || it.name || 'Item',
+            it.hsn_code || null,
+            it.unit || null,
+            amount.quantity,
+            amount.unitPrice,
+            amount.discountAmount,
+          ],
+        );
+      }
+
+      return challanRes.rows[0];
+    });
+
+    res.json(success(result));
+  } catch (err: any) {
+    const msg = err.message || 'Failed to update delivery challan';
+    res.status(/not found|cannot|At least one/i.test(msg) ? 400 : 500).json(error(msg));
+  }
+}
+
+export async function deleteDeliveryChallan(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `UPDATE delivery_challans
+       SET is_deleted = true
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false AND status <> 'converted'
+       RETURNING id`,
+      [id, companyId],
+    );
+    if (!result.rows.length) {
+      return res.status(400).json(error('Delivery challan not found or already converted'));
+    }
+    res.json(success({ id }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to delete delivery challan'));
+  }
 }
 
 export async function getDeliveryChallanPDF(req: Request, res: Response) {
