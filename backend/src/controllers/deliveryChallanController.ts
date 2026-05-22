@@ -209,7 +209,16 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
 
     const [challanRes, itemsRes] = await Promise.all([
       query(
-        `SELECT c.*, p.gstin AS party_gstin FROM delivery_challans c
+        `SELECT c.*,
+                p.name AS party_name,
+                p.gstin AS party_gstin,
+                p.phone AS party_phone,
+                p.email AS party_email,
+                p.billing_address AS party_billing_address,
+                p.shipping_address AS party_shipping_address,
+                p.billing_state_code AS party_billing_state_code,
+                p.state_code AS party_state_code
+         FROM delivery_challans c
          LEFT JOIN parties p ON p.id = c.party_id
          WHERE c.id = $1 AND c.company_id = $2 AND c.is_deleted = false AND c.status != 'converted'`,
         [id, companyId],
@@ -218,6 +227,7 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
     ]);
 
     if (!challanRes.rows.length) return res.status(404).json(error('Challan not found or already converted'));
+    if (!itemsRes.rows.length) return res.status(400).json(error('Challan has no items to convert'));
     const challan = challanRes.rows[0];
 
     // Auto-generate invoice number
@@ -230,43 +240,102 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
     const invoiceNumber = d.invoice_number?.trim() || `INV/${yr}/${seq}`;
 
     const result = await withTransaction(async (client) => {
-      // Create invoice
-      const totalAmount = itemsRes.rows.reduce(
-        (s: number, it: any) => s + Math.round(Number(it.quantity) * Number(it.unit_price)), 0,
+      const companyRes = await client.query(
+        `SELECT state_code, gstin, einvoice_enabled, einvoice_turnover_above_5cr
+         FROM companies WHERE id = $1`,
+        [companyId],
+      );
+      const company = companyRes.rows[0] || {};
+      const companyStateCode = String(company.gstin || '').slice(0, 2) || String(company.state_code || '').slice(0, 2);
+      const partyGstin = challan.party_gstin_snapshot || challan.party_gstin || null;
+      const partyStateCode = String(partyGstin || '').slice(0, 2)
+        || String(challan.party_billing_state_code || challan.party_state_code || '').slice(0, 2);
+      const isInterstate = !!companyStateCode && !!partyStateCode && companyStateCode !== partyStateCode;
+      const einvoiceStatus = company.einvoice_enabled && company.einvoice_turnover_above_5cr ? 'pending' : 'not_applicable';
+
+      const totals = itemsRes.rows.reduce(
+        (acc: any, it: any) => {
+          const amount = normalizeChallanItemAmount(it);
+          const gross = Math.round(amount.quantity * amount.unitPrice);
+          const gstRate = amount.gstRate;
+          const cgst = isInterstate ? 0 : Math.round(amount.gstAmount / 2);
+          const sgst = isInterstate ? 0 : amount.gstAmount - cgst;
+          const igst = isInterstate ? amount.gstAmount : 0;
+          acc.subtotal += gross;
+          acc.discount += amount.discountAmount;
+          acc.taxable += amount.taxableAmount;
+          acc.cgst += cgst;
+          acc.sgst += sgst;
+          acc.igst += igst;
+          acc.total += amount.taxableAmount + amount.gstAmount;
+          acc.hasGst = acc.hasGst || gstRate > 0;
+          return acc;
+        },
+        { subtotal: 0, discount: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, hasGst: false },
       );
 
       const invRes = await client.query(
         `INSERT INTO invoices
            (company_id, party_id, invoice_number, invoice_date, invoice_type, status, payment_mode,
+            is_interstate, place_of_supply,
+            party_name_snapshot, party_gstin_snapshot, party_phone_snapshot, party_email_snapshot,
+            billing_address_snapshot, shipping_address_snapshot,
             subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, cess_amount,
-            round_off, total_amount, paid_amount, payment_status, balance_due,
-            party_name, party_gstin, challan_number, created_by)
-         VALUES ($1,$2,$3,$4,'b2b','unpaid',$5,$6,0,$6,0,0,0,0,0,$6,0,'unpaid',$6,$7,$8,$9,$10)
+            round_off, total_amount, paid_amount, payment_status, einvoice_status,
+            notes, created_by)
+         VALUES ($1,$2,$3,$4,'tax_invoice','confirmed',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,0,$21,0,'unpaid',$22,$23,$24)
          RETURNING *`,
         [
           companyId, challan.party_id, invoiceNumber,
           d.invoice_date || new Date().toISOString().split('T')[0],
           d.payment_mode || 'credit',
-          totalAmount,
-          challan.party_name_snapshot, challan.party_gstin_snapshot,
-          challan.challan_number, req.user!.id,
+          isInterstate,
+          partyStateCode || null,
+          challan.party_name_snapshot || challan.party_name || null,
+          partyGstin,
+          challan.party_phone || null,
+          challan.party_email || null,
+          challan.party_address_snapshot || challan.party_billing_address || null,
+          challan.party_shipping_address || challan.party_address_snapshot || challan.party_billing_address || null,
+          totals.subtotal,
+          totals.discount,
+          totals.taxable,
+          totals.cgst,
+          totals.sgst,
+          totals.igst,
+          0,
+          totals.total,
+          einvoiceStatus,
+          challan.notes ? `${challan.notes}\nConverted from delivery challan ${challan.challan_number}` : `Converted from delivery challan ${challan.challan_number}`,
+          req.user!.id,
         ],
       );
       const invoiceId = invRes.rows[0].id;
 
       // Insert invoice items
-      for (const it of itemsRes.rows) {
-        const lineTotal = Math.round(Number(it.quantity) * Number(it.unit_price));
-        const gstAmt = Math.round(lineTotal * Number(it.gst_rate) / 100);
+      for (let idx = 0; idx < itemsRes.rows.length; idx++) {
+        const it = itemsRes.rows[idx];
+        const amount = normalizeChallanItemAmount(it);
+        const cgstAmount = isInterstate ? 0 : Math.round(amount.gstAmount / 2);
+        const sgstAmount = isInterstate ? 0 : amount.gstAmount - cgstAmount;
+        const igstAmount = isInterstate ? amount.gstAmount : 0;
+        const halfRate = amount.gstRate / 2;
         await client.query(
           `INSERT INTO invoice_items
-             (invoice_id, item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate,
-              cgst_rate, sgst_rate, igst_rate, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,0,$10,$11,$11,0,$12)`,
-          [invoiceId, it.item_id, it.item_name, it.hsn_code, it.unit,
-           it.quantity, it.unit_price, it.gst_rate,
-           Number(it.gst_rate) / 2, // cgst_rate = sgst_rate = half
-           lineTotal, Math.round(gstAmt / 2), lineTotal + gstAmt],
+             (invoice_id, company_id, item_id, item_name, hsn_code, unit, quantity, unit_price, discount_amount, taxable_amount, gst_rate,
+              cgst_rate, sgst_rate, igst_rate, cgst_amount, sgst_amount, igst_amount, total_amount)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [
+            invoiceId, companyId, it.item_id || null, it.item_name || 'Item', it.hsn_code || null, it.unit || 'PCS',
+            amount.quantity, amount.unitPrice, amount.discountAmount, amount.taxableAmount, amount.gstRate,
+            isInterstate ? 0 : halfRate,
+            isInterstate ? 0 : halfRate,
+            isInterstate ? amount.gstRate : 0,
+            cgstAmount,
+            sgstAmount,
+            igstAmount,
+            amount.totalAmount,
+          ],
         );
       }
 
@@ -274,13 +343,13 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
       if (challan.party_id) {
         await client.query(
           `UPDATE parties SET balance = balance + $1 WHERE id = $2`,
-          [totalAmount, challan.party_id],
+          [totals.total, challan.party_id],
         );
         await client.query(
-          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration)
-           SELECT $1, $2, 'debit', $3, balance, 'invoice', $4, 'Converted from challan ' || $5
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           SELECT $1, $2, 'debit', $3, balance, 'invoice', $4, 'Converted from challan ' || $5, $6
            FROM parties WHERE id = $2`,
-          [companyId, challan.party_id, totalAmount, invoiceId, challan.challan_number],
+          [companyId, challan.party_id, totals.total, invoiceId, challan.challan_number, req.user!.id],
         );
       }
 
