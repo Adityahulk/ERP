@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { InputHTMLAttributes } from 'react';
 import { Input } from '@/components/ui/input';
 import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
@@ -24,11 +24,6 @@ function displayValue(paise: number) {
 export default function MoneyInput({ value, onChange, className, onFocus, onBlur, ...props }: MoneyInputProps) {
   const [draft, setDraft] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (draft === null) return;
-    onChange(rupeesToPaise(draft || '0'));
-  }, [draft]);
-
   return (
     <Input
       {...props}
@@ -45,7 +40,11 @@ export default function MoneyInput({ value, onChange, className, onFocus, onBlur
         setDraft(null);
         onBlur?.(event);
       }}
-      onChange={(event) => setDraft(cleanMoney(event.target.value))}
+      onChange={(event) => {
+        const nextDraft = cleanMoney(event.target.value);
+        setDraft(nextDraft);
+        onChange(rupeesToPaise(nextDraft || '0'));
+      }}
     />
   );
 }
