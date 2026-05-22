@@ -13,6 +13,25 @@ async function nextChallanNumber(companyId: string, client: any) {
   return `DC/${yr}/${seq}`;
 }
 
+function normalizeChallanItemAmount(it: any) {
+  const quantity = Number(it.quantity) || 0;
+  const unitPrice = Math.max(0, Math.round(Number(it.unit_price) || 0));
+  const gstRate = Math.max(0, Number(it.gst_rate) || 0);
+  const discountAmount = Math.max(0, Math.round(Number(it.discount_amount) || 0));
+  const grossAmount = Math.round(quantity * unitPrice);
+  const taxableAmount = Math.max(0, grossAmount - discountAmount);
+  const gstAmount = Math.round((taxableAmount * gstRate) / 100);
+  return {
+    quantity,
+    unitPrice,
+    gstRate,
+    discountAmount,
+    taxableAmount,
+    gstAmount,
+    totalAmount: taxableAmount + gstAmount,
+  };
+}
+
 export async function listDeliveryChallans(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
@@ -77,7 +96,8 @@ export async function createDeliveryChallan(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body;
-    if (!d.items?.length) return res.status(400).json(error('At least one item required'));
+    const inputItems = Array.isArray(d.items) ? d.items : [];
+    if (!inputItems.length) return res.status(400).json(error('At least one item required'));
 
     const result = await withTransaction(async (client) => {
       const challanNumber = d.challan_number?.trim() || await nextChallanNumber(companyId, client);
@@ -87,8 +107,9 @@ export async function createDeliveryChallan(req: Request, res: Response) {
         : { rows: [] };
       const party = partySnap.rows[0];
 
-      const totalAmount = (d.items as any[]).reduce(
-        (s: number, it: any) => s + Math.round(it.quantity * it.unit_price), 0,
+      const totalAmount = inputItems.reduce(
+        (sum: number, it: any) => sum + normalizeChallanItemAmount(it).totalAmount,
+        0,
       );
 
       const challanRes = await client.query(
@@ -112,14 +133,15 @@ export async function createDeliveryChallan(req: Request, res: Response) {
       );
       const challanId = challanRes.rows[0].id;
 
-      for (const it of d.items as any[]) {
+      for (const it of inputItems) {
+        const amount = normalizeChallanItemAmount(it);
         await client.query(
           `INSERT INTO delivery_challan_items
              (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [challanId, it.item_id || null, it.so_item_id || null,
            it.item_name || it.name, it.hsn_code || null, it.unit || null,
-           it.quantity, it.unit_price, it.gst_rate || 0, it.discount_amount || 0],
+           amount.quantity, amount.unitPrice, amount.gstRate, amount.discountAmount],
         );
       }
       return challanRes.rows[0];

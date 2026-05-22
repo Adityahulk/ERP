@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { formatDate } from '@/lib/formatters';
+import { useCompany } from '@/hooks/useBusiness';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +24,8 @@ const STATUS_COLORS: Record<string, string> = {
 export default function DeliveryChallansTab() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { data: company } = useCompany();
+  const showChallanPricing = !!company?.delivery_challan_show_pricing;
   const [showForm, setShowForm] = useState(false);
   const [convertDialog, setConvertDialog] = useState<any>(null);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -110,8 +113,10 @@ export default function DeliveryChallansTab() {
       status: 'open',
       items: items.map(it => ({
         item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
-        unit: it.unit, quantity: it.quantity, unit_price: 0,
-        gst_rate: 0, discount_amount: 0,
+        unit: it.unit, quantity: it.quantity,
+        unit_price: showChallanPricing ? Math.max(0, Math.round(Number(it.unit_price || 0))) : 0,
+        gst_rate: showChallanPricing ? Math.max(0, Number(it.gst_rate || 0)) : 0,
+        discount_amount: showChallanPricing ? Math.max(0, Math.round(Number(it.discount_amount || 0))) : 0,
       })),
     });
   };
@@ -274,7 +279,20 @@ export default function DeliveryChallansTab() {
             </div>
             <div>
               <Label className="text-xs mb-2 block">Items</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={false} searchMode="catalog" showHsn showUnit showPricing={false} />
+              <p className="mb-2 text-xs text-muted-foreground">
+                {showChallanPricing
+                  ? 'Pricing is enabled for delivery challans. Rate, discount and GST will be saved and shown on the PDF.'
+                  : 'Pricing is disabled in company settings, so this challan will only show item movement details.'}
+              </p>
+              <VyaparLineItems
+                items={items}
+                onChange={setItems}
+                isGst={showChallanPricing}
+                searchMode="catalog"
+                showHsn
+                showUnit
+                showPricing={showChallanPricing}
+              />
             </div>
             <div>
               <Label className="text-xs">Notes</Label>
