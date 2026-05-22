@@ -317,7 +317,7 @@ export async function updateLicensePlanSuper(req: Request, res: Response) {
          FROM licenses l
          LEFT JOIN companies c ON c.id = l.company_id AND c.is_deleted = false
          WHERE l.id = $1 AND l.is_deleted = false
-         FOR UPDATE`,
+         FOR UPDATE OF l`,
         [id],
       );
       if (!licRes.rows.length) throw new Error('License not found');
