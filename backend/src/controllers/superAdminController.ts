@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
+import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 export async function getDashboardStats(req: Request, res: Response) {
   try {
@@ -12,6 +13,8 @@ export async function getDashboardStats(req: Request, res: Response) {
          (SELECT COUNT(*)::int FROM licenses WHERE is_deleted = false) AS total_licenses,
          (SELECT COUNT(*)::int FROM licenses WHERE status = 'pending' AND is_deleted = false) AS pending_licenses,
          (SELECT COUNT(*)::int FROM licenses WHERE status = 'active' AND is_deleted = false) AS active_licenses,
+         (SELECT COUNT(*)::int FROM licenses WHERE status = 'trial' AND is_deleted = false AND (expires_at IS NULL OR expires_at > NOW())) AS trial_licenses,
+         (SELECT COUNT(*)::int FROM licenses WHERE status = 'trial' AND is_deleted = false AND expires_at <= NOW()) AS expired_trial_licenses,
          (SELECT COUNT(*)::int FROM licenses WHERE status = 'revoked' AND is_deleted = false) AS revoked_licenses,
          (SELECT COUNT(*)::int FROM companies WHERE is_deleted = false) AS total_companies,
          (SELECT COUNT(*)::int FROM users WHERE is_deleted = false AND company_id IS NOT NULL) AS total_users,
@@ -54,11 +57,26 @@ export async function getDashboardStats(req: Request, res: Response) {
        LIMIT 10`
     );
 
+    const recentTrials = await query(
+      `SELECT l.id, l.license_key, l.requested_at, l.activated_at, l.expires_at,
+              r.name AS registrant_name, r.email AS registrant_email, r.phone AS registrant_phone,
+              lt.name AS tier_name, lt.display_name AS tier_display_name, lt.max_users AS tier_max_users,
+              c.id AS company_id, c.name AS company_name
+       FROM licenses l
+       JOIN registrants r ON r.id = l.registrant_id
+       JOIN license_tiers lt ON lt.id = l.tier_id
+       LEFT JOIN companies c ON c.id = l.company_id
+       WHERE l.status = 'trial' AND l.is_deleted = false
+       ORDER BY l.expires_at ASC NULLS LAST, l.created_at DESC
+       LIMIT 8`
+    );
+
     res.json(
       success({
         ...stats,
         revenue_potential: Number(stats.revenue_potential),
         recent_requests: recentReq.rows,
+        recent_trials: recentTrials.rows,
         recent_activity: recentActivity.rows,
       })
     );
@@ -76,8 +94,12 @@ export async function getAllLicenses(req: Request, res: Response) {
     const params: unknown[] = [];
 
     if (status && status !== 'all') {
-      params.push(status);
-      conditions.push(`l.status = $${params.length}`);
+      if (status === 'expired_trial') {
+        conditions.push(`l.status = 'trial' AND l.expires_at <= NOW()`);
+      } else {
+        params.push(status);
+        conditions.push(`l.status = $${params.length}`);
+      }
     }
 
     if (q && String(q).trim()) {
@@ -107,7 +129,7 @@ export async function getAllLicenses(req: Request, res: Response) {
     const offIdx = params.length;
 
     const result = await query(
-      `SELECT l.id, l.license_key, l.status, l.requested_at, l.activated_at, l.expires_at, l.notes,
+      `SELECT l.id, l.license_key, l.status, l.tier_id, l.requested_at, l.activated_at, l.expires_at, l.notes,
               r.name AS registrant_name, r.email AS registrant_email, r.phone AS registrant_phone,
               lt.name AS tier_name, lt.display_name AS tier_display_name, lt.price_inr AS tier_price_inr,
               lt.max_users AS tier_max_users,
@@ -213,24 +235,147 @@ export async function extendLicense(req: Request, res: Response) {
     const { id } = req.params;
     const { days } = req.body as { days: number };
 
-    const result = await query(
-      `UPDATE licenses
-       SET expires_at = COALESCE(expires_at, NOW()) + ($1::int * INTERVAL '1 day'),
-           updated_at = NOW()
-       WHERE id = $2 AND is_deleted = false AND status = 'active'
-       RETURNING id, license_key, status, expires_at`,
-      [days, id]
-    );
+    const result = await withTransaction(async (client) => {
+      const upd = await client.query(
+        `UPDATE licenses
+         SET expires_at = GREATEST(COALESCE(expires_at, NOW()), NOW()) + ($1::int * INTERVAL '1 day'),
+             updated_at = NOW()
+         WHERE id = $2 AND is_deleted = false AND status IN ('active', 'trial')
+         RETURNING id, license_key, status, expires_at, company_id`,
+        [days, id]
+      );
 
-    if (!result.rows.length) {
-      return res.status(404).json(error('Active license not found'));
+      if (!upd.rows.length) return null;
+
+      const license = upd.rows[0];
+      if (license.company_id) {
+        await client.query(
+          `UPDATE companies
+           SET plan_expires_at = $1,
+               is_active = true,
+               updated_at = NOW()
+           WHERE id = $2 AND is_deleted = false`,
+          [license.expires_at, license.company_id]
+        );
+      }
+
+      return license;
+    });
+
+    if (!result) {
+      return res.status(404).json(error('Active or trial license not found'));
+    }
+
+    if (result.company_id) {
+      await clearTierFeaturesCache(result.company_id);
     }
 
     await logAction(req.user!.id, null, 'extend_license', 'license', id, null, { days }, req.ip, req.get('User-Agent'));
 
-    res.json(success({ license: result.rows[0] }));
+    res.json(success({ license: result }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
+  }
+}
+
+export async function getLicenseTiersSuper(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT id, name, display_name, max_users, price_inr, description, sort_order
+       FROM license_tiers
+       WHERE is_active = true
+       ORDER BY sort_order ASC, price_inr ASC`
+    );
+    res.json(success({ tiers: result.rows }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function updateLicensePlanSuper(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const { tier_id, status, expires_days, expires_at, notes } = req.body as {
+      tier_id: string;
+      status?: 'active' | 'trial';
+      expires_days?: number;
+      expires_at?: string;
+      notes?: string;
+    };
+
+    const nextStatus = status === 'trial' ? 'trial' : 'active';
+    const expiresAt = expires_at
+      ? new Date(expires_at)
+      : new Date(Date.now() + (Number(expires_days || 365) * 24 * 60 * 60 * 1000));
+    if (Number.isNaN(expiresAt.getTime())) {
+      return res.status(400).json(error('Invalid expiry date'));
+    }
+
+    const result = await withTransaction(async (client) => {
+      const licRes = await client.query(
+        `SELECT l.*, c.id AS company_id
+         FROM licenses l
+         LEFT JOIN companies c ON c.id = l.company_id AND c.is_deleted = false
+         WHERE l.id = $1 AND l.is_deleted = false
+         FOR UPDATE`,
+        [id],
+      );
+      if (!licRes.rows.length) throw new Error('License not found');
+      const lic = licRes.rows[0];
+      if (lic.status === 'revoked') throw new Error('Revoked licenses cannot be converted. Create a new request instead.');
+
+      const tierRes = await client.query(
+        `SELECT id, name, display_name, max_users, price_inr FROM license_tiers WHERE id = $1 AND is_active = true`,
+        [tier_id],
+      );
+      if (!tierRes.rows.length) throw new Error('Plan not found');
+      const tier = tierRes.rows[0];
+
+      const stamp = notes && String(notes).trim()
+        ? `\n[${new Date().toISOString()}] Superadmin changed plan to ${tier.display_name} (${nextStatus}): ${String(notes).trim()}`
+        : `\n[${new Date().toISOString()}] Superadmin changed plan to ${tier.display_name} (${nextStatus})`;
+
+      const upd = await client.query(
+        `UPDATE licenses
+         SET tier_id = $1,
+             status = $2,
+             activated_at = COALESCE(activated_at, NOW()),
+             expires_at = $3,
+             notes = CASE
+               WHEN notes IS NULL OR trim(notes) = '' THEN trim($4::text)
+               ELSE trim(notes) || $4::text
+             END,
+             updated_at = NOW()
+         WHERE id = $5
+         RETURNING id, license_key, status, tier_id, company_id, expires_at`,
+        [tier.id, nextStatus, expiresAt, stamp, id],
+      );
+
+      if (lic.company_id) {
+        await client.query(
+          `UPDATE companies
+           SET license_id = $1,
+               plan_type = $2,
+               plan_expires_at = $3,
+               is_active = true,
+               updated_at = NOW()
+           WHERE id = $4`,
+          [id, nextStatus === 'trial' ? 'trial' : tier.name, expiresAt, lic.company_id],
+        );
+      }
+
+      return { license: upd.rows[0], tier };
+    });
+
+    if (result.license.company_id) {
+      await clearTierFeaturesCache(result.license.company_id);
+    }
+
+    await logAction(req.user!.id, null, 'update_license_plan', 'license', id, null, result, req.ip, req.get('User-Agent'));
+    res.json(success(result));
+  } catch (err: any) {
+    const msg = err.message || 'Failed to update license plan';
+    res.status(/not found|cannot|invalid|plan/i.test(msg) ? 400 : 500).json(error(msg));
   }
 }
 

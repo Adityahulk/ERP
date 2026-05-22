@@ -6,9 +6,11 @@ import { validateBody, validateQuery } from '../middleware/validate';
 import { activateLicense, revokeLicense } from '../controllers/licenseController';
 import {
   getDashboardStats,
+  getLicenseTiersSuper,
   getAllLicenses,
   getLicenseDetailSuper,
   extendLicense,
+  updateLicensePlanSuper,
   getAllCompanies,
   getCompanyDetailSuper,
   addUserToCompany,
@@ -28,7 +30,7 @@ const activateSchema = z.object({
 });
 
 const licensesQuerySchema = z.object({
-  status: z.enum(['all', 'pending', 'active', 'revoked']).optional().default('all'),
+  status: z.enum(['all', 'pending', 'active', 'expired', 'trial', 'expired_trial', 'revoked']).optional().default('all'),
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().optional(),
   q: z.string().optional(),
@@ -40,6 +42,14 @@ const revokeSchema = z.object({
 
 const extendSchema = z.object({
   days: z.coerce.number().int().positive(),
+});
+
+const planChangeSchema = z.object({
+  tier_id: z.string().uuid(),
+  status: z.enum(['active', 'trial']).optional(),
+  expires_days: z.coerce.number().int().positive().optional(),
+  expires_at: z.string().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 const addUserSchema = z.object({
@@ -65,11 +75,13 @@ const companiesQuerySchema = z.object({
 });
 
 router.get('/stats', getDashboardStats);
+router.get('/license-tiers', getLicenseTiersSuper);
 router.get('/licenses', validateQuery(licensesQuerySchema), getAllLicenses);
 router.get('/licenses/:id', getLicenseDetailSuper);
 router.post('/licenses/:id/activate', validateBody(activateSchema), activateLicense);
 router.put('/licenses/:id/revoke', validateBody(revokeSchema), revokeLicense);
 router.put('/licenses/:id/extend', validateBody(extendSchema), extendLicense);
+router.put('/licenses/:id/plan', validateBody(planChangeSchema), updateLicensePlanSuper);
 
 router.get('/companies', validateQuery(companiesQuerySchema), getAllCompanies);
 router.get('/companies/:id', getCompanyDetailSuper);

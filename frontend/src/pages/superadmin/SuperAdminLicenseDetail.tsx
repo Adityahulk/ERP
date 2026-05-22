@@ -4,11 +4,13 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { fetchSuperAdminLicenseDetail, revokeSuperAdminLicense, extendSuperAdminLicense } from '@/lib/superAdminApi';
 import ActivateLicenseModal from '@/components/superadmin/ActivateLicenseModal';
+import ManageLicensePlanModal from '@/components/superadmin/ManageLicensePlanModal';
 
 export default function SuperAdminLicenseDetail() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const [showActivate, setShowActivate] = useState(false);
+  const [showPlan, setShowPlan] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['superadmin', 'license', id],
@@ -106,7 +108,7 @@ export default function SuperAdminLicenseDetail() {
             Activate
           </button>
         )}
-        {status === 'active' && (
+        {(status === 'active' || status === 'trial') && (
           <>
             <button
               type="button"
@@ -129,6 +131,14 @@ export default function SuperAdminLicenseDetail() {
             </button>
             <button
               type="button"
+              onClick={() => setShowPlan(true)}
+              className="px-4 py-2 rounded-lg border border-blue-300 text-sm font-medium text-blue-800 hover:bg-blue-50"
+            >
+              Change / Give Plan
+            </button>
+            {status === 'active' && (
+            <button
+              type="button"
               onClick={async () => {
                 if (!window.confirm('Revoke license and deactivate company?')) return;
                 const reason = window.prompt('Reason (optional)') || undefined;
@@ -144,6 +154,7 @@ export default function SuperAdminLicenseDetail() {
             >
               Revoke
             </button>
+            )}
           </>
         )}
         {!!lic.company_id && (
@@ -217,6 +228,19 @@ export default function SuperAdminLicenseDetail() {
             void qc.invalidateQueries({ queryKey: ['superadmin'] });
           }}
           onSuccessCredentials={() => toast.success('License activated')}
+        />
+      )}
+      {showPlan && (
+        <ManageLicensePlanModal
+          open
+          licenseId={id}
+          currentTierId={String(lic.tier_id || '')}
+          currentStatus={status}
+          onClose={() => setShowPlan(false)}
+          onUpdated={() => {
+            void qc.invalidateQueries({ queryKey: ['superadmin', 'license', id] });
+            void qc.invalidateQueries({ queryKey: ['superadmin'] });
+          }}
         />
       )}
     </div>

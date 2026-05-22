@@ -9,11 +9,15 @@ import {
   type LicenseStatusFilter,
 } from '@/lib/superAdminApi';
 import ActivateLicenseModal from '@/components/superadmin/ActivateLicenseModal';
+import ManageLicensePlanModal from '@/components/superadmin/ManageLicensePlanModal';
 
 const TABS: { id: LicenseStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'pending', label: 'Pending' },
   { id: 'active', label: 'Active' },
+  { id: 'expired', label: 'Expired' },
+  { id: 'trial', label: 'Trials' },
+  { id: 'expired_trial', label: 'Expired Trials' },
   { id: 'revoked', label: 'Revoked' },
 ];
 
@@ -23,6 +27,7 @@ export default function SuperAdminLicenses() {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<{ id: string; tier: string; maxUsers: number } | null>(null);
+  const [planModal, setPlanModal] = useState<{ id: string; tierId?: string; status?: string } | null>(null);
 
   const queryKey = useMemo(() => ['superadmin', 'licenses', tab, q, page] as const, [tab, q, page]);
 
@@ -124,7 +129,7 @@ export default function SuperAdminLicenses() {
                             Activate
                           </button>
                         )}
-                        {row.status === 'active' && (
+                        {(row.status === 'active' || row.status === 'trial') && (
                           <>
                             <button
                               type="button"
@@ -150,6 +155,23 @@ export default function SuperAdminLicenses() {
                             </button>
                             <button
                               type="button"
+                              onClick={() => setPlanModal({ id: row.id, tierId: row.tier_id, status: row.status })}
+                              className="text-blue-700 font-medium hover:underline"
+                            >
+                              Plan
+                            </button>
+                            {row.status === 'trial' && (
+                              <button
+                                type="button"
+                                onClick={() => setPlanModal({ id: row.id, tierId: row.tier_id, status: 'active' })}
+                                className="text-emerald-700 font-medium hover:underline"
+                              >
+                                Give paid plan
+                              </button>
+                            )}
+                            {row.status === 'active' && (
+                            <button
+                              type="button"
                               onClick={async () => {
                                 if (!window.confirm('Revoke this license and deactivate the company?')) return;
                                 const reason = window.prompt('Reason (optional)') || undefined;
@@ -165,6 +187,7 @@ export default function SuperAdminLicenses() {
                             >
                               Revoke
                             </button>
+                            )}
                           </>
                         )}
                       </td>
@@ -211,6 +234,19 @@ export default function SuperAdminLicenses() {
           onClose={() => setModal(null)}
           onActivated={() => void qc.invalidateQueries({ queryKey: ['superadmin'] })}
           onSuccessCredentials={() => toast.success('Activated — open license detail to copy credentials if needed')}
+        />
+      )}
+      {planModal && (
+        <ManageLicensePlanModal
+          open
+          licenseId={planModal.id}
+          currentTierId={planModal.tierId}
+          currentStatus={planModal.status}
+          onClose={() => setPlanModal(null)}
+          onUpdated={() => {
+            void qc.invalidateQueries({ queryKey: ['superadmin'] });
+            void qc.invalidateQueries({ queryKey });
+          }}
         />
       )}
     </div>

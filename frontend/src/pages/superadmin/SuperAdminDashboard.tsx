@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCircle2, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { fetchSuperAdminStats } from '@/lib/superAdminApi';
@@ -54,9 +55,10 @@ export default function SuperAdminDashboard() {
     { label: 'Total licenses', value: data.total_licenses },
     { label: 'Pending', value: data.pending_licenses },
     { label: 'Active', value: data.active_licenses },
+    { label: 'Trials', value: data.trial_licenses },
+    { label: 'Expired trials', value: data.expired_trial_licenses },
     { label: 'Companies', value: data.total_companies },
     { label: 'Users', value: data.total_users },
-    { label: 'Revenue potential (₹)', value: data.revenue_potential.toLocaleString('en-IN') },
   ];
 
   return (
@@ -73,6 +75,49 @@ export default function SuperAdminDashboard() {
             <p className="text-2xl font-semibold text-slate-900 mt-1">{s.value}</p>
           </div>
         ))}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-200">
+          <h2 className="font-semibold text-slate-900">Trial follow-ups</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Trials closest to expiry, so your team can convert or extend them from the license detail.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                <th className="px-4 py-3">Registrant</th>
+                <th className="px-4 py-3">Company</th>
+                <th className="px-4 py-3">Expires</th>
+                <th className="px-4 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {data.recent_trials?.length ? data.recent_trials.map((trial) => {
+                const expired = trial.expires_at ? new Date(trial.expires_at).getTime() < Date.now() : false;
+                return (
+                  <tr key={trial.id} className="hover:bg-slate-50/80">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-800">{trial.registrant_name}</div>
+                      <div className="text-xs text-slate-500">{trial.registrant_email}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{trial.company_name || '—'}</td>
+                    <td className={`px-4 py-3 whitespace-nowrap text-xs ${expired ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
+                      {trial.expires_at ? new Date(trial.expires_at).toLocaleDateString() : 'No expiry'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link to={`/superadmin/licenses/${trial.id}`} className="text-violet-600 font-medium hover:underline">
+                        Manage
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-500">No trial licenses yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {cred && (
