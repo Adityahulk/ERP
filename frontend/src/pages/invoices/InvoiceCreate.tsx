@@ -48,6 +48,29 @@ const GST_STATE_OPTIONS = [
 const INVOICE_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
 const INVOICE_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
 
+type SalesCustomFieldDef = {
+  id: string;
+  label: string;
+  scope: 'invoice' | 'item';
+  type?: 'text' | 'number' | 'date';
+  required?: boolean;
+  enabled?: boolean;
+};
+
+function salesCustomFieldDefs(company: any, scope: 'invoice' | 'item'): SalesCustomFieldDef[] {
+  const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
+  return defs
+    .map((d: any) => ({
+      id: String(d?.id || '').trim(),
+      label: String(d?.label || d?.id || '').trim(),
+      scope: d?.scope === 'item' ? 'item' : 'invoice',
+      type: ['number', 'date'].includes(String(d?.type)) ? d.type : 'text',
+      required: Boolean(d?.required),
+      enabled: d?.enabled !== false,
+    }))
+    .filter((d: SalesCustomFieldDef) => d.id && d.label && d.scope === scope && d.enabled);
+}
+
 function partyFullAddress(p: any, kind: 'shipping' | 'billing' = 'shipping') {
   const direct = kind === 'shipping' ? p?.shipping_address : p?.billing_address;
   if (direct) return String(direct);
@@ -100,12 +123,16 @@ export default function InvoiceCreate() {
 
   const [notes, setNotes] = useState('');
   const [externalDescription, setExternalDescription] = useState('');
+  const [customFields, setCustomFields] = useState<Record<string, string>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentEditorRow[]>([newPaymentEditorRow()]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [items, setItems] = useState<VyaparLineItem[]>([]);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const invoiceCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'invoice'), [company]);
+  const itemCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'item'), [company]);
 
   const hydratedIdRef = useRef<string | null>(null);
 
@@ -139,6 +166,7 @@ export default function InvoiceCreate() {
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setExternalDescription(String(inv.external_description || ''));
+    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
     const tpl = String(inv.pdf_template || 'monochrome');
@@ -159,6 +187,7 @@ export default function InvoiceCreate() {
       discount_amount: Number(it.discount_amount || 0),
       gst_rate: Number(it.gst_rate) || 0,
       cess_rate: Number(it.cess_rate) || 0,
+      custom_fields: (it.custom_fields && typeof it.custom_fields === 'object' ? it.custom_fields : {}) as Record<string, string>,
     })));
     hydratedIdRef.current = editInvoiceId;
   }, [editInvoiceId, existingInv, navigate]);
@@ -248,6 +277,7 @@ export default function InvoiceCreate() {
     gst_rate: isGstInvoice ? i.gst_rate : 0,
     discount_amount: i.discount_amount,
     cess_rate: isGstInvoice ? i.cess_rate || 0 : 0,
+    custom_fields: i.custom_fields || {},
   }));
 
   const paymentPayload = () => paymentRows
@@ -279,19 +309,20 @@ export default function InvoiceCreate() {
       party_phone: partyPhone || undefined,
       notes: notes || undefined,
       external_description: externalDescription || undefined,
+      custom_fields: customFields,
       amount_paid: amountPaid,
       payments: paymentRows,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const draftState = useMemo(() => ({
     partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate,
     isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate,
-    documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items,
-  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, paymentRows, items]);
+    documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items,
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
@@ -314,6 +345,7 @@ export default function InvoiceCreate() {
       setCompanyBankAccountId(String(draft.companyBankAccountId || ''));
       setNotes(String(draft.notes || ''));
       setExternalDescription(String(draft.externalDescription || ''));
+      setCustomFields(draft.customFields && typeof draft.customFields === 'object' ? draft.customFields : {});
       setPaymentRows(Array.isArray(draft.paymentRows) && draft.paymentRows.length ? draft.paymentRows : [newPaymentEditorRow()]);
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
@@ -347,6 +379,18 @@ export default function InvoiceCreate() {
     if (!effectivePartyName) { toast.error('Enter or select a party name'); return false; }
     if (items.length === 0) { toast.error('Add at least one item'); return false; }
     if (items.some((item) => !String(item.name || '').trim())) { toast.error('Every line needs an item name'); return false; }
+    for (const field of invoiceCustomFieldDefs) {
+      if (field.required && !String(customFields[field.id] || '').trim()) {
+        toast.error(`${field.label} is required`);
+        return false;
+      }
+    }
+    for (const field of itemCustomFieldDefs) {
+      if (field.required && items.some((item) => !String(item.custom_fields?.[field.id] || '').trim())) {
+        toast.error(`${field.label} is required on every item line`);
+        return false;
+      }
+    }
     if (!editInvoiceId && amountPaid > totals.total) { toast.error('Amount paid cannot exceed invoice total'); return false; }
     const normalizedInvoiceNumber = invoiceNumber.trim();
     if (editInvoiceId && !normalizedInvoiceNumber) { toast.error('Invoice number is required while editing'); return false; }
@@ -381,6 +425,7 @@ export default function InvoiceCreate() {
       party_phone: partyPhone || undefined,
       notes,
       external_description: externalDescription || undefined,
+      custom_fields: customFields,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     };
@@ -581,8 +626,29 @@ export default function InvoiceCreate() {
             showUnit
             showDescription
             showCess
+            customFields={itemCustomFieldDefs}
           />
         </TransactionSection>
+
+        {invoiceCustomFieldDefs.length > 0 && (
+          <TransactionSection title="Additional Fields" compact>
+            <div className="grid gap-3 md:grid-cols-3">
+              {invoiceCustomFieldDefs.map((field) => (
+                <div key={field.id}>
+                  <Label className="text-xs">
+                    {field.label}{field.required ? ' *' : ''}
+                  </Label>
+                  <Input
+                    type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                    className="mt-1"
+                    value={customFields[field.id] || ''}
+                    onChange={(e) => setCustomFields((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
+          </TransactionSection>
+        )}
 
         {!editInvoiceId && (
           <TransactionSection title="Payment" compact>

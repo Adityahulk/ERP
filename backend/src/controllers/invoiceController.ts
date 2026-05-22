@@ -502,13 +502,13 @@ export async function createInvoice(req: Request, res: Response) {
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
-          notes, external_description, terms_and_conditions, created_by, pdf_template, document_theme,
+          notes, external_description, terms_and_conditions, custom_fields, created_by, pdf_template, document_theme,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-          $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,
-          $35,$36,$37,$38,$39,$40,$41,$42
+          $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
+          $36,$37,$38,$39,$40,$41,$42,$43
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, godownId,
@@ -539,6 +539,7 @@ export async function createInvoice(req: Request, res: Response) {
           d.notes || null,
           d.external_description || null,
           d.terms_and_conditions || null,
+          JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : {}),
           req.user!.id,
           ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : 'monochrome',
           ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'executive',
@@ -573,8 +574,8 @@ export async function createInvoice(req: Request, res: Response) {
             quantity, unit_price, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+            total_amount, sort_order, custom_fields
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
           [
             invoice.id, companyId, item.item_id || null,
             invoiceLineName(item),
@@ -595,6 +596,7 @@ export async function createInvoice(req: Request, res: Response) {
             taxInfo.totalCess,
             taxInfo.totalAmount,
             i + 1,
+            JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
           ]
         );
 
@@ -995,6 +997,7 @@ export async function updateInvoice(req: Request, res: Response) {
           company_bank_account_id = $27, bank_label_snapshot = $28, bank_name_snapshot = $29,
           bank_account_number_snapshot = $30, bank_ifsc_snapshot = $31, bank_branch_snapshot = $32, upi_id_snapshot = $33,
           invoice_number = $34,
+          custom_fields = $38,
           updated_at = NOW()
         WHERE id = $35 AND company_id = $36`,
         [
@@ -1035,6 +1038,7 @@ export async function updateInvoice(req: Request, res: Response) {
           id,
           companyId,
           updatedPaymentStatus,
+          JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : oldInv.custom_fields || {}),
         ],
       );
 
@@ -1057,8 +1061,8 @@ export async function updateInvoice(req: Request, res: Response) {
             quantity, unit_price, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+            total_amount, sort_order, custom_fields
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
           [
             id,
             companyId,
@@ -1081,6 +1085,7 @@ export async function updateInvoice(req: Request, res: Response) {
             taxInfo.totalCess,
             taxInfo.totalAmount,
             i + 1,
+            JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
           ],
         );
 
@@ -1432,6 +1437,7 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
          i.invoice_date,
          i.payment_status,
          i.status,
+         i.custom_fields AS invoice_custom_fields,
          ii.id AS invoice_item_id,
          ii.item_name,
          ii.item_description,
@@ -1446,7 +1452,8 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
          ii.sgst_amount,
          ii.igst_amount,
          ii.cess_amount,
-         ii.total_amount
+         ii.total_amount,
+         ii.custom_fields AS item_custom_fields
        FROM invoices i
        INNER JOIN invoice_items ii ON ii.invoice_id = i.id AND ii.company_id = i.company_id
        WHERE i.company_id = $1

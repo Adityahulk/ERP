@@ -670,15 +670,43 @@ const BULK_NUMERIC_COLUMNS = new Set([
 ]);
 
 function normalizeBulkSalesColumns(input: unknown): string[] {
-  const allowed = new Set<string>(BULK_SALES_INVOICE_ALLOWED_COLUMNS as readonly string[]);
   const raw = Array.isArray(input) ? input : [];
-  const picked = raw.map((c) => String(c || '').trim()).filter((c) => allowed.has(c));
+  const picked = raw
+    .map((c) => String(c || '').trim())
+    .filter((c) => BULK_COLUMN_LABELS[c] || c.startsWith('custom:invoice:') || c.startsWith('custom:item:'));
   const uniq = Array.from(new Set(picked));
   return uniq.length ? uniq : [...BULK_SALES_INVOICE_DEFAULT_COLUMNS];
 }
 
+function salesCustomFieldDefinitions(company: any): Array<{ id: string; label: string; scope: string; enabled?: boolean }> {
+  const raw = company?.sales_invoice_custom_fields;
+  const defs = Array.isArray(raw) ? raw : [];
+  return defs
+    .map((d: any) => ({
+      id: String(d?.id || '').trim(),
+      label: String(d?.label || d?.id || '').trim(),
+      scope: String(d?.scope || 'invoice'),
+      enabled: d?.enabled !== false,
+    }))
+    .filter((d) => d.id && d.label && d.enabled);
+}
+
+function bulkColumnLabel(company: any, column: string): string {
+  if (BULK_COLUMN_LABELS[column]) return BULK_COLUMN_LABELS[column];
+  const def = salesCustomFieldDefinitions(company).find((d) => column === `custom:${d.scope}:${d.id}`);
+  return def?.label || column.replace(/^custom:(invoice|item):/, '');
+}
+
 function bulkCellValue(row: any, column: string, serial: number): string {
   if (column === 'serial_no') return String(serial);
+  if (column.startsWith('custom:invoice:')) {
+    const key = column.replace('custom:invoice:', '');
+    return String(row.invoice_custom_fields?.[key] ?? '');
+  }
+  if (column.startsWith('custom:item:')) {
+    const key = column.replace('custom:item:', '');
+    return String(row.item_custom_fields?.[key] ?? '');
+  }
   if (column === 'billing_date') return formatDocDate(row.invoice_date);
   if (column === 'amount') return fmtPaise(Number(row.total_amount || 0));
   if (column === 'unit_price') return fmtPaise(Number(row.unit_price || 0));
@@ -716,7 +744,7 @@ export async function generateBulkSalesInvoicePDF(args: {
   }
 
   const tableHead = columns
-    .map((col) => `<th class="${BULK_NUMERIC_COLUMNS.has(col) ? 'num' : ''}">${escapeHtml(BULK_COLUMN_LABELS[col] || col)}</th>`)
+    .map((col) => `<th class="${BULK_NUMERIC_COLUMNS.has(col) ? 'num' : ''}">${escapeHtml(bulkColumnLabel(company, col))}</th>`)
     .join('');
   const tableRows = rows
     .map((row, idx) => {

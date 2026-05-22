@@ -13,6 +13,33 @@ import api, { getApiBaseURL } from '@/lib/api';
 import { normalizeRole, roleLabel } from '@/lib/roles';
 import { DOCUMENT_THEME_OPTIONS } from '@/components/invoices/InvoicePreviewWorkspace';
 
+type SalesCustomFieldDef = {
+  id: string;
+  label: string;
+  scope: 'invoice' | 'item';
+  type: 'text' | 'number' | 'date';
+  required: boolean;
+  enabled: boolean;
+};
+
+function normalizeFieldId(value: string) {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+}
+
+function normalizeSalesCustomFields(value: unknown): SalesCustomFieldDef[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows
+    .map((row: any) => ({
+      id: normalizeFieldId(String(row?.id || row?.label || '')),
+      label: String(row?.label || row?.id || '').trim(),
+      scope: (row?.scope === 'item' ? 'item' : 'invoice') as SalesCustomFieldDef['scope'],
+      type: (['number', 'date'].includes(String(row?.type)) ? row.type : 'text') as SalesCustomFieldDef['type'],
+      required: Boolean(row?.required),
+      enabled: row?.enabled !== false,
+    }))
+    .filter((row) => row.id && row.label);
+}
+
 export default function Settings() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
@@ -50,6 +77,7 @@ export default function Settings() {
   const [documentTheme, setDocumentTheme] = useState('executive');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
   const [deliveryChallanShowPricing, setDeliveryChallanShowPricing] = useState(false);
+  const [salesCustomFields, setSalesCustomFields] = useState<SalesCustomFieldDef[]>([]);
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
   const [itemTerminologyPlural, setItemTerminologyPlural] = useState('Items');
   const [defaultGstRate, setDefaultGstRate] = useState('18');
@@ -394,6 +422,7 @@ export default function Settings() {
     setDocumentTheme(company.document_theme || 'executive');
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
     setDeliveryChallanShowPricing(!!company.delivery_challan_show_pricing);
+    setSalesCustomFields(normalizeSalesCustomFields(company.sales_invoice_custom_fields));
     setItemTerminologySingular(company.item_terminology || 'Item');
     setItemTerminologyPlural(company.item_terminology_plural || 'Items');
     setDefaultGstRate(String(company.default_gst_rate ?? 18));
@@ -476,11 +505,36 @@ export default function Settings() {
         document_theme: documentTheme,
         document_primary_color: documentPrimaryColor || '#4F46E5',
         delivery_challan_show_pricing: deliveryChallanShowPricing,
+        sales_invoice_custom_fields: salesCustomFields,
       });
       toast.success('Invoice preferences saved');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Save failed');
     }
+  };
+
+  const addSalesCustomField = () => {
+    const base = `field_${salesCustomFields.length + 1}`;
+    setSalesCustomFields((prev) => [
+      ...prev,
+      { id: base, label: 'New Field', scope: 'invoice', type: 'text', required: false, enabled: true },
+    ]);
+  };
+
+  const updateSalesCustomField = (idx: number, patch: Partial<SalesCustomFieldDef>) => {
+    setSalesCustomFields((prev) => prev.map((field, i) => {
+      if (i !== idx) return field;
+      const next = { ...field, ...patch };
+      if (patch.label !== undefined && (!field.id || field.id.startsWith('field_'))) {
+        next.id = normalizeFieldId(String(patch.label)) || field.id;
+      }
+      if (patch.id !== undefined) next.id = normalizeFieldId(String(patch.id));
+      return next;
+    }));
+  };
+
+  const removeSalesCustomField = (idx: number) => {
+    setSalesCustomFields((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const applyItemSchema = async () => {
@@ -1197,11 +1251,63 @@ export default function Settings() {
                            <div className="rounded-lg border bg-slate-50 p-4">
                               <div className="flex items-start justify-between gap-4">
                                  <div>
-                                    <p className="text-sm font-medium text-slate-800">Show pricing and GST details</p>
-                                    <p className="mt-1 text-xs text-slate-500">When enabled, delivery challan PDFs include rate, GST %, taxable value and totals. Keep it off for movement-only challans.</p>
+                                    <p className="text-sm font-medium text-slate-800">Show pricing details</p>
+                                    <p className="mt-1 text-xs text-slate-500">When enabled, delivery challans include reference rate, discount and amount only. GST/tax is never shown on challans.</p>
                                  </div>
                                  <Switch checked={deliveryChallanShowPricing} onCheckedChange={setDeliveryChallanShowPricing} />
                               </div>
+                           </div>
+                        </div>
+                        <div className="border-t pt-6 space-y-3">
+                           <div className="flex items-center justify-between gap-3">
+                              <div>
+                                 <h3 className="font-semibold">Sales Invoice Custom Fields</h3>
+                                 <p className="text-xs text-slate-500">Add fields once here. They appear while creating sales invoices and can be selected in Bulk Invoice columns.</p>
+                              </div>
+                              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addSalesCustomField}>
+                                 <Plus className="w-4 h-4" /> Add field
+                              </Button>
+                           </div>
+                           <div className="space-y-2">
+                              {salesCustomFields.length === 0 && (
+                                 <div className="rounded-lg border border-dashed p-4 text-sm text-slate-500">
+                                    No custom invoice fields yet.
+                                 </div>
+                              )}
+                              {salesCustomFields.map((field, idx) => (
+                                 <div key={`${field.id}-${idx}`} className="grid gap-2 rounded-lg border bg-white p-3 lg:grid-cols-[1.4fr_1fr_120px_90px_90px_44px]">
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-600">Label</label>
+                                       <Input className="mt-1" value={field.label} onChange={(e) => updateSalesCustomField(idx, { label: e.target.value })} />
+                                    </div>
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-600">Field key</label>
+                                       <Input className="mt-1 font-mono text-xs" value={field.id} onChange={(e) => updateSalesCustomField(idx, { id: e.target.value })} />
+                                    </div>
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-600">Where</label>
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={field.scope} onChange={(e) => updateSalesCustomField(idx, { scope: e.target.value as SalesCustomFieldDef['scope'] })}>
+                                          <option value="invoice">Invoice</option>
+                                          <option value="item">Item row</option>
+                                       </select>
+                                    </div>
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-600">Type</label>
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={field.type} onChange={(e) => updateSalesCustomField(idx, { type: e.target.value as SalesCustomFieldDef['type'] })}>
+                                          <option value="text">Text</option>
+                                          <option value="number">Number</option>
+                                          <option value="date">Date</option>
+                                       </select>
+                                    </div>
+                                    <label className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs text-slate-600 lg:mt-5">
+                                       Required
+                                       <Switch checked={field.required} onCheckedChange={(v) => updateSalesCustomField(idx, { required: v })} />
+                                    </label>
+                                    <Button type="button" variant="ghost" size="icon" className="text-red-600 hover:text-red-700 lg:mt-5" onClick={() => removeSalesCustomField(idx)}>
+                                       <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                 </div>
+                              ))}
                            </div>
                         </div>
                         <div className="border-t pt-6 space-y-3 max-w-md">

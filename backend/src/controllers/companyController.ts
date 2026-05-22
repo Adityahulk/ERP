@@ -51,7 +51,7 @@ export async function updateCompany(req: Request, res: Response) {
       'einvoice_enabled', 'einvoice_turnover_above_5cr', 'einvoice_sandbox',
       'einvoice_gsp_username', 'eway_bill_only_above_50k',
       'document_primary_color', 'document_theme', 'receipt_footer_message', 'invoice_pdf_template',
-      'delivery_challan_show_pricing', 'bulk_sales_invoice_columns',
+      'delivery_challan_show_pricing', 'bulk_sales_invoice_columns', 'sales_invoice_custom_fields',
     ];
 
     const updates: string[] = [];

@@ -32,6 +32,7 @@ export interface VyaparLineItem {
   discount_amount: number; // in paise
   gst_rate: number;    // percent
   cess_rate?: number;
+  custom_fields?: Record<string, string>;
 }
 
 interface Props {
@@ -49,6 +50,7 @@ interface Props {
   showDescription?: boolean;
   showCess?: boolean;
   showPricing?: boolean;
+  customFields?: Array<{ id: string; label: string; type?: string; required?: boolean }>;
 }
 
 const GST_OPTIONS = GST_RATE_OPTIONS;
@@ -102,6 +104,7 @@ export default function VyaparLineItems({
   showDescription = false,
   showCess = false,
   showPricing = true,
+  customFields = [],
 }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
@@ -230,6 +233,11 @@ export default function VyaparLineItems({
     const next = [...items];
     next[idx] = { ...next[idx], ...patch };
     onChange(next);
+  };
+
+  const updateCustomField = (idx: number, key: string, value: string) => {
+    const current = items[idx]?.custom_fields || {};
+    update(idx, { custom_fields: { ...current, [key]: value } });
   };
 
   const updateSellingPriceWithGst = (idx: number, priceInclGst: number) => {
@@ -612,6 +620,19 @@ export default function VyaparLineItems({
                                 />
                               </div>
                             )}
+                            {customFields.map((field) => (
+                              <div key={field.id} className="min-w-0">
+                                <span className="mb-1 block text-muted-foreground">
+                                  {field.label}{field.required ? ' *' : ''}
+                                </span>
+                                <Input
+                                  type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                                  className="h-8 w-full text-xs"
+                                  value={String(item.custom_fields?.[field.id] || '')}
+                                  onChange={(e) => updateCustomField(idx, field.id, e.target.value)}
+                                />
+                              </div>
+                            ))}
                             {/* Mobile: disc & gst in expanded row */}
                             {showPricing && <div className="min-w-0 sm:hidden">
                               <span className="mb-1 block text-muted-foreground">Disc (₹)</span>

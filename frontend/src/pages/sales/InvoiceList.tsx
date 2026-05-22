@@ -38,6 +38,16 @@ const BULK_COLUMN_OPTIONS = [
 
 const DEFAULT_BULK_COLUMNS = ['serial_no', 'item_name', 'billing_date', 'quantity', 'unit', 'unit_price', 'gst_rate', 'amount'];
 
+function salesCustomBulkOptions(company: any) {
+  const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
+  return defs
+    .filter((d: any) => d?.enabled !== false && d?.id && d?.label)
+    .map((d: any) => ({
+      id: `custom:${d.scope === 'item' ? 'item' : 'invoice'}:${String(d.id)}`,
+      label: String(d.label),
+    }));
+}
+
 function defaultRange() {
   const to = new Date().toISOString().split('T')[0];
   const d = new Date();
@@ -45,8 +55,8 @@ function defaultRange() {
   return { from, to };
 }
 
-function sanitizeBulkColumns(value: unknown): string[] {
-  const allowed = new Set<string>(BULK_COLUMN_OPTIONS.map((c) => c.id));
+function sanitizeBulkColumns(value: unknown, extraOptions: Array<{ id: string }> = []): string[] {
+  const allowed = new Set<string>([...BULK_COLUMN_OPTIONS.map((c) => c.id), ...extraOptions.map((c) => c.id)]);
   const raw = Array.isArray(value) ? value : [];
   const cols = raw.map((v) => String(v || '')).filter((v) => allowed.has(v));
   return cols.length ? Array.from(new Set(cols)) : [...DEFAULT_BULK_COLUMNS];
@@ -71,10 +81,11 @@ export default function InvoiceList() {
   const [bulkToDate, setBulkToDate] = useState(initialRange.to);
   const [bulkColumns, setBulkColumns] = useState<string[]>(DEFAULT_BULK_COLUMNS);
   const [bulkLoading, setBulkLoading] = useState<'preview' | 'download' | null>(null);
+  const customBulkColumnOptions = useMemo(() => salesCustomBulkOptions(company), [company]);
 
   const companyDefaultBulkColumns = useMemo(
-    () => sanitizeBulkColumns((company as any)?.bulk_sales_invoice_columns),
-    [company],
+    () => sanitizeBulkColumns((company as any)?.bulk_sales_invoice_columns, customBulkColumnOptions),
+    [company, customBulkColumnOptions],
   );
 
   useEffect(() => {
@@ -559,7 +570,7 @@ export default function InvoiceList() {
                 </Button>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                {BULK_COLUMN_OPTIONS.map((col) => {
+                {[...BULK_COLUMN_OPTIONS, ...customBulkColumnOptions].map((col) => {
                   const checked = bulkColumns.includes(col.id);
                   const required = bulkColumns.length === 1 && checked;
                   return (
