@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useCreateInvoice, useCompany, useInvoice, useUpdateInvoice } from '@/hooks/useBusiness';
 import { useGodowns } from '@/hooks/useStock';
-import { formatMoney } from '@/lib/formatters';
+import { formatMoney, normalizeCurrencyCode, SUPPORTED_CURRENCIES, type CurrencyCode } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -113,6 +113,7 @@ export default function InvoiceCreate() {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
+  const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('INR');
   const [isInterstate, setIsInterstate] = useState(false);
   const [placeOfSupply, setPlaceOfSupply] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
@@ -133,6 +134,17 @@ export default function InvoiceCreate() {
 
   const invoiceCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'invoice'), [company]);
   const itemCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'item'), [company]);
+  const enabledCurrencies = useMemo(() => {
+    const raw = Array.isArray((company as any)?.enabled_currencies) ? (company as any).enabled_currencies : ['INR'];
+    const normalized = raw.map((c: unknown) => normalizeCurrencyCode(c)).filter((c: CurrencyCode, idx: number, arr: CurrencyCode[]) => arr.indexOf(c) === idx);
+    return normalized.length ? normalized : ['INR'];
+  }, [company]);
+
+  useEffect(() => {
+    if (editInvoiceId || !company) return;
+    const preferred = normalizeCurrencyCode((company as any).default_currency || (company as any).currency || 'INR');
+    setCurrencyCode(enabledCurrencies.includes(preferred) ? preferred : enabledCurrencies[0]);
+  }, [company, editInvoiceId, enabledCurrencies]);
 
   const hydratedIdRef = useRef<string | null>(null);
 
@@ -159,6 +171,7 @@ export default function InvoiceCreate() {
     setPartyPhone(String(inv.party_phone || ''));
     setGodownId(inv.godown_id ? String(inv.godown_id) : '');
     setInvoiceNumber(String(inv.invoice_number || ''));
+    setCurrencyCode(normalizeCurrencyCode(inv.currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
     setInvoiceDate(inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
     setIsInterstate(Boolean(inv.is_interstate));
@@ -277,6 +290,7 @@ export default function InvoiceCreate() {
     gst_rate: isGstInvoice ? i.gst_rate : 0,
     discount_amount: i.discount_amount,
     cess_rate: isGstInvoice ? i.cess_rate || 0 : 0,
+    currency_code: currencyCode,
     custom_fields: i.custom_fields || {},
   }));
 
@@ -285,6 +299,7 @@ export default function InvoiceCreate() {
     .map((row) => ({
       payment_mode: row.payment_mode,
       amount: row.amount,
+      currency_code: currencyCode,
       company_bank_account_id: row.company_bank_account_id || companyBankAccountId || undefined,
       reference_number: row.reference_number || undefined,
       cheque_number: row.cheque_number || undefined,
@@ -307,6 +322,7 @@ export default function InvoiceCreate() {
       place_of_supply: placeOfSupply || undefined,
       shipping_address: shippingAddress.trim() || undefined,
       party_phone: partyPhone || undefined,
+      currency_code: currencyCode,
       notes: notes || undefined,
       external_description: externalDescription || undefined,
       custom_fields: customFields,
@@ -315,14 +331,14 @@ export default function InvoiceCreate() {
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const draftState = useMemo(() => ({
-    partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate,
+    partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode,
     isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate,
     documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items,
-  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
@@ -336,6 +352,7 @@ export default function InvoiceCreate() {
       setInvoiceNumber(String(draft.invoiceNumber || ''));
       setInvoiceDate(String(draft.invoiceDate || new Date().toISOString().split('T')[0]));
       setDueDate(String(draft.dueDate || ''));
+      setCurrencyCode(normalizeCurrencyCode(draft.currencyCode || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
       setIsInterstate(Boolean(draft.isInterstate));
       setPlaceOfSupply(String(draft.placeOfSupply || ''));
       setShippingAddress(String(draft.shippingAddress || ''));
@@ -413,6 +430,7 @@ export default function InvoiceCreate() {
       is_gst_invoice: isGstInvoice,
       pdf_template: pdfTemplate,
       document_theme: documentTheme,
+      currency_code: currencyCode,
       invoice_number: normalizedInvoiceNumber || undefined,
       party_id: partyId || undefined,
       party_name: effectivePartyName,
@@ -496,24 +514,24 @@ export default function InvoiceCreate() {
       <div className="space-y-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Invoice Summary</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(totals.total)}</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(totals.total, currencyCode)}</p>
         </div>
         <div className="space-y-1.5 border-t pt-3 text-sm">
-          <div className="flex justify-between"><span className="text-muted-foreground">Taxable</span><span className="tabular-nums">{formatMoney(totals.taxable)}</span></div>
-          {totals.discount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums">-{formatMoney(totals.discount)}</span></div>}
+          <div className="flex justify-between"><span className="text-muted-foreground">Taxable</span><span className="tabular-nums">{formatMoney(totals.taxable, currencyCode)}</span></div>
+          {totals.discount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums">-{formatMoney(totals.discount, currencyCode)}</span></div>}
           {!isGstInvoice ? (
             <div className="flex justify-between"><span className="text-muted-foreground">GST</span><span>Non-GST</span></div>
           ) : isInterstate ? (
-            <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatMoney(totals.tax)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatMoney(totals.tax, currencyCode)}</span></div>
           ) : (
             <>
-              <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2))}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2))}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span></div>
             </>
           )}
-          {totals.cess > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cess</span><span className="tabular-nums">{formatMoney(totals.cess)}</span></div>}
-          {!editInvoiceId && <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Received</span><span className="tabular-nums">{formatMoney(amountPaid)}</span></div>}
-          {!editInvoiceId && <div className={`flex justify-between font-semibold ${balanceDue > 0 ? 'text-red-600' : 'text-emerald-600'}`}><span>Balance Due</span><span className="tabular-nums">{formatMoney(Math.max(balanceDue, 0))}</span></div>}
+          {totals.cess > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cess</span><span className="tabular-nums">{formatMoney(totals.cess, currencyCode)}</span></div>}
+          {!editInvoiceId && <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Received</span><span className="tabular-nums">{formatMoney(amountPaid, currencyCode)}</span></div>}
+          {!editInvoiceId && <div className={`flex justify-between font-semibold ${balanceDue > 0 ? 'text-red-600' : 'text-emerald-600'}`}><span>Balance Due</span><span className="tabular-nums">{formatMoney(Math.max(balanceDue, 0), currencyCode)}</span></div>}
         </div>
         <div className="hidden xl:block border-t pt-3">
           <DocumentActionsBar
@@ -606,6 +624,23 @@ export default function InvoiceCreate() {
               <div><Label className="text-xs">Invoice Date</Label><Input type="date" className="mt-1" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
               <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
               <div className="col-span-2">
+                <Label className="text-xs">Currency</Label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={currencyCode}
+                  onChange={(e) => setCurrencyCode(normalizeCurrencyCode(e.target.value))}
+                >
+                  {SUPPORTED_CURRENCIES.filter((c) => enabledCurrencies.includes(c.code)).map((c) => (
+                    <option key={c.code} value={c.code}>{c.label}</option>
+                  ))}
+                </select>
+                {currencyCode !== 'INR' && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    USD invoices can be printed and tracked, but GST IRN/E-Way Bill generation remains INR-only.
+                  </p>
+                )}
+              </div>
+              <div className="col-span-2">
                 <Label className="text-xs">Ship To / Place of Supply Address</Label>
                 <textarea className="mt-1 min-h-[64px] w-full resize-y rounded-md border bg-background px-3 py-2 text-sm" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Leave blank to use party shipping or billing address" />
               </div>
@@ -626,6 +661,7 @@ export default function InvoiceCreate() {
             showUnit
             showDescription
             showCess
+            currencyCode={currencyCode}
             customFields={itemCustomFieldDefs}
           />
         </TransactionSection>
@@ -656,6 +692,7 @@ export default function InvoiceCreate() {
               rows={paymentRows}
               onChange={setPaymentRows}
               defaultBankAccountId={companyBankAccountId}
+              currencyCode={currencyCode}
             />
           </TransactionSection>
         )}

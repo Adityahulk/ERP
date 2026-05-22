@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import MoneyInput from './MoneyInput';
+import { currencySymbol } from '@/lib/formatters';
 
 export interface PaymentEditorRow {
   id: string;
@@ -24,12 +25,15 @@ export default function PaymentRowsEditor({
   onChange,
   defaultBankAccountId,
   disabled,
+  currencyCode = 'INR',
 }: {
   rows: PaymentEditorRow[];
   onChange: (rows: PaymentEditorRow[]) => void;
   defaultBankAccountId?: string;
   disabled?: boolean;
+  currencyCode?: string;
 }) {
+  const moneySymbol = currencySymbol(currencyCode);
   const update = (id: string, patch: Partial<PaymentEditorRow>) => {
     onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
@@ -74,7 +78,7 @@ export default function PaymentRowsEditor({
               </select>
             </div>
             <div>
-              <Label className="text-xs">Amount (₹)</Label>
+              <Label className="text-xs">Amount ({moneySymbol})</Label>
               <MoneyInput
                 className="mt-1"
                 placeholder="0"

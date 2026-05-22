@@ -414,12 +414,12 @@ export async function createItem(req: Request, res: Response) {
           company_id, name, description, sku, barcode, hsn_code, category_id, brand, unit_id,
           secondary_unit_id, unit_conversion_factor,
           item_type, track_inventory, is_serialized,
-          purchase_price, selling_price,
+          purchase_price, selling_price, price_currency_code,
           tax_preference, gst_rate, cgst_rate, sgst_rate, igst_rate, cess_rate,
           opening_stock, opening_stock_value, opening_stock_date,
           reorder_point, max_stock_level, image_url, custom_fields
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
         ) RETURNING *`,
         [
           companyId, data.name, data.description, data.sku, data.barcode || null, data.hsn_code,
@@ -429,6 +429,7 @@ export async function createItem(req: Request, res: Response) {
           trackInventory,
           isService ? false : data.is_serialized || false,
           data.purchase_price || 0, data.selling_price || 0,
+          String(data.price_currency_code || 'INR').toUpperCase() === 'USD' ? 'USD' : 'INR',
           data.tax_preference || 'taxable', gstRate, halfRate, halfRate, gstRate,
           data.cess_rate || 0,
           openingStock, openingStockValue,
@@ -656,7 +657,7 @@ export async function updateItem(req: Request, res: Response) {
         'name','description','sku','barcode','hsn_code','category_id','brand','unit_id',
         'secondary_unit_id','unit_conversion_factor',
         'item_type','track_inventory','is_serialized',
-        'purchase_price','selling_price',
+        'purchase_price','selling_price','price_currency_code',
         'tax_preference','gst_rate','cgst_rate','sgst_rate','igst_rate','cess_rate',
         'opening_stock','opening_stock_value','opening_stock_date',
         'reorder_point','max_stock_level','image_url','is_active','custom_fields',

@@ -93,6 +93,7 @@ export interface Item {
   is_serialized: boolean;
   purchase_price: number;
   selling_price: number;
+  price_currency_code?: 'INR' | 'USD';
   gst_rate: number;
   tax_preference: string;
   reorder_point: number;

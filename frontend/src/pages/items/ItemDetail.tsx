@@ -76,8 +76,8 @@ export default function ItemDetail() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchase Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.purchase_price)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Selling Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.selling_price)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchase Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.purchase_price, (item as any).price_currency_code)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Selling Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.selling_price, (item as any).price_currency_code)}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Stock</p><p className="text-xl font-bold tabular-nums mt-1">{totalStock} {item.unit_abbr || ''}</p>
           {item.track_inventory && totalStock <= (item.reorder_point || 0) && totalStock > 0 && <div className="flex items-center gap-1 mt-1 text-amber-600 text-xs"><AlertTriangle className="w-3 h-3" />Low stock</div>}
         </CardContent></Card>

@@ -46,6 +46,26 @@ function externalTaxErrorStatus(message: string): number {
   return /TaxPro|GSP credentials|EINVOICE_|GSTIN|e-invoice auth|e-way auth/i.test(message) ? 400 : 500;
 }
 
+const SUPPORTED_CURRENCIES = new Set(['INR', 'USD']);
+
+function normalizeCurrencyCode(value: unknown, fallback = 'INR'): string {
+  const code = String(value || fallback || 'INR').trim().toUpperCase();
+  return SUPPORTED_CURRENCIES.has(code) ? code : fallback;
+}
+
+async function resolveCompanyCurrency(db: Queryable, companyId: string, requested?: unknown): Promise<string> {
+  const res = await db.query(
+    `SELECT default_currency, currency, enabled_currencies FROM companies WHERE id = $1`,
+    [companyId],
+  );
+  const row = res.rows[0] || {};
+  const fallback = normalizeCurrencyCode(row.default_currency || row.currency || 'INR');
+  const code = normalizeCurrencyCode(requested, fallback);
+  const enabled = Array.isArray(row.enabled_currencies) ? row.enabled_currencies : ['INR'];
+  const normalizedEnabled = enabled.map((v: unknown) => normalizeCurrencyCode(v)).filter(Boolean);
+  return normalizedEnabled.includes(code) ? code : fallback;
+}
+
 function trimOrNull(value: unknown): string | null {
   const s = String(value ?? '').trim();
   return s ? s : null;
@@ -418,6 +438,7 @@ export async function createInvoice(req: Request, res: Response) {
       const isPurchase = rawType === 'purchase';
       const invoiceType = isPurchase ? 'purchase' : 'tax_invoice';
       const godownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
+      const currencyCode = await resolveCompanyCurrency(client, companyId, d.currency_code);
 
       const requestedInvoiceNumber = trimOrNull(d.invoice_number);
       let invoiceNumber = '';
@@ -497,7 +518,7 @@ export async function createInvoice(req: Request, res: Response) {
       const invRes = await client.query(
         `INSERT INTO invoices (
           company_id, invoice_number, invoice_type, party_id, godown_id,
-          invoice_date, due_date, is_interstate, place_of_supply,
+          invoice_date, due_date, currency_code, is_interstate, place_of_supply,
           party_name_snapshot, party_gstin_snapshot, party_phone_snapshot, party_email_snapshot, billing_address_snapshot, shipping_address_snapshot,
           subtotal, discount_amount, taxable_amount,
           cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
@@ -508,12 +529,13 @@ export async function createInvoice(req: Request, res: Response) {
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
           $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
-          $36,$37,$38,$39,$40,$41,$42,$43
+          $36,$37,$38,$39,$40,$41,$42,$43,$44
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, godownId,
           d.invoice_date || new Date().toISOString().split('T')[0],
           d.due_date || null,
+          currencyCode,
           isInterstate,
           placeOfSupply,
           partySnap.name || null,
@@ -571,11 +593,11 @@ export async function createInvoice(req: Request, res: Response) {
         await client.query(
           `INSERT INTO invoice_items (
             invoice_id, company_id, item_id, item_name, item_description, hsn_code, unit,
-            quantity, unit_price, discount_amount, taxable_amount,
+            quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
             total_amount, sort_order, custom_fields
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
           [
             invoice.id, companyId, item.item_id || null,
             invoiceLineName(item),
@@ -584,6 +606,7 @@ export async function createInvoice(req: Request, res: Response) {
             item.unit || 'PCS',
             item.quantity,
             Math.round(Number(item.unit_price) || 0),
+            currencyCode,
             taxInfo.totalDiscountLineLevel,
             taxInfo.totalTaxable,
             gstRt,
@@ -649,10 +672,10 @@ export async function createInvoice(req: Request, res: Response) {
         const payRes = await client.query(
           `INSERT INTO payments (
              company_id, payment_type, payment_number, payment_date, party_id, amount,
-             payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date,
+             currency_code, payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date,
              clearance_status, notes, payment_source, source_id, source_label, created_by
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'invoice', $14, $15, $16) RETURNING id`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'invoice', $15, $16, $17) RETURNING id`,
           [
             companyId,
             isPurchase ? 'outgoing' : 'incoming',
@@ -660,6 +683,7 @@ export async function createInvoice(req: Request, res: Response) {
             invoice.invoice_date,
             d.party_id || null,
             row.amount,
+            currencyCode,
             row.payment_mode || 'cash',
             row.reference_number || null,
             row.company_bank_account_id || null,
@@ -886,6 +910,7 @@ export async function updateInvoice(req: Request, res: Response) {
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
       const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
+      const currencyCode = await resolveCompanyCurrency(client, companyId, d.currency_code || oldInv.currency_code);
 
       const itemsRes = await client.query(
         `SELECT ii.*, it.name AS item_master_name, it.track_inventory
@@ -998,6 +1023,7 @@ export async function updateInvoice(req: Request, res: Response) {
           bank_account_number_snapshot = $30, bank_ifsc_snapshot = $31, bank_branch_snapshot = $32, upi_id_snapshot = $33,
           invoice_number = $34,
           custom_fields = $38,
+          currency_code = $39,
           updated_at = NOW()
         WHERE id = $35 AND company_id = $36`,
         [
@@ -1039,6 +1065,7 @@ export async function updateInvoice(req: Request, res: Response) {
           companyId,
           updatedPaymentStatus,
           JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : oldInv.custom_fields || {}),
+          currencyCode,
         ],
       );
 
@@ -1058,11 +1085,11 @@ export async function updateInvoice(req: Request, res: Response) {
         await client.query(
           `INSERT INTO invoice_items (
             invoice_id, company_id, item_id, item_name, item_description, hsn_code, unit,
-            quantity, unit_price, discount_amount, taxable_amount,
+            quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
             total_amount, sort_order, custom_fields
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
           [
             id,
             companyId,
@@ -1073,6 +1100,7 @@ export async function updateInvoice(req: Request, res: Response) {
             item.unit || 'PCS',
             item.quantity,
             Math.round(Number(item.unit_price) || 0),
+            currencyCode,
             taxInfo.totalDiscountLineLevel,
             taxInfo.totalTaxable,
             gstRt,
@@ -1761,6 +1789,9 @@ export async function generateEinvoice(req: Request, res: Response) {
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
 
     const inv = invRes.rows[0];
+    if (normalizeCurrencyCode(inv.currency_code) !== 'INR') {
+      return res.status(400).json(error('E-invoice/IRN generation is supported only for INR GST invoices. Create USD invoices as normal commercial invoices without IRN.'));
+    }
     const itemsRes = await query(
       `SELECT ii.*, it.item_type, it.track_inventory
        FROM invoice_items ii
@@ -1867,6 +1898,9 @@ export async function generateEwayBill(req: Request, res: Response) {
     );
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
     const inv = invRes.rows[0];
+    if (normalizeCurrencyCode(inv.currency_code) !== 'INR') {
+      return res.status(400).json(error('E-Way Bill generation is supported only for INR GST invoices.'));
+    }
     if (!inv.irn) return res.status(400).json(error('Generate IRN before generating E-Way Bill'));
     if (inv.einvoice_status !== 'generated') return res.status(400).json(error('E-invoice must be in generated state'));
     if (inv.eway_bill_no && inv.eway_bill_status !== 'cancelled') {

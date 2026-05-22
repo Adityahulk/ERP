@@ -30,6 +30,10 @@ function normalizeChallanItemAmount(it: any) {
   };
 }
 
+function normalizeCurrencyCode(value: unknown): 'INR' | 'USD' {
+  return String(value || 'INR').trim().toUpperCase() === 'USD' ? 'USD' : 'INR';
+}
+
 export async function listDeliveryChallans(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
@@ -99,6 +103,7 @@ export async function createDeliveryChallan(req: Request, res: Response) {
 
     const result = await withTransaction(async (client) => {
       const challanNumber = d.challan_number?.trim() || await nextChallanNumber(companyId, client);
+      const currencyCode = normalizeCurrencyCode(d.currency_code);
 
       const partySnap = d.party_id
         ? await client.query(`SELECT name, gstin, billing_address FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
@@ -113,16 +118,16 @@ export async function createDeliveryChallan(req: Request, res: Response) {
       const challanRes = await client.query(
         `INSERT INTO delivery_challans
            (company_id, party_id, so_id, challan_number, challan_date, due_date, status,
-            transport_name, vehicle_number, lr_number, notes, total_amount,
+            transport_name, vehicle_number, lr_number, notes, total_amount, currency_code,
             party_name_snapshot, party_gstin_snapshot, party_address_snapshot, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
         [
           companyId, d.party_id || null, d.so_id || null, challanNumber,
           d.challan_date || new Date().toISOString().split('T')[0],
           d.due_date || null,
           d.status || 'open',
           d.transport_name || null, d.vehicle_number || null, d.lr_number || null,
-          d.notes || null, totalAmount,
+          d.notes || null, totalAmount, currencyCode,
           party?.name || d.party_name || null,
           party?.gstin || null,
           party?.billing_address || null,
@@ -135,11 +140,11 @@ export async function createDeliveryChallan(req: Request, res: Response) {
         const amount = normalizeChallanItemAmount(it);
         await client.query(
           `INSERT INTO delivery_challan_items
-             (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+             (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount, currency_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [challanId, it.item_id || null, it.so_item_id || null,
            it.item_name || it.name, it.hsn_code || null, it.unit || null,
-           amount.quantity, amount.unitPrice, 0, amount.discountAmount],
+           amount.quantity, amount.unitPrice, 0, amount.discountAmount, currencyCode],
         );
       }
       return challanRes.rows[0];
@@ -176,6 +181,7 @@ export async function updateDeliveryChallan(req: Request, res: Response) {
           )
         : { rows: [] };
       const party = partySnap.rows[0];
+      const currencyCode = normalizeCurrencyCode(d.currency_code || existing.rows[0].currency_code);
       const totalAmount = inputItems.reduce(
         (sum: number, it: any) => sum + normalizeChallanItemAmount(it).totalAmount,
         0,
@@ -191,10 +197,11 @@ export async function updateDeliveryChallan(req: Request, res: Response) {
            lr_number = $6,
            notes = $7,
            total_amount = $8,
-           party_name_snapshot = $9,
-           party_gstin_snapshot = $10,
-           party_address_snapshot = $11
-         WHERE id = $12 AND company_id = $13 AND is_deleted = false
+           currency_code = $9,
+           party_name_snapshot = $10,
+           party_gstin_snapshot = $11,
+           party_address_snapshot = $12
+         WHERE id = $13 AND company_id = $14 AND is_deleted = false
          RETURNING *`,
         [
           d.party_id || null,
@@ -205,6 +212,7 @@ export async function updateDeliveryChallan(req: Request, res: Response) {
           d.lr_number || null,
           d.notes || null,
           totalAmount,
+          currencyCode,
           party?.name || d.party_name || existing.rows[0].party_name_snapshot || null,
           party?.gstin || null,
           party?.billing_address || null,
@@ -218,8 +226,8 @@ export async function updateDeliveryChallan(req: Request, res: Response) {
         const amount = normalizeChallanItemAmount(it);
         await client.query(
           `INSERT INTO delivery_challan_items
-             (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9)`,
+             (challan_id, item_id, so_item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate, discount_amount, currency_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,$10)`,
           [
             id,
             it.item_id || null,
@@ -230,6 +238,7 @@ export async function updateDeliveryChallan(req: Request, res: Response) {
             amount.quantity,
             amount.unitPrice,
             amount.discountAmount,
+            currencyCode,
           ],
         );
       }
@@ -390,13 +399,14 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
       const invRes = await client.query(
         `INSERT INTO invoices
            (company_id, party_id, invoice_number, invoice_date, invoice_type, status, payment_mode,
-            is_interstate, place_of_supply,
+           is_interstate, place_of_supply,
+            currency_code,
             party_name_snapshot, party_gstin_snapshot, party_phone_snapshot, party_email_snapshot,
             billing_address_snapshot, shipping_address_snapshot,
             subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, cess_amount,
             round_off, total_amount, paid_amount, payment_status, einvoice_status,
             notes, created_by)
-         VALUES ($1,$2,$3,$4,'tax_invoice','confirmed',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,0,$21,0,'unpaid',$22,$23,$24)
+         VALUES ($1,$2,$3,$4,'tax_invoice','confirmed',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,0,$22,0,'unpaid',$23,$24,$25)
          RETURNING *`,
         [
           companyId, challan.party_id, invoiceNumber,
@@ -404,6 +414,7 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
           d.payment_mode || 'credit',
           isInterstate,
           partyStateCode || null,
+          normalizeCurrencyCode(challan.currency_code),
           challan.party_name_snapshot || challan.party_name || null,
           partyGstin,
           challan.party_phone || null,
@@ -435,12 +446,12 @@ export async function convertChallanToInvoice(req: Request, res: Response) {
         const halfRate = amount.gstRate / 2;
         await client.query(
           `INSERT INTO invoice_items
-             (invoice_id, company_id, item_id, item_name, hsn_code, unit, quantity, unit_price, discount_amount, taxable_amount, gst_rate,
+             (invoice_id, company_id, item_id, item_name, hsn_code, unit, quantity, unit_price, currency_code, discount_amount, taxable_amount, gst_rate,
               cgst_rate, sgst_rate, igst_rate, cgst_amount, sgst_amount, igst_amount, total_amount)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
           [
             invoiceId, companyId, it.item_id || null, it.item_name || 'Item', it.hsn_code || null, it.unit || 'PCS',
-            amount.quantity, amount.unitPrice, amount.discountAmount, amount.taxableAmount, amount.gstRate,
+            amount.quantity, amount.unitPrice, normalizeCurrencyCode(challan.currency_code), amount.discountAmount, amount.taxableAmount, amount.gstRate,
             isInterstate ? 0 : halfRate,
             isInterstate ? 0 : halfRate,
             isInterstate ? amount.gstRate : 0,

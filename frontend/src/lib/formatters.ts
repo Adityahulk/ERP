@@ -1,7 +1,29 @@
-export function formatMoney(amountPaise: number | undefined): string {
-    if (amountPaise === undefined || amountPaise === null) return '₹0.00';
-    const rupees = amountPaise / 100;
-    return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export type CurrencyCode = 'INR' | 'USD';
+
+export const SUPPORTED_CURRENCIES: { code: CurrencyCode; label: string; symbol: string; locale: string }[] = [
+    { code: 'INR', label: 'Indian Rupee (INR)', symbol: '₹', locale: 'en-IN' },
+    { code: 'USD', label: 'US Dollar (USD)', symbol: '$', locale: 'en-US' },
+];
+
+export function normalizeCurrencyCode(value: unknown, fallback: CurrencyCode = 'INR'): CurrencyCode {
+    const code = String(value || fallback).toUpperCase();
+    return code === 'USD' ? 'USD' : 'INR';
+}
+
+export function currencySymbol(currency?: string): string {
+    return normalizeCurrencyCode(currency) === 'USD' ? '$' : '₹';
+}
+
+export function currencyLabel(currency?: string): string {
+    return normalizeCurrencyCode(currency) === 'USD' ? 'USD' : 'INR';
+}
+
+export function formatMoney(amountPaise: number | undefined, currency: string = 'INR'): string {
+    const code = normalizeCurrencyCode(currency);
+    if (amountPaise === undefined || amountPaise === null) return `${currencySymbol(code)}0.00`;
+    const major = amountPaise / 100;
+    const meta = SUPPORTED_CURRENCIES.find((c) => c.code === code)!;
+    return `${meta.symbol}${major.toLocaleString(meta.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function rupeesToPaise(value: number | string | null | undefined): number {
@@ -25,12 +47,13 @@ export function parseRupeeInput(value: number | string | null | undefined): numb
     return Number.isFinite(n) ? n : 0;
 }
 
-export function formatCurrencyCompact(amountPaise: number): string {
+export function formatCurrencyCompact(amountPaise: number, currency: string = 'INR'): string {
     const amount = amountPaise / 100;
     const abs = Math.abs(amount);
-    if(abs >= 100000) return `₹${(amount/100000).toFixed(1)}L`;
-    if(abs >= 1000) return `₹${(amount/1000).toFixed(1)}K`;
-    return `₹${amount.toFixed(0)}`;
+    const symbol = currencySymbol(currency);
+    if (normalizeCurrencyCode(currency) === 'INR' && abs >= 100000) return `${symbol}${(amount/100000).toFixed(1)}L`;
+    if(abs >= 1000) return `${symbol}${(amount/1000).toFixed(1)}K`;
+    return `${symbol}${amount.toFixed(0)}`;
 }
 
 export function indianNumberFormat(n: number): string {

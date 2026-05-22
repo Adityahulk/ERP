@@ -358,7 +358,7 @@ export default function ItemList() {
                         </div>
                         <div className="text-right">
                           <div className="font-semibold tabular-nums">{qtyText(item.total_stock || 0)}</div>
-                          <div className="text-xs text-muted-foreground">{formatMoney(item.selling_price || 0)}</div>
+                          <div className="text-xs text-muted-foreground">{formatMoney(item.selling_price || 0, item.price_currency_code)}</div>
                         </div>
                       </div>
                     </button>
@@ -439,8 +439,8 @@ export default function ItemList() {
                         <div className="rounded-xl border p-4">
                           <h3 className="font-semibold">Commercial snapshot</h3>
                           <div className="mt-3 space-y-2 text-sm">
-                            <div className="flex justify-between"><span className="text-muted-foreground">Purchase price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.purchase_price || 0))}</span></div>
-                            <div className="flex justify-between"><span className="text-muted-foreground">Selling price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.selling_price || 0))}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Purchase price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.purchase_price || 0), selectedItem.price_currency_code)}</span></div>
+                            <div className="flex justify-between"><span className="text-muted-foreground">Selling price</span><span className="tabular-nums">{formatMoney(Number(selectedItem.selling_price || 0), selectedItem.price_currency_code)}</span></div>
                             <div className="flex justify-between"><span className="text-muted-foreground">Reorder point</span><span className="tabular-nums">{qtyText(selectedItem.reorder_point || 0)}</span></div>
                             <div className="flex justify-between"><span className="text-muted-foreground">Last purchase</span><span>{activitySummary.last_purchase_date ? formatDate(String(activitySummary.last_purchase_date)) : '—'}</span></div>
                             <div className="flex justify-between"><span className="text-muted-foreground">Last sale</span><span>{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</span></div>
@@ -525,7 +525,7 @@ export default function ItemList() {
                       <Badge variant="secondary">Service</Badge>
                     </div>
                     <div className="mt-4 space-y-1 text-sm">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Sale price</span><span className="tabular-nums">{formatMoney(item.selling_price || 0)}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Sale price</span><span className="tabular-nums">{formatMoney(item.selling_price || 0, item.price_currency_code)}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">GST</span><span>{item.gst_rate || 0}%</span></div>
                     </div>
                     <div className="mt-4 flex gap-2">

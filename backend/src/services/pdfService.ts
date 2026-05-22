@@ -22,6 +22,24 @@ function fmtPaise(paise: number): string {
   return (Math.round(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function normalizeCurrencyCode(value: unknown): 'INR' | 'USD' {
+  return String(value || 'INR').trim().toUpperCase() === 'USD' ? 'USD' : 'INR';
+}
+
+function currencySymbol(value: unknown): string {
+  return normalizeCurrencyCode(value) === 'USD' ? '$' : '₹';
+}
+
+function fmtMoney(paise: number, currency: unknown): string {
+  const code = normalizeCurrencyCode(currency);
+  const locale = code === 'USD' ? 'en-US' : 'en-IN';
+  const symbol = currencySymbol(code);
+  return `${symbol}${(Math.round(Number(paise || 0)) / 100).toLocaleString(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function replaceAll(tpl: string, vars: Record<string, string>): string {
   let out = tpl;
   for (const [k, v] of Object.entries(vars)) {
@@ -323,7 +341,7 @@ function themePalette(theme: string, fallback: string) {
   return palettes[theme] || palettes.classic;
 }
 
-function invoiceItemRows(items: any[], kind: string): string {
+function invoiceItemRows(items: any[], kind: string, currencyCode: string): string {
   const showTax = kind !== 'simple';
   return items
     .map((it, i) => {
@@ -339,15 +357,15 @@ function invoiceItemRows(items: any[], kind: string): string {
         <td class="mono">${escapeHtml(it.hsn_code || '')}</td>
         <td class="right"><b>${fmtQty(it.quantity)}</b></td>
         <td class="mono">${escapeHtml(it.unit || 'PCS')}</td>
-        <td class="right">${fmtPaise(Number(it.unit_price || 0))}</td>
-        ${showTax ? `<td class="right">${fmtPaise(tax)}</td>` : ''}
-        <td class="right amount">${fmtPaise(Number(it.total_amount || 0))}</td>
+        <td class="right">${fmtMoney(Number(it.unit_price || 0), it.currency_code || currencyCode)}</td>
+        ${showTax ? `<td class="right">${fmtMoney(tax, it.currency_code || currencyCode)}</td>` : ''}
+        <td class="right amount">${fmtMoney(Number(it.total_amount || 0), it.currency_code || currencyCode)}</td>
       </tr>`;
     })
     .join('');
 }
 
-function totalsRows(invoice: any): string {
+function totalsRows(invoice: any, currencyCode: string): string {
   const rows: Array<[string, number, string?]> = [
     ['Sub Total', Number(invoice.subtotal || 0)],
     ['Discount', Number(invoice.discount_amount || 0)],
@@ -359,7 +377,7 @@ function totalsRows(invoice: any): string {
   if (Number(invoice.round_off || 0)) rows.push(['Round Off', Number(invoice.round_off || 0)]);
   return rows
     .filter(([, amount], idx) => idx < 3 || amount !== 0)
-    .map(([label, amount]) => `<div class="total-row"><span>${escapeHtml(label)}</span><b>₹${fmtPaise(amount)}</b></div>`)
+    .map(([label, amount]) => `<div class="total-row"><span>${escapeHtml(label)}</span><b>${fmtMoney(amount, currencyCode)}</b></div>`)
     .join('');
 }
 
@@ -376,6 +394,7 @@ function buildInvoiceHtml(args: {
   einvBlock: string;
 }) {
   const { invoice, company, party, items, kind, theme, logoSrc, signatureSrc, upiQr, einvBlock } = args;
+  const currencyCode = normalizeCurrencyCode(invoice.currency_code || company.default_currency || company.currency || 'INR');
   const palette = themePalette(theme, String(company.document_primary_color || ''));
   const isPurchase = Boolean(invoice.bill_number || invoice.purchase_invoice_id);
   const title = kind === 'performa' ? 'PROFORMA INVOICE' : isPurchase ? 'PURCHASE BILL' : 'INVOICE';
@@ -433,7 +452,9 @@ function buildInvoiceHtml(args: {
       state: stateLabel(supplyStateCode || buyerStateCode, party?.shipping_state || party?.billing_state || party?.state),
     });
   const shouldShowShipToBlock = isPurchase || hasExplicitShipTo || hasExplicitPlaceOfSupply;
-  const amountWords = escapeHtml(amountToWordsINR(Math.round(Number(invoice.total_amount || 0) / 100)));
+  const amountWords = currencyCode === 'INR'
+    ? escapeHtml(amountToWordsINR(Math.round(Number(invoice.total_amount || 0) / 100)))
+    : escapeHtml(`${fmtMoney(Number(invoice.total_amount || 0), currencyCode)} only`);
   const balanceDue = Number(invoice.balance_due ?? Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)));
   const terms = String(invoice.terms_and_conditions || company.terms_and_conditions || 'Thank you for your business.').trim();
   const notes = String(invoice.notes || company.invoice_notes || 'Thanks for your business.').trim();
@@ -464,8 +485,8 @@ function buildInvoiceHtml(args: {
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
   const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>Authorised Signatory</p></div>`;
   const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
-  const itemTable = `<table class="items">${itemsHead}<tbody>${invoiceItemRows(items, kind)}</tbody></table>`;
-  const totals = `<div class="totals">${totalsRows(invoice)}<div class="grand total-row"><span>Total</span><b>₹${fmtPaise(Number(invoice.total_amount || 0))}</b></div><div class="due total-row"><span>Balance Due</span><b>₹${fmtPaise(balanceDue)}</b></div></div>`;
+  const itemTable = `<table class="items">${itemsHead}<tbody>${invoiceItemRows(items, kind, currencyCode)}</tbody></table>`;
+  const totals = `<div class="totals">${totalsRows(invoice, currencyCode)}<div class="grand total-row"><span>Total</span><b>${fmtMoney(Number(invoice.total_amount || 0), currencyCode)}</b></div><div class="due total-row"><span>Balance Due</span><b>${fmtMoney(balanceDue, currencyCode)}</b></div></div>`;
 
   const baseCss = `<!doctype html><html><head><meta charset="utf-8"/>
   <style>
@@ -500,7 +521,7 @@ function buildInvoiceHtml(args: {
 
   const simple = `${baseCss}<style>@page{margin:0}.page{padding:0}.hero{background:${palette.accent};color:#fff;padding:24px 34px;display:grid;grid-template-columns:1fr 1fr;align-items:start}.hero .doc-title{color:#fff;font-size:40px}.hero .address,.hero .muted,.hero .business-address,.hero .business-lines,.hero .business-name,.hero .block-title{color:#fff!important}.simple-body{padding:24px 34px}.simple .bill-grid{grid-template-columns:1fr 330px}.simple table.items th{background:#fff;color:#85858b;border-bottom:1px solid #d4d4d8}.simple table.items td{border-bottom:1px solid #e4e4e7}.simple .totals{background:${palette.soft}}.simple .due{background:#dbeafe;color:#111827}</style></head><body><main class="page simple">
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
-    <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>₹${fmtPaise(balanceDue)}</b></section>
+    <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>${fmtMoney(balanceDue, currencyCode)}</b></section>
     <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:24px">${shipToBlock}</div>` : ''}</div>${invoiceMeta}</div>
     ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
   </main></body></html>`;

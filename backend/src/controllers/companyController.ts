@@ -41,7 +41,7 @@ export async function updateCompany(req: Request, res: Response) {
       'registered_address', 'city', 'state', 'pincode', 'state_code',
       'phone', 'email', 'website',
       'financial_year_start', 'invoice_prefix', 'po_prefix', 'quotation_prefix',
-      'default_due_days', 'currency', 'timezone',
+      'default_due_days', 'currency', 'default_currency', 'enabled_currencies', 'timezone',
       'item_terminology', 'item_terminology_plural', 'default_gst_rate', 'default_hsn',
       'bank_name', 'bank_account_number', 'bank_ifsc', 'bank_branch', 'upi_id',
       'business_category',

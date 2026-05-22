@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
-import { formatDate } from '@/lib/formatters';
+import { normalizeCurrencyCode, SUPPORTED_CURRENCIES, formatDate, type CurrencyCode } from '@/lib/formatters';
 import { useCompany } from '@/hooks/useBusiness';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +48,9 @@ export default function DeliveryChallansTab() {
   const qc = useQueryClient();
   const { data: company } = useCompany();
   const showChallanPricing = !!company?.delivery_challan_show_pricing;
+  const enabledCurrencies = Array.isArray((company as any)?.enabled_currencies)
+    ? (company as any).enabled_currencies.map((c: unknown) => normalizeCurrencyCode(c))
+    : ['INR'];
   const [formMode, setFormMode] = useState<FormMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [convertDialog, setConvertDialog] = useState<any>(null);
@@ -65,6 +68,7 @@ export default function DeliveryChallansTab() {
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [lrNumber, setLrNumber] = useState('');
   const [notes, setNotes] = useState('');
+  const [currencyCode, setCurrencyCode] = useState<CurrencyCode>(normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'));
   const [items, setItems] = useState<VyaparLineItem[]>([]);
 
   const { data, isLoading } = useQuery({
@@ -84,6 +88,7 @@ export default function DeliveryChallansTab() {
     setLrNumber('');
     setDueDate('');
     setItems([]);
+    setCurrencyCode(normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'));
     setChallanDate(todayIso());
     setEditingId(null);
   };
@@ -132,6 +137,7 @@ export default function DeliveryChallansTab() {
     lr_number: lrNumber.trim() || undefined,
     notes: notes.trim() || undefined,
     status: 'open',
+    currency_code: currencyCode,
     items: items.map(it => ({
       item_id: it.item_id,
       item_name: it.name,
@@ -141,6 +147,7 @@ export default function DeliveryChallansTab() {
       unit_price: showChallanPricing ? Math.max(0, Math.round(Number(it.unit_price || 0))) : 0,
       gst_rate: 0,
       discount_amount: showChallanPricing ? Math.max(0, Math.round(Number(it.discount_amount || 0))) : 0,
+      currency_code: currencyCode,
     })),
   });
 
@@ -214,6 +221,7 @@ export default function DeliveryChallansTab() {
       setVehicleNumber(challan.vehicle_number || '');
       setLrNumber(challan.lr_number || '');
       setNotes(challan.notes || '');
+      setCurrencyCode(normalizeCurrencyCode(challan.currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
       setItems((challan.items || []).map(toLineItem));
       setFormMode('edit');
       toast.dismiss(t);
@@ -325,6 +333,16 @@ export default function DeliveryChallansTab() {
                     <Label className="text-xs">Due Date</Label>
                     <Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} />
                   </div>
+                  {showChallanPricing && (
+                    <div className="col-span-2">
+                      <Label className="text-xs">Currency</Label>
+                      <select className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm" value={currencyCode} onChange={(e) => setCurrencyCode(normalizeCurrencyCode(e.target.value))}>
+                        {SUPPORTED_CURRENCIES.filter((c) => enabledCurrencies.includes(c.code)).map((currency) => (
+                          <option key={currency.code} value={currency.code}>{currency.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               </div>
             </section>
@@ -346,6 +364,7 @@ export default function DeliveryChallansTab() {
                 showHsn
                 showUnit
                 showPricing={showChallanPricing}
+                currencyCode={currencyCode}
               />
             </section>
 

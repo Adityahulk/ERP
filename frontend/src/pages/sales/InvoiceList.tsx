@@ -397,10 +397,10 @@ export default function InvoiceList() {
                         <div className="font-medium">{inv.party_name || 'Walk-in Customer'}</div>
                         <div className="text-xs text-muted-foreground">{inv.party_phone || '-'}</div>
                       </td>
-                      <td className="py-3 px-4 text-right font-bold tabular-nums">{formatMoney(inv.total_amount)}</td>
+                      <td className="py-3 px-4 text-right font-bold tabular-nums">{formatMoney(inv.total_amount, inv.currency_code)}</td>
                       <td className="py-3 px-4 text-right font-bold tabular-nums">
                         <span className={isOverdue ? 'text-red-600' : ''}>
-                          {formatMoney(inv.balance_due ?? 0)}
+                          {formatMoney(inv.balance_due ?? 0, inv.currency_code)}
                         </span>
                       </td>
                       <td className="py-3 px-4">

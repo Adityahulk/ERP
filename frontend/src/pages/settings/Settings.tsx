@@ -11,6 +11,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
 import { normalizeRole, roleLabel } from '@/lib/roles';
+import { normalizeCurrencyCode, SUPPORTED_CURRENCIES, type CurrencyCode } from '@/lib/formatters';
 import { DOCUMENT_THEME_OPTIONS } from '@/components/invoices/InvoicePreviewWorkspace';
 
 type SalesCustomFieldDef = {
@@ -76,6 +77,8 @@ export default function Settings() {
   const [invoiceTemplate, setInvoiceTemplate] = useState('monochrome');
   const [documentTheme, setDocumentTheme] = useState('executive');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
+  const [enabledCurrencies, setEnabledCurrencies] = useState<CurrencyCode[]>(['INR']);
+  const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('INR');
   const [deliveryChallanShowPricing, setDeliveryChallanShowPricing] = useState(false);
   const [salesCustomFields, setSalesCustomFields] = useState<SalesCustomFieldDef[]>([]);
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
@@ -421,6 +424,13 @@ export default function Settings() {
     setInvoiceTemplate(company.invoice_pdf_template || 'monochrome');
     setDocumentTheme(company.document_theme || 'executive');
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
+    const currencies = Array.isArray(company.enabled_currencies)
+      ? company.enabled_currencies
+          .map((c: unknown) => normalizeCurrencyCode(c))
+          .filter((c: CurrencyCode, idx: number, arr: CurrencyCode[]) => arr.indexOf(c) === idx)
+      : ['INR'];
+    setEnabledCurrencies(currencies.length ? currencies : ['INR']);
+    setDefaultCurrency(normalizeCurrencyCode(company.default_currency || company.currency || 'INR'));
     setDeliveryChallanShowPricing(!!company.delivery_challan_show_pricing);
     setSalesCustomFields(normalizeSalesCustomFields(company.sales_invoice_custom_fields));
     setItemTerminologySingular(company.item_terminology || 'Item');
@@ -504,6 +514,9 @@ export default function Settings() {
         invoice_pdf_template: invoiceTemplate,
         document_theme: documentTheme,
         document_primary_color: documentPrimaryColor || '#4F46E5',
+        enabled_currencies: enabledCurrencies,
+        default_currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
+        currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         delivery_challan_show_pricing: deliveryChallanShowPricing,
         sales_invoice_custom_fields: salesCustomFields,
       });
@@ -535,6 +548,16 @@ export default function Settings() {
 
   const removeSalesCustomField = (idx: number) => {
     setSalesCustomFields((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const toggleCurrency = (code: CurrencyCode, enabled: boolean) => {
+    setEnabledCurrencies((prev) => {
+      if (code === 'INR') return ['INR', ...prev.filter((c) => c !== 'INR')];
+      const next = enabled ? Array.from(new Set([...prev, code])) : prev.filter((c) => c !== code);
+      if (!next.length) return ['INR'];
+      if (!next.includes(defaultCurrency)) setDefaultCurrency(next[0]);
+      return next;
+    });
   };
 
   const applyItemSchema = async () => {
@@ -1244,6 +1267,41 @@ export default function Settings() {
                                  <input type="color" className="h-10 w-12 rounded border bg-white p-1" value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} />
                                  <Input value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} className="font-mono" />
                               </div>
+                           </div>
+                        </div>
+                        <div className="border-t pt-6 space-y-3 max-w-2xl">
+                           <div>
+                              <h3 className="font-semibold">Currencies</h3>
+                              <p className="text-xs text-slate-500">Enable the currencies users can select while entering prices. Existing records remain in their saved currency.</p>
+                           </div>
+                           <div className="grid gap-3 sm:grid-cols-2">
+                              {SUPPORTED_CURRENCIES.map((currency) => (
+                                 <div key={currency.code} className="rounded-lg border bg-slate-50 p-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                       <div>
+                                          <p className="text-sm font-medium text-slate-800">{currency.label}</p>
+                                          <p className="mt-1 text-xs text-slate-500">Symbol: {currency.symbol}</p>
+                                       </div>
+                                       <Switch
+                                          checked={enabledCurrencies.includes(currency.code)}
+                                          disabled={currency.code === 'INR'}
+                                          onCheckedChange={(checked) => toggleCurrency(currency.code, checked)}
+                                       />
+                                    </div>
+                                 </div>
+                              ))}
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Default currency for new transactions</label>
+                              <select
+                                 className="mt-1 h-10 w-full max-w-xs rounded-md border bg-white px-3 text-sm"
+                                 value={defaultCurrency}
+                                 onChange={(e) => setDefaultCurrency(normalizeCurrencyCode(e.target.value))}
+                              >
+                                 {SUPPORTED_CURRENCIES.filter((c) => enabledCurrencies.includes(c.code)).map((currency) => (
+                                    <option key={currency.code} value={currency.code}>{currency.label}</option>
+                                 ))}
+                              </select>
                            </div>
                         </div>
                         <div className="border-t pt-6 space-y-3 max-w-md">

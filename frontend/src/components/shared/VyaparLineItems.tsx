@@ -12,7 +12,7 @@
 import { Fragment, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { formatMoney } from '@/lib/formatters';
+import { currencySymbol, formatMoney } from '@/lib/formatters';
 import { GST_RATE_OPTIONS } from '@/lib/gstRates';
 import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
 import api from '@/lib/api';
@@ -50,6 +50,7 @@ interface Props {
   showDescription?: boolean;
   showCess?: boolean;
   showPricing?: boolean;
+  currencyCode?: string;
   customFields?: Array<{ id: string; label: string; type?: string; required?: boolean }>;
 }
 
@@ -104,8 +105,10 @@ export default function VyaparLineItems({
   showDescription = false,
   showCess = false,
   showPricing = true,
+  currencyCode = 'INR',
   customFields = [],
 }: Props) {
+  const moneySymbol = currencySymbol(currencyCode);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -353,7 +356,7 @@ export default function VyaparLineItems({
                   {it.sku && <span className="text-muted-foreground ml-2 text-xs">{it.sku}</span>}
                 </div>
                 <div className="text-right flex-shrink-0 text-muted-foreground text-xs">
-                  {formatMoney(Number(it.unit_price ?? it.selling_price ?? 0))}
+                  {formatMoney(Number(it.unit_price ?? it.selling_price ?? 0), currencyCode)}
                   {it.item_type !== 'service' && typeof it.available_stock === 'number' && (
                     <span className="ml-2">· {it.available_stock} in stock</span>
                   )}
@@ -404,8 +407,8 @@ export default function VyaparLineItems({
                 {showUnit && !showPricing && (
                   <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Unit</th>
                 )}
-                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Rate (₹)</th>}
-                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24 hidden sm:table-cell">Disc (₹)</th>}
+                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Rate ({moneySymbol})</th>}
+                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24 hidden sm:table-cell">Disc ({moneySymbol})</th>}
                 {showPricing && isGst && (
                   <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20 hidden sm:table-cell">GST %</th>
                 )}
@@ -462,7 +465,7 @@ export default function VyaparLineItems({
                                   }}
                                 >
                                   <span className="min-w-0 truncate font-medium">{it.name}</span>
-                                  <span className="shrink-0 text-muted-foreground">{formatMoney(Number(it.unit_price ?? it.selling_price ?? 0))}</span>
+                                  <span className="shrink-0 text-muted-foreground">{formatMoney(Number(it.unit_price ?? it.selling_price ?? 0), currencyCode)}</span>
                                 </button>
                               ))}
                             </div>
@@ -519,7 +522,7 @@ export default function VyaparLineItems({
                         </td>
                       )}
                       {showPricing && <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
-                        {formatMoney(c.total)}
+                        {formatMoney(c.total, currencyCode)}
                       </td>}
                       <td className="sticky right-0 z-10 bg-card px-2 py-2 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
                         <button
@@ -635,7 +638,7 @@ export default function VyaparLineItems({
                             ))}
                             {/* Mobile: disc & gst in expanded row */}
                             {showPricing && <div className="min-w-0 sm:hidden">
-                              <span className="mb-1 block text-muted-foreground">Disc (₹)</span>
+                              <span className="mb-1 block text-muted-foreground">Disc ({moneySymbol})</span>
                               <MoneyInput
                                 className="h-8 w-full text-xs"
                                 placeholder="0"
@@ -658,7 +661,7 @@ export default function VyaparLineItems({
                           </div>
                           {showPricing && isGst && (
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
-                              Taxable: {formatMoney(c.taxable)} · GST: {formatMoney(c.gst)}
+                              Taxable: {formatMoney(c.taxable, currencyCode)} · GST: {formatMoney(c.gst, currencyCode)}
                               {isInterstate ? ' (IGST)' : ' (CGST + SGST)'}
                             </p>
                           )}
@@ -685,31 +688,31 @@ export default function VyaparLineItems({
           <div className="w-full max-w-xs space-y-1.5 text-sm bg-muted/30 rounded-xl px-4 py-3 border">
             <div className="flex justify-between text-muted-foreground">
               <span>Subtotal (taxable)</span>
-              <span className="tabular-nums font-medium text-foreground">{formatMoney(totals.subtotal)}</span>
+              <span className="tabular-nums font-medium text-foreground">{formatMoney(totals.subtotal, currencyCode)}</span>
             </div>
             {isGst && (
               <>
                 {isInterstate ? (
                   <div className="flex justify-between text-muted-foreground">
                     <span>IGST</span>
-                    <span className="tabular-nums">{formatMoney(totals.tax)}</span>
+                    <span className="tabular-nums">{formatMoney(totals.tax, currencyCode)}</span>
                   </div>
                 ) : (
                   <>
                     <div className="flex justify-between text-muted-foreground">
                       <span>CGST</span>
-                      <span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2))}</span>
+                      <span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span>
                     </div>
                     <div className="flex justify-between text-muted-foreground">
                       <span>SGST</span>
-                      <span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2))}</span>
+                      <span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span>
                     </div>
                   </>
                 )}
                 {totals.cess > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>Cess</span>
-                    <span className="tabular-nums">{formatMoney(totals.cess)}</span>
+                    <span className="tabular-nums">{formatMoney(totals.cess, currencyCode)}</span>
                   </div>
                 )}
               </>
@@ -721,7 +724,7 @@ export default function VyaparLineItems({
             )}
             <div className="flex justify-between border-t pt-2 font-bold text-base">
               <span>Grand Total</span>
-              <span className="tabular-nums">{formatMoney(totals.total)}</span>
+              <span className="tabular-nums">{formatMoney(totals.total, currencyCode)}</span>
             </div>
           </div>
         </div>

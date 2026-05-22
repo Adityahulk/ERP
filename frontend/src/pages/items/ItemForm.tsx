@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCreateItem, useUpdateItem, useItemCategories, useItemUnits, useCreateItemCategory, useCreateItemUnit } from '@/hooks/useItems';
 import { useGodowns } from '@/hooks/useStock';
+import { useCompany } from '@/hooks/useBusiness';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import api from '@/lib/api';
-import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
+import { currencySymbol, normalizeCurrencyCode, SUPPORTED_CURRENCIES, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 import { GST_RATE_OPTIONS, gstRateLabel } from '@/lib/gstRates';
 
 
@@ -43,9 +44,13 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
   const { data: catData } = useItemCategories();
   const { data: unitData } = useItemUnits();
   const { data: godownData } = useGodowns();
+  const { data: company } = useCompany();
   const categories = catData?.data?.flat || [];
   const units = unitData?.data || [];
   const godowns = godownData?.data || [];
+  const enabledCurrencies = Array.isArray((company as any)?.enabled_currencies)
+    ? (company as any).enabled_currencies.map((c: unknown) => normalizeCurrencyCode(c))
+    : ['INR'];
 
   const [form, setForm] = useState<any>({});
   const [customFields, setCustomFields] = useState<Array<{ key: string; value: string }>>([]);
@@ -78,6 +83,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
         unit_id: item.unit_id, item_type: item.item_type,
         track_inventory: item.track_inventory, is_serialized: item.is_serialized,
         purchase_price: (item.purchase_price || 0) / 100, selling_price: (item.selling_price || 0) / 100,
+        price_currency_code: normalizeCurrencyCode((item as any).price_currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'),
         gst_rate: item.gst_rate, tax_preference: item.tax_preference,
         opening_stock: item.opening_stock || 0,
         opening_stock_value: item.opening_stock_value ? paiseToRupees(item.opening_stock_value).toFixed(2) : '',
@@ -89,12 +95,12 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       setShowWholesalePricing(false);
     } else {
       const isService = defaultItemType === 'service';
-      setForm({ name: '', item_type: defaultItemType, gst_rate: 18, tax_preference: 'taxable', track_inventory: !isService, is_serialized: false, purchase_price: 0, selling_price: 0, opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
+      setForm({ name: '', item_type: defaultItemType, gst_rate: 18, tax_preference: 'taxable', track_inventory: !isService, is_serialized: false, purchase_price: 0, selling_price: 0, price_currency_code: normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'), opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
       setCustomFields([]);
       setShowWholesalePricing(false);
       setWholesaleTiers([]);
     }
-  }, [item, open, defaultItemType]);
+  }, [item, open, defaultItemType, company]);
 
   useEffect(() => {
     if (!open) return;
@@ -129,6 +135,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       opening_stock: isService ? 0 : form.opening_stock,
       purchase_price: Math.round((form.purchase_price || 0) * 100),
       selling_price: Math.round((form.selling_price || 0) * 100),
+      price_currency_code: normalizeCurrencyCode(form.price_currency_code),
       opening_stock_value: isService || form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
     };
     if (isService) {
@@ -329,13 +336,25 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
 
           {/* PRICING & TAX */}
           <TabsContent value="pricing" className="space-y-4">
+            <div>
+              <Label>Price Currency</Label>
+              <select
+                className="mt-1 h-10 w-full max-w-xs rounded-md border bg-background px-3 text-sm"
+                value={normalizeCurrencyCode(form.price_currency_code)}
+                onChange={(e) => update('price_currency_code', normalizeCurrencyCode(e.target.value))}
+              >
+                {SUPPORTED_CURRENCIES.filter((c) => enabledCurrencies.includes(c.code)).map((currency) => (
+                  <option key={currency.code} value={currency.code}>{currency.label}</option>
+                ))}
+              </select>
+            </div>
             <div className="grid grid-cols-2 gap-4">
-              <div><Label>Purchase Price (₹)</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.purchase_price || ''} onChange={e => update('purchase_price', parseFloat(e.target.value) || 0)} /></div>
-              <div><Label>Selling Price (₹)</Label><Input type="number" className="mt-1 tabular-nums font-medium" min={0} step={0.01} value={form.selling_price || ''} onChange={e => update('selling_price', parseFloat(e.target.value) || 0)} /></div>
+              <div><Label>Purchase Price ({currencySymbol(form.price_currency_code)})</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.purchase_price || ''} onChange={e => update('purchase_price', parseFloat(e.target.value) || 0)} /></div>
+              <div><Label>Selling Price ({currencySymbol(form.price_currency_code)})</Label><Input type="number" className="mt-1 tabular-nums font-medium" min={0} step={0.01} value={form.selling_price || ''} onChange={e => update('selling_price', parseFloat(e.target.value) || 0)} /></div>
             </div>
             {form.selling_price > 0 && (
               <div className={`p-3 rounded-lg text-sm font-medium ${margin >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>
-                ₹{margin.toFixed(2)} profit ({marginPct}% margin)
+                {currencySymbol(form.price_currency_code)}{margin.toFixed(2)} profit ({marginPct}% margin)
               </div>
             )}
             <div>
