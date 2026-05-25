@@ -6,6 +6,7 @@ import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
 import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
+import { postPurchaseInvoiceAccounting } from '../services/accountingService';
 
 // ── Helpers ───────────────────────────────────────────────────
 const PURCHASE_BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
@@ -485,6 +486,7 @@ export async function receiveStock(req: Request, res: Response) {
         [companyId, po.party_id, invoiceTotals.totalAmount, partyBalanceAfter, invoice.id, `Received GRN Bill ${grnBillNumber}`, req.user!.id]
       );
 
+      await postPurchaseInvoiceAccounting(client, companyId, invoice, req.user!.id);
       return invoice;
     });
 
@@ -594,6 +596,7 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
         [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, inv.id, `Purchase Bill ${billNumber}`, req.user!.id],
       );
 
+      await postPurchaseInvoiceAccounting(client, companyId, inv, req.user!.id);
       return inv;
     });
 

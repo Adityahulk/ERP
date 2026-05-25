@@ -8,6 +8,7 @@ import {
   determineGSTType,
   stateCodeFromGstin,
 } from '../services/gstService';
+import { postExpenseAccounting, reverseAccountingForReference } from '../services/accountingService';
 
 async function resolveExpenseGstType(companyId: string, vendorGstin: string | undefined) {
   const comp = await query(`SELECT gstin, state_code FROM companies WHERE id = $1`, [companyId]);
@@ -29,38 +30,42 @@ export async function createExpense(req: Request, res: Response) {
     const includesGst = !!d.amount_includes_gst;
     const tax = calculateExpenseGstBreakdown(Number(d.amount), rate, gstType, includesGst);
 
-    const numRes = await query(
-      `SELECT COUNT(*) + 1 as num FROM expenses WHERE company_id = $1`, [companyId]
-    );
-    const expenseNumber = `EXP-${String(numRes.rows[0].num).padStart(5, '0')}`;
+    const result = await withTransaction(async (client) => {
+      const numRes = await client.query(
+        `SELECT COUNT(*) + 1 as num FROM expenses WHERE company_id = $1`, [companyId]
+      );
+      const expenseNumber = `EXP-${String(numRes.rows[0].num).padStart(5, '0')}`;
 
-    const result = await query(
-      `INSERT INTO expenses (
-        company_id, expense_number, expense_date, category, amount,
-        gst_rate, tax_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
-        amount_includes_gst,
-        payment_mode, reference_number, vendor_name, vendor_gstin,
-        description, notes, is_reimbursable, status, created_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
-      [
-        companyId, expenseNumber,
-        d.expense_date || new Date().toISOString().split('T')[0],
-        d.category, tax.taxable_amount,
-        rate,
-        tax.gst_amount,
-        tax.gst_amount,
-        tax.cgst_amount,
-        tax.sgst_amount,
-        tax.igst_amount,
-        tax.total_amount,
-        includesGst,
-        d.payment_mode || 'cash', d.reference_number,
-        d.vendor_name, d.vendor_gstin,
-        d.description, d.notes,
-        d.is_reimbursable || false,
-        'approved', req.user!.id,
-      ]
-    );
+      const inserted = await client.query(
+        `INSERT INTO expenses (
+          company_id, expense_number, expense_date, category, amount,
+          gst_rate, tax_amount, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
+          amount_includes_gst,
+          payment_mode, reference_number, vendor_name, vendor_gstin,
+          description, notes, is_reimbursable, status, created_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
+        [
+          companyId, expenseNumber,
+          d.expense_date || new Date().toISOString().split('T')[0],
+          d.category, tax.taxable_amount,
+          rate,
+          tax.gst_amount,
+          tax.gst_amount,
+          tax.cgst_amount,
+          tax.sgst_amount,
+          tax.igst_amount,
+          tax.total_amount,
+          includesGst,
+          d.payment_mode || 'cash', d.reference_number,
+          d.vendor_name, d.vendor_gstin,
+          d.description, d.notes,
+          d.is_reimbursable || false,
+          'approved', req.user!.id,
+        ]
+      );
+      await postExpenseAccounting(client, companyId, inserted.rows[0], req.user!.id);
+      return inserted;
+    });
 
     await logAction(req.user!.id, companyId, 'create', 'expense', result.rows[0].id);
     res.status(201).json(success(result.rows[0]));
@@ -213,9 +218,16 @@ export async function updateExpense(req: Request, res: Response) {
     if (!updates.length) return res.status(400).json(error('No fields to update'));
 
     values.push(id, companyId);
-    const result = await query(
-      `UPDATE expenses SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} AND is_deleted = false RETURNING *`, values
-    );
+    const result = await withTransaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE expenses SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} AND is_deleted = false RETURNING *`, values
+      );
+      if (updated.rows[0]) {
+        await reverseAccountingForReference(client, companyId, 'expense', id, req.user!.id);
+        await postExpenseAccounting(client, companyId, updated.rows[0], req.user!.id);
+      }
+      return updated;
+    });
     if (!result.rows.length) return res.status(404).json(error('Expense not found'));
     res.json(success(result.rows[0]));
   } catch (err: any) { res.status(500).json(error(err.message)); }
@@ -224,10 +236,16 @@ export async function updateExpense(req: Request, res: Response) {
 // ── DELETE /api/expenses/:id ──────────────────────────────────
 export async function deleteExpense(req: Request, res: Response) {
   try {
-    const result = await query(
-      'UPDATE expenses SET is_deleted = true WHERE id = $1 AND company_id = $2 RETURNING id',
-      [req.params.id, req.user!.company_id]
-    );
+    const result = await withTransaction(async (client) => {
+      const updated = await client.query(
+        'UPDATE expenses SET is_deleted = true WHERE id = $1 AND company_id = $2 RETURNING id',
+        [req.params.id, req.user!.company_id]
+      );
+      if (updated.rows[0]) {
+        await reverseAccountingForReference(client, req.user!.company_id, 'expense', req.params.id, req.user!.id);
+      }
+      return updated;
+    });
     if (!result.rows.length) return res.status(404).json(error('Expense not found'));
     await logAction(req.user!.id, req.user!.company_id, 'delete', 'expense', req.params.id);
     res.json(success({ message: 'Expense deleted' }));

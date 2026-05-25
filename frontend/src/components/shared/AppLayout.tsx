@@ -86,7 +86,7 @@ const navGroups = [
   {
      label: 'FINANCE',
      items: [
-        { to: '/accounting', icon: Receipt, label: 'Cash & Bank' },
+        { to: '/accounting', icon: Receipt, label: 'Accounting' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },
      ]
   },

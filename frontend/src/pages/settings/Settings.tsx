@@ -483,9 +483,11 @@ export default function Settings() {
       const res = await api.get(`/company/gstin/${g}`);
       const details = res.data?.data ?? res.data;
       setGstinDetails(details);
-      if (details.legal_name) setLegalName(details.legal_name);
-      if (details.address && !registeredAddress.trim()) setRegisteredAddress(details.address);
-      if (details.state && !companyState.trim()) setCompanyState(details.state);
+      if (details.legal_name || details.trade_name) setLegalName(details.legal_name || details.trade_name);
+      if (details.address) setRegisteredAddress(details.address);
+      if (details.city) setCompanyCity(details.city);
+      if (details.pincode) setCompanyPincode(details.pincode);
+      if (details.state) setCompanyState(details.state);
       if (!silent) {
         toast.success(details.source === 'provider' ? 'GSTIN details fetched' : 'GSTIN verified locally', { id: t ?? undefined });
       }
@@ -761,6 +763,8 @@ export default function Settings() {
                                <div className="mt-2 rounded-md border bg-slate-50 p-3 text-xs text-slate-700 space-y-1">
                                  <p><span className="font-semibold">Legal:</span> {gstinDetails.legal_name || 'Verified GSTIN format only'}</p>
                                  {gstinDetails.trade_name && <p><span className="font-semibold">Trade:</span> {gstinDetails.trade_name}</p>}
+                                 {gstinDetails.address && <p><span className="font-semibold">Address:</span> {gstinDetails.address}</p>}
+                                 {(gstinDetails.city || gstinDetails.pincode) && <p><span className="font-semibold">City/PIN:</span> {[gstinDetails.city, gstinDetails.pincode].filter(Boolean).join(' - ')}</p>}
                                  <p><span className="font-semibold">State:</span> {[gstinDetails.state_code, gstinDetails.state].filter(Boolean).join(' - ') || '—'}</p>
                                  {gstinDetails.status && <p><span className="font-semibold">Status:</span> {gstinDetails.status}</p>}
                                </div>

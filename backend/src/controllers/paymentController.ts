@@ -3,6 +3,7 @@ import { query, withTransaction } from '../config/db';
 import { logAction } from '../lib/auditLog';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
+import { postPaymentAccounting } from '../services/accountingService';
 
 // ── GET /api/payments ─────────────────────────────────────────
 export async function listPayments(req: Request, res: Response) {
@@ -136,6 +137,7 @@ export async function createPayment(req: Request, res: Response) {
          await client.query('UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3', [isIncoming ? -Number(d.amount) : Number(d.amount), d.party_id, companyId]);
       }
 
+      await postPaymentAccounting(client, companyId, payment, req.user!.id);
       return payment;
     });
 

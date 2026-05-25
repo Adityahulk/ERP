@@ -29,6 +29,11 @@ import {
   type Queryable,
 } from '../lib/bankAccountSnapshots';
 import { getUploadUrl } from '../services/fileUpload';
+import {
+  postPaymentAccounting,
+  postSalesInvoiceAccounting,
+  reverseAccountingForReference,
+} from '../services/accountingService';
 
 const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa', 'monochrome'] as const;
 const ALLOWED_DOCUMENT_THEMES = [
@@ -770,7 +775,10 @@ export async function createInvoice(req: Request, res: Response) {
            VALUES ($1, $2, $3)`,
           [payRes.rows[0].id, invoice.id, row.amount]
         );
+        await postPaymentAccounting(client, companyId, payRes.rows[0], req.user!.id);
       }
+
+      await postSalesInvoiceAccounting(client, companyId, invoice, req.user!.id);
 
       return invoice;
     });
@@ -1219,6 +1227,8 @@ export async function updateInvoice(req: Request, res: Response) {
       }
 
       const fresh = await client.query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2`, [id, companyId]);
+      await reverseAccountingForReference(client, companyId, 'invoice', id, req.user!.id);
+      await postSalesInvoiceAccounting(client, companyId, fresh.rows[0], req.user!.id);
       return fresh.rows[0];
     });
 
@@ -1324,6 +1334,7 @@ export async function cancelInvoice(req: Request, res: Response) {
         [id, companyId]
       );
 
+      await reverseAccountingForReference(client, companyId, 'invoice', inv.id, req.user!.id);
       return inv;
     });
 
@@ -1426,6 +1437,7 @@ export async function deleteInvoice(req: Request, res: Response) {
          WHERE id = $1 AND company_id = $2`,
         [id, companyId],
       );
+      await reverseAccountingForReference(client, companyId, 'invoice', inv.id, req.user!.id);
       return inv;
     });
 

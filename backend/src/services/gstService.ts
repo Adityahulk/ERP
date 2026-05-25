@@ -67,6 +67,114 @@ function pickProviderField(raw: any, keys: string[]) {
   return null;
 }
 
+function getProviderValue(raw: any, key: string) {
+  return key.split('.').reduce((acc, part) => (acc == null ? acc : acc[part]), raw);
+}
+
+function normalizeText(value: unknown): string | null {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+function firstObject(raw: any, keys: string[]) {
+  for (const key of keys) {
+    const value = getProviderValue(raw, key);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  }
+  return null;
+}
+
+function buildAddressFromObject(addr: any): string | null {
+  if (!addr || typeof addr !== 'object') return null;
+
+  const direct = pickProviderField(addr, [
+    'address', 'adr', 'addr', 'full_address', 'fullAddress', 'complete_address', 'completeAddress',
+  ]);
+  if (direct) return direct;
+
+  const parts = [
+    addr.bno || addr.building_no || addr.buildingNo || addr.building_number,
+    addr.flno || addr.floor_no || addr.floorNo || addr.floor_number,
+    addr.bnm || addr.building_name || addr.buildingName,
+    addr.st || addr.street || addr.street_name || addr.streetName,
+    addr.locality || addr.loc || addr.location,
+    addr.dst || addr.district,
+    addr.city,
+    addr.stcd || addr.state || addr.state_name || addr.stateName,
+    addr.pncd || addr.pincode || addr.pin_code || addr.pinCode,
+  ]
+    .map(normalizeText)
+    .filter(Boolean) as string[];
+
+  const deduped = parts.filter((part, idx) => parts.findIndex((p) => p.toLowerCase() === part.toLowerCase()) === idx);
+  return deduped.length ? deduped.join(', ') : null;
+}
+
+function extractAddress(raw: any): string | null {
+  const direct = pickProviderField(raw, [
+    'address',
+    'data.address',
+    'data.principal_place_of_business',
+    'data.principalPlaceOfBusiness',
+    'data.principal_place_of_business_address',
+    'principal_place_of_business',
+    'principalPlaceOfBusiness',
+    'principal_place_of_business_address',
+    'pradr.adr',
+    'data.pradr.adr',
+    'result.pradr.adr',
+    'taxpayer.pradr.adr',
+  ]);
+  if (direct) return direct;
+
+  const addrObj = firstObject(raw, [
+    'pradr.addr',
+    'data.pradr.addr',
+    'result.pradr.addr',
+    'taxpayer.pradr.addr',
+    'address',
+    'data.address',
+    'principal_address',
+    'data.principal_address',
+  ]);
+  return buildAddressFromObject(addrObj);
+}
+
+function extractPincode(raw: any, address: string | null): string | null {
+  const pin = pickProviderField(raw, [
+    'pincode',
+    'pin_code',
+    'pinCode',
+    'data.pincode',
+    'data.pin_code',
+    'data.pinCode',
+    'pradr.addr.pncd',
+    'data.pradr.addr.pncd',
+    'result.pradr.addr.pncd',
+    'taxpayer.pradr.addr.pncd',
+  ]);
+  if (pin) return pin;
+  const match = String(address || '').match(/\b(\d{6})\b/);
+  return match ? match[1] : null;
+}
+
+function extractCity(raw: any): string | null {
+  return pickProviderField(raw, [
+    'city',
+    'data.city',
+    'loc',
+    'data.loc',
+    'pradr.addr.loc',
+    'data.pradr.addr.loc',
+    'result.pradr.addr.loc',
+    'taxpayer.pradr.addr.loc',
+    'pradr.addr.dst',
+    'data.pradr.addr.dst',
+    'result.pradr.addr.dst',
+    'taxpayer.pradr.addr.dst',
+  ]);
+}
+
 function isTaxProSandboxTestGstin(gstin: string): boolean {
   if (env.TAXPRO_ENV !== 'sandbox') return false;
   const configuredTestGstin = String(env.TAXPRO_SANDBOX_TEST_GSTIN || '')
@@ -89,6 +197,8 @@ export type GstinLookupDetails = {
   status: string | null;
   taxpayer_type: string | null;
   address: string | null;
+  city: string | null;
+  pincode: string | null;
   state_code: string | null;
   state: string | null;
   raw: Record<string, unknown>;
@@ -114,6 +224,8 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
       status: 'Active',
       taxpayer_type: 'Regular',
       address: null,
+      city: null,
+      pincode: null,
       state_code: stateCode,
       state,
       raw: {
@@ -137,17 +249,35 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
     const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`GSTIN lookup failed (${response.status})`);
     const raw = await response.json();
+    const address = extractAddress(raw);
+    const city = extractCity(raw);
+    const pincode = extractPincode(raw, address);
+    const providerState = pickProviderField(raw, [
+      'state',
+      'state_name',
+      'stateName',
+      'stj',
+      'data.state',
+      'data.state_name',
+      'data.stateName',
+      'pradr.addr.stcd',
+      'data.pradr.addr.stcd',
+      'result.pradr.addr.stcd',
+      'taxpayer.pradr.addr.stcd',
+    ]);
     return {
       gstin,
       valid: true,
       source: 'provider',
-      legal_name: pickProviderField(raw, ['legal_name', 'lgnm', 'data.legal_name', 'data.lgnm']),
-      trade_name: pickProviderField(raw, ['trade_name', 'tradeNam', 'data.trade_name', 'data.tradeNam']),
-      status: pickProviderField(raw, ['status', 'sts', 'data.status', 'data.sts']),
-      taxpayer_type: pickProviderField(raw, ['taxpayer_type', 'dty', 'data.taxpayer_type', 'data.dty']),
-      address: pickProviderField(raw, ['address', 'pradr.addr.bnm', 'data.address', 'data.pradr.addr.bnm']),
+      legal_name: pickProviderField(raw, ['legal_name', 'legalName', 'lgnm', 'data.legal_name', 'data.legalName', 'data.lgnm', 'result.lgnm', 'taxpayer.lgnm']),
+      trade_name: pickProviderField(raw, ['trade_name', 'tradeName', 'tradeNam', 'data.trade_name', 'data.tradeName', 'data.tradeNam', 'result.tradeNam', 'taxpayer.tradeNam']),
+      status: pickProviderField(raw, ['status', 'sts', 'data.status', 'data.sts', 'result.sts', 'taxpayer.sts']),
+      taxpayer_type: pickProviderField(raw, ['taxpayer_type', 'taxpayerType', 'dty', 'ctb', 'data.taxpayer_type', 'data.taxpayerType', 'data.dty', 'data.ctb', 'result.dty', 'taxpayer.dty']),
+      address,
+      city,
+      pincode,
       state_code: stateCode,
-      state,
+      state: providerState || state,
       raw: raw as Record<string, unknown>,
     };
   }
@@ -161,6 +291,8 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
     status: null,
     taxpayer_type: null,
     address: null,
+    city: null,
+    pincode: null,
     state_code: stateCode,
     state,
     raw: { note: 'Local GSTIN format, checksum, and state-code validation only. Configure GSTIN_LOOKUP_API_URL for live registry details.' },

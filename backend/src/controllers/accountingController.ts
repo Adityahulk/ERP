@@ -2,6 +2,15 @@ import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
+import {
+  ensureDefaultChartOfAccounts,
+  postExpenseAccounting,
+  postJournalEntry,
+  postPaymentAccounting,
+  postPurchaseInvoiceAccounting,
+  postSalesInvoiceAccounting,
+  type Queryable,
+} from '../services/accountingService';
 
 /** Default report window for GL-style statements (matches reports module). */
 function parseRange(req: Request): { from: string; to: string } {
@@ -16,12 +25,17 @@ function accountTypeLower(t: unknown): string {
   return String(t || '').toLowerCase();
 }
 
+function normalBalance(t: unknown): 'debit' | 'credit' {
+  return ['asset', 'expense'].includes(accountTypeLower(t)) ? 'debit' : 'credit';
+}
+
 // ── Chart of Accounts ─────────────────────────────────────────
 
 export async function getAccounts(req: Request, res: Response) {
   try {
+    await ensureDefaultChartOfAccounts({ query: query as unknown as Queryable['query'] }, req.user!.company_id);
     const result = await query(
-      `SELECT * FROM accounts WHERE company_id = $1 AND is_deleted = false ORDER BY code ASC`,
+      `SELECT * FROM accounts WHERE company_id = $1 AND is_deleted = false ORDER BY display_order ASC, code ASC NULLS LAST, name ASC`,
       [req.user!.company_id]
     );
 
@@ -45,13 +59,65 @@ export async function getAccounts(req: Request, res: Response) {
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
+export async function getAccountsTree(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    await ensureDefaultChartOfAccounts({ query: query as unknown as Queryable['query'] }, companyId);
+    const result = await query(
+      `SELECT a.*,
+              COALESCE(SUM(
+                CASE
+                  WHEN je.id IS NULL THEN 0
+                  WHEN LOWER(a.account_type) IN ('asset', 'expense') THEN jel.debit - jel.credit
+                  ELSE jel.credit - jel.debit
+                END
+              ), 0)::bigint AS direct_balance_paise
+       FROM accounts a
+       LEFT JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
+       LEFT JOIN journal_entries je ON je.id = jel.entry_id AND je.company_id = a.company_id
+         AND je.is_deleted = false AND COALESCE(je.status, 'posted') = 'posted'
+       WHERE a.company_id = $1 AND a.is_deleted = false
+       GROUP BY a.id
+       ORDER BY a.display_order ASC, a.code ASC NULLS LAST, a.name ASC`,
+      [companyId],
+    );
+
+    const byId = new Map<string, any>();
+    result.rows.forEach((row: any) => byId.set(row.id, { ...row, children: [], balance_paise: Number(row.opening_balance || 0) + Number(row.direct_balance_paise || 0) }));
+    const roots: any[] = [];
+    byId.forEach((row) => {
+      if (row.parent_id && byId.has(row.parent_id)) byId.get(row.parent_id).children.push(row);
+      else roots.push(row);
+    });
+    const rollup = (node: any): number => {
+      const childTotal = node.children.reduce((sum: number, child: any) => sum + rollup(child), 0);
+      node.balance_paise = Number(node.balance_paise || 0) + childTotal;
+      const natural = normalBalance(node.account_type);
+      const signedType = node.balance_paise < 0 ? (natural === 'debit' ? 'credit' : 'debit') : natural;
+      node.balance_type = signedType === 'credit' ? 'Cr' : 'Dr';
+      return node.balance_paise;
+    };
+    roots.forEach(rollup);
+    res.json(success(roots, { accounts: Array.from(byId.values()) }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
 export async function createAccount(req: Request, res: Response) {
   try {
     const d = req.body;
+    const nb = d.normal_balance || normalBalance(d.account_type);
     const result = await query(
-      `INSERT INTO accounts (company_id, name, code, account_type, account_subtype, parent_id, opening_balance, is_system, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-       [req.user!.company_id, d.name, d.code, d.account_type, d.account_subtype, d.parent_id, d.opening_balance || 0, false, d.description]
+      `INSERT INTO accounts (
+         company_id, name, code, account_type, account_subtype, account_category, parent_id,
+         opening_balance, opening_balance_type, normal_balance, currency_code, is_system, is_locked, is_default, description, display_order
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,false,false,$12,$13) RETURNING *`,
+       [
+        req.user!.company_id, d.name, d.code, d.account_type, d.account_subtype, d.account_category,
+        d.parent_id || null, Math.round(Number(d.opening_balance) || 0), d.opening_balance_type || nb,
+        nb, d.currency_code || 'INR', d.description || null, Number(d.display_order || 9999),
+       ]
     );
     res.status(201).json(success(result.rows[0]));
   } catch (err: any) { res.status(500).json(error(err.message)); }
@@ -62,9 +128,24 @@ export async function updateAccount(req: Request, res: Response) {
    try {
      const { id } = req.params;
      const result = await query(
-       `UPDATE accounts SET name = $1, account_type = $2, code = $3 WHERE id = $4 AND company_id = $5 AND is_system = false RETURNING *`,
-       [req.body.name, req.body.account_type, req.body.code, id, req.user!.company_id]
+       `UPDATE accounts SET
+          name = COALESCE($1, name),
+          account_type = COALESCE($2, account_type),
+          code = COALESCE($3, code),
+          account_subtype = COALESCE($4, account_subtype),
+          account_category = COALESCE($5, account_category),
+          description = COALESCE($6, description),
+          is_active = COALESCE($7, is_active),
+          updated_at = NOW()
+        WHERE id = $8 AND company_id = $9 AND COALESCE(is_locked, is_system, false) = false
+        RETURNING *`,
+       [
+        req.body.name ?? null, req.body.account_type ?? null, req.body.code ?? null,
+        req.body.account_subtype ?? null, req.body.account_category ?? null, req.body.description ?? null,
+        req.body.is_active ?? null, id, req.user!.company_id,
+       ]
      );
+     if (!result.rows.length) return res.status(400).json(error('Account not found or locked'));
      res.json(success(result.rows[0]));
    } catch(err:any){ res.status(500).json(error(err.message)); }
 }
@@ -74,7 +155,8 @@ export async function deleteAccount(req: Request, res: Response) {
      const check = await query('SELECT COUNT(*) FROM journal_entry_lines WHERE account_id = $1', [req.params.id]);
      if (parseInt(check.rows[0].count) > 0) return res.status(400).json(error("Cannot delete account with existing transactions"));
 
-     await query('UPDATE accounts SET is_deleted = true WHERE id = $1 AND company_id = $2 AND is_system = false', [req.params.id, req.user!.company_id]);
+     const deleted = await query('UPDATE accounts SET is_deleted = true WHERE id = $1 AND company_id = $2 AND COALESCE(is_locked, is_system, false) = false RETURNING id', [req.params.id, req.user!.company_id]);
+     if (!deleted.rows.length) return res.status(400).json(error('Account not found or locked'));
      res.json(success({ message: 'Deleted' }));
   } catch(err:any){ res.status(500).json(error(err.message)); }
 }
@@ -84,64 +166,111 @@ export async function deleteAccount(req: Request, res: Response) {
 export async function createJournalEntry(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
-    const { entry_date, description, lines } = req.body; // lines: [{account_id, debit, credit, description, party_id}]
-
-    let totalDebit = 0, totalCredit = 0;
-    lines.forEach((l: any) => {
-      totalDebit += (l.debit || 0);
-      totalCredit += (l.credit || 0);
-    });
-
-    if (totalDebit !== totalCredit) return res.status(400).json(error('Debits and Credits must be equal'));
-    if (totalDebit === 0) return res.status(400).json(error('Journal entry cannot be empty'));
-
-    const result = await withTransaction(async (client) => {
-      // Auto-sequence
-      const seqRes = await client.query(`SELECT COUNT(*) FROM journal_entries WHERE company_id = $1`, [companyId]);
-      const entryNum = `JV/${new Date().getFullYear().toString().slice(-2)}/${String(parseInt(seqRes.rows[0].count)+1).padStart(4,'0')}`;
-      
-      const jeRes = await client.query(
-        `INSERT INTO journal_entries (company_id, entry_number, entry_date, description, total_debit, total_credit, status, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,'posted',$7) RETURNING *`,
-         [companyId, entryNum, entry_date || new Date().toISOString().split('T')[0], description, totalDebit, totalCredit, req.user!.id]
-      );
-      
-      const jeId = jeRes.rows[0].id;
-
-      let sort_order = 0;
-      for (const line of lines) {
-        await client.query(
-          `INSERT INTO journal_entry_lines (entry_id, company_id, account_id, debit, credit, description, party_id, sort_order)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [jeId, companyId, line.account_id, line.debit || 0, line.credit || 0, line.description, line.party_id, sort_order++]
-        );
-      }
-
-      return jeRes.rows[0];
-    });
+    const d = req.body;
+    const result = await withTransaction(async (client) => postJournalEntry(client, {
+      companyId,
+      entryDate: d.entry_date || new Date().toISOString().split('T')[0],
+      description: d.description || d.remarks || 'Journal Entry',
+      remarks: d.remarks || null,
+      attachmentUrl: d.attachment_url || null,
+      voucherType: d.voucher_type || 'journal',
+      voucherNumber: d.voucher_number || d.entry_number || null,
+      createdBy: req.user!.id,
+      lines: (Array.isArray(d.lines) ? d.lines : []).map((line: any) => ({
+        accountId: line.account_id,
+        debit: line.debit || 0,
+        credit: line.credit || 0,
+        description: line.description || null,
+        partyId: line.party_id || null,
+        costCenter: line.cost_center || null,
+        referenceNumber: line.reference_number || null,
+        instrumentDetails: line.instrument_details || null,
+      })),
+    }));
 
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) { res.status(/debits|empty|account/i.test(err.message) ? 400 : 500).json(error(err.message)); }
 }
 
 export async function listJournalEntries(req: Request, res: Response) {
   try {
     const { page, limit, offset } = parsePagination(req.query);
+    const where = ['je.company_id = $1', 'je.is_deleted = false'];
+    const params: any[] = [req.user!.company_id];
+    let idx = 2;
+    if (req.query.from_date) { where.push(`je.entry_date >= $${idx++}::date`); params.push(req.query.from_date); }
+    if (req.query.to_date) { where.push(`je.entry_date <= $${idx++}::date`); params.push(req.query.to_date); }
+    if (req.query.status) { where.push(`je.status = $${idx++}`); params.push(req.query.status); }
+    if (req.query.voucher_number) { where.push(`(je.entry_number ILIKE $${idx} OR je.voucher_number ILIKE $${idx})`); params.push(`%${req.query.voucher_number}%`); idx++; }
+    if (req.query.account_id) {
+      where.push(`EXISTS (SELECT 1 FROM journal_entry_lines l WHERE l.entry_id = je.id AND l.account_id = $${idx++})`);
+      params.push(req.query.account_id);
+    }
     const result = await query(
-      `SELECT * FROM journal_entries WHERE company_id = $1 AND is_deleted = false ORDER BY entry_date DESC LIMIT $2 OFFSET $3`,
-      [req.user!.company_id, limit, offset]
+      `SELECT je.*,
+              COALESCE(json_agg(json_build_object('account_name', a.name, 'debit', l.debit, 'credit', l.credit) ORDER BY l.sort_order)
+                FILTER (WHERE l.id IS NOT NULL), '[]'::json) AS line_summary
+       FROM journal_entries je
+       LEFT JOIN journal_entry_lines l ON l.entry_id = je.id
+       LEFT JOIN accounts a ON a.id = l.account_id
+       WHERE ${where.join(' AND ')}
+       GROUP BY je.id
+       ORDER BY je.entry_date DESC, je.created_at DESC LIMIT $${idx++} OFFSET $${idx}`,
+      [...params, limit, offset]
     );
-    const countRes = await query('SELECT COUNT(*) FROM journal_entries WHERE company_id = $1 AND is_deleted = false', [req.user!.company_id]);
+    const countRes = await query(`SELECT COUNT(*) FROM journal_entries je WHERE ${where.join(' AND ')}`, params);
     res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit)));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
 export async function getJournalEntry(req: Request, res: Response) {
    try {
-     const je = await query('SELECT * FROM journal_entries WHERE id = $1', [req.params.id]);
-     const lines = await query(`SELECT l.*, a.name as account_name FROM journal_entry_lines l LEFT JOIN accounts a ON l.account_id = a.id WHERE l.entry_id = $1`, [req.params.id]);
+     const je = await query('SELECT * FROM journal_entries WHERE id = $1 AND company_id = $2 AND is_deleted = false', [req.params.id, req.user!.company_id]);
+     if (!je.rows.length) return res.status(404).json(error('Journal entry not found'));
+     const lines = await query(`SELECT l.*, a.name as account_name, a.code as account_code FROM journal_entry_lines l LEFT JOIN accounts a ON l.account_id = a.id WHERE l.entry_id = $1 ORDER BY l.sort_order ASC`, [req.params.id]);
      res.json(success({...je.rows[0], lines: lines.rows}));
    } catch(err:any){ res.status(500).json(error(err.message)); }
+}
+
+export async function updateJournalEntry(req: Request, res: Response) {
+  try {
+    const id = req.params.id;
+    const companyId = req.user!.company_id;
+    const result = await withTransaction(async (client) => {
+      const cur = await client.query(
+        `SELECT * FROM journal_entries
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!cur.rows.length) throw new Error('Journal entry not found');
+      if (cur.rows[0].entry_type !== 'manual') throw new Error('Only manual entries can be edited');
+      if (cur.rows[0].status !== 'posted') throw new Error('Only posted non-reversed entries can be edited');
+      await client.query(`UPDATE journal_entries SET is_deleted = true, status = 'cancelled' WHERE id = $1`, [id]);
+      return postJournalEntry(client, {
+        companyId,
+        entryDate: req.body.entry_date || cur.rows[0].entry_date,
+        description: req.body.description || cur.rows[0].description,
+        remarks: req.body.remarks || cur.rows[0].remarks,
+        attachmentUrl: req.body.attachment_url || cur.rows[0].attachment_url,
+        voucherType: req.body.voucher_type || cur.rows[0].voucher_type || 'journal',
+        voucherNumber: req.body.voucher_number || cur.rows[0].voucher_number || cur.rows[0].entry_number,
+        createdBy: req.user!.id,
+        lines: (Array.isArray(req.body.lines) ? req.body.lines : []).map((line: any) => ({
+          accountId: line.account_id,
+          debit: line.debit || 0,
+          credit: line.credit || 0,
+          description: line.description || null,
+          partyId: line.party_id || null,
+          costCenter: line.cost_center || null,
+          referenceNumber: line.reference_number || null,
+          instrumentDetails: line.instrument_details || null,
+        })),
+      });
+    });
+    res.json(success(result));
+  } catch (err: any) {
+    res.status(/not found|Only|debits|empty/i.test(err.message) ? 400 : 500).json(error(err.message));
+  }
 }
 
 export async function reverseJournalEntry(req: Request, res: Response) {
@@ -197,8 +326,8 @@ export async function getLedger(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const companyId = req.user!.company_id;
-    const from = req.query.from ? String(req.query.from) : null;
-    const to = req.query.to ? String(req.query.to) : null;
+    const from = req.query.from_date || req.query.from ? String(req.query.from_date || req.query.from) : null;
+    const to = req.query.to_date || req.query.to ? String(req.query.to_date || req.query.to) : null;
 
     const accRes = await query(
       `SELECT * FROM accounts WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
@@ -279,6 +408,8 @@ export async function getLedger(req: Request, res: Response) {
     res.status(500).json(error(err.message));
   }
 }
+
+export const getAccountStatement = getLedger;
 
 export async function getTrialBalance(req: Request, res: Response) {
   try {
@@ -607,6 +738,7 @@ export async function createCashBankAdjustment(req: Request, res: Response) {
           req.user!.id,
         ],
       );
+      await postPaymentAccounting(client, companyId, pay.rows[0], req.user!.id);
       return pay.rows[0];
     });
 
@@ -743,5 +875,69 @@ export async function recordLoanTransaction(req: Request, res: Response) {
     res.status(201).json(success(result));
   } catch (err: any) {
     res.status(400).json(error(err.message || 'Failed to record loan transaction'));
+  }
+}
+
+export async function rebuildLedger(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const result = await withTransaction(async (client) => {
+      await ensureDefaultChartOfAccounts(client, companyId);
+      const counts = { sales: 0, purchases: 0, expenses: 0, payments: 0 };
+
+      const sales = await client.query(
+        `SELECT * FROM invoices
+         WHERE company_id = $1 AND is_deleted = false
+           AND invoice_type IN ('sale', 'tax_invoice')
+           AND COALESCE(status, '') <> 'cancelled'
+         ORDER BY invoice_date ASC, created_at ASC`,
+        [companyId],
+      );
+      for (const row of sales.rows) {
+        await postSalesInvoiceAccounting(client, companyId, row, req.user!.id);
+        counts.sales += 1;
+      }
+
+      const purchases = await client.query(
+        `SELECT * FROM purchase_invoices
+         WHERE company_id = $1 AND is_deleted = false
+           AND COALESCE(status, '') <> 'cancelled'
+         ORDER BY bill_date ASC, created_at ASC`,
+        [companyId],
+      );
+      for (const row of purchases.rows) {
+        await postPurchaseInvoiceAccounting(client, companyId, row, req.user!.id);
+        counts.purchases += 1;
+      }
+
+      const expenses = await client.query(
+        `SELECT * FROM expenses
+         WHERE company_id = $1 AND is_deleted = false
+           AND COALESCE(status, '') NOT IN ('cancelled', 'rejected')
+         ORDER BY expense_date ASC, created_at ASC`,
+        [companyId],
+      );
+      for (const row of expenses.rows) {
+        await postExpenseAccounting(client, companyId, row, req.user!.id);
+        counts.expenses += 1;
+      }
+
+      const payments = await client.query(
+        `SELECT * FROM payments
+         WHERE company_id = $1 AND is_deleted = false
+           AND COALESCE(status, 'posted') <> 'cancelled'
+         ORDER BY payment_date ASC, created_at ASC`,
+        [companyId],
+      );
+      for (const row of payments.rows) {
+        await postPaymentAccounting(client, companyId, row, req.user!.id);
+        counts.payments += 1;
+      }
+
+      return counts;
+    });
+    res.json(success({ message: 'Accounting ledger rebuilt', counts: result }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message || 'Failed to rebuild accounting ledger'));
   }
 }

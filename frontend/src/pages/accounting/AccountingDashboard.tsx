@@ -1,681 +1,705 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, CalendarDays, ChevronsUpDown, FileText, Landmark, Plus, Printer, ReceiptText, Search, WalletCards } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FileText,
+  Landmark,
+  ListTree,
+  Plus,
+  Printer,
+  RefreshCcw,
+  Search,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { formatDate, formatMoney, rupeesToPaise } from '@/lib/formatters';
-import { QuickAddBankAccountSheet } from '@/components/company/QuickAddBankAccountSheet';
+import { formatDate, formatMoney } from '@/lib/formatters';
 import MoneyInput from '@/components/transactions/MoneyInput';
+import { QuickAddBankAccountSheet } from '@/components/company/QuickAddBankAccountSheet';
 
-type CashBankSummary = {
-  cash_in_hand: number;
-  unassigned_bank_balance: number;
-  bank_accounts: any[];
-  cheques: any[];
-  recent_transactions: any[];
+type Workspace = 'journal' | 'chart' | 'statement' | 'cash-bank';
+type AccountNode = {
+  id: string;
+  name: string;
+  code?: string;
+  account_type: string;
+  account_category?: string;
+  normal_balance?: 'debit' | 'credit';
+  is_locked?: boolean;
+  is_system?: boolean;
+  balance_paise: number;
+  balance_type: 'Dr' | 'Cr';
+  children?: AccountNode[];
 };
+type JournalLine = { account_id: string; debit: number; credit: number; description?: string };
 
-const paymentModes = [
-  ['cash', 'Cash'],
-  ['upi', 'UPI / Online'],
-  ['bank_transfer', 'NEFT / Bank Transfer'],
-  ['cheque', 'Cheque'],
-  ['card', 'Card'],
+const accountTypes = [
+  ['Assets', 'asset'],
+  ['Equities & Liabilities', 'liability'],
+  ['Incomes', 'income'],
+  ['Expenses', 'expense'],
 ] as const;
+
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
 
 function monthStart() {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
 }
 
-function today() {
-  return new Date().toISOString().split('T')[0];
+function flattenAccounts(nodes: AccountNode[] = [], level = 0): Array<AccountNode & { level: number }> {
+  return nodes.flatMap((node) => [{ ...node, level }, ...flattenAccounts(node.children || [], level + 1)]);
 }
 
-function unwrapRows(body: any) {
-  return body?.data?.data || body?.data || [];
+function drCrClass(kind?: string) {
+  return kind === 'Cr' ? 'text-emerald-700' : 'text-sky-700';
 }
 
 export default function AccountingDashboard() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'cash-bank' | 'party-ledger'>('cash-bank');
+  const [workspace, setWorkspace] = useState<Workspace>('journal');
+  const [accountType, setAccountType] = useState<string>('Assets');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [accountSearch, setAccountSearch] = useState('');
+  const [newAccountOpen, setNewAccountOpen] = useState(false);
+  const [newAccount, setNewAccount] = useState({ name: '', code: '', type: 'asset', parent_id: '', opening_balance: 0, opening_balance_type: 'debit' });
+
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalForm, setJournalForm] = useState({
+    voucher_number: '',
+    entry_date: today(),
+    description: '',
+    remarks: '',
+    attachment_url: '',
+    lines: [
+      { account_id: '', debit: 0, credit: 0, description: '' },
+      { account_id: '', debit: 0, credit: 0, description: '' },
+    ] as JournalLine[],
+  });
+
+  const [statementAccountId, setStatementAccountId] = useState('');
+  const [fromDate, setFromDate] = useState(monthStart());
+  const [toDate, setToDate] = useState(today());
+
   const [cashBankView, setCashBankView] = useState<'banks' | 'cash' | 'cheques' | 'loans'>('banks');
-  const [selectedBankId, setSelectedBankId] = useState<string>('cash');
+  const [selectedBankId, setSelectedBankId] = useState('cash');
   const [addBankOpen, setAddBankOpen] = useState(false);
   const [adjustType, setAdjustType] = useState<'bank_deposit' | 'bank_withdrawal'>('bank_deposit');
-  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState(0);
   const [adjustRef, setAdjustRef] = useState('');
   const [adjustNotes, setAdjustNotes] = useState('');
 
-  const [partySearch, setPartySearch] = useState('');
-  const [partyResults, setPartyResults] = useState<any[]>([]);
-  const [party, setParty] = useState<any>(null);
-  const [fromDate, setFromDate] = useState(monthStart());
-  const [toDate, setToDate] = useState(today());
-  const [receiptAmount, setReceiptAmount] = useState('');
-  const [receiptMode, setReceiptMode] = useState('cash');
-  const [receiptRef, setReceiptRef] = useState('');
-  const [loanForm, setLoanForm] = useState({ account_name: '', lender_name: '', principal_amount: '', interest_rate: '', reference_number: '', notes: '' });
-  const [loanTx, setLoanTx] = useState<Record<string, { transaction_type: string; amount: string; reference_number: string; notes: string }>>({});
-
-  const { data: summary, isLoading } = useQuery({
-    queryKey: ['accounting', 'cash-bank', 'summary'],
-    queryFn: async () => (await api.get('/accounting/cash-bank/summary')).data?.data as CashBankSummary,
+  const { data: accountsTree = [], isLoading: accountsLoading } = useQuery({
+    queryKey: ['accounting', 'accounts-tree'],
+    queryFn: async () => (await api.get('/accounting/accounts/tree')).data?.data as AccountNode[],
   });
 
-  const { data: loanAccounts = [], isLoading: loansLoading } = useQuery({
+  const accountOptions = useMemo(() => flattenAccounts(accountsTree), [accountsTree]);
+  const filteredChartRoots = useMemo(() => {
+    const roots = accountsTree.filter((a) => (a.account_category || '') === accountType || a.account_type === accountType);
+    const q = accountSearch.trim().toLowerCase();
+    if (!q) return roots;
+    const keep = (node: AccountNode): AccountNode | null => {
+      const children = (node.children || []).map(keep).filter(Boolean) as AccountNode[];
+      if (node.name.toLowerCase().includes(q) || String(node.code || '').toLowerCase().includes(q) || children.length) {
+        return { ...node, children };
+      }
+      return null;
+    };
+    return roots.map(keep).filter(Boolean) as AccountNode[];
+  }, [accountsTree, accountSearch, accountType]);
+
+  const { data: journals = [], isLoading: journalsLoading } = useQuery({
+    queryKey: ['accounting', 'journal-entries'],
+    queryFn: async () => (await api.get('/accounting/journal-entries')).data?.data || [],
+  });
+
+  const { data: statement, isLoading: statementLoading } = useQuery({
+    queryKey: ['accounting', 'statement', statementAccountId, fromDate, toDate],
+    enabled: !!statementAccountId,
+    queryFn: async () =>
+      (await api.get(`/accounting/accounts/${statementAccountId}/statement`, { params: { from_date: fromDate, to_date: toDate } })).data?.data,
+  });
+
+  const { data: cashSummary } = useQuery({
+    queryKey: ['accounting', 'cash-bank', 'summary'],
+    queryFn: async () => (await api.get('/accounting/cash-bank/summary')).data?.data,
+  });
+
+  const { data: loanAccounts = [] } = useQuery({
     queryKey: ['accounting', 'cash-bank', 'loans'],
     queryFn: async () => (await api.get('/accounting/cash-bank/loans')).data?.data || [],
   });
 
-  const { data: statement, isLoading: statementLoading } = useQuery({
-    queryKey: ['party-statement', party?.id, fromDate, toDate],
-    queryFn: async () => (await api.get(`/parties/${party.id}/statement`, { params: { from_date: fromDate, to_date: toDate } })).data?.data,
-    enabled: !!party?.id,
+  const createJournalMutation = useMutation({
+    mutationFn: (payload: any) => api.post('/accounting/journal-entries', payload),
+    onSuccess: () => {
+      toast.success('Journal entry posted');
+      setJournalOpen(false);
+      setJournalForm((f) => ({
+        ...f,
+        voucher_number: '',
+        description: '',
+        remarks: '',
+        attachment_url: '',
+        lines: [
+          { account_id: '', debit: 0, credit: 0, description: '' },
+          { account_id: '', debit: 0, credit: 0, description: '' },
+        ],
+      }));
+      qc.invalidateQueries({ queryKey: ['accounting'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not post journal entry'),
   });
 
-  const selectedBank = useMemo(
-    () => summary?.bank_accounts?.find((b: any) => b.id === selectedBankId),
-    [summary?.bank_accounts, selectedBankId],
-  );
+  const reverseJournalMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/accounting/journal-entries/${id}/reverse`),
+    onSuccess: () => {
+      toast.success('Journal entry reversed');
+      qc.invalidateQueries({ queryKey: ['accounting'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not reverse entry'),
+  });
 
-  const visibleTransactions = useMemo(() => {
-    const rows = summary?.recent_transactions || [];
-    if (selectedBankId === 'cash') return rows.filter((r: any) => Number(r.signed_cash_amount || 0) !== 0 || r.payment_mode === 'cash');
-    if (selectedBankId === 'unassigned') return rows.filter((r: any) => !r.company_bank_account_id && ['bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque'].includes(r.payment_mode));
-    return rows.filter((r: any) => r.company_bank_account_id === selectedBankId);
-  }, [summary?.recent_transactions, selectedBankId]);
+  const createAccountMutation = useMutation({
+    mutationFn: (payload: any) => api.post('/accounting/accounts', payload),
+    onSuccess: () => {
+      toast.success('Account created');
+      setNewAccountOpen(false);
+      setNewAccount({ name: '', code: '', type: 'asset', parent_id: '', opening_balance: 0, opening_balance_type: 'debit' });
+      qc.invalidateQueries({ queryKey: ['accounting', 'accounts-tree'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not create account'),
+  });
+
+  const rebuildMutation = useMutation({
+    mutationFn: () => api.post('/accounting/rebuild-ledger'),
+    onSuccess: (res) => {
+      toast.success(`Ledger rebuilt (${res.data?.data?.posted || 0} vouchers checked)`);
+      qc.invalidateQueries({ queryKey: ['accounting'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not rebuild ledger'),
+  });
 
   const adjustMutation = useMutation({
     mutationFn: (payload: any) => api.post('/accounting/cash-bank/adjustment', payload),
     onSuccess: () => {
       toast.success(adjustType === 'bank_deposit' ? 'Cash deposit recorded' : 'Cash withdrawal recorded');
-      setAdjustAmount('');
+      setAdjustAmount(0);
       setAdjustRef('');
       setAdjustNotes('');
-      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] });
+      qc.invalidateQueries({ queryKey: ['accounting'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Could not save cash/bank entry'),
   });
 
-  const createLoanMutation = useMutation({
-    mutationFn: (payload: any) => api.post('/accounting/cash-bank/loans', payload),
-    onSuccess: () => {
-      toast.success('Loan account added');
-      setLoanForm({ account_name: '', lender_name: '', principal_amount: '', interest_rate: '', reference_number: '', notes: '' });
-      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank', 'loans'] });
-    },
-    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not add loan account'),
-  });
+  const totals = useMemo(() => {
+    const debit = journalForm.lines.reduce((sum, l) => sum + Number(l.debit || 0), 0);
+    const credit = journalForm.lines.reduce((sum, l) => sum + Number(l.credit || 0), 0);
+    return { debit, credit, balanced: debit > 0 && debit === credit };
+  }, [journalForm.lines]);
 
-  const loanTxMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: any }) => api.post(`/accounting/cash-bank/loans/${id}/transactions`, payload),
-    onSuccess: (_res, vars) => {
-      toast.success('Loan transaction recorded');
-      setLoanTx((state) => ({ ...state, [vars.id]: { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' } }));
-      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank', 'loans'] });
-    },
-    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not record loan transaction'),
-  });
+  const selectedBank = cashSummary?.bank_accounts?.find((b: any) => b.id === selectedBankId);
+  const visibleCashTransactions = useMemo(() => {
+    const rows = cashSummary?.recent_transactions || [];
+    if (selectedBankId === 'cash') return rows.filter((r: any) => Number(r.signed_cash_amount || 0) !== 0 || r.payment_mode === 'cash');
+    if (selectedBankId === 'unassigned') return rows.filter((r: any) => !r.company_bank_account_id && ['bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque'].includes(r.payment_mode));
+    return rows.filter((r: any) => r.company_bank_account_id === selectedBankId);
+  }, [cashSummary?.recent_transactions, selectedBankId]);
 
-  const receiptMutation = useMutation({
-    mutationFn: (payload: any) => api.post('/payments', payload),
-    onSuccess: () => {
-      toast.success('Payment recorded');
-      setReceiptAmount('');
-      setReceiptRef('');
-      qc.invalidateQueries({ queryKey: ['party-statement'] });
-      qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] });
-      qc.invalidateQueries({ queryKey: ['parties'] });
-    },
-    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not record payment'),
-  });
+  const updateLine = (index: number, patch: Partial<JournalLine>) => {
+    setJournalForm((form) => ({
+      ...form,
+      lines: form.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
+    }));
+  };
 
-  const searchParties = async (q: string) => {
-    setPartySearch(q);
-    if (q.trim().length < 2) {
-      setPartyResults([]);
-      return;
-    }
-    try {
-      const res = await api.get('/parties/search', { params: { q } });
-      setPartyResults(unwrapRows(res.data));
-    } catch {
-      setPartyResults([]);
-    }
+  const saveJournal = () => {
+    const lines = journalForm.lines.filter((l) => l.account_id && (Number(l.debit) > 0 || Number(l.credit) > 0));
+    if (!journalForm.description.trim()) return toast.error('Enter journal description');
+    if (lines.length < 2) return toast.error('Add at least two journal lines');
+    if (!totals.balanced) return toast.error('Debit and credit totals must match');
+    createJournalMutation.mutate({
+      entry_date: journalForm.entry_date,
+      voucher_number: journalForm.voucher_number || undefined,
+      description: journalForm.description,
+      remarks: journalForm.remarks || undefined,
+      attachment_url: journalForm.attachment_url || undefined,
+      lines,
+    });
+  };
+
+  const saveAccount = () => {
+    if (!newAccount.name.trim()) return toast.error('Enter account name');
+    createAccountMutation.mutate({
+      name: newAccount.name.trim(),
+      code: newAccount.code.trim() || undefined,
+      account_type: newAccount.type,
+      parent_id: newAccount.parent_id || undefined,
+      opening_balance: newAccount.opening_balance,
+      opening_balance_type: newAccount.opening_balance_type,
+    });
   };
 
   const saveAdjustment = () => {
-    if (!selectedBank || !adjustAmount || Number(adjustAmount) <= 0) {
-      toast.error('Select a bank account and enter amount');
-      return;
-    }
+    if (!selectedBank?.id || adjustAmount <= 0) return toast.error('Select a bank account and enter amount');
     adjustMutation.mutate({
       type: adjustType,
       company_bank_account_id: selectedBank.id,
-      amount: rupeesToPaise(adjustAmount),
+      amount: adjustAmount,
       reference_number: adjustRef || undefined,
       notes: adjustNotes || undefined,
     });
   };
 
-  const saveLoan = () => {
-    if (!loanForm.account_name.trim()) {
-      toast.error('Enter loan account name');
-      return;
-    }
-    createLoanMutation.mutate({
-      account_name: loanForm.account_name.trim(),
-      lender_name: loanForm.lender_name.trim() || undefined,
-      principal_amount: rupeesToPaise(loanForm.principal_amount || '0'),
-      interest_rate: Number(loanForm.interest_rate || 0),
-      reference_number: loanForm.reference_number.trim() || undefined,
-      notes: loanForm.notes.trim() || undefined,
-    });
-  };
-
-  const saveLoanTx = (loanId: string) => {
-    const tx = loanTx[loanId] || { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' };
-    if (!tx.amount || Number(tx.amount) <= 0) {
-      toast.error('Enter loan transaction amount');
-      return;
-    }
-    loanTxMutation.mutate({
-      id: loanId,
-      payload: {
-        transaction_type: tx.transaction_type || 'repayment',
-        amount: rupeesToPaise(tx.amount),
-        reference_number: tx.reference_number || undefined,
-        notes: tx.notes || undefined,
-      },
-    });
-  };
-
-  const recordReceipt = () => {
-    if (!party?.id) {
-      toast.error('Select a party');
-      return;
-    }
-    if (!receiptAmount || Number(receiptAmount) <= 0) {
-      toast.error('Enter a valid amount');
-      return;
-    }
-    receiptMutation.mutate({
-      party_id: party.id,
-      payment_type: 'incoming',
-      amount: rupeesToPaise(receiptAmount),
-      payment_date: today(),
-      payment_mode: receiptMode,
-      reference_number: receiptRef || undefined,
-      cheque_number: receiptMode === 'cheque' ? receiptRef || undefined : undefined,
-      notes: `Payment from ${party.name}`,
-    });
-  };
-
-  const printStatement = () => {
-    window.print();
-  };
-
   const exportStatementCsv = () => {
-    if (!party || !statement) return;
-    const rows = [
-      ['Date', 'Type', 'Narration', 'Debit', 'Credit', 'Balance'],
-      ...(statement.transactions || []).map((r: any) => [
-        formatDate(r.transaction_date || r.created_at),
-        r.type,
-        String(r.narration || '').replace(/"/g, '""'),
-        r.type === 'debit' ? (Number(r.amount || 0) / 100).toFixed(2) : '',
-        r.type === 'credit' ? (Number(r.amount || 0) / 100).toFixed(2) : '',
-        (Number(r.running_balance || 0) / 100).toFixed(2),
-      ]),
-    ];
-    const csv = rows.map((r: Array<string | number>) => r.map((c: string | number) => `"${c}"`).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const rows = statement?.lines || [];
+    const header = ['Date', 'Voucher No.', 'Particulars', 'Debit', 'Credit', 'Balance'];
+    const csv = [
+      header.join(','),
+      ...rows.map((r: any) => [
+        formatDate(r.entry_date),
+        r.entry_number || '',
+        `"${String(r.description || r.entry_description || '').replace(/"/g, '""')}"`,
+        Number(r.debit || 0) / 100,
+        Number(r.credit || 0) / 100,
+        Number(r.balance_after_paise || 0) / 100,
+      ].join(',')),
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${party.name || 'party'}-statement-${fromDate}-to-${toDate}.csv`;
+    a.download = 'account-statement.csv';
     a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Accounting</h1>
-          <p className="text-sm text-muted-foreground">Cash, bank, cheques, receipts and monthly party ledgers.</p>
+    <div className="h-full bg-slate-50">
+      <div className="border-b bg-white px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Accounting</h1>
+            <p className="text-sm text-slate-500">Journal vouchers, chart of accounts, statements, and cash/bank balances.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => rebuildMutation.mutate()} disabled={rebuildMutation.isPending}>
+              <RefreshCcw className="mr-2 h-4 w-4" /> Rebuild Ledger
+            </Button>
+            <Button onClick={() => setJournalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Add Journal Entry
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="flex gap-2 border-b">
-        <button type="button" onClick={() => setTab('cash-bank')} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === 'cash-bank' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`}>
-          Cash & Bank
-        </button>
-        <button type="button" onClick={() => setTab('party-ledger')} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === 'party-ledger' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground'}`}>
-          Party Monthly Ledger
-        </button>
+      <div className="grid min-h-[calc(100vh-132px)] grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="border-r bg-white p-3">
+          {[
+            ['journal', FileText, 'Journal Entries'],
+            ['chart', ListTree, 'Chart of Accounts'],
+            ['statement', BookOpen, 'Account Statements'],
+            ['cash-bank', Landmark, 'Cash & Bank'],
+          ].map(([key, Icon, label]) => {
+            const I = Icon as typeof FileText;
+            return (
+              <button
+                key={String(key)}
+                onClick={() => setWorkspace(key as Workspace)}
+                className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium ${workspace === key ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-100'}`}
+              >
+                <I className="h-4 w-4" /> {String(label)}
+              </button>
+            );
+          })}
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            <AlertTriangle className="mb-2 h-4 w-4" />
+            Journal entries affect accounting balances. Use reversals instead of deleting posted vouchers.
+          </div>
+        </aside>
+
+        <main className="min-w-0 p-4">
+          {workspace === 'journal' && (
+            <JournalEntries
+              loading={journalsLoading}
+              rows={journals}
+              onReverse={(id) => reverseJournalMutation.mutate(id)}
+            />
+          )}
+
+          {workspace === 'chart' && (
+            <ChartOfAccounts
+              loading={accountsLoading}
+              roots={filteredChartRoots}
+              accountType={accountType}
+              onType={setAccountType}
+              search={accountSearch}
+              onSearch={setAccountSearch}
+              expanded={expanded}
+              onToggle={(id) => setExpanded((s) => ({ ...s, [id]: !s[id] }))}
+              onNew={() => setNewAccountOpen(true)}
+            />
+          )}
+
+          {workspace === 'statement' && (
+            <Card>
+              <CardHeader className="border-b">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle>Account Statement</CardTitle>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" /> Print</Button>
+                    <Button variant="outline" size="sm" disabled={!statementAccountId} onClick={exportStatementCsv}><Download className="mr-2 h-4 w-4" /> XLS</Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4">
+                <div className="grid gap-3 md:grid-cols-[1.3fr_180px_180px]">
+                  <label className="text-sm font-medium">
+                    Account
+                    <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={statementAccountId} onChange={(e) => setStatementAccountId(e.target.value)}>
+                      <option value="">Search / select account</option>
+                      {accountOptions.map((a) => (
+                        <option key={a.id} value={a.id}>{`${'-- '.repeat(Math.min(a.level, 3))}${a.name}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium">From<Input className="mt-1" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
+                  <label className="text-sm font-medium">To<Input className="mt-1" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <SummaryTile label="Opening Balance" value={formatMoney(statement?.opening_balance_paise || 0)} />
+                  <SummaryTile label="Total Debit" value={formatMoney((statement?.lines || []).reduce((s: number, r: any) => s + Number(r.debit || 0), 0))} />
+                  <SummaryTile label="Closing Balance" value={formatMoney(statement?.closing_balance_paise || 0)} />
+                </div>
+                <div className="mt-4 overflow-auto rounded-md border bg-white">
+                  <table className="w-full min-w-[820px] text-sm">
+                    <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500">
+                      <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Voucher No.</th><th className="px-3 py-2">Particulars</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2 text-right">Balance</th></tr>
+                    </thead>
+                    <tbody>
+                      {statementLoading ? <tr><td colSpan={6} className="p-8 text-center text-slate-500">Loading statement...</td></tr> : null}
+                      {!statementLoading && !(statement?.lines || []).length ? <tr><td colSpan={6} className="p-8 text-center text-slate-500">Select an account to view transactions.</td></tr> : null}
+                      {(statement?.lines || []).map((r: any) => (
+                        <tr key={r.id || `${r.entry_id}-${r.entry_date}`} className="border-t">
+                          <td className="px-3 py-2">{formatDate(r.entry_date)}</td>
+                          <td className="px-3 py-2 font-medium">{r.entry_number}</td>
+                          <td className="px-3 py-2">{r.description || r.entry_description}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{Number(r.debit) ? formatMoney(Number(r.debit)) : '-'}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{Number(r.credit) ? formatMoney(Number(r.credit)) : '-'}</td>
+                          <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatMoney(Number(r.balance_after_paise || 0))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {workspace === 'cash-bank' && (
+            <CashBank
+              summary={cashSummary}
+              loanAccounts={loanAccounts}
+              view={cashBankView}
+              setView={setCashBankView}
+              selectedBankId={selectedBankId}
+              setSelectedBankId={setSelectedBankId}
+              selectedBank={selectedBank}
+              transactions={visibleCashTransactions}
+              addBank={() => setAddBankOpen(true)}
+              adjustType={adjustType}
+              setAdjustType={setAdjustType}
+              adjustAmount={adjustAmount}
+              setAdjustAmount={setAdjustAmount}
+              adjustRef={adjustRef}
+              setAdjustRef={setAdjustRef}
+              adjustNotes={adjustNotes}
+              setAdjustNotes={setAdjustNotes}
+              saveAdjustment={saveAdjustment}
+            />
+          )}
+        </main>
       </div>
 
-      {tab === 'cash-bank' && (
-        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-base">Cash & Bank</CardTitle>
-                <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => setAddBankOpen(true)}>
-                  <Plus className="h-3.5 w-3.5" /> Add Bank
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {isLoading ? (
-                <div className="p-6 text-sm text-muted-foreground">Loading accounts...</div>
-              ) : (
-                <div className="divide-y">
-                  <button type="button" onClick={() => { setCashBankView('banks'); setSelectedBankId((summary?.bank_accounts || [])[0]?.id || 'unassigned'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'banks' ? 'bg-muted' : ''}`}>
-                    <Building2 className="h-5 w-5 text-blue-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold">Bank Accounts</p>
-                      <p className="text-xs text-muted-foreground">NEFT, UPI, card, cheque and bank ledger</p>
-                    </div>
-                    <span className="text-xs font-semibold">{(summary?.bank_accounts || []).length}</span>
-                  </button>
-                  <button type="button" onClick={() => { setCashBankView('cash'); setSelectedBankId('cash'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'cash' ? 'bg-muted' : ''}`}>
-                    <WalletCards className="h-5 w-5 text-emerald-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold">Cash in Hand</p>
-                      <p className="text-xs text-muted-foreground">Cash receipts and withdrawals</p>
-                    </div>
-                    <span className="font-semibold tabular-nums">{formatMoney(summary?.cash_in_hand || 0)}</span>
-                  </button>
-                  <button type="button" onClick={() => { setCashBankView('cheques'); setSelectedBankId('cheques'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'cheques' ? 'bg-muted' : ''}`}>
-                    <ReceiptText className="h-5 w-5 text-amber-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold">Cheques</p>
-                      <p className="text-xs text-muted-foreground">Cheque number, party and clearance view</p>
-                    </div>
-                    <span className="text-xs font-semibold">{(summary?.cheques || []).length}</span>
-                  </button>
-                  <button type="button" onClick={() => { setCashBankView('loans'); setSelectedBankId('loans'); }} className={`w-full p-4 flex items-center gap-3 text-left hover:bg-muted/50 ${cashBankView === 'loans' ? 'bg-muted' : ''}`}>
-                    <Landmark className="h-5 w-5 text-violet-600" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold">Loan Accounts</p>
-                      <p className="text-xs text-muted-foreground">Opening loan, repayments and balance</p>
-                    </div>
-                    <span className="text-xs font-semibold">{loanAccounts.length}</span>
-                  </button>
+      {journalOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h2 className="text-lg font-bold">Add Journal Entry</h2>
+              <Button variant="ghost" onClick={() => setJournalOpen(false)}>Close</Button>
+            </div>
+            <div className="grid gap-4 p-5 lg:grid-cols-[1fr_260px]">
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Label>Voucher No.<Input className="mt-1" value={journalForm.voucher_number} placeholder="Auto generated" onChange={(e) => setJournalForm((f) => ({ ...f, voucher_number: e.target.value }))} /></Label>
+                  <Label>Date<Input className="mt-1" type="date" value={journalForm.entry_date} onChange={(e) => setJournalForm((f) => ({ ...f, entry_date: e.target.value }))} /></Label>
+                  <Label>Attachment URL<Input className="mt-1" value={journalForm.attachment_url} onChange={(e) => setJournalForm((f) => ({ ...f, attachment_url: e.target.value }))} /></Label>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <div className="space-y-5">
-            {cashBankView === 'banks' && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Bank Accounts</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {(summary?.bank_accounts || []).length === 0 ? (
-                    <div className="rounded-md border border-dashed p-8 text-center">
-                      <p className="text-sm text-muted-foreground">No bank account saved yet.</p>
-                      <Button className="mt-3 gap-2" size="sm" onClick={() => setAddBankOpen(true)}>
-                        <Plus className="h-4 w-4" /> Add Bank Account
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {(summary?.bank_accounts || []).map((b: any) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => setSelectedBankId(b.id)}
-                          className={`rounded-lg border p-4 text-left hover:bg-muted/40 ${selectedBankId === b.id ? 'border-primary bg-primary/5' : ''}`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold">{b.account_label || b.bank_name || 'Bank account'}</p>
-                              <p className="text-xs text-muted-foreground">{b.bank_name || 'Bank'}{b.account_number ? ` - ${b.account_number}` : ''}</p>
-                              {b.ifsc && <p className="mt-1 text-xs font-mono text-muted-foreground">IFSC {b.ifsc}</p>}
-                              {b.upi_id && <p className="text-xs text-muted-foreground">{b.upi_id}</p>}
-                            </div>
-                            <span className="font-bold tabular-nums">{formatMoney(Number(b.balance || 0))}</span>
-                          </div>
-                        </button>
-                      ))}
-                      {Number(summary?.unassigned_bank_balance || 0) !== 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedBankId('unassigned')}
-                          className={`rounded-lg border p-4 text-left hover:bg-muted/40 ${selectedBankId === 'unassigned' ? 'border-primary bg-primary/5' : ''}`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold">Unassigned Bank/UPI</p>
-                              <p className="text-xs text-muted-foreground">Payments where no bank account was selected</p>
-                            </div>
-                            <span className="font-bold tabular-nums">{formatMoney(summary?.unassigned_bank_balance || 0)}</span>
-                          </div>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {(cashBankView === 'banks' || cashBankView === 'cash') && (
-              <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <ChevronsUpDown className="h-4 w-4" /> Deposit / Withdraw
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <div>
-                  <Label>Type</Label>
-                  <select className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm" value={adjustType} onChange={(e) => setAdjustType(e.target.value as any)}>
-                    <option value="bank_deposit">Deposit cash to bank</option>
-                    <option value="bank_withdrawal">Withdraw cash from bank</option>
-                  </select>
-                </div>
-                <div>
-                  <Label>Amount (₹)</Label>
-                  <MoneyInput className="mt-1" value={rupeesToPaise(adjustAmount || '0')} onChange={(paise) => setAdjustAmount(String(paise / 100))} />
-                </div>
-                <div>
-                  <Label>Reference</Label>
-                  <Input className="mt-1" value={adjustRef} onChange={(e) => setAdjustRef(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Notes</Label>
-                  <Input className="mt-1" value={adjustNotes} onChange={(e) => setAdjustNotes(e.target.value)} />
-                </div>
-                <div className="flex items-end">
-                  <Button className="w-full gap-2" loading={adjustMutation.isPending} onClick={saveAdjustment}>
-                    <Plus className="h-4 w-4" /> Save
-                  </Button>
-                </div>
-              </CardContent>
-              </Card>
-            )}
-
-            {(cashBankView === 'banks' || cashBankView === 'cash') && (
-              <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Transactions</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 overflow-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 border-y">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-medium">Date</th>
-                      <th className="px-4 py-2 text-left font-medium">Type</th>
-                      <th className="px-4 py-2 text-left font-medium">Name</th>
-                      <th className="px-4 py-2 text-left font-medium">Mode</th>
-                      <th className="px-4 py-2 text-right font-medium">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleTransactions.length === 0 ? (
-                      <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No transactions yet.</td></tr>
-                    ) : visibleTransactions.map((t: any) => {
-                      const cash = Number(t.signed_cash_amount || 0);
-                      const bank = Number(t.signed_bank_amount || 0);
-                      const amount = selectedBankId === 'cash' ? cash : bank;
-                      return (
-                        <tr key={t.id} className="border-b">
-                          <td className="px-4 py-2 text-muted-foreground">{formatDate(t.payment_date)}</td>
-                          <td className="px-4 py-2 capitalize">{String(t.payment_type || '').replace(/_/g, ' ')}</td>
-                          <td className="px-4 py-2">{t.party_name || t.notes || '-'}</td>
-                          <td className="px-4 py-2 capitalize">{String(t.payment_mode || '').replace(/_/g, ' ')}</td>
-                          <td className={`px-4 py-2 text-right font-semibold tabular-nums ${amount < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatMoney(Math.abs(amount || Number(t.amount || 0)))}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </CardContent>
-              </Card>
-            )}
-
-            {cashBankView === 'cheques' && (
-              <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Cheques</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-2">
-                {(summary?.cheques || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No cheque payments recorded.</p>
-                ) : (summary?.cheques || []).map((c: any) => (
-                  <div key={c.id} className="flex items-center justify-between rounded-md border p-3 text-sm">
-                    <div>
-                      <p className="font-medium">{c.party_name || c.notes || 'Cheque entry'}</p>
-                      <p className="text-xs text-muted-foreground">{formatDate(c.payment_date)} - Cheque {c.cheque_number || c.reference_number || '-'}</p>
-                    </div>
-                    <span className="font-semibold tabular-nums">{formatMoney(Number(c.amount || 0))}</span>
-                  </div>
-                ))}
-              </CardContent>
-              </Card>
-            )}
-
-            {cashBankView === 'loans' && (
-              <>
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Add Loan Account</CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                      <Label>Account name</Label>
-                      <Input className="mt-1" value={loanForm.account_name} onChange={(e) => setLoanForm((f) => ({ ...f, account_name: e.target.value }))} placeholder="Business loan / OD" />
-                    </div>
-                    <div>
-                      <Label>Lender</Label>
-                      <Input className="mt-1" value={loanForm.lender_name} onChange={(e) => setLoanForm((f) => ({ ...f, lender_name: e.target.value }))} placeholder="Bank / person" />
-                    </div>
-                    <div>
-                      <Label>Opening amount (₹)</Label>
-                      <MoneyInput className="mt-1" value={rupeesToPaise(loanForm.principal_amount || '0')} onChange={(paise) => setLoanForm((f) => ({ ...f, principal_amount: String(paise / 100) }))} />
-                    </div>
-                    <div>
-                      <Label>Interest %</Label>
-                      <Input className="mt-1" inputMode="decimal" value={loanForm.interest_rate} onChange={(e) => setLoanForm((f) => ({ ...f, interest_rate: e.target.value }))} />
-                    </div>
-                    <div>
-                      <Label>Reference</Label>
-                      <Input className="mt-1" value={loanForm.reference_number} onChange={(e) => setLoanForm((f) => ({ ...f, reference_number: e.target.value }))} />
-                    </div>
-                    <div>
-                      <Label>Notes</Label>
-                      <Input className="mt-1" value={loanForm.notes} onChange={(e) => setLoanForm((f) => ({ ...f, notes: e.target.value }))} />
-                    </div>
-                    <div className="md:col-span-3 flex justify-end">
-                      <Button className="gap-2" loading={createLoanMutation.isPending} onClick={saveLoan}>
-                        <Plus className="h-4 w-4" /> Save Loan Account
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Loan Accounts</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {loansLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading loans...</p>
-                    ) : loanAccounts.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No loan account recorded.</p>
-                    ) : loanAccounts.map((loan: any) => {
-                      const tx = loanTx[loan.id] || { transaction_type: 'repayment', amount: '', reference_number: '', notes: '' };
-                      return (
-                        <div key={loan.id} className="rounded-lg border p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold">{loan.account_name}</p>
-                              <p className="text-xs text-muted-foreground">{loan.lender_name || 'Loan account'}{Number(loan.interest_rate || 0) ? ` • ${loan.interest_rate}%` : ''}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xs text-muted-foreground">Outstanding</p>
-                              <p className="font-bold tabular-nums">{formatMoney(Number(loan.current_balance || 0))}</p>
-                            </div>
-                          </div>
-                          <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-2">
-                            <select className="h-9 rounded-md border bg-background px-2 text-sm" value={tx.transaction_type} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, transaction_type: e.target.value } }))}>
-                              <option value="repayment">Repayment</option>
-                              <option value="disbursement">New Disbursement</option>
-                              <option value="interest">Interest</option>
-                              <option value="adjustment">Adjustment</option>
+                <Label>Description<Input className="mt-1" value={journalForm.description} onChange={(e) => setJournalForm((f) => ({ ...f, description: e.target.value }))} /></Label>
+                <div className="overflow-auto rounded-md border">
+                  <table className="w-full min-w-[760px] text-sm">
+                    <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500">
+                      <tr><th className="px-3 py-2">Account</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Debit</th><th className="px-3 py-2">Credit</th><th /></tr>
+                    </thead>
+                    <tbody>
+                      {journalForm.lines.map((line, index) => (
+                        <tr className="border-t" key={index}>
+                          <td className="px-3 py-2">
+                            <select className="h-10 w-full rounded-md border bg-white px-3" value={line.account_id} onChange={(e) => updateLine(index, { account_id: e.target.value })}>
+                              <option value="">Select account</option>
+                              {accountOptions.map((a) => <option key={a.id} value={a.id}>{`${'-- '.repeat(Math.min(a.level, 3))}${a.name}`}</option>)}
                             </select>
-                            <MoneyInput placeholder="Amount ₹" value={rupeesToPaise(tx.amount || '0')} onChange={(paise) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, amount: String(paise / 100) } }))} />
-                            <Input placeholder="Reference" value={tx.reference_number} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, reference_number: e.target.value } }))} />
-                            <Input placeholder="Notes" value={tx.notes} onChange={(e) => setLoanTx((s) => ({ ...s, [loan.id]: { ...tx, notes: e.target.value } }))} />
-                            <Button loading={loanTxMutation.isPending && loanTxMutation.variables?.id === loan.id} onClick={() => saveLoanTx(loan.id)}>Record</Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
-              </>
-            )}
+                          </td>
+                          <td className="px-3 py-2"><Input value={line.description || ''} onChange={(e) => updateLine(index, { description: e.target.value })} /></td>
+                          <td className="px-3 py-2"><MoneyInput value={line.debit || 0} onChange={(v) => updateLine(index, { debit: v, credit: v > 0 ? 0 : line.credit })} /></td>
+                          <td className="px-3 py-2"><MoneyInput value={line.credit || 0} onChange={(v) => updateLine(index, { credit: v, debit: v > 0 ? 0 : line.debit })} /></td>
+                          <td className="px-3 py-2"><Button variant="ghost" size="sm" disabled={journalForm.lines.length <= 2} onClick={() => setJournalForm((f) => ({ ...f, lines: f.lines.filter((_, i) => i !== index) }))}>Remove</Button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Button variant="outline" onClick={() => setJournalForm((f) => ({ ...f, lines: [...f.lines, { account_id: '', debit: 0, credit: 0, description: '' }] }))}><Plus className="mr-2 h-4 w-4" /> Add Line</Button>
+                <Label>Remarks<Input className="mt-1" value={journalForm.remarks} onChange={(e) => setJournalForm((f) => ({ ...f, remarks: e.target.value }))} /></Label>
+              </div>
+              <div className="rounded-lg border bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Voucher Total</p>
+                <div className="mt-4 space-y-3 text-sm">
+                  <div className="flex justify-between"><span>Debit</span><b>{formatMoney(totals.debit)}</b></div>
+                  <div className="flex justify-between"><span>Credit</span><b>{formatMoney(totals.credit)}</b></div>
+                  <div className={`rounded-md p-3 font-semibold ${totals.balanced ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{totals.balanced ? 'Balanced' : 'Debit and credit must match'}</div>
+                </div>
+                <Button className="mt-5 w-full" disabled={!totals.balanced || createJournalMutation.isPending} onClick={saveJournal}>Post Journal Entry</Button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {tab === 'party-ledger' && (
-        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5 print:block">
-          <Card className="print:hidden">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Party & Period</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="relative">
-                <Label>Party</Label>
-                <div className="relative mt-1">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input className="pl-9" value={partySearch || party?.name || ''} onChange={(e) => { setParty(null); searchParties(e.target.value); }} placeholder="Search customer or supplier" />
-                </div>
-                {partyResults.length > 0 && (
-                  <div className="absolute z-20 mt-1 w-full rounded-md border bg-card shadow">
-                    {partyResults.map((p) => (
-                      <button key={p.id} type="button" className="w-full px-3 py-2 text-left hover:bg-muted" onClick={() => { setParty(p); setPartySearch(''); setPartyResults([]); }}>
-                        <p className="text-sm font-medium">{p.name}</p>
-                        <p className="text-xs text-muted-foreground">{p.phone || p.gstin || p.city || ''}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>From</Label>
-                  <Input className="mt-1" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-                </div>
-                <div>
-                  <Label>To</Label>
-                  <Input className="mt-1" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-                </div>
-              </div>
-              <div className="rounded-md border p-3 space-y-3">
-                <p className="text-sm font-semibold">Record Payment</p>
-                <MoneyInput placeholder="Amount in rupees" value={rupeesToPaise(receiptAmount || '0')} onChange={(paise) => setReceiptAmount(String(paise / 100))} />
-                <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={receiptMode} onChange={(e) => setReceiptMode(e.target.value)}>
-                  {paymentModes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      {newAccountOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">New Account</h2>
+              <Button variant="ghost" onClick={() => setNewAccountOpen(false)}>Close</Button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <Label>Account Name<Input className="mt-1" value={newAccount.name} onChange={(e) => setNewAccount((a) => ({ ...a, name: e.target.value }))} /></Label>
+              <Label>Account Code<Input className="mt-1" value={newAccount.code} onChange={(e) => setNewAccount((a) => ({ ...a, code: e.target.value }))} /></Label>
+              <Label>Account Type
+                <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={newAccount.type} onChange={(e) => setNewAccount((a) => ({ ...a, type: e.target.value }))}>
+                  <option value="asset">Asset</option><option value="liability">Liability</option><option value="equity">Equity</option><option value="income">Income</option><option value="expense">Expense</option>
                 </select>
-                <Input placeholder={receiptMode === 'cheque' ? 'Cheque number' : 'Reference number'} value={receiptRef} onChange={(e) => setReceiptRef(e.target.value)} />
-                <Button className="w-full" loading={receiptMutation.isPending} onClick={recordReceipt}>Record Receipt</Button>
+              </Label>
+              <Label>Parent Account
+                <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={newAccount.parent_id} onChange={(e) => setNewAccount((a) => ({ ...a, parent_id: e.target.value }))}>
+                  <option value="">No parent</option>
+                  {accountOptions.filter((a) => a.account_type === newAccount.type).map((a) => <option key={a.id} value={a.id}>{`${'-- '.repeat(Math.min(a.level, 3))}${a.name}`}</option>)}
+                </select>
+              </Label>
+              <div className="grid grid-cols-[1fr_120px] gap-3">
+                <Label>Opening Balance<MoneyInput className="mt-1" value={newAccount.opening_balance} onChange={(v) => setNewAccount((a) => ({ ...a, opening_balance: v }))} /></Label>
+                <Label>Type
+                  <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={newAccount.opening_balance_type} onChange={(e) => setNewAccount((a) => ({ ...a, opening_balance_type: e.target.value }))}>
+                    <option value="debit">Dr</option><option value="credit">Cr</option>
+                  </select>
+                </Label>
               </div>
+              <Button onClick={saveAccount} disabled={createAccountMutation.isPending}>Create Account</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <QuickAddBankAccountSheet open={addBankOpen} onOpenChange={setAddBankOpen} onCreated={() => qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] })} />
+    </div>
+  );
+}
+
+function SummaryTile({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-md border bg-white p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-bold tabular-nums">{value}</p></div>;
+}
+
+function JournalEntries({ loading, rows, onReverse }: { loading: boolean; rows: any[]; onReverse: (id: string) => void }) {
+  return (
+    <Card>
+      <CardHeader className="border-b"><CardTitle>Journal Entries</CardTitle></CardHeader>
+      <CardContent className="p-0">
+        {!loading && !rows.length ? (
+          <div className="grid place-items-center py-20 text-center">
+            <div className="max-w-xl">
+              <Landmark className="mx-auto h-14 w-14 text-amber-500" />
+              <h2 className="mt-4 text-xl font-bold">Journal Entry</h2>
+              <p className="mt-2 text-sm text-slate-500">Manual vouchers are for adjustments, equity, opening balances, and entries that cannot be handled by sales, purchases, payments, or expenses.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Voucher</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Particulars</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2">Status</th><th /></tr></thead>
+              <tbody>
+                {loading ? <tr><td colSpan={8} className="p-8 text-center text-slate-500">Loading journal entries...</td></tr> : null}
+                {rows.map((row: any) => (
+                  <tr key={row.id} className="border-t">
+                    <td className="px-3 py-2">{formatDate(row.entry_date)}</td>
+                    <td className="px-3 py-2 font-semibold">{row.voucher_number || row.entry_number}</td>
+                    <td className="px-3 py-2 capitalize">{row.voucher_type || row.entry_type}</td>
+                    <td className="px-3 py-2">{row.description}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(row.total_debit || 0))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(row.total_credit || 0))}</td>
+                    <td className="px-3 py-2"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs capitalize">{row.status || 'posted'}</span></td>
+                    <td className="px-3 py-2 text-right"><Button variant="ghost" size="sm" disabled={row.status === 'reversed'} onClick={() => onReverse(row.id)}>Reverse</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ChartOfAccounts(props: {
+  loading: boolean;
+  roots: AccountNode[];
+  accountType: string;
+  onType: (v: string) => void;
+  search: string;
+  onSearch: (v: string) => void;
+  expanded: Record<string, boolean>;
+  onToggle: (id: string) => void;
+  onNew: () => void;
+}) {
+  return (
+    <div className="grid h-[calc(100vh-170px)] grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-lg border bg-white">
+      <aside className="border-r bg-slate-50">
+        <div className="border-b p-3 text-xs font-bold uppercase text-slate-500">Account Type</div>
+        {accountTypes.map(([label]) => <button key={label} className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium ${props.accountType === label ? 'bg-sky-100 text-sky-900' : 'hover:bg-white'}`} onClick={() => props.onType(label)}>{label}<ChevronDown className="h-4 w-4" /></button>)}
+      </aside>
+      <section className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <h2 className="text-xl font-bold">Chart of Accounts</h2>
+          <div className="flex gap-2">
+            <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input className="w-72 pl-9" value={props.search} onChange={(e) => props.onSearch(e.target.value)} placeholder="Search accounts" /></div>
+            <Button onClick={props.onNew}><Plus className="mr-2 h-4 w-4" /> New Account</Button>
+          </div>
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[780px] text-sm">
+            <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-4 py-2">Account Name</th><th className="px-4 py-2">Account Code</th><th className="px-4 py-2 text-right">Account Balance</th></tr></thead>
+            <tbody>
+              {props.loading ? <tr><td colSpan={3} className="p-8 text-center text-slate-500">Loading accounts...</td></tr> : null}
+              {props.roots.map((node) => <AccountRow key={node.id} node={node} level={0} expanded={props.expanded} onToggle={props.onToggle} />)}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AccountRow({ node, level, expanded, onToggle }: { node: AccountNode; level: number; expanded: Record<string, boolean>; onToggle: (id: string) => void }) {
+  const hasChildren = !!node.children?.length;
+  const isOpen = expanded[node.id] ?? level < 2;
+  return (
+    <>
+      <tr className="border-t hover:bg-slate-50">
+        <td className="px-4 py-2">
+          <div className="flex items-center gap-2" style={{ paddingLeft: level * 18 }}>
+            {hasChildren ? <button onClick={() => onToggle(node.id)}>{isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button> : <span className="w-4" />}
+            <span className={level <= 1 ? 'font-semibold' : ''}>{node.name}</span>
+            {node.is_locked ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">locked</span> : null}
+          </div>
+        </td>
+        <td className="px-4 py-2 text-slate-500">{node.code || '-'}</td>
+        <td className={`px-4 py-2 text-right font-semibold tabular-nums ${drCrClass(node.balance_type)}`}>{formatMoney(Math.abs(Number(node.balance_paise || 0)))} {node.balance_type}</td>
+      </tr>
+      {hasChildren && isOpen ? node.children!.map((child) => <AccountRow key={child.id} node={child} level={level + 1} expanded={expanded} onToggle={onToggle} />) : null}
+    </>
+  );
+}
+
+function CashBank(props: any) {
+  return (
+    <div className="grid h-[calc(100vh-170px)] grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-lg border bg-white">
+      <aside className="border-r">
+        <div className="flex items-center justify-between border-b p-3">
+          <h2 className="font-bold">Cash & Bank</h2>
+          <Button size="sm" variant="outline" onClick={props.addBank}><Plus className="h-4 w-4" /></Button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 p-3">
+          {[
+            ['banks', 'Banks'],
+            ['cash', 'Cash'],
+            ['cheques', 'Cheques'],
+            ['loans', 'Loans'],
+          ].map(([key, label]) => <button key={key} onClick={() => props.setView(key)} className={`rounded-md border px-3 py-2 text-sm ${props.view === key ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-white'}`}>{label}</button>)}
+        </div>
+        <div className="overflow-auto px-3 pb-3">
+          <button className={`mb-2 flex w-full justify-between rounded-md border p-3 text-left ${props.selectedBankId === 'cash' ? 'bg-sky-50' : ''}`} onClick={() => props.setSelectedBankId('cash')}>
+            <span>Cash in Hand</span><b>{formatMoney(props.summary?.cash_in_hand || 0)}</b>
+          </button>
+          {(props.summary?.bank_accounts || []).map((b: any) => (
+            <button key={b.id} className={`mb-2 w-full rounded-md border p-3 text-left ${props.selectedBankId === b.id ? 'bg-sky-50' : ''}`} onClick={() => props.setSelectedBankId(b.id)}>
+              <div className="flex justify-between gap-3"><span className="font-medium">{b.account_label || b.bank_name}</span><b>{formatMoney(Number(b.balance || 0))}</b></div>
+              <p className="mt-1 text-xs text-slate-500">{b.bank_name} {b.account_number ? `• ${b.account_number}` : ''}</p>
+            </button>
+          ))}
+          {props.view === 'loans' ? (props.loanAccounts || []).map((l: any) => <div key={l.id} className="mb-2 rounded-md border p-3"><b>{l.account_name}</b><p className="text-xs text-slate-500">{l.lender_name || 'Loan account'}</p><p className="mt-1 font-semibold">{formatMoney(Number(l.current_balance || 0))}</p></div>) : null}
+        </div>
+      </aside>
+      <section className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <div>
+            <h2 className="text-lg font-bold">{props.selectedBank?.account_label || props.selectedBank?.bank_name || 'Cash in Hand'}</h2>
+            <p className="text-sm text-slate-500">{props.selectedBank ? `${props.selectedBank.bank_name || ''} ${props.selectedBank.account_number || ''}` : 'Cash account'}</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant={props.adjustType === 'bank_deposit' ? 'default' : 'outline'} onClick={() => props.setAdjustType('bank_deposit')}><ArrowDownRight className="mr-2 h-4 w-4" /> Deposit</Button>
+            <Button variant={props.adjustType === 'bank_withdrawal' ? 'default' : 'outline'} onClick={() => props.setAdjustType('bank_withdrawal')}><ArrowUpRight className="mr-2 h-4 w-4" /> Withdraw</Button>
+          </div>
+        </div>
+        <div className="grid gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <Card>
+            <CardHeader><CardTitle className="text-base">{props.adjustType === 'bank_deposit' ? 'Deposit Cash' : 'Withdraw Cash'}</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <Label>Amount<MoneyInput className="mt-1" value={props.adjustAmount} onChange={props.setAdjustAmount} /></Label>
+              <Label>Reference No.<Input className="mt-1" value={props.adjustRef} onChange={(e) => props.setAdjustRef(e.target.value)} /></Label>
+              <Label>Notes<Input className="mt-1" value={props.adjustNotes} onChange={(e) => props.setAdjustNotes(e.target.value)} /></Label>
+              <Button className="w-full" onClick={props.saveAdjustment}>Save</Button>
             </CardContent>
           </Card>
-
-          <Card className="print:shadow-none print:border-0">
-            <CardHeader className="pb-3 border-b">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5" /> Monthly Ledger Statement</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">{party?.name || 'Select a party'} - {formatDate(fromDate)} to {formatDate(toDate)}</p>
-                </div>
-                <div className="flex gap-2 print:hidden">
-                  <Button variant="outline" size="sm" onClick={exportStatementCsv} disabled={!party || !statement}>Download CSV</Button>
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={printStatement} disabled={!party || !statement}><Printer className="h-4 w-4" /> Print</Button>
-                </div>
-              </div>
-            </CardHeader>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Transactions</CardTitle></CardHeader>
             <CardContent className="p-0">
-              {!party ? (
-                <div className="p-12 text-center text-muted-foreground">
-                  <CalendarDays className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                  Select a party to view monthly bills, payments and balance.
-                </div>
-              ) : statementLoading ? (
-                <div className="p-12 text-center text-muted-foreground">Loading statement...</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 divide-x border-b text-sm">
-                    <div className="p-4">
-                      <p className="text-muted-foreground">Opening</p>
-                      <p className="font-bold tabular-nums">{formatMoney(statement?.opening_balance || 0)}</p>
-                    </div>
-                    <div className="p-4">
-                      <p className="text-muted-foreground">Transactions</p>
-                      <p className="font-bold tabular-nums">{statement?.transactions?.length || 0}</p>
-                    </div>
-                    <div className="p-4">
-                      <p className="text-muted-foreground">Closing</p>
-                      <p className="font-bold tabular-nums">{formatMoney(statement?.closing_balance || 0)}</p>
-                    </div>
-                  </div>
-                  <div className="overflow-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50 border-b">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-medium">Date</th>
-                          <th className="px-4 py-2 text-left font-medium">Particulars</th>
-                          <th className="px-4 py-2 text-right font-medium">Debit</th>
-                          <th className="px-4 py-2 text-right font-medium">Credit</th>
-                          <th className="px-4 py-2 text-right font-medium">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(statement?.transactions || []).length === 0 ? (
-                          <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No ledger entries in this period.</td></tr>
-                        ) : (statement?.transactions || []).map((r: any) => (
-                          <tr key={r.id} className="border-b">
-                            <td className="px-4 py-2 text-muted-foreground">{formatDate(r.transaction_date || r.created_at)}</td>
-                            <td className="px-4 py-2">{r.narration || r.reference_type || '-'}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{r.type === 'debit' ? formatMoney(Number(r.amount || 0)) : '-'}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{r.type === 'credit' ? formatMoney(Number(r.amount || 0)) : '-'}</td>
-                            <td className="px-4 py-2 text-right font-semibold tabular-nums">{formatMoney(Number(r.running_balance || 0))}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
+              <div className="overflow-auto">
+                <table className="w-full min-w-[620px] text-sm">
+                  <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">Date</th><th className="px-3 py-2 text-right">Amount</th></tr></thead>
+                  <tbody>
+                    {(props.transactions || []).map((t: any) => {
+                      const amount = Number(t.signed_bank_amount || t.signed_cash_amount || t.amount || 0);
+                      return <tr key={t.id} className="border-t"><td className="px-3 py-2 capitalize">{String(t.payment_type || '').replace(/_/g, ' ')}</td><td className="px-3 py-2">{t.party_name || t.reference_number || '-'}</td><td className="px-3 py-2">{formatDate(t.payment_date)}</td><td className={`px-3 py-2 text-right font-semibold tabular-nums ${amount < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{formatMoney(Math.abs(amount))}</td></tr>;
+                    })}
+                    {!(props.transactions || []).length ? <tr><td colSpan={4} className="p-8 text-center text-slate-500">No transactions yet.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         </div>
-      )}
-      <QuickAddBankAccountSheet
-        open={addBankOpen}
-        onOpenChange={setAddBankOpen}
-        onCreated={(row) => {
-          qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] });
-          const id = String((row as any)?.id || '');
-          if (id) {
-            setCashBankView('banks');
-            setSelectedBankId(id);
-          }
-        }}
-      />
+      </section>
     </div>
   );
 }
