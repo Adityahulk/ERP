@@ -2,8 +2,6 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -24,9 +22,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDate, formatMoney } from '@/lib/formatters';
 import MoneyInput from '@/components/transactions/MoneyInput';
-import { QuickAddBankAccountSheet } from '@/components/company/QuickAddBankAccountSheet';
 
-type Workspace = 'journal' | 'chart' | 'statement' | 'cash-bank';
+type Workspace = 'journal' | 'chart' | 'statement';
 type AccountNode = {
   id: string;
   name: string;
@@ -92,14 +89,6 @@ export default function AccountingDashboard() {
   const [fromDate, setFromDate] = useState(monthStart());
   const [toDate, setToDate] = useState(today());
 
-  const [cashBankView, setCashBankView] = useState<'banks' | 'cash' | 'cheques' | 'loans'>('banks');
-  const [selectedBankId, setSelectedBankId] = useState('cash');
-  const [addBankOpen, setAddBankOpen] = useState(false);
-  const [adjustType, setAdjustType] = useState<'bank_deposit' | 'bank_withdrawal'>('bank_deposit');
-  const [adjustAmount, setAdjustAmount] = useState(0);
-  const [adjustRef, setAdjustRef] = useState('');
-  const [adjustNotes, setAdjustNotes] = useState('');
-
   const { data: accountsTree = [], isLoading: accountsLoading } = useQuery({
     queryKey: ['accounting', 'accounts-tree'],
     queryFn: async () => (await api.get('/accounting/accounts/tree')).data?.data as AccountNode[],
@@ -130,16 +119,6 @@ export default function AccountingDashboard() {
     enabled: !!statementAccountId,
     queryFn: async () =>
       (await api.get(`/accounting/accounts/${statementAccountId}/statement`, { params: { from_date: fromDate, to_date: toDate } })).data?.data,
-  });
-
-  const { data: cashSummary } = useQuery({
-    queryKey: ['accounting', 'cash-bank', 'summary'],
-    queryFn: async () => (await api.get('/accounting/cash-bank/summary')).data?.data,
-  });
-
-  const { data: loanAccounts = [] } = useQuery({
-    queryKey: ['accounting', 'cash-bank', 'loans'],
-    queryFn: async () => (await api.get('/accounting/cash-bank/loans')).data?.data || [],
   });
 
   const createJournalMutation = useMutation({
@@ -192,31 +171,11 @@ export default function AccountingDashboard() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'Could not rebuild ledger'),
   });
 
-  const adjustMutation = useMutation({
-    mutationFn: (payload: any) => api.post('/accounting/cash-bank/adjustment', payload),
-    onSuccess: () => {
-      toast.success(adjustType === 'bank_deposit' ? 'Cash deposit recorded' : 'Cash withdrawal recorded');
-      setAdjustAmount(0);
-      setAdjustRef('');
-      setAdjustNotes('');
-      qc.invalidateQueries({ queryKey: ['accounting'] });
-    },
-    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not save cash/bank entry'),
-  });
-
   const totals = useMemo(() => {
     const debit = journalForm.lines.reduce((sum, l) => sum + Number(l.debit || 0), 0);
     const credit = journalForm.lines.reduce((sum, l) => sum + Number(l.credit || 0), 0);
     return { debit, credit, balanced: debit > 0 && debit === credit };
   }, [journalForm.lines]);
-
-  const selectedBank = cashSummary?.bank_accounts?.find((b: any) => b.id === selectedBankId);
-  const visibleCashTransactions = useMemo(() => {
-    const rows = cashSummary?.recent_transactions || [];
-    if (selectedBankId === 'cash') return rows.filter((r: any) => Number(r.signed_cash_amount || 0) !== 0 || r.payment_mode === 'cash');
-    if (selectedBankId === 'unassigned') return rows.filter((r: any) => !r.company_bank_account_id && ['bank_transfer', 'neft', 'rtgs', 'upi', 'online', 'card', 'cheque'].includes(r.payment_mode));
-    return rows.filter((r: any) => r.company_bank_account_id === selectedBankId);
-  }, [cashSummary?.recent_transactions, selectedBankId]);
 
   const updateLine = (index: number, patch: Partial<JournalLine>) => {
     setJournalForm((form) => ({
@@ -252,17 +211,6 @@ export default function AccountingDashboard() {
     });
   };
 
-  const saveAdjustment = () => {
-    if (!selectedBank?.id || adjustAmount <= 0) return toast.error('Select a bank account and enter amount');
-    adjustMutation.mutate({
-      type: adjustType,
-      company_bank_account_id: selectedBank.id,
-      amount: adjustAmount,
-      reference_number: adjustRef || undefined,
-      notes: adjustNotes || undefined,
-    });
-  };
-
   const exportStatementCsv = () => {
     const rows = statement?.lines || [];
     const header = ['Date', 'Voucher No.', 'Particulars', 'Debit', 'Credit', 'Balance'];
@@ -291,7 +239,7 @@ export default function AccountingDashboard() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Accounting</h1>
-            <p className="text-sm text-slate-500">Journal vouchers, chart of accounts, statements, and cash/bank balances.</p>
+            <p className="text-sm text-slate-500">Journal vouchers, chart of accounts, and account statements.</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => rebuildMutation.mutate()} disabled={rebuildMutation.isPending}>
@@ -310,7 +258,6 @@ export default function AccountingDashboard() {
             ['journal', FileText, 'Journal Entries'],
             ['chart', ListTree, 'Chart of Accounts'],
             ['statement', BookOpen, 'Account Statements'],
-            ['cash-bank', Landmark, 'Cash & Bank'],
           ].map(([key, Icon, label]) => {
             const I = Icon as typeof FileText;
             return (
@@ -406,29 +353,6 @@ export default function AccountingDashboard() {
               </CardContent>
             </Card>
           )}
-
-          {workspace === 'cash-bank' && (
-            <CashBank
-              summary={cashSummary}
-              loanAccounts={loanAccounts}
-              view={cashBankView}
-              setView={setCashBankView}
-              selectedBankId={selectedBankId}
-              setSelectedBankId={setSelectedBankId}
-              selectedBank={selectedBank}
-              transactions={visibleCashTransactions}
-              addBank={() => setAddBankOpen(true)}
-              adjustType={adjustType}
-              setAdjustType={setAdjustType}
-              adjustAmount={adjustAmount}
-              setAdjustAmount={setAdjustAmount}
-              adjustRef={adjustRef}
-              setAdjustRef={setAdjustRef}
-              adjustNotes={adjustNotes}
-              setAdjustNotes={setAdjustNotes}
-              saveAdjustment={saveAdjustment}
-            />
-          )}
         </main>
       </div>
 
@@ -521,8 +445,6 @@ export default function AccountingDashboard() {
           </div>
         </div>
       )}
-
-      <QuickAddBankAccountSheet open={addBankOpen} onOpenChange={setAddBankOpen} onCreated={() => qc.invalidateQueries({ queryKey: ['accounting', 'cash-bank'] })} />
     </div>
   );
 }
@@ -583,7 +505,7 @@ function ChartOfAccounts(props: {
   onNew: () => void;
 }) {
   return (
-    <div className="grid h-[calc(100vh-170px)] grid-cols-[240px_minmax(0,1fr)] overflow-hidden rounded-lg border bg-white">
+    <div className="grid h-[calc(100vh-170px)] grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-lg border bg-white">
       <aside className="border-r bg-slate-50">
         <div className="border-b p-3 text-xs font-bold uppercase text-slate-500">Account Type</div>
         {accountTypes.map(([label]) => <button key={label} className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium ${props.accountType === label ? 'bg-sky-100 text-sky-900' : 'hover:bg-white'}`} onClick={() => props.onType(label)}>{label}<ChevronDown className="h-4 w-4" /></button>)}
@@ -591,14 +513,19 @@ function ChartOfAccounts(props: {
       <section className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
           <h2 className="text-xl font-bold">Chart of Accounts</h2>
-          <div className="flex gap-2">
-            <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input className="w-72 pl-9" value={props.search} onChange={(e) => props.onSearch(e.target.value)} placeholder="Search accounts" /></div>
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input className="w-64 pl-9" value={props.search} onChange={(e) => props.onSearch(e.target.value)} placeholder="Search accounts" /></div>
             <Button onClick={props.onNew}><Plus className="mr-2 h-4 w-4" /> New Account</Button>
           </div>
         </div>
-        <div className="overflow-auto">
-          <table className="w-full min-w-[780px] text-sm">
-            <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-4 py-2">Account Name</th><th className="px-4 py-2">Account Code</th><th className="px-4 py-2 text-right">Account Balance</th></tr></thead>
+        <div className="overflow-y-auto overflow-x-hidden">
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col />
+              <col className="w-28" />
+              <col className="w-40" />
+            </colgroup>
+            <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-4 py-2">Account Name</th><th className="px-3 py-2">Code</th><th className="px-4 py-2 text-right">Balance</th></tr></thead>
             <tbody>
               {props.loading ? <tr><td colSpan={3} className="p-8 text-center text-slate-500">Loading accounts...</td></tr> : null}
               {props.roots.map((node) => <AccountRow key={node.id} node={node} level={0} expanded={props.expanded} onToggle={props.onToggle} />)}
@@ -616,90 +543,17 @@ function AccountRow({ node, level, expanded, onToggle }: { node: AccountNode; le
   return (
     <>
       <tr className="border-t hover:bg-slate-50">
-        <td className="px-4 py-2">
+        <td className="min-w-0 px-4 py-2">
           <div className="flex items-center gap-2" style={{ paddingLeft: level * 18 }}>
             {hasChildren ? <button onClick={() => onToggle(node.id)}>{isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button> : <span className="w-4" />}
-            <span className={level <= 1 ? 'font-semibold' : ''}>{node.name}</span>
-            {node.is_locked ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">locked</span> : null}
+            <span className={`truncate ${level <= 1 ? 'font-semibold' : ''}`} title={node.name}>{node.name}</span>
+            {node.is_locked ? <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">locked</span> : null}
           </div>
         </td>
-        <td className="px-4 py-2 text-slate-500">{node.code || '-'}</td>
+        <td className="px-3 py-2 text-slate-500">{node.code || '-'}</td>
         <td className={`px-4 py-2 text-right font-semibold tabular-nums ${drCrClass(node.balance_type)}`}>{formatMoney(Math.abs(Number(node.balance_paise || 0)))} {node.balance_type}</td>
       </tr>
       {hasChildren && isOpen ? node.children!.map((child) => <AccountRow key={child.id} node={child} level={level + 1} expanded={expanded} onToggle={onToggle} />) : null}
     </>
-  );
-}
-
-function CashBank(props: any) {
-  return (
-    <div className="grid h-[calc(100vh-170px)] grid-cols-[340px_minmax(0,1fr)] overflow-hidden rounded-lg border bg-white">
-      <aside className="border-r">
-        <div className="flex items-center justify-between border-b p-3">
-          <h2 className="font-bold">Cash & Bank</h2>
-          <Button size="sm" variant="outline" onClick={props.addBank}><Plus className="h-4 w-4" /></Button>
-        </div>
-        <div className="grid grid-cols-2 gap-2 p-3">
-          {[
-            ['banks', 'Banks'],
-            ['cash', 'Cash'],
-            ['cheques', 'Cheques'],
-            ['loans', 'Loans'],
-          ].map(([key, label]) => <button key={key} onClick={() => props.setView(key)} className={`rounded-md border px-3 py-2 text-sm ${props.view === key ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-white'}`}>{label}</button>)}
-        </div>
-        <div className="overflow-auto px-3 pb-3">
-          <button className={`mb-2 flex w-full justify-between rounded-md border p-3 text-left ${props.selectedBankId === 'cash' ? 'bg-sky-50' : ''}`} onClick={() => props.setSelectedBankId('cash')}>
-            <span>Cash in Hand</span><b>{formatMoney(props.summary?.cash_in_hand || 0)}</b>
-          </button>
-          {(props.summary?.bank_accounts || []).map((b: any) => (
-            <button key={b.id} className={`mb-2 w-full rounded-md border p-3 text-left ${props.selectedBankId === b.id ? 'bg-sky-50' : ''}`} onClick={() => props.setSelectedBankId(b.id)}>
-              <div className="flex justify-between gap-3"><span className="font-medium">{b.account_label || b.bank_name}</span><b>{formatMoney(Number(b.balance || 0))}</b></div>
-              <p className="mt-1 text-xs text-slate-500">{b.bank_name} {b.account_number ? `• ${b.account_number}` : ''}</p>
-            </button>
-          ))}
-          {props.view === 'loans' ? (props.loanAccounts || []).map((l: any) => <div key={l.id} className="mb-2 rounded-md border p-3"><b>{l.account_name}</b><p className="text-xs text-slate-500">{l.lender_name || 'Loan account'}</p><p className="mt-1 font-semibold">{formatMoney(Number(l.current_balance || 0))}</p></div>) : null}
-        </div>
-      </aside>
-      <section className="min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-          <div>
-            <h2 className="text-lg font-bold">{props.selectedBank?.account_label || props.selectedBank?.bank_name || 'Cash in Hand'}</h2>
-            <p className="text-sm text-slate-500">{props.selectedBank ? `${props.selectedBank.bank_name || ''} ${props.selectedBank.account_number || ''}` : 'Cash account'}</p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant={props.adjustType === 'bank_deposit' ? 'default' : 'outline'} onClick={() => props.setAdjustType('bank_deposit')}><ArrowDownRight className="mr-2 h-4 w-4" /> Deposit</Button>
-            <Button variant={props.adjustType === 'bank_withdrawal' ? 'default' : 'outline'} onClick={() => props.setAdjustType('bank_withdrawal')}><ArrowUpRight className="mr-2 h-4 w-4" /> Withdraw</Button>
-          </div>
-        </div>
-        <div className="grid gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <Card>
-            <CardHeader><CardTitle className="text-base">{props.adjustType === 'bank_deposit' ? 'Deposit Cash' : 'Withdraw Cash'}</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <Label>Amount<MoneyInput className="mt-1" value={props.adjustAmount} onChange={props.setAdjustAmount} /></Label>
-              <Label>Reference No.<Input className="mt-1" value={props.adjustRef} onChange={(e) => props.setAdjustRef(e.target.value)} /></Label>
-              <Label>Notes<Input className="mt-1" value={props.adjustNotes} onChange={(e) => props.setAdjustNotes(e.target.value)} /></Label>
-              <Button className="w-full" onClick={props.saveAdjustment}>Save</Button>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-base">Transactions</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-auto">
-                <table className="w-full min-w-[620px] text-sm">
-                  <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">Date</th><th className="px-3 py-2 text-right">Amount</th></tr></thead>
-                  <tbody>
-                    {(props.transactions || []).map((t: any) => {
-                      const amount = Number(t.signed_bank_amount || t.signed_cash_amount || t.amount || 0);
-                      return <tr key={t.id} className="border-t"><td className="px-3 py-2 capitalize">{String(t.payment_type || '').replace(/_/g, ' ')}</td><td className="px-3 py-2">{t.party_name || t.reference_number || '-'}</td><td className="px-3 py-2">{formatDate(t.payment_date)}</td><td className={`px-3 py-2 text-right font-semibold tabular-nums ${amount < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{formatMoney(Math.abs(amount))}</td></tr>;
-                    })}
-                    {!(props.transactions || []).length ? <tr><td colSpan={4} className="p-8 text-center text-slate-500">No transactions yet.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-    </div>
   );
 }

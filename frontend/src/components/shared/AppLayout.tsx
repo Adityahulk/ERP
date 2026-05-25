@@ -8,7 +8,7 @@ import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck, Barcode,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
-  Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight,
+  Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -87,6 +87,7 @@ const navGroups = [
      label: 'FINANCE',
      items: [
         { to: '/accounting', icon: Receipt, label: 'Accounting' },
+        { to: '/cash-bank', icon: Landmark, label: 'Cash & Bank' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },
      ]
   },

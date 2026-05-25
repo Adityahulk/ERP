@@ -140,6 +140,17 @@ function normalBalance(type: string): NormalBalance {
   return ['asset', 'expense'].includes(String(type).toLowerCase()) ? 'debit' : 'credit';
 }
 
+function toSqlDate(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
 async function upsertAccount(
   db: Queryable,
   companyId: string,
@@ -329,7 +340,7 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
     [
       input.companyId,
       voucherNumber,
-      input.entryDate,
+      toSqlDate(input.entryDate),
       input.entryType || 'manual',
       input.voucherType || input.entryType || 'manual',
       input.referenceType || null,
@@ -377,7 +388,7 @@ export async function postSalesInvoiceAccounting(db: Queryable, companyId: strin
   const outIgst = await getOrCreateDefaultAccount(db, companyId, 'Output IGST', 'liability', 'Current Liabilities');
   return postJournalEntry(db, {
     companyId,
-    entryDate: String(invoice.invoice_date || new Date().toISOString().slice(0, 10)),
+    entryDate: toSqlDate(invoice.invoice_date),
     entryType: 'system',
     voucherType: 'sale',
     voucherNumber: invoice.invoice_number,
@@ -403,7 +414,7 @@ export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: st
   const inIgst = await getOrCreateDefaultAccount(db, companyId, 'Input IGST', 'asset', 'Current Assets');
   return postJournalEntry(db, {
     companyId,
-    entryDate: String(invoice.bill_date || new Date().toISOString().slice(0, 10)),
+    entryDate: toSqlDate(invoice.bill_date),
     entryType: 'system',
     voucherType: 'purchase',
     voucherNumber: invoice.bill_number,
@@ -428,7 +439,7 @@ export async function postExpenseAccounting(db: Queryable, companyId: string, ex
   const creditAccount = ['cash'].includes(String(expense.payment_mode || '').toLowerCase()) ? cash : bank;
   return postJournalEntry(db, {
     companyId,
-    entryDate: String(expense.expense_date || new Date().toISOString().slice(0, 10)),
+    entryDate: toSqlDate(expense.expense_date),
     entryType: 'system',
     voucherType: 'expense',
     voucherNumber: expense.expense_number,
@@ -457,7 +468,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
   if (String(payment.payment_type) === 'bank_deposit') {
     return postJournalEntry(db, {
       companyId,
-      entryDate: String(payment.payment_date || new Date().toISOString().slice(0, 10)),
+      entryDate: toSqlDate(payment.payment_date),
       entryType: 'system',
       voucherType: 'payment',
       voucherNumber: payment.payment_number,
@@ -474,7 +485,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
   if (String(payment.payment_type) === 'bank_withdrawal') {
     return postJournalEntry(db, {
       companyId,
-      entryDate: String(payment.payment_date || new Date().toISOString().slice(0, 10)),
+      entryDate: toSqlDate(payment.payment_date),
       entryType: 'system',
       voucherType: 'payment',
       voucherNumber: payment.payment_number,
@@ -491,7 +502,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
 
   return postJournalEntry(db, {
     companyId,
-    entryDate: String(payment.payment_date || new Date().toISOString().slice(0, 10)),
+    entryDate: toSqlDate(payment.payment_date),
     entryType: 'system',
     voucherType: 'payment',
     voucherNumber: payment.payment_number,
