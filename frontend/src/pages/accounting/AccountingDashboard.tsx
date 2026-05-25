@@ -37,7 +37,20 @@ type AccountNode = {
   balance_type: 'Dr' | 'Cr';
   children?: AccountNode[];
 };
-type JournalLine = { account_id: string; debit: number; credit: number; description?: string };
+type JournalLine = { account_id: string; party_id?: string; debit: number; credit: number; description?: string };
+type PartyOption = { id: string; name: string; balance?: number };
+type AccountPickerOption =
+  | (AccountNode & { level: number; optionType: 'account'; value: string })
+  | {
+      id: string;
+      name: string;
+      level: number;
+      optionType: 'party';
+      value: string;
+      account_id: string;
+      party_id: string;
+      balance?: number;
+    };
 
 const accountTypes = [
   ['Assets', 'asset'],
@@ -57,6 +70,33 @@ function monthStart() {
 
 function flattenAccounts(nodes: AccountNode[] = [], level = 0): Array<AccountNode & { level: number }> {
   return nodes.flatMap((node) => [{ ...node, level }, ...flattenAccounts(node.children || [], level + 1)]);
+}
+
+function isPartyLedgerAccount(account: AccountNode & { level: number }) {
+  const name = account.name.toLowerCase();
+  return name === 'sundry debtors' || name === 'sundry creditors';
+}
+
+function buildJournalAccountOptions(accounts: Array<AccountNode & { level: number }>, parties: PartyOption[]): AccountPickerOption[] {
+  return accounts.flatMap((account) => {
+    const accountOption: AccountPickerOption = { ...account, optionType: 'account', value: account.id };
+    if (!isPartyLedgerAccount(account) || !parties.length) return [accountOption];
+    const partyOptions: AccountPickerOption[] = parties.map((party) => ({
+      id: `${account.id}:${party.id}`,
+      name: party.name,
+      level: account.level + 1,
+      optionType: 'party',
+      value: `party:${account.id}:${party.id}`,
+      account_id: account.id,
+      party_id: party.id,
+      balance: party.balance,
+    }));
+    return [accountOption, ...partyOptions];
+  });
+}
+
+function journalLineAccountValue(line: JournalLine) {
+  return line.party_id ? `party:${line.account_id}:${line.party_id}` : line.account_id;
 }
 
 function drCrClass(kind?: string) {
@@ -94,7 +134,23 @@ export default function AccountingDashboard() {
     queryFn: async () => (await api.get('/accounting/accounts/tree')).data?.data as AccountNode[],
   });
 
+  const { data: partyOptions = [] } = useQuery({
+    queryKey: ['accounting', 'party-options'],
+    queryFn: async () => {
+      const body = (await api.get('/parties', { params: { page: 1, limit: 500, is_active: true } })).data?.data;
+      return ((body?.data ?? body ?? []) as PartyOption[]).map((party) => ({
+        id: party.id,
+        name: party.name,
+        balance: Number(party.balance || 0),
+      }));
+    },
+  });
+
   const accountOptions = useMemo(() => flattenAccounts(accountsTree), [accountsTree]);
+  const journalAccountOptions = useMemo(
+    () => buildJournalAccountOptions(accountOptions, partyOptions),
+    [accountOptions, partyOptions],
+  );
   const filteredChartRoots = useMemo(() => {
     const roots = accountsTree.filter((a) => (a.account_category || '') === accountType || a.account_type === accountType);
     const q = accountSearch.trim().toLowerCase();
@@ -380,9 +436,24 @@ export default function AccountingDashboard() {
                       {journalForm.lines.map((line, index) => (
                         <tr className="border-t" key={index}>
                           <td className="px-3 py-2">
-                            <select className="h-10 w-full rounded-md border bg-white px-3" value={line.account_id} onChange={(e) => updateLine(index, { account_id: e.target.value })}>
+                            <select
+                              className="h-10 w-full rounded-md border bg-white px-3"
+                              value={journalLineAccountValue(line)}
+                              onChange={(e) => {
+                                const selected = journalAccountOptions.find((option) => option.value === e.target.value);
+                                if (selected?.optionType === 'party') {
+                                  updateLine(index, { account_id: selected.account_id, party_id: selected.party_id });
+                                  return;
+                                }
+                                updateLine(index, { account_id: e.target.value, party_id: undefined });
+                              }}
+                            >
                               <option value="">Select account</option>
-                              {accountOptions.map((a) => <option key={a.id} value={a.id}>{`${'-- '.repeat(Math.min(a.level, 3))}${a.name}`}</option>)}
+                              {journalAccountOptions.map((option) => (
+                                <option key={option.id} value={option.value}>
+                                  {`${'-- '.repeat(Math.min(option.level, 4))}${option.name}${option.optionType === 'party' ? ' (party)' : ''}`}
+                                </option>
+                              ))}
                             </select>
                           </td>
                           <td className="px-3 py-2"><Input value={line.description || ''} onChange={(e) => updateLine(index, { description: e.target.value })} /></td>
