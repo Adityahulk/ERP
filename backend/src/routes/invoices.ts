@@ -10,6 +10,7 @@ router.use(verifyToken);
 router.post('/search-items', ctrl.searchItems);
 router.post('/scan-barcode', ctrl.scanBarcode);
 router.get('/', ctrl.listInvoices);
+router.get('/next-number', ctrl.getNextInvoiceNumber);
 router.post('/', ctrl.createInvoice);
 router.post('/preview-pdf', ctrl.previewInvoicePdf);
 router.post('/bulk-sales-pdf', ctrl.getBulkSalesInvoicePDF);

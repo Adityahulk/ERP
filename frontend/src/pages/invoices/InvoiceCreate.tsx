@@ -111,6 +111,9 @@ export default function InvoiceCreate() {
 
   const [godownId, setGodownId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [autoInvoiceNumber, setAutoInvoiceNumber] = useState('');
+  const [invoiceNumberEdited, setInvoiceNumberEdited] = useState(false);
+  const [invoiceNumberLoading, setInvoiceNumberLoading] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('INR');
@@ -151,7 +154,6 @@ export default function InvoiceCreate() {
   useEffect(() => {
     if (!editInvoiceId) {
       hydratedIdRef.current = null;
-      setInvoiceNumber('');
       return;
     }
     if (!existingInv) return;
@@ -171,6 +173,8 @@ export default function InvoiceCreate() {
     setPartyPhone(String(inv.party_phone || ''));
     setGodownId(inv.godown_id ? String(inv.godown_id) : '');
     setInvoiceNumber(String(inv.invoice_number || ''));
+    setAutoInvoiceNumber('');
+    setInvoiceNumberEdited(true);
     setCurrencyCode(normalizeCurrencyCode(inv.currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
     setInvoiceDate(inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
@@ -205,9 +209,44 @@ export default function InvoiceCreate() {
     hydratedIdRef.current = editInvoiceId;
   }, [editInvoiceId, existingInv, navigate]);
 
+  useEffect(() => {
+    if (editInvoiceId) return;
+    let cancelled = false;
+    setInvoiceNumberLoading(true);
+    api.get('/invoices/next-number', {
+      params: {
+        invoice_type: isGstInvoice ? 'sale' : 'non_gst',
+        godown_id: godownId || undefined,
+      },
+    })
+      .then(({ data: res }) => {
+        if (cancelled) return;
+        const nextNumber = String(res?.data?.invoice_number || '').trim();
+        if (!nextNumber) return;
+        setAutoInvoiceNumber(nextNumber);
+        setInvoiceNumber((current) => {
+          if (invoiceNumberEdited && current.trim()) return current;
+          return nextNumber;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setAutoInvoiceNumber('');
+      })
+      .finally(() => {
+        if (!cancelled) setInvoiceNumberLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editInvoiceId, godownId, isGstInvoice, invoiceNumberEdited]);
+
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.bill_date) setInvoiceDate(data.bill_date);
-    if (data.invoice_number) setInvoiceNumber(String(data.invoice_number).trim().toUpperCase().slice(0, 16));
+    if (data.invoice_number) {
+      setInvoiceNumberEdited(true);
+      setInvoiceNumber(String(data.invoice_number).trim().toUpperCase().slice(0, 16));
+    }
     if (data.matched_party_id && data.matched_party) {
       selectParty(data.matched_party);
       toast.success('Matched party from OCR and applied it');
@@ -350,6 +389,7 @@ export default function InvoiceCreate() {
       setPartyPhone(String(draft.partyPhone || ''));
       setGodownId(String(draft.godownId || ''));
       setInvoiceNumber(String(draft.invoiceNumber || ''));
+      setInvoiceNumberEdited(Boolean(String(draft.invoiceNumber || '').trim()));
       setInvoiceDate(String(draft.invoiceDate || new Date().toISOString().split('T')[0]));
       setDueDate(String(draft.dueDate || ''));
       setCurrencyCode(normalizeCurrencyCode(draft.currencyCode || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
@@ -432,6 +472,7 @@ export default function InvoiceCreate() {
       document_theme: documentTheme,
       currency_code: currencyCode,
       invoice_number: normalizedInvoiceNumber || undefined,
+      invoice_number_auto: !editInvoiceId && Boolean(normalizedInvoiceNumber) && !invoiceNumberEdited && normalizedInvoiceNumber === autoInvoiceNumber,
       party_id: partyId || undefined,
       party_name: effectivePartyName,
       godown_id: godownId || undefined,
@@ -618,8 +659,31 @@ export default function InvoiceCreate() {
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <Label className="text-xs">Invoice Number</Label>
-                <Input className="mt-1 font-mono" value={invoiceNumber} maxLength={16} placeholder="Auto generated" onChange={(e) => setInvoiceNumber(e.target.value.trim().toUpperCase())} />
-                <p className="mt-1 text-[11px] text-muted-foreground">{INVOICE_NUMBER_HELP}</p>
+                <Input
+                  className="mt-1 font-mono"
+                  value={invoiceNumber}
+                  maxLength={16}
+                  placeholder={invoiceNumberLoading ? 'Fetching next number...' : 'Auto generated'}
+                  onChange={(e) => {
+                    setInvoiceNumberEdited(true);
+                    setInvoiceNumber(e.target.value.trim().toUpperCase());
+                  }}
+                />
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>{INVOICE_NUMBER_HELP}</span>
+                  {!editInvoiceId && autoInvoiceNumber && (
+                    <button
+                      type="button"
+                      className="font-medium text-primary hover:underline"
+                      onClick={() => {
+                        setInvoiceNumber(autoInvoiceNumber);
+                        setInvoiceNumberEdited(false);
+                      }}
+                    >
+                      Use next: {autoInvoiceNumber}
+                    </button>
+                  )}
+                </div>
               </div>
               <div><Label className="text-xs">Invoice Date</Label><Input type="date" className="mt-1" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
               <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>

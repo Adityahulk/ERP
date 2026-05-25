@@ -139,6 +139,40 @@ async function generateInvoiceNumber(companyId: string, invoiceKind: string, god
   return `${prefix}/${branchCode}/${fyShort}${paddedSeq}`;
 }
 
+async function previewNextInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
+  const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
+  const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
+  const prefix = prefixRes.rows[0]?.invoice_prefix || defaultPrefix;
+
+  const now = new Date();
+  const month = now.getMonth();
+  const yearStr = now.getFullYear().toString().slice(-2);
+  const nextYearStr = (now.getFullYear() + 1).toString().slice(-2);
+  const prevYearStr = (now.getFullYear() - 1).toString().slice(-2);
+  const fyShort = month >= 3 ? `${yearStr}-${nextYearStr}` : `${prevYearStr}-${yearStr}`;
+  const branchCode = godownId ? 'GW' : 'HQ';
+  const redisKey = `seq:invoice:${companyId}:${fyShort}:${invoiceKind}`;
+
+  const dbRes = await query(
+    `SELECT COUNT(*)::int AS count
+     FROM invoices
+     WHERE company_id = $1 AND is_deleted = false AND created_at >= $2`,
+    [companyId, new Date(now.getFullYear(), 0, 1).toISOString()],
+  );
+  let seq = (dbRes.rows[0]?.count || 0) + 1;
+
+  if (redis) {
+    try {
+      const current = Number(await redis.get(redisKey));
+      if (Number.isFinite(current) && current >= seq) seq = current + 1;
+    } catch {
+      // Read-only preview should never block invoice creation.
+    }
+  }
+
+  return `${prefix}/${branchCode}/${fyShort}${String(seq).padStart(4, '0')}`;
+}
+
 function mapLineForGst(raw: any) {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
   const qty = Number(raw.quantity) || 0;
@@ -413,6 +447,32 @@ export async function scanBarcode(req: Request, res: Response) {
   }
 }
 
+// ── GET /api/invoices/next-number ────────────────────────────────
+export async function getNextInvoiceNumber(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const rawType = req.query.invoice_type === 'non_gst' ? 'sale' : String(req.query.invoice_type || 'sale');
+    const invoiceKind = rawType === 'purchase' ? 'purchase' : 'sale';
+    const requestedGodownId = trimOrNull(req.query.godown_id);
+    let godownId = requestedGodownId || req.user!.godown_id || null;
+    if (!godownId) {
+      const godownRes = await query(
+        `SELECT id FROM godowns
+         WHERE company_id = $1 AND is_deleted = false AND is_active = true
+         ORDER BY is_default DESC, created_at ASC
+         LIMIT 1`,
+        [companyId],
+      );
+      godownId = godownRes.rows[0]?.id || 'default';
+    }
+    const invoiceNumber = validateInvoiceNumber(await previewNextInvoiceNumber(companyId, invoiceKind, godownId));
+    res.json(success({ invoice_number: invoiceNumber }));
+  } catch (err: any) {
+    console.error('getNextInvoiceNumber error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message || 'Failed to fetch next invoice number'));
+  }
+}
+
 // ── POST /api/invoices ────────────────────────────────────────
 export async function createInvoice(req: Request, res: Response) {
   try {
@@ -444,8 +504,17 @@ export async function createInvoice(req: Request, res: Response) {
       let invoiceNumber = '';
       if (requestedInvoiceNumber) {
         invoiceNumber = validateInvoiceNumber(requestedInvoiceNumber);
-        await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
+        try {
+          await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
+        } catch (err: any) {
+          if (!d.invoice_number_auto || !/already used/i.test(err?.message || '')) throw err;
+          invoiceNumber = '';
+        }
       } else {
+        invoiceNumber = '';
+      }
+
+      if (!invoiceNumber) {
         for (let attempt = 0; attempt < 5; attempt += 1) {
           invoiceNumber = validateInvoiceNumber(await generateInvoiceNumber(companyId, rawType, godownId));
           try {
