@@ -82,9 +82,7 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
         const label = String(record.label || record.key || '').trim().slice(0, 80);
         if (!label) return null;
         const key = normalizeFieldKey(record.key || label, `custom_${index + 1}`);
-        const scope = ['sales', 'purchase', 'all'].includes(String(record.scope || '').toLowerCase())
-          ? String(record.scope).toLowerCase()
-          : 'sales';
+        const scope = 'item';
         const type = ['text', 'number', 'date'].includes(String(record.type || '').toLowerCase())
           ? String(record.type).toLowerCase()
           : 'text';

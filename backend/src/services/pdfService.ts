@@ -706,7 +706,7 @@ function salesCustomFieldDefinitions(company: any): Array<{ id: string; label: s
     .map((d: any) => ({
       id: String(d?.id || '').trim(),
       label: String(d?.label || d?.id || '').trim(),
-      scope: String(d?.scope || 'invoice'),
+      scope: 'item',
       enabled: d?.enabled !== false,
     }))
     .filter((d) => d.id && d.label && d.enabled);

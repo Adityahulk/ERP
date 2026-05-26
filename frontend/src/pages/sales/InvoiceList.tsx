@@ -43,7 +43,7 @@ function salesCustomBulkOptions(company: any) {
   return defs
     .filter((d: any) => d?.enabled !== false && d?.id && d?.label)
     .map((d: any) => ({
-      id: `custom:${d.scope === 'item' ? 'item' : 'invoice'}:${String(d.id)}`,
+      id: `custom:item:${String(d.id)}`,
       label: String(d.label),
     }));
 }

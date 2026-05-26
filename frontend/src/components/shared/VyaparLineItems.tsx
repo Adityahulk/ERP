@@ -109,6 +109,7 @@ export default function VyaparLineItems({
   customFields = [],
 }: Props) {
   const moneySymbol = currencySymbol(currencyCode);
+  const customColumnFields = customFields.filter((field) => field.id && field.label);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -389,7 +390,10 @@ export default function VyaparLineItems({
       {/* Items Table */}
       {items.length > 0 && (
         <div className="max-w-full overflow-x-auto rounded-xl border">
-          <table className={`w-full table-fixed text-sm ${showPricing ? 'min-w-[760px]' : 'min-w-[520px]'}`}>
+          <table
+            className="w-full table-fixed text-sm"
+            style={{ minWidth: `${(showPricing ? 760 : 520) + customColumnFields.length * 150}px` }}
+          >
             <colgroup>
               <col className={showPricing ? 'w-[26%]' : 'w-[44%]'} />
               <col className="w-[92px]" />
@@ -397,6 +401,7 @@ export default function VyaparLineItems({
               {showPricing && <col className="w-[120px]" />}
               {showPricing && <col className="hidden w-[110px] sm:table-column" />}
               {showPricing && isGst && <col className="hidden w-[92px] sm:table-column" />}
+              {customColumnFields.map((field) => <col key={field.id} className="w-[150px]" />)}
               {showPricing && <col className="w-[132px]" />}
               <col className="w-[56px]" />
             </colgroup>
@@ -412,6 +417,11 @@ export default function VyaparLineItems({
                 {showPricing && isGst && (
                   <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20 hidden sm:table-cell">GST %</th>
                 )}
+                {customColumnFields.map((field) => (
+                  <th key={field.id} className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">
+                    {field.label}{field.required ? ' *' : ''}
+                  </th>
+                ))}
                 {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24">Total</th>}
                 <th className="sticky right-0 z-10 w-12 bg-muted/40"></th>
               </tr>
@@ -521,6 +531,17 @@ export default function VyaparLineItems({
                           </select>
                         </td>
                       )}
+                      {customColumnFields.map((field) => (
+                        <td key={field.id} className="px-3 py-2">
+                          <Input
+                            type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                            className="h-8 w-full text-sm"
+                            value={String(item.custom_fields?.[field.id] || '')}
+                            onChange={(e) => updateCustomField(idx, field.id, e.target.value)}
+                            placeholder={field.label}
+                          />
+                        </td>
+                      ))}
                       {showPricing && <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total, currencyCode)}
                       </td>}
@@ -623,19 +644,6 @@ export default function VyaparLineItems({
                                 />
                               </div>
                             )}
-                            {customFields.map((field) => (
-                              <div key={field.id} className="min-w-0">
-                                <span className="mb-1 block text-muted-foreground">
-                                  {field.label}{field.required ? ' *' : ''}
-                                </span>
-                                <Input
-                                  type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                                  className="h-8 w-full text-xs"
-                                  value={String(item.custom_fields?.[field.id] || '')}
-                                  onChange={(e) => updateCustomField(idx, field.id, e.target.value)}
-                                />
-                              </div>
-                            ))}
                             {/* Mobile: disc & gst in expanded row */}
                             {showPricing && <div className="min-w-0 sm:hidden">
                               <span className="mb-1 block text-muted-foreground">Disc ({moneySymbol})</span>

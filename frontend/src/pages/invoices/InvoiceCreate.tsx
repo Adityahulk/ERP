@@ -63,7 +63,7 @@ function salesCustomFieldDefs(company: any, scope: 'invoice' | 'item'): SalesCus
     .map((d: any) => ({
       id: String(d?.id || '').trim(),
       label: String(d?.label || d?.id || '').trim(),
-      scope: d?.scope === 'item' ? 'item' : 'invoice',
+      scope: 'item',
       type: ['number', 'date'].includes(String(d?.type)) ? d.type : 'text',
       required: Boolean(d?.required),
       enabled: d?.enabled !== false,

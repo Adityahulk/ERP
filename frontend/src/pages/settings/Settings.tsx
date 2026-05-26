@@ -17,7 +17,7 @@ import { DOCUMENT_THEME_OPTIONS } from '@/components/invoices/InvoicePreviewWork
 type SalesCustomFieldDef = {
   id: string;
   label: string;
-  scope: 'invoice' | 'item';
+  scope: 'item';
   type: 'text' | 'number' | 'date';
   required: boolean;
   enabled: boolean;
@@ -33,7 +33,7 @@ function normalizeSalesCustomFields(value: unknown): SalesCustomFieldDef[] {
     .map((row: any) => ({
       id: normalizeFieldId(String(row?.id || row?.label || '')),
       label: String(row?.label || row?.id || '').trim(),
-      scope: (row?.scope === 'item' ? 'item' : 'invoice') as SalesCustomFieldDef['scope'],
+      scope: 'item' as SalesCustomFieldDef['scope'],
       type: (['number', 'date'].includes(String(row?.type)) ? row.type : 'text') as SalesCustomFieldDef['type'],
       required: Boolean(row?.required),
       enabled: row?.enabled !== false,
@@ -47,7 +47,7 @@ function prepareSalesCustomFields(fields: SalesCustomFieldDef[]) {
     .map((field) => ({
       id: normalizeFieldId(field.id || field.label),
       label: String(field.label || field.id || '').trim(),
-      scope: field.scope === 'item' ? 'item' : 'invoice',
+      scope: 'item',
       type: field.type === 'number' || field.type === 'date' ? field.type : 'text',
       required: Boolean(field.required),
       enabled: field.enabled !== false,
@@ -550,7 +550,7 @@ export default function Settings() {
     const base = `field_${salesCustomFields.length + 1}`;
     setSalesCustomFields((prev) => [
       ...prev,
-      { id: base, label: 'New Field', scope: 'invoice', type: 'text', required: false, enabled: true },
+      { id: base, label: 'New Field', scope: 'item', type: 'text', required: false, enabled: true },
     ]);
   };
 
@@ -1342,7 +1342,7 @@ export default function Settings() {
                            <div className="flex items-center justify-between gap-3">
                               <div>
                                  <h3 className="font-semibold">Sales Invoice Custom Fields</h3>
-                                 <p className="text-xs text-slate-500">Add fields once here. They appear while creating sales invoices and can be selected in Bulk Invoice columns.</p>
+                                 <p className="text-xs text-slate-500">Add item-row fields once here. They appear as columns on every sales invoice line and can be selected in Bulk Invoice columns.</p>
                               </div>
                               <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addSalesCustomField}>
                                  <Plus className="w-4 h-4" /> Add field
@@ -1355,7 +1355,7 @@ export default function Settings() {
                                  </div>
                               )}
                               {salesCustomFields.map((field, idx) => (
-                                 <div key={idx} className="grid gap-2 rounded-lg border bg-white p-3 lg:grid-cols-[1.4fr_1fr_120px_90px_90px_44px]">
+                                 <div key={idx} className="grid gap-2 rounded-lg border bg-white p-3 lg:grid-cols-[1.4fr_1fr_90px_90px_44px]">
                                     <div>
                                        <label className="text-xs font-medium text-slate-600">Label</label>
                                        <Input className="mt-1" value={field.label} onChange={(e) => updateSalesCustomField(idx, { label: e.target.value })} />
@@ -1363,13 +1363,6 @@ export default function Settings() {
                                     <div>
                                        <label className="text-xs font-medium text-slate-600">Field key</label>
                                        <Input className="mt-1 font-mono text-xs" value={field.id} onChange={(e) => updateSalesCustomField(idx, { id: e.target.value })} />
-                                    </div>
-                                    <div>
-                                       <label className="text-xs font-medium text-slate-600">Where</label>
-                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={field.scope} onChange={(e) => updateSalesCustomField(idx, { scope: e.target.value as SalesCustomFieldDef['scope'] })}>
-                                          <option value="invoice">Invoice</option>
-                                          <option value="item">Item row</option>
-                                       </select>
                                     </div>
                                     <div>
                                        <label className="text-xs font-medium text-slate-600">Type</label>
