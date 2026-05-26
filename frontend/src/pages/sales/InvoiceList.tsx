@@ -37,6 +37,7 @@ const BULK_COLUMN_OPTIONS = [
 ] as const;
 
 const DEFAULT_BULK_COLUMNS = ['serial_no', 'item_name', 'billing_date', 'quantity', 'unit', 'unit_price', 'gst_rate', 'amount'];
+const BULK_TAX_COLUMN_IDS = new Set(['gst_rate', 'cgst_amount', 'sgst_amount', 'igst_amount', 'cess_amount']);
 
 function salesCustomBulkOptions(company: any) {
   const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
@@ -80,7 +81,9 @@ export default function InvoiceList() {
   const [bulkFromDate, setBulkFromDate] = useState(initialRange.from);
   const [bulkToDate, setBulkToDate] = useState(initialRange.to);
   const [bulkColumns, setBulkColumns] = useState<string[]>(DEFAULT_BULK_COLUMNS);
+  const [bulkIsGstBill, setBulkIsGstBill] = useState(true);
   const [bulkLoading, setBulkLoading] = useState<'preview' | 'download' | null>(null);
+  const [bulkSavedLoadingId, setBulkSavedLoadingId] = useState<string | null>(null);
   const customBulkColumnOptions = useMemo(() => salesCustomBulkOptions(company), [company]);
 
   const companyDefaultBulkColumns = useMemo(
@@ -114,6 +117,13 @@ export default function InvoiceList() {
   });
   const bulkParties: any[] = Array.isArray(partiesData) ? partiesData : [];
   const selectedBulkParty = bulkParties.find((p) => p.id === bulkPartyId);
+
+  const { data: bulkInvoicesData, isLoading: bulkInvoicesLoading } = useQuery({
+    queryKey: ['bulk-sales-invoices'],
+    enabled: bulkOpen,
+    queryFn: () => api.get('/invoices/bulk-sales', { params: { page: 1, limit: 20 } }).then((r) => r.data?.data ?? r.data),
+  });
+  const bulkInvoices: any[] = bulkInvoicesData?.data ?? bulkInvoicesData ?? [];
 
   const generatePDF = useCallback(async (id: string, number: string) => {
     setPdfLoadingId(id);
@@ -163,11 +173,13 @@ export default function InvoiceList() {
     setBulkLoading(mode);
     const t = toast.loading(mode === 'preview' ? 'Preparing preview…' : 'Preparing bulk invoice…');
     try {
-      const res = await api.post('/invoices/bulk-sales-pdf', {
+      const endpoint = mode === 'download' ? '/invoices/bulk-sales' : '/invoices/bulk-sales-pdf';
+      const res = await api.post(endpoint, {
         party_id: bulkPartyId,
         from_date: bulkFromDate,
         to_date: bulkToDate,
         columns: bulkColumns,
+        is_gst_bill: bulkIsGstBill,
         inline: mode === 'preview',
       }, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/pdf' });
@@ -186,6 +198,7 @@ export default function InvoiceList() {
         link.remove();
         window.URL.revokeObjectURL(url);
         toast.success('Bulk invoice download started', { id: t });
+        queryClient.invalidateQueries({ queryKey: ['bulk-sales-invoices'] });
       }
     } catch (err: any) {
       if (err?.response?.data instanceof Blob) {
@@ -202,7 +215,28 @@ export default function InvoiceList() {
     } finally {
       setBulkLoading(null);
     }
-  }, [bulkColumns, bulkFromDate, bulkPartyId, bulkToDate, selectedBulkParty]);
+  }, [bulkColumns, bulkFromDate, bulkIsGstBill, bulkPartyId, bulkToDate, queryClient, selectedBulkParty]);
+
+  const downloadSavedBulkInvoice = useCallback(async (bulk: any) => {
+    setBulkSavedLoadingId(bulk.id);
+    const t = toast.loading('Preparing bulk invoice…');
+    try {
+      const res = await api.get(`/invoices/bulk-sales/${bulk.id}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${String(bulk.bulk_invoice_number || 'bulk-invoice').replace(/[^\w.-]+/g, '-')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Bulk invoice download started', { id: t });
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to download bulk invoice', { id: t });
+    } finally {
+      setBulkSavedLoadingId(null);
+    }
+  }, []);
 
   const generateIRN = useCallback(async (id: string) => {
     setIrnLoadingId(id);
@@ -524,7 +558,7 @@ export default function InvoiceList() {
           </SheetHeader>
           <div className="mt-6 space-y-6">
             <div className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-600">
-              Creates a printable party-wise PDF from existing sales in the selected date range. This does not create a new invoice or change ledger, stock, payments, IRN, or E-Way Bill records.
+              Creates a reference-only party-wise bulk invoice from existing sales in the selected date range. It is saved separately and does not change ledger, stock, payments, IRN, E-Way Bill, or accounting records.
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -559,6 +593,22 @@ export default function InvoiceList() {
               </div>
             </div>
 
+            <div className="rounded-lg border bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Bill type</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Non-GST hides GST columns and GST totals in the reference PDF.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 text-sm font-medium">
+                  <span className={!bulkIsGstBill ? 'text-foreground' : 'text-muted-foreground'}>Non-GST</span>
+                  <Switch checked={bulkIsGstBill} onCheckedChange={setBulkIsGstBill} />
+                  <span className={bulkIsGstBill ? 'text-foreground' : 'text-muted-foreground'}>GST</span>
+                </div>
+              </div>
+            </div>
+
             <div>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -571,19 +621,67 @@ export default function InvoiceList() {
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {[...BULK_COLUMN_OPTIONS, ...customBulkColumnOptions].map((col) => {
+                  const isTaxColumn = BULK_TAX_COLUMN_IDS.has(col.id);
                   const checked = bulkColumns.includes(col.id);
                   const required = bulkColumns.length === 1 && checked;
                   return (
-                    <div key={col.id} className="flex items-center justify-between gap-3 rounded-md border bg-white p-3">
+                    <div key={col.id} className={`flex items-center justify-between gap-3 rounded-md border bg-white p-3 ${!bulkIsGstBill && isTaxColumn ? 'opacity-50' : ''}`}>
                       <span className="text-sm font-medium">{col.label}</span>
                       <Switch
                         checked={checked}
-                        disabled={required}
+                        disabled={required || (!bulkIsGstBill && isTaxColumn)}
                         onCheckedChange={(v) => toggleBulkColumn(col.id, v)}
                       />
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">Bulk invoice section</h3>
+                  <p className="text-xs text-muted-foreground">Saved reference invoices. Status is derived from the included source invoices.</p>
+                </div>
+              </div>
+              <div className="overflow-hidden rounded-lg border bg-white">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted text-left text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">Bulk Invoice #</th>
+                      <th className="px-3 py-2">Party</th>
+                      <th className="px-3 py-2">Period</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2 text-right">PDF</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {bulkInvoicesLoading ? (
+                      <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">Loading bulk invoices...</td></tr>
+                    ) : bulkInvoices.length === 0 ? (
+                      <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">No bulk invoices created yet.</td></tr>
+                    ) : bulkInvoices.map((bulk) => (
+                      <tr key={bulk.id}>
+                        <td className="px-3 py-2 font-semibold">{bulk.bulk_invoice_number}</td>
+                        <td className="px-3 py-2">{bulk.party_name}</td>
+                        <td className="px-3 py-2 tabular-nums">{formatDate(bulk.from_date)} - {formatDate(bulk.to_date)}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatMoney(Number(bulk.total_amount || 0))}</td>
+                        <td className="px-3 py-2">
+                          <Badge variant="secondary" className={`capitalize ${statusColors[bulk.payment_status] || 'bg-muted text-muted-foreground'}`}>
+                            {String(bulk.payment_status || 'unpaid').replace('_', ' ')}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <Button type="button" variant="ghost" size="icon" disabled={bulkSavedLoadingId === bulk.id} onClick={() => downloadSavedBulkInvoice(bulk)}>
+                            {bulkSavedLoadingId === bulk.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -596,7 +694,7 @@ export default function InvoiceList() {
                   <Eye className="h-4 w-4" /> Preview PDF
                 </Button>
                 <Button type="button" className="gap-2" onClick={() => generateBulkInvoicePdf('download')} loading={bulkLoading === 'download'}>
-                  <Download className="h-4 w-4" /> Download PDF
+                  <Download className="h-4 w-4" /> Create & Download PDF
                 </Button>
               </div>
             </div>

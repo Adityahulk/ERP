@@ -676,6 +676,14 @@ const BULK_MONEY_COLUMNS = new Set([
   'amount',
 ]);
 
+const BULK_TAX_COLUMNS = new Set([
+  'gst_rate',
+  'cgst_amount',
+  'sgst_amount',
+  'igst_amount',
+  'cess_amount',
+]);
+
 const BULK_NUMERIC_COLUMNS = new Set([
   'serial_no',
   'quantity',
@@ -697,6 +705,13 @@ function normalizeBulkSalesColumns(input: unknown): string[] {
     .filter((c) => BULK_COLUMN_LABELS[c] || c.startsWith('custom:invoice:') || c.startsWith('custom:item:'));
   const uniq = Array.from(new Set(picked));
   return uniq.length ? uniq : [...BULK_SALES_INVOICE_DEFAULT_COLUMNS];
+}
+
+function normalizeBulkSalesColumnsForBill(input: unknown, isGstBill: boolean): string[] {
+  const columns = normalizeBulkSalesColumns(input);
+  if (isGstBill) return columns;
+  const filtered = columns.filter((column) => !BULK_TAX_COLUMNS.has(column));
+  return filtered.length ? filtered : ['serial_no', 'item_name', 'billing_date', 'quantity', 'unit', 'unit_price', 'amount'];
 }
 
 function salesCustomFieldDefinitions(company: any): Array<{ id: string; label: string; scope: string; enabled?: boolean }> {
@@ -745,9 +760,13 @@ export async function generateBulkSalesInvoicePDF(args: {
   columns: unknown;
   fromDate: string;
   toDate: string;
+  isGstBill?: boolean;
+  bulkInvoiceNumber?: string;
+  paymentStatus?: string;
 }): Promise<Buffer> {
   const { company, party, rows, fromDate, toDate } = args;
-  const columns = normalizeBulkSalesColumns(args.columns);
+  const isGstBill = args.isGstBill !== false;
+  const columns = normalizeBulkSalesColumnsForBill(args.columns, isGstBill);
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
   const totalAmount = rows.reduce((sum, r) => sum + Number(r.total_amount || 0), 0);
@@ -787,11 +806,15 @@ export async function generateBulkSalesInvoicePDF(args: {
 
   const qtyTotalCell = columns.includes('quantity') ? `<div><span>Total Qty</span><b>${fmtQty(totalQty)}</b></div>` : '';
   const discountCell = totalDiscount > 0 ? `<div><span>Discount</span><b>${fmtPaise(totalDiscount)}</b></div>` : '';
-  const taxCells = [
-    totalCgst > 0 ? `<div><span>CGST</span><b>${fmtPaise(totalCgst)}</b></div>` : '',
-    totalSgst > 0 ? `<div><span>SGST</span><b>${fmtPaise(totalSgst)}</b></div>` : '',
-    totalIgst > 0 ? `<div><span>IGST</span><b>${fmtPaise(totalIgst)}</b></div>` : '',
-  ].join('');
+  const taxCells = isGstBill
+    ? [
+        `<div><span>Taxable</span><b>${fmtPaise(totalTaxable)}</b></div>`,
+        totalCgst > 0 ? `<div><span>CGST</span><b>${fmtPaise(totalCgst)}</b></div>` : '',
+        totalSgst > 0 ? `<div><span>SGST</span><b>${fmtPaise(totalSgst)}</b></div>` : '',
+        totalIgst > 0 ? `<div><span>IGST</span><b>${fmtPaise(totalIgst)}</b></div>` : '',
+      ].join('')
+    : '';
+  const paymentStatus = String(args.paymentStatus || '').trim();
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111827;margin:0;font-size:11px}
@@ -820,7 +843,7 @@ export async function generateBulkSalesInvoicePDF(args: {
       </div>
       <div>${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Logo"/>` : ''}</div>
     </section>
-    <h1 class="title">Tax Invoice</h1>
+    <h1 class="title">${isGstBill ? 'Tax Invoice' : 'Invoice'}</h1>
     <section class="meta">
       <div>
         <div class="block-title">Bill To</div>
@@ -837,8 +860,9 @@ export async function generateBulkSalesInvoicePDF(args: {
       <div class="details">
         <b>Invoice Details</b>
         <div class="range">Period: ${escapeHtml(formatDocDate(fromDate))} to ${escapeHtml(formatDocDate(toDate))}</div>
+        ${args.bulkInvoiceNumber ? `<div>Bulk Invoice No.: ${escapeHtml(args.bulkInvoiceNumber)}</div>` : ''}
         <div>Generated: ${escapeHtml(formatDocDate(new Date().toISOString()))}</div>
-        <div>Total lines: ${rows.length}</div>
+        <div>Total lines: ${rows.length}${paymentStatus ? ` · ${escapeHtml(paymentStatus.replace(/_/g, ' '))}` : ''}</div>
       </div>
     </section>
     <table>
@@ -847,13 +871,12 @@ export async function generateBulkSalesInvoicePDF(args: {
     </table>
     <section class="footer">
       <div>
-        <div class="words"><b>Invoice Amount in Words:</b> ${escapeHtml(amountToWordsINR(totalAmount))}</div>
+        <div class="words"><b>Invoice Amount in Words:</b> ${escapeHtml(amountToWordsINR(totalAmount / 100))}</div>
         <div class="terms"><b>Terms and Conditions</b><br/>${multilineHtml(company.terms_and_conditions || 'Thank you for your business.')}</div>
       </div>
       <div class="totals">
         ${qtyTotalCell}
         ${discountCell}
-        <div><span>Taxable</span><b>${fmtPaise(totalTaxable)}</b></div>
         ${taxCells}
         <div class="grand"><span>Total</span><b>₹ ${fmtPaise(totalAmount)}</b></div>
       </div>

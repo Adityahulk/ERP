@@ -88,6 +88,81 @@ function validateInvoiceNumber(value: unknown): string {
   return s;
 }
 
+function deriveBulkPaymentStatus(rows: any[]): 'paid' | 'partial' | 'unpaid' {
+  const byInvoice = new Map<string, string>();
+  for (const row of rows) {
+    if (row.invoice_id) byInvoice.set(String(row.invoice_id), String(row.payment_status || 'unpaid'));
+  }
+  const statuses = Array.from(byInvoice.values());
+  if (statuses.length && statuses.every((status) => status === 'paid')) return 'paid';
+  if (statuses.some((status) => status === 'paid' || status === 'partial')) return 'partial';
+  return 'unpaid';
+}
+
+async function nextBulkInvoiceNumber(db: Queryable, companyId: string): Promise<string> {
+  const year = new Date().getFullYear().toString().slice(-2);
+  const res = await db.query(
+    `SELECT COUNT(*)::int AS c
+     FROM bulk_sales_invoices
+     WHERE company_id = $1 AND is_deleted = false
+       AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())`,
+    [companyId],
+  );
+  return `BULK/${year}/${String(Number(res.rows[0]?.c || 0) + 1).padStart(4, '0')}`;
+}
+
+async function loadBulkSalesRows(db: Queryable, companyId: string, partyId: string, fromDate: string, toDate: string) {
+  return db.query(
+    `SELECT
+       i.id AS invoice_id,
+       i.invoice_number,
+       i.invoice_date,
+       i.payment_status,
+       i.status,
+       i.custom_fields AS invoice_custom_fields,
+       ii.id AS invoice_item_id,
+       ii.item_name,
+       ii.item_description,
+       ii.hsn_code,
+       ii.quantity,
+       ii.unit,
+       ii.unit_price,
+       ii.discount_amount,
+       ii.taxable_amount,
+       ii.gst_rate,
+       ii.cgst_amount,
+       ii.sgst_amount,
+       ii.igst_amount,
+       ii.cess_amount,
+       ii.total_amount,
+       ii.custom_fields AS item_custom_fields
+     FROM invoices i
+     INNER JOIN invoice_items ii ON ii.invoice_id = i.id AND ii.company_id = i.company_id
+     WHERE i.company_id = $1
+       AND i.party_id = $2
+       AND i.is_deleted = false
+       AND i.status != 'cancelled'
+       AND i.invoice_type IN ('sale', 'tax_invoice')
+       AND i.invoice_date >= $3::date
+       AND i.invoice_date <= $4::date
+     ORDER BY i.invoice_date ASC, i.invoice_number ASC, ii.sort_order ASC, ii.id ASC`,
+    [companyId, partyId, fromDate, toDate],
+  );
+}
+
+function validateBulkDateRange(partyId: string | null, fromDate: string | null, toDate: string | null) {
+  if (!partyId) throw new Error('Select a party before generating bulk invoice PDF');
+  if (!fromDate || !toDate) throw new Error('Select both from and to dates');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    throw new Error('Dates must be in YYYY-MM-DD format');
+  }
+  if (fromDate > toDate) throw new Error('From date must be on or before to date');
+}
+
+function bulkErrorStatus(message: string): number {
+  return /not found|No sales|Select|Dates|date/i.test(message) ? 400 : 500;
+}
+
 async function assertInvoiceNumberAvailable(
   db: Queryable,
   companyId: string,
@@ -1512,6 +1587,183 @@ export async function getInvoicePDF(req: Request, res: Response) {
   }
 }
 
+export async function listBulkSalesInvoices(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { page, limit, offset } = parsePagination(req.query);
+    const result = await query(
+      `SELECT b.*, p.name AS party_name, p.phone AS party_phone, p.gstin AS party_gstin
+       FROM bulk_sales_invoices b
+       JOIN parties p ON p.id = b.party_id AND p.company_id = b.company_id
+       WHERE b.company_id = $1 AND b.is_deleted = false
+       ORDER BY b.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [companyId, limit, offset],
+    );
+    const countRes = await query(
+      `SELECT COUNT(*)::int AS count FROM bulk_sales_invoices WHERE company_id = $1 AND is_deleted = false`,
+      [companyId],
+    );
+    res.json(success(buildPaginatedResponse(result.rows, Number(countRes.rows[0]?.count || 0), page, limit)));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function createBulkSalesInvoicePDF(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const partyId = trimOrNull(d.party_id);
+    const fromDate = trimOrNull(d.from_date);
+    const toDate = trimOrNull(d.to_date);
+    validateBulkDateRange(partyId, fromDate, toDate);
+    const isGstBill = d.is_gst_bill !== false;
+
+    const created = await withTransaction(async (client) => {
+      const companyRes = await client.query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [companyId]);
+      const partyRes = await client.query('SELECT * FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false', [partyId, companyId]);
+      const bankRes = await client.query(
+        `SELECT * FROM company_bank_accounts
+         WHERE company_id = $1 AND is_deleted = false AND is_active = true
+         ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
+        [companyId],
+      );
+      if (!companyRes.rows.length) throw new Error('Company not found');
+      if (!partyRes.rows.length) throw new Error('Party not found');
+
+      const rowsRes = await loadBulkSalesRows(client, companyId, partyId!, fromDate!, toDate!);
+      if (!rowsRes.rows.length) throw new Error('No sales found for this party and date range');
+
+      const columns = Array.isArray(d.columns) && d.columns.length
+        ? d.columns
+        : companyRes.rows[0].bulk_sales_invoice_columns || [...BULK_SALES_INVOICE_DEFAULT_COLUMNS];
+      const bulkInvoiceNumber = await nextBulkInvoiceNumber(client, companyId);
+      const sourceInvoiceIds = Array.from(new Set(rowsRes.rows.map((row: any) => row.invoice_id).filter(Boolean)));
+      const taxableAmount = rowsRes.rows.reduce((sum: number, row: any) => sum + Number(row.taxable_amount || 0), 0);
+      const taxAmount = isGstBill
+        ? rowsRes.rows.reduce(
+            (sum: number, row: any) =>
+              sum + Number(row.cgst_amount || 0) + Number(row.sgst_amount || 0) + Number(row.igst_amount || 0) + Number(row.cess_amount || 0),
+            0,
+          )
+        : 0;
+      const totalAmount = rowsRes.rows.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+      const paymentStatus = deriveBulkPaymentStatus(rowsRes.rows);
+
+      const ins = await client.query(
+        `INSERT INTO bulk_sales_invoices (
+           company_id, party_id, bulk_invoice_number, from_date, to_date, generated_date,
+           is_gst_bill, payment_status, columns, rows_snapshot, source_invoice_ids,
+           total_lines, taxable_amount, tax_amount, total_amount, created_by
+         ) VALUES ($1,$2,$3,$4,$5,CURRENT_DATE,$6,$7,$8::jsonb,$9::jsonb,$10::uuid[],$11,$12,$13,$14,$15)
+         RETURNING *`,
+        [
+          companyId,
+          partyId,
+          bulkInvoiceNumber,
+          fromDate,
+          toDate,
+          isGstBill,
+          paymentStatus,
+          JSON.stringify(columns),
+          JSON.stringify(rowsRes.rows),
+          sourceInvoiceIds,
+          rowsRes.rows.length,
+          taxableAmount,
+          taxAmount,
+          totalAmount,
+          req.user!.id,
+        ],
+      );
+
+      const companyForPdf = await resolveCompanyRowForInvoicePdf(
+        client,
+        companyId,
+        companyRes.rows[0],
+        {},
+        bankRes.rows[0] || null,
+      );
+      const pdfBuffer = await generateBulkSalesInvoicePDF({
+        company: companyForPdf,
+        party: partyRes.rows[0],
+        rows: rowsRes.rows,
+        columns,
+        fromDate: fromDate!,
+        toDate: toDate!,
+        isGstBill,
+        bulkInvoiceNumber,
+        paymentStatus,
+      });
+      return { bulkInvoice: ins.rows[0], party: partyRes.rows[0], pdfBuffer };
+    });
+
+    const inline = d.inline === true || String(req.query.inline || '') === '1';
+    const safeParty = String(created.party.name || 'party').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
+    const filename = `${created.bulkInvoice.bulk_invoice_number.replace(/[^\w.-]+/g, '-')}-${safeParty}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
+    res.setHeader('X-Bulk-Invoice-Id', created.bulkInvoice.id);
+    res.setHeader('X-Bulk-Invoice-Number', created.bulkInvoice.bulk_invoice_number);
+    res.send(created.pdfBuffer);
+  } catch (err: any) {
+    console.error('create bulk sales invoice pdf error:', err.message, err.detail, err.position);
+    res.status(bulkErrorStatus(err?.message || '')).json(error(err.message));
+  }
+}
+
+export async function getSavedBulkSalesInvoicePDF(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const id = req.params.id;
+    const [bulkRes, companyRes, bankRes] = await Promise.all([
+      query(
+        `SELECT b.*, p.name AS party_name
+         FROM bulk_sales_invoices b
+         JOIN parties p ON p.id = b.party_id AND p.company_id = b.company_id
+         WHERE b.id = $1 AND b.company_id = $2 AND b.is_deleted = false`,
+        [id, companyId],
+      ),
+      query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [companyId]),
+      query(
+        `SELECT * FROM company_bank_accounts
+         WHERE company_id = $1 AND is_deleted = false AND is_active = true
+         ORDER BY is_primary DESC, created_at ASC LIMIT 1`,
+        [companyId],
+      ),
+    ]);
+    if (!bulkRes.rows.length) return res.status(404).json(error('Bulk invoice not found'));
+    const bulk = bulkRes.rows[0];
+    const partyRes = await query('SELECT * FROM parties WHERE id = $1 AND company_id = $2', [bulk.party_id, companyId]);
+    const companyForPdf = await resolveCompanyRowForInvoicePdf(
+      query as unknown as Queryable,
+      companyId,
+      companyRes.rows[0],
+      {},
+      bankRes.rows[0] || null,
+    );
+    const rows = Array.isArray(bulk.rows_snapshot) ? bulk.rows_snapshot : [];
+    const pdfBuffer = await generateBulkSalesInvoicePDF({
+      company: companyForPdf,
+      party: partyRes.rows[0] || { name: bulk.party_name },
+      rows,
+      columns: bulk.columns,
+      fromDate: bulk.from_date,
+      toDate: bulk.to_date,
+      isGstBill: bulk.is_gst_bill,
+      bulkInvoiceNumber: bulk.bulk_invoice_number,
+      paymentStatus: bulk.payment_status,
+    });
+    const inline = String(req.query.inline || '') === '1';
+    const filename = `${bulk.bulk_invoice_number.replace(/[^\w.-]+/g, '-')}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
 export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
@@ -1519,12 +1771,8 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
     const partyId = trimOrNull(d.party_id);
     const fromDate = trimOrNull(d.from_date);
     const toDate = trimOrNull(d.to_date);
-    if (!partyId) return res.status(400).json(error('Select a party before generating bulk invoice PDF'));
-    if (!fromDate || !toDate) return res.status(400).json(error('Select both from and to dates'));
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
-      return res.status(400).json(error('Dates must be in YYYY-MM-DD format'));
-    }
-    if (fromDate > toDate) return res.status(400).json(error('From date must be on or before to date'));
+    validateBulkDateRange(partyId, fromDate, toDate);
+    const isGstBill = d.is_gst_bill !== false;
 
     const [companyRes, partyRes, bankRes] = await Promise.all([
       query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [companyId]),
@@ -1539,42 +1787,7 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
     if (!companyRes.rows.length) return res.status(404).json(error('Company not found'));
     if (!partyRes.rows.length) return res.status(404).json(error('Party not found'));
 
-    const rowsRes = await query(
-      `SELECT
-         i.id AS invoice_id,
-         i.invoice_number,
-         i.invoice_date,
-         i.payment_status,
-         i.status,
-         i.custom_fields AS invoice_custom_fields,
-         ii.id AS invoice_item_id,
-         ii.item_name,
-         ii.item_description,
-         ii.hsn_code,
-         ii.quantity,
-         ii.unit,
-         ii.unit_price,
-         ii.discount_amount,
-         ii.taxable_amount,
-         ii.gst_rate,
-         ii.cgst_amount,
-         ii.sgst_amount,
-         ii.igst_amount,
-         ii.cess_amount,
-         ii.total_amount,
-         ii.custom_fields AS item_custom_fields
-       FROM invoices i
-       INNER JOIN invoice_items ii ON ii.invoice_id = i.id AND ii.company_id = i.company_id
-       WHERE i.company_id = $1
-         AND i.party_id = $2
-         AND i.is_deleted = false
-         AND i.status != 'cancelled'
-         AND i.invoice_type IN ('sale', 'tax_invoice')
-         AND i.invoice_date >= $3::date
-         AND i.invoice_date <= $4::date
-       ORDER BY i.invoice_date ASC, i.invoice_number ASC, ii.sort_order ASC, ii.id ASC`,
-      [companyId, partyId, fromDate, toDate],
-    );
+    const rowsRes = await loadBulkSalesRows(query as unknown as Queryable, companyId, partyId!, fromDate!, toDate!);
     if (!rowsRes.rows.length) {
       return res.status(404).json(error('No sales found for this party and date range'));
     }
@@ -1595,8 +1808,10 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
       party: partyRes.rows[0],
       rows: rowsRes.rows,
       columns,
-      fromDate,
-      toDate,
+      fromDate: fromDate!,
+      toDate: toDate!,
+      isGstBill,
+      paymentStatus: deriveBulkPaymentStatus(rowsRes.rows),
     });
 
     const inline = d.inline === true || String(req.query.inline || '') === '1';

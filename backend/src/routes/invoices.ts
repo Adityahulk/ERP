@@ -14,6 +14,9 @@ router.get('/next-number', ctrl.getNextInvoiceNumber);
 router.post('/', ctrl.createInvoice);
 router.post('/preview-pdf', ctrl.previewInvoicePdf);
 router.post('/bulk-sales-pdf', ctrl.getBulkSalesInvoicePDF);
+router.get('/bulk-sales', ctrl.listBulkSalesInvoices);
+router.post('/bulk-sales', ctrl.createBulkSalesInvoicePDF);
+router.get('/bulk-sales/:id/pdf', ctrl.getSavedBulkSalesInvoicePDF);
 
 router.get('/:id/pdf', ctrl.getInvoicePDF);
 router.post('/:id/whatsapp', ctrl.sendWhatsApp);
