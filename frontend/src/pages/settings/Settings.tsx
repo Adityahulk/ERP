@@ -1355,7 +1355,7 @@ export default function Settings() {
                                  </div>
                               )}
                               {salesCustomFields.map((field, idx) => (
-                                 <div key={`${field.id}-${idx}`} className="grid gap-2 rounded-lg border bg-white p-3 lg:grid-cols-[1.4fr_1fr_120px_90px_90px_44px]">
+                                 <div key={idx} className="grid gap-2 rounded-lg border bg-white p-3 lg:grid-cols-[1.4fr_1fr_120px_90px_90px_44px]">
                                     <div>
                                        <label className="text-xs font-medium text-slate-600">Label</label>
                                        <Input className="mt-1" value={field.label} onChange={(e) => updateSalesCustomField(idx, { label: e.target.value })} />

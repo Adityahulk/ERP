@@ -27,24 +27,98 @@ const JSONB_COMPANY_FIELD_DEFAULTS: Record<string, unknown> = {
   gstin_lookup_payload: null,
 };
 
-function normalizeJsonbField(field: string, value: unknown): string | null {
-  const fallback = JSONB_COMPANY_FIELD_DEFAULTS[field] ?? null;
-  if (value === undefined) return JSON.stringify(fallback);
-  if (value === null) return fallback === null ? null : JSON.stringify(fallback);
+function parseJsonMaybe(value: string): unknown | undefined {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function asArrayPayload(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (!trimmed) return fallback === null ? null : JSON.stringify(fallback);
+    if (!trimmed) return [];
+    const parsed = parseJsonMaybe(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+    return trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeFieldKey(value: unknown, fallback: string) {
+  const key = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  return key || fallback;
+}
+
+function normalizeJsonbField(field: string, value: unknown): string | null {
+  if (field === 'enabled_currencies') {
+    const raw = asArrayPayload(value);
+    const allowed = new Set(['INR', 'USD']);
+    const currencies = Array.from(new Set(raw
+      .map((entry) => String(entry || '').trim().toUpperCase())
+      .filter((entry) => allowed.has(entry))));
+    return JSON.stringify(currencies.length ? currencies : ['INR']);
+  }
+
+  if (field === 'bulk_sales_invoice_columns') {
+    const columns = Array.from(new Set(asArrayPayload(value)
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean)));
+    return JSON.stringify(columns);
+  }
+
+  if (field === 'sales_invoice_custom_fields') {
+    const fields = asArrayPayload(value)
+      .map((entry, index) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const record = entry as Record<string, unknown>;
+        const label = String(record.label || record.key || '').trim().slice(0, 80);
+        if (!label) return null;
+        const key = normalizeFieldKey(record.key || label, `custom_${index + 1}`);
+        const scope = ['sales', 'purchase', 'all'].includes(String(record.scope || '').toLowerCase())
+          ? String(record.scope).toLowerCase()
+          : 'sales';
+        const type = ['text', 'number', 'date'].includes(String(record.type || '').toLowerCase())
+          ? String(record.type).toLowerCase()
+          : 'text';
+        return {
+          id: String(record.id || key || `custom_${index + 1}`).slice(0, 64),
+          key,
+          label,
+          type,
+          scope,
+          enabled: record.enabled !== false,
+          include_in_bulk_invoice: record.include_in_bulk_invoice !== false,
+        };
+      })
+      .filter(Boolean);
+    return JSON.stringify(fields);
+  }
+
+  if (field === 'gstin_lookup_payload') {
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const parsed = parseJsonMaybe(trimmed);
+      return parsed && typeof parsed === 'object' ? JSON.stringify(parsed) : null;
+    }
     try {
-      return JSON.stringify(JSON.parse(trimmed));
+      return JSON.stringify(value);
     } catch {
-      throw new Error(`Invalid JSON value for ${field}`);
+      return null;
     }
   }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    throw new Error(`Invalid JSON value for ${field}`);
-  }
+
+  const fallback = JSONB_COMPANY_FIELD_DEFAULTS[field] ?? null;
+  return JSON.stringify(fallback);
 }
 
 // ── GET /api/company ──────────────────────────────────────────
@@ -121,7 +195,10 @@ export async function updateCompany(req: Request, res: Response) {
     res.json(success(sanitizeCompany(result.rows[0] as any)));
   } catch (err: any) {
     const msg = err?.message || 'Failed to update company';
-    res.status(/Invalid JSON/i.test(msg) ? 400 : 500).json(error(msg));
+    const isJsonSyntaxError = err?.code === '22P02' || /invalid input syntax for type json/i.test(msg);
+    res
+      .status(isJsonSyntaxError || /Invalid JSON/i.test(msg) ? 400 : 500)
+      .json(error(isJsonSyntaxError ? 'Invalid settings payload. Please refresh the page and save again.' : msg));
   }
 }
 
