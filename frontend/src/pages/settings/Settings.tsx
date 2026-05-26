@@ -41,6 +41,24 @@ function normalizeSalesCustomFields(value: unknown): SalesCustomFieldDef[] {
     .filter((row) => row.id && row.label);
 }
 
+function prepareSalesCustomFields(fields: SalesCustomFieldDef[]) {
+  const seen = new Set<string>();
+  return fields
+    .map((field) => ({
+      id: normalizeFieldId(field.id || field.label),
+      label: String(field.label || field.id || '').trim(),
+      scope: field.scope === 'item' ? 'item' : 'invoice',
+      type: field.type === 'number' || field.type === 'date' ? field.type : 'text',
+      required: Boolean(field.required),
+      enabled: field.enabled !== false,
+    }))
+    .filter((field) => {
+      if (!field.id || !field.label || seen.has(field.id)) return false;
+      seen.add(field.id);
+      return true;
+    });
+}
+
 export default function Settings() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
@@ -520,7 +538,7 @@ export default function Settings() {
         default_currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         delivery_challan_show_pricing: deliveryChallanShowPricing,
-        sales_invoice_custom_fields: salesCustomFields,
+        sales_invoice_custom_fields: prepareSalesCustomFields(salesCustomFields),
       });
       toast.success('Invoice preferences saved');
     } catch (e: any) {

@@ -20,6 +20,33 @@ function sanitizeCompany(row: Record<string, unknown>) {
   };
 }
 
+const JSONB_COMPANY_FIELD_DEFAULTS: Record<string, unknown> = {
+  enabled_currencies: ['INR'],
+  bulk_sales_invoice_columns: [],
+  sales_invoice_custom_fields: [],
+  gstin_lookup_payload: null,
+};
+
+function normalizeJsonbField(field: string, value: unknown): string | null {
+  const fallback = JSONB_COMPANY_FIELD_DEFAULTS[field] ?? null;
+  if (value === undefined) return JSON.stringify(fallback);
+  if (value === null) return fallback === null ? null : JSON.stringify(fallback);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback === null ? null : JSON.stringify(fallback);
+    try {
+      return JSON.stringify(JSON.parse(trimmed));
+    } catch {
+      throw new Error(`Invalid JSON value for ${field}`);
+    }
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    throw new Error(`Invalid JSON value for ${field}`);
+  }
+}
+
 // ── GET /api/company ──────────────────────────────────────────
 export async function getCompany(req: Request, res: Response) {
   try {
@@ -58,10 +85,17 @@ export async function updateCompany(req: Request, res: Response) {
     const values: any[] = [];
     let idx = 1;
 
+    const jsonbFields = new Set(Object.keys(JSONB_COMPANY_FIELD_DEFAULTS));
+
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        updates.push(`${field} = $${idx++}`);
-        values.push(req.body[field]);
+        if (jsonbFields.has(field)) {
+          updates.push(`${field} = $${idx++}::jsonb`);
+          values.push(normalizeJsonbField(field, req.body[field]));
+        } else {
+          updates.push(`${field} = $${idx++}`);
+          values.push(req.body[field]);
+        }
       }
     }
 
@@ -85,7 +119,10 @@ export async function updateCompany(req: Request, res: Response) {
 
     await logAction(req.user!.id, companyId, 'update', 'company', companyId, old, result.rows[0], req.ip);
     res.json(success(sanitizeCompany(result.rows[0] as any)));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to update company';
+    res.status(/Invalid JSON/i.test(msg) ? 400 : 500).json(error(msg));
+  }
 }
 
 export async function lookupGstin(req: Request, res: Response) {
