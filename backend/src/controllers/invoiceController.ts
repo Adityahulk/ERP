@@ -749,7 +749,7 @@ export async function createInvoice(req: Request, res: Response) {
              currency_code, payment_mode, reference_number, company_bank_account_id, cheque_number, instrument_date,
              clearance_status, notes, payment_source, source_id, source_label, created_by
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'invoice', $15, $16, $17) RETURNING id`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'invoice', $15, $16, $17) RETURNING *`,
           [
             companyId,
             isPurchase ? 'outgoing' : 'incoming',

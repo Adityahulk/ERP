@@ -30,6 +30,7 @@ export type JournalInput = {
   remarks?: string | null;
   attachmentUrl?: string | null;
   replaceExisting?: boolean;
+  skipIfEmpty?: boolean;
 };
 
 const COA: Array<{
@@ -299,6 +300,19 @@ export async function getOrCreateDefaultAccount(
 }
 
 export async function postJournalEntry(db: Queryable, input: JournalInput) {
+  const lines = input.lines
+    .map((line) => ({
+      ...line,
+      debit: Math.round(Number(line.debit) || 0),
+      credit: Math.round(Number(line.credit) || 0),
+    }))
+    .filter((line) => line.debit > 0 || line.credit > 0);
+  const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
+  const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
+  if ((!lines.length || totalDebit <= 0) && input.skipIfEmpty) return null;
+  if (!lines.length || totalDebit <= 0) throw new Error('Journal entry cannot be empty');
+  if (totalDebit !== totalCredit) throw new Error('Debits and credits must be equal');
+
   if (input.referenceType && input.referenceId) {
     const existing = await db.query(
       `SELECT id FROM journal_entries
@@ -312,18 +326,6 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
       await db.query(`UPDATE journal_entries SET is_deleted = true, status = 'cancelled', cancelled_at = NOW() WHERE id = $1`, [existing.rows[0].id]);
     }
   }
-
-  const lines = input.lines
-    .map((line) => ({
-      ...line,
-      debit: Math.round(Number(line.debit) || 0),
-      credit: Math.round(Number(line.credit) || 0),
-    }))
-    .filter((line) => line.debit > 0 || line.credit > 0);
-  const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
-  const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
-  if (!lines.length || totalDebit <= 0) throw new Error('Journal entry cannot be empty');
-  if (totalDebit !== totalCredit) throw new Error('Debits and credits must be equal');
 
   const seqRes = await db.query(`SELECT COUNT(*)::int AS c FROM journal_entries WHERE company_id = $1`, [input.companyId]);
   const prefix = input.voucherType === 'reversal' ? 'JV-REV' : input.voucherType === 'payment' ? 'PAY-JV' : input.voucherType === 'sale' ? 'SALE-JV' : input.voucherType === 'purchase' ? 'PUR-JV' : 'JV';
@@ -396,6 +398,7 @@ export async function postSalesInvoiceAccounting(db: Queryable, companyId: strin
     referenceId: invoice.id,
     description: `Sales invoice ${invoice.invoice_number}`,
     createdBy,
+    skipIfEmpty: true,
     lines: [
       { accountId: debtor, debit: Number(invoice.total_amount || 0), partyId: invoice.party_id || null },
       { accountId: sales, credit: Number(invoice.taxable_amount || invoice.subtotal || 0) },
@@ -422,6 +425,7 @@ export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: st
     referenceId: invoice.id,
     description: `Purchase bill ${invoice.bill_number}`,
     createdBy,
+    skipIfEmpty: true,
     lines: [
       { accountId: purchase, debit: Number(invoice.taxable_amount || invoice.subtotal || 0) },
       { accountId: inCgst, debit: Number(invoice.cgst_amount || 0) },
@@ -447,6 +451,7 @@ export async function postExpenseAccounting(db: Queryable, companyId: string, ex
     referenceId: expense.id,
     description: `Expense ${expense.expense_number}`,
     createdBy,
+    skipIfEmpty: true,
     lines: [
       { accountId: expenseAccount, debit: Number(expense.total_amount || expense.amount || 0) },
       { accountId: creditAccount, credit: Number(expense.total_amount || expense.amount || 0), referenceNumber: expense.reference_number || null },
@@ -476,6 +481,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
       referenceId: payment.id,
       description: payment.notes || `Cash deposit ${payment.payment_number}`,
       createdBy,
+      skipIfEmpty: true,
       lines: [
         { accountId: bank, debit: amount },
         { accountId: cash, credit: amount },
@@ -493,6 +499,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
       referenceId: payment.id,
       description: payment.notes || `Cash withdrawal ${payment.payment_number}`,
       createdBy,
+      skipIfEmpty: true,
       lines: [
         { accountId: cash, debit: amount },
         { accountId: bank, credit: amount },
@@ -510,6 +517,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
     referenceId: payment.id,
     description: payment.notes || `Payment ${payment.payment_number}`,
     createdBy,
+    skipIfEmpty: true,
     lines: isIncoming
       ? [
           { accountId: assetAccount, debit: amount, referenceNumber: payment.reference_number || null },
