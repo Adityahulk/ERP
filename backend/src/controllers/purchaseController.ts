@@ -923,7 +923,7 @@ export async function getPurchaseInvoicePDF(req: Request, res: Response) {
       [req.user!.company_id],
     );
     const companyForPdf = await resolveCompanyRowForInvoicePdf(
-      query as unknown as Queryable,
+      ({ query } as Queryable),
       req.user!.company_id,
       companyRes.rows[0],
       invRes.rows[0],

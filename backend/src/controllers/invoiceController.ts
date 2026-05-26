@@ -1106,7 +1106,7 @@ export async function getInvoiceDeliveryChallanPreview(req: Request, res: Respon
 
     const invoice = invRes.rows[0];
     const companyForPdf = await resolveCompanyRowForInvoicePdf(
-      query as unknown as Queryable,
+      ({ query } as Queryable),
       companyId,
       companyRes.rows[0],
       invoice,
@@ -1686,7 +1686,7 @@ export async function getInvoicePDF(req: Request, res: Response) {
       [req.user!.company_id],
     );
     const companyForPdf = await resolveCompanyRowForInvoicePdf(
-      query as unknown as Queryable,
+      ({ query } as Queryable),
       req.user!.company_id,
       companyRes.rows[0],
       invRes.rows[0],
@@ -1873,7 +1873,7 @@ export async function getSavedBulkSalesInvoicePDF(req: Request, res: Response) {
     const bulk = bulkRes.rows[0];
     const partyRes = await query('SELECT * FROM parties WHERE id = $1 AND company_id = $2', [bulk.party_id, companyId]);
     const companyForPdf = await resolveCompanyRowForInvoicePdf(
-      query as unknown as Queryable,
+      ({ query } as Queryable),
       companyId,
       companyRes.rows[0],
       {},
@@ -1924,13 +1924,13 @@ export async function getBulkSalesInvoicePDF(req: Request, res: Response) {
     if (!companyRes.rows.length) return res.status(404).json(error('Company not found'));
     if (!partyRes.rows.length) return res.status(404).json(error('Party not found'));
 
-    const rowsRes = await loadBulkSalesRows(query as unknown as Queryable, companyId, partyId!, fromDate!, toDate!);
+    const rowsRes = await loadBulkSalesRows(({ query } as Queryable), companyId, partyId!, fromDate!, toDate!);
     if (!rowsRes.rows.length) {
       return res.status(404).json(error('No sales found for this party and date range'));
     }
 
     const companyForPdf = await resolveCompanyRowForInvoicePdf(
-      query as unknown as Queryable,
+      ({ query } as Queryable),
       companyId,
       companyRes.rows[0],
       {},

@@ -99,7 +99,6 @@ export async function createPayment(req: Request, res: Response) {
              await client.query(
                `UPDATE invoices
                 SET paid_amount = paid_amount + $1,
-                    balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                     payment_status = CASE
                       WHEN paid_amount + $1 >= total_amount THEN 'paid'
                       WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -112,7 +111,6 @@ export async function createPayment(req: Request, res: Response) {
              await client.query(
                `UPDATE purchase_invoices
                 SET paid_amount = paid_amount + $1,
-                    balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                     payment_status = CASE
                       WHEN paid_amount + $1 >= total_amount THEN 'paid'
                       WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -206,7 +204,6 @@ export async function allocatePayment(req: Request, res: Response) {
           await client.query(
              `UPDATE invoices SET
                paid_amount = paid_amount + $1,
-               balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                payment_status = CASE
                  WHEN paid_amount + $1 >= total_amount THEN 'paid'
                  WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -220,7 +217,6 @@ export async function allocatePayment(req: Request, res: Response) {
           await client.query(
              `UPDATE purchase_invoices SET
                paid_amount = paid_amount + $1,
-               balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                payment_status = CASE
                  WHEN paid_amount + $1 >= total_amount THEN 'paid'
                  WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -278,7 +274,6 @@ export async function deletePayment(req: Request, res: Response) {
         await client.query(
           `UPDATE invoices
            SET paid_amount = GREATEST(paid_amount - $1, 0),
-               balance_due = GREATEST(total_amount - GREATEST(paid_amount - $1, 0), 0),
                payment_status = CASE
                  WHEN GREATEST(paid_amount - $1, 0) >= total_amount THEN 'paid'
                  WHEN GREATEST(paid_amount - $1, 0) > 0 THEN 'partial'
