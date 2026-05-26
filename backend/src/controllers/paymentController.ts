@@ -3,7 +3,7 @@ import { query, withTransaction } from '../config/db';
 import { logAction } from '../lib/auditLog';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
-import { postPaymentAccounting } from '../services/accountingService';
+import { postPaymentAccounting, reverseAccountingForReference } from '../services/accountingService';
 
 // ── GET /api/payments ─────────────────────────────────────────
 export async function listPayments(req: Request, res: Response) {
@@ -99,6 +99,7 @@ export async function createPayment(req: Request, res: Response) {
              await client.query(
                `UPDATE invoices
                 SET paid_amount = paid_amount + $1,
+                    balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                     payment_status = CASE
                       WHEN paid_amount + $1 >= total_amount THEN 'paid'
                       WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -111,6 +112,7 @@ export async function createPayment(req: Request, res: Response) {
              await client.query(
                `UPDATE purchase_invoices
                 SET paid_amount = paid_amount + $1,
+                    balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                     payment_status = CASE
                       WHEN paid_amount + $1 >= total_amount THEN 'paid'
                       WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -202,8 +204,9 @@ export async function allocatePayment(req: Request, res: Response) {
             [id, alloc.invoice_id, amt],
           );
           await client.query(
-            `UPDATE invoices SET
+             `UPDATE invoices SET
                paid_amount = paid_amount + $1,
+               balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                payment_status = CASE
                  WHEN paid_amount + $1 >= total_amount THEN 'paid'
                  WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -215,8 +218,9 @@ export async function allocatePayment(req: Request, res: Response) {
         } else if (!incoming && purchase.rows.length) {
           // payment_allocations.invoice_id FK targets sales `invoices` only — purchase lines update PI balances here without a link row.
           await client.query(
-            `UPDATE purchase_invoices SET
+             `UPDATE purchase_invoices SET
                paid_amount = paid_amount + $1,
+               balance_due = GREATEST(total_amount - (paid_amount + $1), 0),
                payment_status = CASE
                  WHEN paid_amount + $1 >= total_amount THEN 'paid'
                  WHEN paid_amount + $1 > 0 THEN 'partial'
@@ -241,5 +245,83 @@ export async function allocatePayment(req: Request, res: Response) {
     res.json(success(result));
   } catch (err: any) {
     res.status(400).json(error(err.message));
+  }
+}
+
+// ── DELETE /api/payments/:id ──────────────────────────────────
+export async function deletePayment(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+
+    const result = await withTransaction(async (client) => {
+      const pRes = await client.query(
+        `SELECT * FROM payments WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!pRes.rows.length) throw new Error('Payment not found');
+      const payment = pRes.rows[0];
+      const amount = Number(payment.amount || 0);
+      const isIncoming = ['incoming', 'payment_in', 'receipt'].includes(String(payment.payment_type || 'incoming'));
+
+      const allocations = await client.query(
+        `SELECT pa.*, i.invoice_number, i.total_amount, i.paid_amount
+         FROM payment_allocations pa
+         JOIN invoices i ON i.id = pa.invoice_id AND i.company_id = $2
+         WHERE pa.payment_id = $1
+         ORDER BY pa.created_at ASC`,
+        [id, companyId],
+      );
+
+      for (const alloc of allocations.rows) {
+        const allocAmount = Number(alloc.amount || 0);
+        await client.query(
+          `UPDATE invoices
+           SET paid_amount = GREATEST(paid_amount - $1, 0),
+               balance_due = GREATEST(total_amount - GREATEST(paid_amount - $1, 0), 0),
+               payment_status = CASE
+                 WHEN GREATEST(paid_amount - $1, 0) >= total_amount THEN 'paid'
+                 WHEN GREATEST(paid_amount - $1, 0) > 0 THEN 'partial'
+                 ELSE 'unpaid'
+               END,
+               updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [allocAmount, alloc.invoice_id, companyId],
+        );
+      }
+
+      await client.query(`DELETE FROM payment_allocations WHERE payment_id = $1`, [id]);
+      await client.query(`UPDATE payments SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2`, [id, companyId]);
+
+      if (payment.party_id && amount > 0) {
+        const delta = isIncoming ? amount : -amount;
+        await client.query(
+          `UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3`,
+          [delta, payment.party_id, companyId],
+        );
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES ($1, $2, $3, $4, (SELECT balance FROM parties WHERE id = $2 AND company_id = $1), 'payment_reversal', $5, $6, $7)`,
+          [
+            companyId,
+            payment.party_id,
+            isIncoming ? 'debit' : 'credit',
+            amount,
+            id,
+            `Reversal of ${payment.payment_number || 'payment'}`,
+            req.user!.id,
+          ],
+        );
+      }
+
+      await reverseAccountingForReference(client, companyId, 'payment', id, req.user!.id);
+      return { payment_id: id, reversed_allocations: allocations.rows.length };
+    });
+
+    await logAction(req.user!.id, companyId, 'delete', 'payment', id, undefined, result, req.ip);
+    res.json(success(result));
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to delete payment';
+    res.status(/not found/i.test(msg) ? 404 : 400).json(error(msg));
   }
 }

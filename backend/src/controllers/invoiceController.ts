@@ -9,6 +9,7 @@ import {
   generateThermalReceipt,
   generateEinvoicePdf,
   generateBulkSalesInvoicePDF,
+  generateDeliveryChallanPDF,
   BULK_SALES_INVOICE_DEFAULT_COLUMNS,
 } from '../services/pdfService';
 import { sendWhatsAppInvoiceLink } from '../services/notificationService';
@@ -1008,6 +1009,142 @@ export async function getInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));
+  }
+}
+
+export async function getInvoiceHistory(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+
+    const invRes = await query(
+      `SELECT id, invoice_number, created_at, total_amount, paid_amount
+       FROM invoices
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const invoice = invRes.rows[0];
+
+    const auditRes = await query(
+      `SELECT action, old_value, new_value, created_at
+       FROM audit_logs
+       WHERE company_id = $1 AND entity = 'invoice' AND entity_id = $2
+       ORDER BY created_at ASC`,
+      [companyId, id],
+    );
+    const paymentRes = await query(
+      `SELECT p.id, p.payment_number, p.payment_date, p.created_at, p.amount AS payment_amount, pa.amount AS allocated_amount,
+              COALESCE(SUM(pa.amount) OVER (ORDER BY p.payment_date ASC, p.created_at ASC, p.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)::bigint AS previous_paid
+       FROM payment_allocations pa
+       JOIN payments p ON p.id = pa.payment_id AND p.company_id = $2 AND p.is_deleted = false
+       WHERE pa.invoice_id = $1
+       ORDER BY p.payment_date ASC, p.created_at ASC`,
+      [id, companyId],
+    );
+
+    const entries = [
+      {
+        id: `${invoice.id}:created`,
+        created_at: invoice.created_at,
+        message: `Sale #${invoice.invoice_number} created`,
+        kind: 'created',
+      },
+      ...auditRes.rows.map((row: any, index: number) => ({
+        id: `audit:${index}:${row.created_at}`,
+        created_at: row.created_at,
+        message: `${String(row.action || 'updated').replace('_', ' ')} invoice`,
+        kind: 'audit',
+        old_value: row.old_value,
+        new_value: row.new_value,
+      })),
+      ...paymentRes.rows.map((row: any) => {
+        const previous = Number(row.previous_paid || 0);
+        const allocated = Number(row.allocated_amount || 0);
+        return {
+          id: `payment:${row.id}`,
+          created_at: row.created_at,
+          message: `Received Amount changed from ${(previous / 100).toFixed(2)} to ${((previous + allocated) / 100).toFixed(2)}`,
+          kind: 'payment',
+          payment_number: row.payment_number,
+          payment_date: row.payment_date,
+        };
+      }),
+    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    res.json(success({ invoice, entries }));
+  } catch (err: any) {
+    console.error('invoice history error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message || 'Failed to load invoice history'));
+  }
+}
+
+export async function getInvoiceDeliveryChallanPreview(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const [companyRes, invRes] = await Promise.all([
+      query('SELECT * FROM companies WHERE id = $1 AND is_deleted = false', [companyId]),
+      query(
+        `SELECT i.*,
+                COALESCE(i.party_name_snapshot, p.name) as party_name,
+                COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
+                COALESCE(i.party_email_snapshot, p.email) as party_email,
+                COALESCE(i.party_gstin_snapshot, p.gstin) as party_gstin,
+                COALESCE(i.billing_address_snapshot, p.billing_address) as party_address,
+                p.pan as party_pan,
+                p.billing_state as party_state,
+                p.billing_state_code as party_state_code
+         FROM invoices i
+         LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id AND p.is_deleted = false
+         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false`,
+        [id, companyId],
+      ),
+    ]);
+    if (!companyRes.rows.length) return res.status(404).json(error('Company not found'));
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+
+    const invoice = invRes.rows[0];
+    const companyForPdf = await resolveCompanyRowForInvoicePdf(
+      query as unknown as Queryable,
+      companyId,
+      companyRes.rows[0],
+      invoice,
+      null,
+    );
+    const itemsRes = await query(
+      `SELECT item_name, item_description, hsn_code, quantity, unit, unit_price, discount_amount
+       FROM invoice_items
+       WHERE invoice_id = $1 AND company_id = $2
+       ORDER BY sort_order, id`,
+      [id, companyId],
+    );
+
+    const challan = {
+      challan_number: `DC-${invoice.invoice_number || ''}`,
+      challan_date: invoice.invoice_date,
+      due_date: invoice.due_date,
+      status: 'open',
+      party_name_snapshot: invoice.party_name,
+      party_address_snapshot: invoice.shipping_address_snapshot || invoice.party_address || '',
+      party_phone_snapshot: invoice.party_phone || '',
+      party_email_snapshot: invoice.party_email || '',
+      party_gstin_snapshot: invoice.party_gstin || '',
+      party_pan: invoice.party_pan || '',
+      party_state: invoice.party_state || '',
+      party_state_code: invoice.party_state_code || '',
+      notes: `Generated from sale invoice ${invoice.invoice_number}`,
+    };
+
+    const pdf = await generateDeliveryChallanPDF(challan, companyForPdf, itemsRes.rows);
+    const inline = String(req.query.inline || '') === '1';
+    const filename = `delivery-challan-${invoice.invoice_number || id}.pdf`.replace(/[^\w.-]+/g, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
+    res.send(pdf);
+  } catch (err: any) {
+    console.error('invoice delivery challan preview error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message || 'Failed to generate delivery challan preview'));
   }
 }
 

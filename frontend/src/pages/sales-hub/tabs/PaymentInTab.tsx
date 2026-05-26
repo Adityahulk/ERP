@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, ArrowUpRight, UserPlus } from 'lucide-react';
+import { Plus, ArrowUpRight, UserPlus, Trash2, Loader2 } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import toast from 'react-hot-toast';
 
@@ -61,6 +61,17 @@ export default function PaymentInTab() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/payments/${id}`),
+    onSuccess: () => {
+      toast.success('Payment-In deleted');
+      qc.invalidateQueries({ queryKey: ['payments-in'] });
+      qc.invalidateQueries({ queryKey: ['salesInvoices'] });
+      qc.invalidateQueries({ queryKey: ['party-unpaid-invoices'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to delete payment'),
+  });
+
   const searchCustomers = async (q: string) => {
     setPartySearch(q);
     if (q.length < 2) { setPartyResults([]); return; }
@@ -92,6 +103,12 @@ export default function PaymentInTab() {
     createMut.mutate(payload);
   };
 
+  const handleDelete = (p: any) => {
+    const ok = window.confirm(`Delete Payment-In ${p.payment_number || p.reference_number || ''}? This will reverse the linked invoice payment and accounting entry.`);
+    if (!ok) return;
+    deleteMut.mutate(p.id);
+  };
+
   return (
     <div className="space-y-5">
       <Card>
@@ -121,12 +138,13 @@ export default function PaymentInTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party Name</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden sm:table-cell">Mode</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && payments.length === 0 && (
-              <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
                 <ArrowUpRight className="w-10 h-10 mx-auto mb-2 opacity-30" />No payments received yet.
               </td></tr>
             )}
@@ -137,6 +155,19 @@ export default function PaymentInTab() {
                 <td className="px-4 py-2.5 font-medium">{p.party_name || '—'}</td>
                 <td className="px-4 py-2.5 text-xs capitalize text-muted-foreground hidden sm:table-cell">{p.payment_mode?.replace('_', ' ')}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-emerald-600">{formatMoney(parseInt(p.amount)||0)}</td>
+                <td className="px-4 py-2.5 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                    disabled={deleteMut.isPending}
+                    onClick={() => handleDelete(p)}
+                    title="Delete payment-in"
+                  >
+                    {deleteMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>

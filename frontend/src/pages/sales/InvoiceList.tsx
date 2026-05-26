@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
@@ -10,7 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
-import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2, Ban, Files } from 'lucide-react';
+import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truck, MoreHorizontal, Printer, Send, Trash2, Ban, Files, ReceiptIndianRupee, History, Copy, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
@@ -38,6 +38,13 @@ const BULK_COLUMN_OPTIONS = [
 
 const DEFAULT_BULK_COLUMNS = ['serial_no', 'item_name', 'billing_date', 'quantity', 'unit', 'unit_price', 'gst_rate', 'amount'];
 const BULK_TAX_COLUMN_IDS = new Set(['gst_rate', 'cgst_amount', 'sgst_amount', 'igst_amount', 'cess_amount']);
+const PAYMENT_MODES = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'upi', label: 'UPI' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'card', label: 'Card' },
+];
 
 function salesCustomBulkOptions(company: any) {
   const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
@@ -84,6 +91,13 @@ export default function InvoiceList() {
   const [bulkIsGstBill, setBulkIsGstBill] = useState(true);
   const [bulkLoading, setBulkLoading] = useState<'preview' | 'download' | null>(null);
   const [bulkSavedLoadingId, setBulkSavedLoadingId] = useState<string | null>(null);
+  const [receiveInvoice, setReceiveInvoice] = useState<any | null>(null);
+  const [receiveAmount, setReceiveAmount] = useState('');
+  const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
+  const [receiveMode, setReceiveMode] = useState('cash');
+  const [receiveReference, setReceiveReference] = useState('');
+  const [receiveNotes, setReceiveNotes] = useState('');
+  const [historyInvoice, setHistoryInvoice] = useState<any | null>(null);
   const customBulkColumnOptions = useMemo(() => salesCustomBulkOptions(company), [company]);
 
   const companyDefaultBulkColumns = useMemo(
@@ -124,6 +138,25 @@ export default function InvoiceList() {
     queryFn: () => api.get('/invoices/bulk-sales', { params: { page: 1, limit: 20 } }).then((r) => r.data?.data ?? r.data),
   });
   const bulkInvoices: any[] = bulkInvoicesData?.data ?? bulkInvoicesData ?? [];
+
+  const { data: historyData, isLoading: historyLoading } = useQuery({
+    queryKey: ['invoice-history', historyInvoice?.id],
+    enabled: !!historyInvoice?.id,
+    queryFn: () => api.get(`/invoices/${historyInvoice.id}/history`).then((r) => r.data?.data ?? r.data),
+  });
+  const historyEntries: any[] = historyData?.entries ?? [];
+
+  const receivePaymentMutation = useMutation({
+    mutationFn: (payload: any) => api.post('/payments', payload),
+    onSuccess: () => {
+      toast.success('Payment-In recorded');
+      queryClient.invalidateQueries({ queryKey: ['salesInvoices'] });
+      queryClient.invalidateQueries({ queryKey: ['payments-in'] });
+      queryClient.invalidateQueries({ queryKey: ['invoice-history'] });
+      setReceiveInvoice(null);
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to record payment'),
+  });
 
   const generatePDF = useCallback(async (id: string, number: string) => {
     setPdfLoadingId(id);
@@ -272,13 +305,12 @@ export default function InvoiceList() {
   }, []);
 
   const openDeliveryChallanPdf = useCallback(async (inv: any) => {
-    if (!inv.delivery_challan_id) {
-      toast.error('No delivery challan is linked to this invoice.');
-      return;
-    }
     const t = toast.loading('Opening delivery challan…');
     try {
-      const res = await api.get(`/sales/challans/${inv.delivery_challan_id}/pdf`, {
+      const endpoint = inv.delivery_challan_id
+        ? `/sales/challans/${inv.delivery_challan_id}/pdf`
+        : `/invoices/${inv.id}/delivery-challan-preview`;
+      const res = await api.get(endpoint, {
         params: { inline: 1 },
         responseType: 'blob',
       });
@@ -289,6 +321,48 @@ export default function InvoiceList() {
       toast.error(err?.response?.data?.error || 'Could not open delivery challan', { id: t });
     }
   }, []);
+
+  const openReceivePayment = useCallback((inv: any) => {
+    if (!inv.party_id) {
+      toast.error('Select a saved party before receiving payment for this invoice');
+      return;
+    }
+    const balance = Math.max(Number(inv.balance_due ?? inv.total_amount ?? 0), 0);
+    if (balance <= 0) {
+      toast.error('This invoice has no balance due');
+      return;
+    }
+    setReceiveInvoice(inv);
+    setReceiveAmount((balance / 100).toFixed(2));
+    setReceiveDate(new Date().toISOString().split('T')[0]);
+    setReceiveMode('cash');
+    setReceiveReference('');
+    setReceiveNotes(`Payment for invoice ${inv.invoice_number}`);
+  }, []);
+
+  const saveReceivePayment = useCallback(() => {
+    if (!receiveInvoice) return;
+    const paise = Math.round(Number(receiveAmount || 0) * 100);
+    const balance = Math.max(Number(receiveInvoice.balance_due ?? receiveInvoice.total_amount ?? 0), 0);
+    if (paise <= 0) {
+      toast.error('Enter a valid amount');
+      return;
+    }
+    if (paise > balance) {
+      toast.error('Received amount cannot exceed invoice balance due');
+      return;
+    }
+    receivePaymentMutation.mutate({
+      party_id: receiveInvoice.party_id,
+      payment_type: 'incoming',
+      amount: paise,
+      payment_date: receiveDate,
+      payment_mode: receiveMode,
+      reference_number: receiveReference || undefined,
+      notes: receiveNotes || `Payment for invoice ${receiveInvoice.invoice_number}`,
+      allocations: [{ invoice_id: receiveInvoice.id, amount: paise }],
+    });
+  }, [receiveAmount, receiveDate, receiveInvoice, receiveMode, receiveNotes, receivePaymentMutation, receiveReference]);
 
   const deleteInvoice = useCallback(async (inv: any) => {
     const ok = window.confirm(`Delete invoice ${inv.invoice_number}? This removes it from active records.`);
@@ -415,6 +489,7 @@ export default function InvoiceList() {
                   const canEWB = hasActiveIrn && !inv.ewb_no && inv.status !== 'cancelled';
                   const canDelete = !hasActiveIrn && inv.status !== 'cancelled';
                   const canCancel = !hasActiveIrn && inv.status !== 'cancelled' && Number(inv.paid_amount || 0) === 0;
+                  const canReceive = inv.status !== 'cancelled' && Number(inv.balance_due ?? 0) > 0;
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
@@ -509,11 +584,9 @@ export default function InvoiceList() {
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); generatePDF(inv.id, inv.invoice_number); }}>
                                 <Download className="h-4 w-4" /> Download invoice PDF
                               </button>
-                              {inv.delivery_challan_id && (
-                                <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); openDeliveryChallanPdf(inv); }}>
-                                  <Truck className="h-4 w-4" /> Preview delivery challan
-                                </button>
-                              )}
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); openDeliveryChallanPdf(inv); }}>
+                                <Truck className="h-4 w-4" /> Preview delivery challan
+                              </button>
                               {hasActiveIrn && (
                                 <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); downloadEinvoicePdf(inv); }}>
                                   <FileCheck className="h-4 w-4" /> Download e-Invoice PDF
@@ -522,6 +595,15 @@ export default function InvoiceList() {
                               <div className="my-1 border-t" />
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/${inv.id}`); }}>
                                 <Eye className="h-4 w-4" /> View / edit
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canReceive} onClick={() => { setMenuInvoiceId(null); if (canReceive) openReceivePayment(inv); }}>
+                                <ReceiptIndianRupee className="h-4 w-4" /> Receive payment
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setHistoryInvoice(inv); }}>
+                                <History className="h-4 w-4" /> View history
+                              </button>
+                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/new?duplicate_from=${inv.id}`); }}>
+                                <Copy className="h-4 w-4" /> Duplicate this invoice
                               </button>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEdit} onClick={() => { setMenuInvoiceId(null); if (canEdit) navigate(`/sales/${inv.id}/edit`); }}>
                                 <Pencil className="h-4 w-4" /> Edit invoice
@@ -701,6 +783,99 @@ export default function InvoiceList() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Sheet open={!!receiveInvoice} onOpenChange={(open) => { if (!open) setReceiveInvoice(null); }}>
+        <SheetContent side="right" className="w-full sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>Receive Payment</SheetTitle>
+          </SheetHeader>
+          {receiveInvoice && (
+            <div className="mt-6 space-y-5">
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="text-xs text-muted-foreground">Party</div>
+                <div className="font-semibold">{receiveInvoice.party_name || 'Customer'}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Invoice</div>
+                    <div className="font-medium">{receiveInvoice.invoice_number}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Balance Due</div>
+                    <div className="font-semibold text-primary">{formatMoney(Number(receiveInvoice.balance_due || 0), receiveInvoice.currency_code)}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Receipt Date</Label>
+                  <Input type="date" className="mt-1" value={receiveDate} onChange={(e) => setReceiveDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Payment Type</Label>
+                  <select className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm" value={receiveMode} onChange={(e) => setReceiveMode(e.target.value)}>
+                    {PAYMENT_MODES.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs">Received Amount *</Label>
+                <Input type="number" min={0.01} step={0.01} className="mt-1 text-lg tabular-nums" value={receiveAmount} onChange={(e) => setReceiveAmount(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Reference No.</Label>
+                <Input className="mt-1" placeholder="UTR, cheque no., receipt ref." value={receiveReference} onChange={(e) => setReceiveReference(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Notes</Label>
+                <textarea className="mt-1 w-full resize-none rounded-md border bg-transparent px-3 py-2 text-sm" rows={3} value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} />
+              </div>
+
+              <div className="flex gap-3 border-t pt-4">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setReceiveInvoice(null)}>Cancel</Button>
+                <Button type="button" className="flex-1" loading={receivePaymentMutation.isPending} onClick={saveReceivePayment}>Save Payment</Button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {historyInvoice && (
+        <div className="fixed inset-0 z-40 bg-black/40 p-4">
+          <div className="mx-auto mt-8 flex max-h-[86vh] max-w-4xl flex-col rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <h2 className="text-xl font-bold">Edit History for Sale #{historyInvoice.invoice_number}</h2>
+              <Button type="button" variant="ghost" size="icon" onClick={() => setHistoryInvoice(null)}>
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-20 text-muted-foreground">
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading history...
+                </div>
+              ) : historyEntries.length === 0 ? (
+                <div className="rounded-lg border p-6 text-muted-foreground">No history found for this sale.</div>
+              ) : (
+                <div className="space-y-3">
+                  {historyEntries.map((entry) => (
+                    <div key={entry.id} className="rounded-lg border p-4">
+                      <div className="flex gap-3">
+                        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-slate-500" />
+                        <div>
+                          <div className="font-semibold">{entry.message}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{formatDate(entry.created_at)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <InvoicePreviewWorkspace
         open={!!previewInvoice}

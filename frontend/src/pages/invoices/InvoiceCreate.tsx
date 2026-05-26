@@ -90,12 +90,13 @@ function gstStateFromGstin(value?: string | null) {
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: routeParamId } = useParams();
-  const { pathname } = useLocation();
+  const { pathname, search: locationSearch } = useLocation();
   const editInvoiceId = pathname.endsWith('/edit') && routeParamId ? routeParamId : undefined;
+  const duplicateInvoiceId = !editInvoiceId ? new URLSearchParams(locationSearch).get('duplicate_from') || undefined : undefined;
 
   const createMutation = useCreateInvoice();
   const updateMutation = useUpdateInvoice();
-  const { data: existingInv, isLoading: editInvLoading, isError: editInvError } = useInvoice(editInvoiceId);
+  const { data: existingInv, isLoading: editInvLoading, isError: editInvError } = useInvoice(editInvoiceId || duplicateInvoiceId);
   const { data: company } = useCompany();
   const { data: godownData } = useGodowns();
   const godowns = godownData?.data || [];
@@ -150,6 +151,7 @@ export default function InvoiceCreate() {
   }, [company, editInvoiceId, enabledCurrencies]);
 
   const hydratedIdRef = useRef<string | null>(null);
+  const duplicateHydratedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!editInvoiceId) {
@@ -208,6 +210,58 @@ export default function InvoiceCreate() {
     })));
     hydratedIdRef.current = editInvoiceId;
   }, [editInvoiceId, existingInv, navigate]);
+
+  useEffect(() => {
+    if (!duplicateInvoiceId || editInvoiceId) {
+      duplicateHydratedIdRef.current = null;
+      return;
+    }
+    if (!existingInv) return;
+    const inv = existingInv as Record<string, unknown>;
+    if (String(inv.id) !== duplicateInvoiceId || duplicateHydratedIdRef.current === duplicateInvoiceId) return;
+
+    const today = new Date().toISOString().split('T')[0];
+    const nonGst = inv.invoice_type === 'non_gst' || inv.is_gst_invoice === false;
+    setIsGstInvoice(!nonGst);
+    setPartyId(String(inv.party_id || ''));
+    setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
+    setPartyPhone(String(inv.party_phone || ''));
+    setGodownId(inv.godown_id ? String(inv.godown_id) : '');
+    setInvoiceNumberEdited(false);
+    setCurrencyCode(normalizeCurrencyCode(inv.currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
+    setInvoiceDate(today);
+    setDueDate('');
+    setIsInterstate(Boolean(inv.is_interstate));
+    setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
+    setShippingAddress(String(inv.shipping_address_snapshot || ''));
+    setNotes(String(inv.notes || ''));
+    setExternalDescription(String(inv.external_description || ''));
+    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
+    setPaymentRows([newPaymentEditorRow()]);
+    setInvoiceFiles([]);
+    const tpl = String(inv.pdf_template || 'monochrome');
+    setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === tpl) ? tpl : 'monochrome') as InvoicePdfTemplateId);
+    const th = String(inv.document_theme || 'executive');
+    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'executive') as DocumentThemeId);
+    setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
+    setItems(((inv.items as any[]) || []).map((it: any) => ({
+      item_id: it.item_id ? String(it.item_id) : undefined,
+      name: String(it.item_name || ''),
+      description: String(it.item_description || ''),
+      hsn_code: it.hsn_code ? String(it.hsn_code) : '',
+      item_type: it.item_type,
+      track_inventory: it.track_inventory,
+      unit: String(it.unit || it.unit_abbr || 'PCS'),
+      quantity: Number(it.quantity) || 1,
+      unit_price: Number(it.unit_price) || 0,
+      discount_amount: Number(it.discount_amount || 0),
+      gst_rate: Number(it.gst_rate) || 0,
+      cess_rate: Number(it.cess_rate) || 0,
+      custom_fields: (it.custom_fields && typeof it.custom_fields === 'object' ? it.custom_fields : {}) as Record<string, string>,
+    })));
+    duplicateHydratedIdRef.current = duplicateInvoiceId;
+    toast.success('Invoice copied into a new editable draft');
+  }, [company, duplicateInvoiceId, editInvoiceId, existingInv]);
 
   useEffect(() => {
     if (editInvoiceId) return;
@@ -407,7 +461,7 @@ export default function InvoiceCreate() {
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
     {
-      enabled: !editInvoiceId,
+      enabled: !editInvoiceId && !duplicateInvoiceId,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.partySearch || draft.invoiceNumber || draft.dueDate ||
         draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
@@ -538,10 +592,10 @@ export default function InvoiceCreate() {
   const saving = createMutation.isPending || updateMutation.isPending;
   const cancelTo = editInvoiceId ? `/sales/${editInvoiceId}` : '/sales';
 
-  if (editInvoiceId && editInvLoading) {
+  if ((editInvoiceId || duplicateInvoiceId) && editInvLoading) {
     return <div className="flex justify-center p-16 text-muted-foreground">Loading invoice…</div>;
   }
-  if (editInvoiceId && editInvError) {
+  if ((editInvoiceId || duplicateInvoiceId) && editInvError) {
     return (
       <div className="flex flex-col items-center gap-4 p-16 max-w-md mx-auto text-center">
         <p className="text-muted-foreground">Could not load this invoice.</p>
@@ -592,7 +646,7 @@ export default function InvoiceCreate() {
   return (
     <TransactionPageShell>
       <TransactionHeader
-        title={editInvoiceId ? 'Edit Sale Invoice' : 'New Sale Invoice'}
+        title={editInvoiceId ? 'Edit Sale Invoice' : duplicateInvoiceId ? 'Duplicate Sale Invoice' : 'New Sale Invoice'}
         description="Create a sale with customer, items, payment and printable invoice details."
         left={<Button variant="ghost" size="icon" onClick={() => navigate(cancelTo)}><ArrowLeft className="h-5 w-5" /></Button>}
         actions={
