@@ -12,7 +12,7 @@ import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
 import { normalizeRole, roleLabel } from '@/lib/roles';
 import { normalizeCurrencyCode, SUPPORTED_CURRENCIES, type CurrencyCode } from '@/lib/formatters';
-import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, normalizeInvoiceThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
+import { normalizeInvoiceThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
 import {
   DEFAULT_PRINT_LAYOUT_COLORS,
   PRINT_COLOR_PALETTE,
@@ -682,7 +682,7 @@ export default function Settings() {
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceTerms, setInvoiceTerms] = useState('');
   const [invoiceTemplate, setInvoiceTemplate] = useState('business-theme-1');
-  const [documentTheme, setDocumentTheme] = useState('business-theme-1');
+  const [, setDocumentTheme] = useState('business-theme-1');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
   const [enabledCurrencies, setEnabledCurrencies] = useState<CurrencyCode[]>(['INR']);
   const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('INR');
@@ -1165,18 +1165,37 @@ export default function Settings() {
 
   const saveInvoicePreferences = async () => {
     try {
+      const selectedLayout = normalizeInvoiceThemeId(invoiceTemplate) as PrintLayoutId;
+      const selectedColor = documentPrimaryColor || DEFAULT_PRINT_LAYOUT_COLORS[selectedLayout] || '#4F46E5';
+      const nextPrintSettings: PrintSettingsState = {
+        ...printSettings,
+        invoiceTheme: selectedLayout,
+        regular: {
+          ...printSettings.regular,
+          layout: selectedLayout,
+        },
+        layout_colors: {
+          ...printSettings.layout_colors,
+          [selectedLayout]: selectedColor,
+        },
+      } as PrintSettingsState;
       await updateCompany.mutateAsync({
         invoice_prefix: invoicePrefix.trim() || 'INV',
         terms_and_conditions: invoiceTerms.trim() || null,
-        invoice_pdf_template: invoiceTemplate,
-        document_theme: documentTheme,
-        document_primary_color: documentPrimaryColor || '#4F46E5',
+        invoice_pdf_template: selectedLayout,
+        document_theme: selectedLayout,
+        document_primary_color: selectedColor,
+        print_settings: nextPrintSettings,
         enabled_currencies: enabledCurrencies,
         default_currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         delivery_challan_show_pricing: deliveryChallanShowPricing,
         sales_invoice_custom_fields: prepareSalesCustomFields(salesCustomFields),
       });
+      setInvoiceTemplate(selectedLayout);
+      setDocumentTheme(selectedLayout);
+      setDocumentPrimaryColor(selectedColor);
+      setPrintSettings(nextPrintSettings);
       toast.success('Invoice preferences saved');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Save failed');
@@ -3069,21 +3088,39 @@ export default function Settings() {
                            <label className="text-sm font-medium text-slate-700">Default Terms & Conditions</label>
                           <textarea className="w-full mt-1 border rounded-md p-3 h-32 text-sm" value={invoiceTerms} onChange={(e) => setInvoiceTerms(e.target.value)} />
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl">
+                        <div className="grid grid-cols-1 gap-4 max-w-2xl">
                            <div>
                               <label className="text-sm font-medium text-slate-700">Default invoice layout</label>
-                              <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={invoiceTemplate} onChange={(e) => setInvoiceTemplate(e.target.value)}>
-                                 {INVOICE_PDF_TEMPLATES.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
-                              </select>
-                           </div>
-                           <div>
-                              <label className="text-sm font-medium text-slate-700">Invoice color style</label>
-                              <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={documentTheme} onChange={(e) => setDocumentTheme(e.target.value)}>
-                                {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
-                              </select>
+                              <div className="mt-1">
+                                <PrintLayoutPicker
+                                  value={normalizeInvoiceThemeId(invoiceTemplate)}
+                                  onChange={(layoutId) => {
+                                    setInvoiceTemplate(layoutId);
+                                    setDocumentTheme(layoutId);
+                                    setDocumentPrimaryColor(printSettings.layout_colors?.[layoutId] || DEFAULT_PRINT_LAYOUT_COLORS[layoutId] || documentPrimaryColor || '#4F46E5');
+                                  }}
+                                />
+                              </div>
                            </div>
                            <div>
                               <label className="text-sm font-medium text-slate-700">Brand color</label>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {PRINT_COLOR_PALETTE.map((color) => {
+                                  const checked = documentPrimaryColor.toLowerCase() === color.value.toLowerCase();
+                                  return (
+                                    <button
+                                      key={color.value}
+                                      type="button"
+                                      onClick={() => setDocumentPrimaryColor(color.value)}
+                                      className={`flex h-8 items-center gap-2 rounded-md border px-2 text-xs font-medium ${checked ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                                      title={color.name}
+                                    >
+                                      <span className="h-4 w-4 rounded-full border" style={{ backgroundColor: color.value }} />
+                                      {color.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                               <div className="mt-1 flex gap-2">
                                  <input type="color" className="h-10 w-12 rounded border bg-white p-1" value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} />
                                  <Input value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} className="font-mono" />

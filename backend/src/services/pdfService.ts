@@ -845,7 +845,17 @@ export async function generateInvoicePDF(
   const explicitTheme = opts?.themeOverride || opts?.templateOverride;
   const savedTheme = rawPrintSettings.invoiceTheme || rawPrintSettings.invoice_theme || rawPrintSettings.regular?.layout || company.invoice_pdf_template || company.document_theme;
   const invoiceTheme = invoice.pdf_template || invoice.document_theme;
-  const resolvedTheme = normalizeInvoicePrintTheme(explicitTheme || savedTheme || invoiceTheme || 'business-theme-1') as InvoicePrintTheme;
+  const resolvedTheme = normalizeInvoicePrintTheme(explicitTheme || invoiceTheme || savedTheme || 'business-theme-1') as InvoicePrintTheme;
+  const invoiceCustomFields = parseObject(invoice?.custom_fields);
+  const invoiceLayoutColor = String(invoiceCustomFields.__print_layout_color || '').trim();
+  const effectivePrintSettings = {
+    ...printSettings,
+    regular: { ...printSettings.regular, layout: resolvedTheme },
+    layout_colors: {
+      ...printSettings.layout_colors,
+      ...(invoiceLayoutColor ? { [resolvedTheme]: invoiceLayoutColor } : {}),
+    },
+  };
   const kind = PRINT_LAYOUT_KIND[resolvedTheme] || 'standard';
   const docTheme = PRINT_LAYOUT_THEME[resolvedTheme] || 'classic';
 
@@ -874,13 +884,13 @@ export async function generateInvoicePDF(
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
 
-  const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, printSettings, logoSrc, signatureSrc, upiQr, einvBlock });
+  const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
   const pdf = await page.pdf({
-    format: printSettings.regular.paper_size === 'Letter' ? 'Letter' : 'A4',
-    landscape: printSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
+    format: effectivePrintSettings.regular.paper_size === 'Letter' ? 'Letter' : 'A4',
+    landscape: effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
     printBackground: true,
     margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
   });

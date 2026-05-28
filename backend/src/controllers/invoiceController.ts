@@ -2115,6 +2115,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       qr_code_url: null,
       pdf_template: template,
       document_theme: template,
+      custom_fields: d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : {},
     };
 
     const pdfBuffer = await generateInvoicePDF(invoice, company, party, pdfRows, { themeOverride: template });

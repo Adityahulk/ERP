@@ -4,52 +4,35 @@ import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import toast from 'react-hot-toast';
+import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } from '@/components/settings/PrintLayoutPreview';
 
 const SKIP_PREVIEW_KEY = 'bizflow_skip_invoice_preview_after_save';
 
-export const INVOICE_PDF_TEMPLATES = [
-  { id: 'business-theme-1', label: 'Business Theme 1', group: 'Business', tip: 'Complete GST-ready layout with buyer, seller, bank, signature, and tax details.' },
-  { id: 'business-theme-2', label: 'Business Theme 2', group: 'Business', tip: 'Bold header layout with clean item rows and compact totals.' },
-  { id: 'business-theme-3', label: 'Business Theme 3', group: 'Business', tip: 'Centered proforma-style layout for estimates and advance invoices.' },
-  { id: 'business-theme-4', label: 'Business Theme 4', group: 'Business', tip: 'Plain black-and-white invoice with boxed details, unit column, GST, bank, and signature.' },
-] as const;
+export const INVOICE_PDF_TEMPLATES = PRINT_LAYOUT_OPTIONS.map((layout) => ({
+  ...layout,
+  tip: `${layout.group} invoice layout`,
+})) as Array<(typeof PRINT_LAYOUT_OPTIONS)[number] & { tip: string }>;
 
-export type InvoicePdfTemplateId = (typeof INVOICE_PDF_TEMPLATES)[number]['id'];
+export type InvoicePdfTemplateId = PrintLayoutId;
 export const DOCUMENT_THEME_OPTIONS = INVOICE_PDF_TEMPLATES;
-export type DocumentThemeId = (typeof DOCUMENT_THEME_OPTIONS)[number]['id'];
+export type DocumentThemeId = PrintLayoutId;
 
 type TemplateRow = (typeof INVOICE_PDF_TEMPLATES)[number];
 
 export const LEGACY_INVOICE_THEME_MAP: Record<string, InvoicePdfTemplateId> = {
-  standard: 'business-theme-1',
-  'detailed-tax-invoice': 'business-theme-1',
-  simple: 'business-theme-2',
-  'professional-header': 'business-theme-2',
-  performa: 'business-theme-3',
-  'centered-proforma': 'business-theme-3',
-  monochrome: 'business-theme-4',
-  'black-white-standard': 'business-theme-4',
-  classic: 'business-theme-1',
-  modern: 'business-theme-1',
-  compact: 'business-theme-1',
-  executive: 'business-theme-1',
-  sunrise: 'business-theme-1',
-  forest: 'business-theme-1',
-  midnight: 'business-theme-1',
-  royal: 'business-theme-1',
-  slate: 'business-theme-1',
-  retail: 'business-theme-1',
-  minimal: 'business-theme-1',
+  ...PRINT_LAYOUT_LEGACY_ID_MAP,
 };
 
 export function normalizeInvoiceThemeId(value: unknown, fallback: InvoicePdfTemplateId = 'business-theme-1'): InvoicePdfTemplateId {
   const raw = String(value || '').trim();
-  if (INVOICE_PDF_TEMPLATES.some((theme) => theme.id === raw)) return raw as InvoicePdfTemplateId;
+  if (PRINT_LAYOUT_OPTIONS.some((theme) => theme.id === raw)) return raw as InvoicePdfTemplateId;
   return LEGACY_INVOICE_THEME_MAP[raw] || fallback;
 }
 
 export type InvoicePreviewDraftPayload = {
   invoice_type: string;
+  pdf_template?: string;
+  document_theme?: string;
   party_id?: string;
   party_name?: string;
   godown_id?: string;
@@ -142,7 +125,7 @@ export function InvoicePreviewWorkspace({
       .then((response) => {
         if (cancelled) return;
         const settings = response.data?.data ?? response.data ?? {};
-        const nextTheme = normalizeInvoiceThemeId(settings.invoiceTheme || settings.regular?.layout || settings.invoice_theme);
+        const nextTheme = normalizeInvoiceThemeId(draftPayload?.pdf_template || draftPayload?.document_theme || settings.invoiceTheme || settings.regular?.layout || settings.invoice_theme);
         setSavedTheme(nextTheme);
         setTemplate(nextTheme);
       })
@@ -157,7 +140,7 @@ export function InvoicePreviewWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [draftPayload?.document_theme, draftPayload?.pdf_template, open]);
 
   const loadPdf = useCallback(async () => {
     if (!open || !printSettingsLoaded) return;

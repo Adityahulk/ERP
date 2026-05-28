@@ -9,13 +9,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { ArrowLeft, ChevronDown, ScanLine, UserPlus, Paperclip } from 'lucide-react';
 import {
-  DOCUMENT_THEME_OPTIONS,
   InvoicePreviewWorkspace,
   normalizeInvoiceThemeId,
   readSkipInvoicePreview,
-  type DocumentThemeId,
-  INVOICE_PDF_TEMPLATES,
-  type InvoicePdfTemplateId,
 } from '@/components/invoices/InvoicePreviewWorkspace';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
@@ -35,6 +31,14 @@ import PaymentRowsEditor, { newPaymentEditorRow, type PaymentEditorRow } from '@
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+import {
+  DEFAULT_PRINT_LAYOUT_COLORS,
+  PRINT_COLOR_PALETTE,
+  PRINT_LAYOUT_BY_ID,
+  PRINT_LAYOUT_LEGACY_ID_MAP,
+  PrintLayoutPicker,
+  type PrintLayoutId,
+} from '@/components/settings/PrintLayoutPreview';
 
 const GST_STATE_OPTIONS = [
   ['01', 'Jammu & Kashmir'], ['02', 'Himachal Pradesh'], ['03', 'Punjab'], ['04', 'Chandigarh'],
@@ -106,6 +110,26 @@ function gstStateFromGstin(value?: string | null) {
   return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
 }
 
+function companyPrintSettings(company: any) {
+  return company?.print_settings && typeof company.print_settings === 'object' ? company.print_settings : {};
+}
+
+function defaultInvoiceLayout(company: any): PrintLayoutId {
+  const settings = companyPrintSettings(company);
+  const raw = settings.invoiceTheme || settings.invoice_theme || settings.regular?.layout || company?.invoice_pdf_template || company?.document_theme;
+  return normalizeInvoiceThemeId(raw) as PrintLayoutId;
+}
+
+function defaultLayoutColor(company: any, layoutId: string) {
+  const settings = companyPrintSettings(company);
+  return String(
+    settings.layout_colors?.[layoutId] ||
+    company?.document_primary_color ||
+    DEFAULT_PRINT_LAYOUT_COLORS[layoutId as PrintLayoutId] ||
+    '#4F46E5',
+  );
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: routeParamId } = useParams();
@@ -142,8 +166,9 @@ export default function InvoiceCreate() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
-  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('business-theme-1');
-  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('business-theme-1');
+  const [pdfTemplate, setPdfTemplate] = useState<PrintLayoutId>('business-theme-1');
+  const [documentTheme, setDocumentTheme] = useState<PrintLayoutId>('business-theme-1');
+  const [invoiceLayoutColor, setInvoiceLayoutColor] = useState('#4F46E5');
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const [notes, setNotes] = useState('');
@@ -171,9 +196,19 @@ export default function InvoiceCreate() {
     setCurrencyCode(enabledCurrencies.includes(preferred) ? preferred : enabledCurrencies[0]);
   }, [company, editInvoiceId, enabledCurrencies]);
 
+  useEffect(() => {
+    if (!company || editInvoiceId || duplicateInvoiceId || defaultLayoutHydratedRef.current) return;
+    const layout = defaultInvoiceLayout(company);
+    setPdfTemplate(layout);
+    setDocumentTheme(layout);
+    setInvoiceLayoutColor(defaultLayoutColor(company, layout));
+    defaultLayoutHydratedRef.current = true;
+  }, [company, duplicateInvoiceId, editInvoiceId]);
+
   const hydratedIdRef = useRef<string | null>(null);
   const duplicateHydratedIdRef = useRef<string | null>(null);
   const advancedAutoOpenedRef = useRef(false);
+  const defaultLayoutHydratedRef = useRef(false);
 
   useEffect(() => {
     if (!editInvoiceId) {
@@ -213,6 +248,7 @@ export default function InvoiceCreate() {
     setInvoiceFiles([]);
     setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
     setDocumentTheme(normalizeInvoiceThemeId(inv.document_theme));
+    setInvoiceLayoutColor(String((inv.custom_fields as any)?.__print_layout_color || defaultLayoutColor(company, normalizeInvoiceThemeId(inv.document_theme || inv.pdf_template))));
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
     setItems(((inv.items as any[]) || []).map((it: any) => ({
       item_id: it.item_id ? String(it.item_id) : undefined,
@@ -263,6 +299,7 @@ export default function InvoiceCreate() {
     setInvoiceFiles([]);
     setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
     setDocumentTheme(normalizeInvoiceThemeId(inv.document_theme));
+    setInvoiceLayoutColor(String((inv.custom_fields as any)?.__print_layout_color || defaultLayoutColor(company, normalizeInvoiceThemeId(inv.document_theme || inv.pdf_template))));
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
     setItems(((inv.items as any[]) || []).map((it: any) => ({
       item_id: it.item_id ? String(it.item_id) : undefined,
@@ -471,20 +508,20 @@ export default function InvoiceCreate() {
       currency_code: currencyCode,
       notes: notes || undefined,
       external_description: externalDescription || undefined,
-      custom_fields: customFields,
+      custom_fields: { ...customFields, __print_layout: pdfTemplate, __print_layout_color: invoiceLayoutColor },
       amount_paid: amountPaid,
       payments: paymentRows,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, invoiceLayoutColor, companyBankAccountId],
   );
 
   const draftState = useMemo(() => ({
     partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode,
-    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate,
+    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor,
     documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items,
-  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
@@ -507,6 +544,7 @@ export default function InvoiceCreate() {
       setRoundOffEnabled(Boolean(draft.roundOffEnabled));
       setPdfTemplate(normalizeInvoiceThemeId(draft.pdfTemplate));
       setDocumentTheme(normalizeInvoiceThemeId(draft.documentTheme));
+      setInvoiceLayoutColor(String(draft.invoiceLayoutColor || defaultLayoutColor(company, normalizeInvoiceThemeId(draft.pdfTemplate || draft.documentTheme))));
       setCompanyBankAccountId(String(draft.companyBankAccountId || ''));
       setNotes(String(draft.notes || ''));
       setExternalDescription(String(draft.externalDescription || ''));
@@ -592,7 +630,7 @@ export default function InvoiceCreate() {
       party_phone: partyPhone || undefined,
       notes,
       external_description: externalDescription || undefined,
-      custom_fields: customFields,
+      custom_fields: { ...customFields, __print_layout: pdfTemplate, __print_layout_color: invoiceLayoutColor },
       round_off_enabled: roundOffEnabled,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
@@ -646,12 +684,19 @@ export default function InvoiceCreate() {
   const canSave = !!effectivePartyName && items.some((item) => String(item.name || '').trim());
   const saving = createMutation.isPending || updateMutation.isPending;
   const cancelTo = editInvoiceId ? `/sales/${editInvoiceId}` : '/sales';
+  const selectedPrintLayoutId = (PRINT_LAYOUT_BY_ID[pdfTemplate as PrintLayoutId]?.id || PRINT_LAYOUT_LEGACY_ID_MAP[pdfTemplate] || 'business-theme-1') as PrintLayoutId;
+  const selectedLayoutColorName = PRINT_COLOR_PALETTE.find((color) => color.value.toLowerCase() === invoiceLayoutColor.toLowerCase())?.name || 'Custom';
+  const changeInvoiceLayout = (layoutId: PrintLayoutId) => {
+    setPdfTemplate(layoutId);
+    setDocumentTheme(layoutId);
+    setInvoiceLayoutColor(defaultLayoutColor(company, layoutId));
+  };
   const advancedHasCustom = Boolean(
     godownId ||
     placeOfSupply ||
     isInterstate ||
-    pdfTemplate !== 'business-theme-1' ||
-    documentTheme !== 'business-theme-1' ||
+    pdfTemplate !== defaultInvoiceLayout(company) ||
+    documentTheme !== defaultInvoiceLayout(company) ||
     companyBankAccountId
   );
 
@@ -986,17 +1031,44 @@ export default function InvoiceCreate() {
                 </label>
               </>
             )}
-            <div>
-              <Label className="text-xs">PDF Template</Label>
-              <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={pdfTemplate} onChange={e => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
-                {INVOICE_PDF_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-              </select>
+            <div className="md:col-span-3">
+              <Label className="text-xs">Invoice layout</Label>
+              <div className="mt-1">
+                <PrintLayoutPicker value={selectedPrintLayoutId} onChange={changeInvoiceLayout} />
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Default from invoice settings is preselected. You can override it for this invoice.
+              </p>
             </div>
-            <div>
-              <Label className="text-xs">Theme</Label>
-              <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={documentTheme} onChange={e => setDocumentTheme(e.target.value as DocumentThemeId)}>
-                {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
-              </select>
+            <div className="md:col-span-3">
+              <Label className="text-xs">Invoice color</Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {PRINT_COLOR_PALETTE.map((color) => {
+                  const checked = invoiceLayoutColor.toLowerCase() === color.value.toLowerCase();
+                  return (
+                    <button
+                      key={color.value}
+                      type="button"
+                      onClick={() => setInvoiceLayoutColor(color.value)}
+                      className={`flex h-8 items-center gap-2 rounded-md border px-2 text-xs font-medium ${checked ? 'border-primary bg-primary/5 text-primary' : 'bg-background text-muted-foreground hover:bg-muted'}`}
+                      title={color.name}
+                    >
+                      <span className="h-4 w-4 rounded-full border" style={{ backgroundColor: color.value }} />
+                      {color.name}
+                    </button>
+                  );
+                })}
+                <div className="flex h-8 items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border bg-background p-1"
+                    value={invoiceLayoutColor}
+                    onChange={(e) => setInvoiceLayoutColor(e.target.value)}
+                    aria-label="Custom invoice color"
+                  />
+                  <span className="text-xs text-muted-foreground">{selectedLayoutColorName}</span>
+                </div>
+              </div>
             </div>
             <div className="md:col-span-3">
               <BankAccountPicker value={companyBankAccountId} onChange={setCompanyBankAccountId} />
