@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useCreateItem, useItemCategories, useItemUnits } from '@/hooks/useItems';
 import { useGodowns } from '@/hooks/useStock';
+import { useCompany } from '@/hooks/useBusiness';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Loader2, Sparkles } from 'lucide-react';
-import { GST_RATE_OPTIONS, gstRateLabel } from '@/lib/gstRates';
+import { companyGstRateOptions, gstRateLabel } from '@/lib/gstRates';
+import { enabledItemCustomFields } from '@/lib/itemCustomFields';
 
 const ITEM_TYPES = [
   { value: 'product', label: 'Product' },
@@ -43,10 +45,13 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
   const { data: catData } = useItemCategories();
   const { data: unitData } = useItemUnits();
   const { data: godownRes } = useGodowns();
+  const { data: company } = useCompany();
+  const gstRateOptions = companyGstRateOptions(company);
 
   const categories = Array.isArray((catData as any)?.data?.flat) ? (catData as any).data.flat : [];
   const units = Array.isArray((unitData as any)?.data) ? (unitData as any).data : [];
   const godowns = godownRes?.data ?? [];
+  const configuredCustomFields = enabledItemCustomFields((company as any)?.item_custom_fields);
 
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
@@ -112,6 +117,18 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
   };
 
   const removeCustomRow = (i: number) => setCustomRows((r) => r.filter((_, idx) => idx !== i));
+  const customValue = (key: string) => customRows.find((row) => row.key === key)?.value || '';
+  const setConfiguredCustomValue = (key: string, value: string) => {
+    setCustomRows((prev) => {
+      const idx = prev.findIndex((row) => row.key === key);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], value };
+        return next;
+      }
+      return [...prev, { key, value }];
+    });
+  };
 
   const submit = async () => {
     const trimmedName = name.trim();
@@ -133,7 +150,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     }
 
     const isService = itemType === 'service';
-    const os = !isService && trackInventory ? parseInt(openingStock, 10) || 0 : 0;
+    const os = !isService && trackInventory ? parseFloat(openingStock) || 0 : 0;
     if (os > 0 && !godownId.trim()) {
       toast.error('Select a godown when adding opening stock');
       return;
@@ -173,9 +190,9 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     const gid = godownId.trim();
     if (gid) body.godown_id = gid;
 
-    const rp = parseInt(reorderPoint, 10);
+    const rp = parseFloat(reorderPoint);
     if (!Number.isNaN(rp) && rp >= 0) body.reorder_point = rp;
-    const mx = parseInt(maxStockLevel, 10);
+    const mx = parseFloat(maxStockLevel);
     if (!Number.isNaN(mx) && mx >= 0) body.max_stock_level = mx;
 
     if (customRows.length) {
@@ -372,7 +389,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   onChange={(e) => setGstRate(parseInt(e.target.value, 10))}
                   disabled={createItem.isPending}
                 >
-                  {GST_RATE_OPTIONS.map((g) => (
+                  {gstRateOptions.map((g) => (
                     <option key={g} value={g}>
                       {gstRateLabel(g)}
                     </option>
@@ -437,6 +454,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                           <Input
                             type="number"
                             min={0}
+                            step="0.01"
                             className="mt-1 tabular-nums"
                             value={openingStock}
                             onChange={(e) => setOpeningStock(e.target.value)}
@@ -481,11 +499,11 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <Label>Reorder point</Label>
-                          <Input type="number" min={0} className="mt-1" value={reorderPoint} onChange={(e) => setReorderPoint(e.target.value)} disabled={createItem.isPending} />
+                          <Input type="number" min={0} step="0.01" className="mt-1" value={reorderPoint} onChange={(e) => setReorderPoint(e.target.value)} disabled={createItem.isPending} />
                         </div>
                         <div>
                           <Label>Max stock level</Label>
-                          <Input type="number" min={0} className="mt-1" value={maxStockLevel} onChange={(e) => setMaxStockLevel(e.target.value)} disabled={createItem.isPending} />
+                          <Input type="number" min={0} step="0.01" className="mt-1" value={maxStockLevel} onChange={(e) => setMaxStockLevel(e.target.value)} disabled={createItem.isPending} />
                         </div>
                       </div>
                     </>
@@ -527,7 +545,24 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
               <div className="border-t pt-3">
                 <Label className="text-sm">Custom fields</Label>
                 <p className="text-xs text-muted-foreground mt-1 mb-2">Optional key–value pairs stored on the item.</p>
+                {configuredCustomFields.length > 0 && (
+                  <div className="mb-3 grid gap-3 rounded-lg border bg-slate-50 p-3 sm:grid-cols-2">
+                    {configuredCustomFields.map((field) => (
+                      <div key={field.id}>
+                        <Label className="text-xs">{field.label}</Label>
+                        <Input
+                          type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                          className="mt-1"
+                          value={customValue(field.id)}
+                          onChange={(e) => setConfiguredCustomValue(field.id, e.target.value)}
+                          disabled={createItem.isPending}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {customRows.map((row, i) => (
+                  configuredCustomFields.some((field) => field.id === row.key) ? null : (
                   <div key={`${row.key}-${i}`} className="flex gap-2 mb-2">
                     <Input value={row.key} readOnly className="flex-1 text-xs" />
                     <Input value={row.value} readOnly className="flex-1 text-xs" />
@@ -535,6 +570,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                       Remove
                     </Button>
                   </div>
+                  )
                 ))}
                 <div className="flex flex-wrap gap-2">
                   <Input placeholder="Field name" className="flex-1 min-w-[100px]" value={newCustomKey} onChange={(e) => setNewCustomKey(e.target.value)} disabled={createItem.isPending} />

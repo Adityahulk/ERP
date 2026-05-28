@@ -101,6 +101,114 @@ export async function seedChartOfAccountsIfEmpty(companyId: string): Promise<num
   return accounts.length;
 }
 
+export async function seedDefaultItemMasters(companyId: string): Promise<{ units: number; categories: number; conversions: number }> {
+  const units: Array<[string, string, boolean]> = [
+    ['Bags', 'Bag', false],
+    ['Bottles', 'Btl', false],
+    ['Box', 'Box', false],
+    ['Bundles', 'Bdl', false],
+    ['Cans', 'Can', false],
+    ['Cartons', 'Ctn', false],
+    ['Dozens', 'Dzn', false],
+    ['Grammes', 'Gm', false],
+    ['Kilograms', 'Kg', false],
+    ['Litre', 'Ltr', false],
+    ['Meters', 'Mtr', false],
+    ['Centimeters', 'Cm', false],
+    ['Millilitre', 'Ml', false],
+    ['Numbers', 'Nos', false],
+    ['Packs', 'Pac', false],
+    ['Pairs', 'Prs', false],
+    ['Pieces', 'Pcs', true],
+    ['Rolls', 'Rol', false],
+    ['Sets', 'Set', false],
+    ['Tonnes', 'Ton', false],
+  ];
+  const categories: Array<[string, string]> = [
+    ['General', 'Default item category'],
+    ['Grocery', 'Food, grains and daily-use goods'],
+    ['Electronics', 'Electronic items and accessories'],
+    ['Clothing', 'Garments, textiles and apparel'],
+    ['Raw Materials', 'Materials used for manufacturing or job work'],
+    ['Finished Goods', 'Ready-to-sell products'],
+    ['Trading Goods', 'Goods bought and sold without further processing'],
+    ['Services', 'Service and labour line items'],
+    ['Consumables', 'Consumable supplies used in operations'],
+    ['Packaging', 'Packing and shipping material'],
+    ['Spare Parts', 'Replacement and maintenance parts'],
+    ['Office Supplies', 'Office and administrative supplies'],
+  ];
+
+  let insertedUnits = 0;
+  for (const [name, abbreviation, isDefault] of units) {
+    const existing = await query(
+      `SELECT id FROM item_units
+       WHERE company_id = $1
+         AND (LOWER(TRIM(name)) = LOWER(TRIM($2))
+           OR LOWER(TRIM(COALESCE(abbreviation, ''))) = LOWER(TRIM($3)))
+       LIMIT 1`,
+      [companyId, name, abbreviation],
+    );
+    if (existing.rows.length) continue;
+    if (isDefault) await query('UPDATE item_units SET is_default = false WHERE company_id = $1', [companyId]);
+    await query(
+      `INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1, $2, $3, $4)`,
+      [companyId, name, abbreviation, isDefault],
+    );
+    insertedUnits++;
+  }
+
+  let insertedCategories = 0;
+  for (const [name, description] of categories) {
+    const existing = await query(
+      `SELECT id FROM item_categories
+       WHERE company_id = $1 AND COALESCE(is_deleted, false) = false
+         AND LOWER(TRIM(name)) = LOWER(TRIM($2))
+       LIMIT 1`,
+      [companyId, name],
+    );
+    if (existing.rows.length) continue;
+    await query(
+      `INSERT INTO item_categories (company_id, name, description, is_active, is_deleted)
+       VALUES ($1, $2, $3, true, false)`,
+      [companyId, name, description],
+    );
+    insertedCategories++;
+  }
+
+  const conversionDefs: Array<[string, number, string]> = [
+    ['Kg', 1000, 'Gm'],
+    ['Ltr', 1000, 'Ml'],
+    ['Mtr', 100, 'Cm'],
+    ['Dzn', 12, 'Pcs'],
+    ['Ton', 1000, 'Kg'],
+  ];
+  let insertedConversions = 0;
+  for (const [baseAbbr, factor, secondaryAbbr] of conversionDefs) {
+    const pair = await query(
+      `SELECT bu.id AS base_unit_id, su.id AS secondary_unit_id
+       FROM item_units bu
+       JOIN item_units su ON su.company_id = bu.company_id
+       WHERE bu.company_id = $1
+         AND LOWER(TRIM(COALESCE(bu.abbreviation, ''))) = LOWER($2)
+         AND LOWER(TRIM(COALESCE(su.abbreviation, ''))) = LOWER($3)
+       LIMIT 1`,
+      [companyId, baseAbbr, secondaryAbbr],
+    );
+    if (!pair.rows.length) continue;
+    const inserted = await query(
+      `INSERT INTO item_unit_conversions (company_id, base_unit_id, factor, secondary_unit_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (company_id, base_unit_id, secondary_unit_id) DO NOTHING
+       RETURNING id`,
+      [companyId, pair.rows[0].base_unit_id, factor, pair.rows[0].secondary_unit_id],
+    );
+    insertedConversions += inserted.rows.length;
+  }
+
+  return { units: insertedUnits, categories: insertedCategories, conversions: insertedConversions };
+}
+
 /** Five starter products with stock in the given godown (only if company has zero items). */
 export async function seedSampleItemsIfEmpty(companyId: string, godownId: string): Promise<number> {
   const c = await query(
@@ -109,14 +217,15 @@ export async function seedSampleItemsIfEmpty(companyId: string, godownId: string
   );
   if ((c.rows[0]?.n || 0) > 0) return 0;
 
+  await seedDefaultItemMasters(companyId);
   const cat = await query(
-    `INSERT INTO item_categories (company_id, name, is_active) VALUES ($1, 'General', true) RETURNING id`,
+    `SELECT id FROM item_categories WHERE company_id = $1 AND is_deleted = false ORDER BY CASE WHEN name = 'General' THEN 0 ELSE 1 END, name LIMIT 1`,
     [companyId],
   );
   const categoryId = cat.rows[0].id as string;
 
   const unit = await query(
-    `INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1, 'Pieces', 'Pcs', true) RETURNING id`,
+    `SELECT id FROM item_units WHERE company_id = $1 ORDER BY is_default DESC, CASE WHEN abbreviation = 'Pcs' THEN 0 ELSE 1 END, name LIMIT 1`,
     [companyId],
   );
   const unitId = unit.rows[0].id as string;

@@ -7,6 +7,7 @@ import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
 import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
 import { postPurchaseInvoiceAccounting } from '../services/accountingService';
+import { normalizeInvoicePrintTheme } from '../lib/printThemes';
 
 // ── Helpers ───────────────────────────────────────────────────
 const PURCHASE_BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
@@ -362,8 +363,8 @@ export async function receiveStock(req: Request, res: Response) {
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
           invoiceTotals.totalAmount, req.user!.id,
-          ['standard', 'simple', 'performa', 'monochrome'].includes(String(d.pdf_template || '')) ? d.pdf_template : 'monochrome',
-          ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : 'executive',
+          normalizeInvoicePrintTheme(d.pdf_template || d.document_theme),
+          normalizeInvoicePrintTheme(d.document_theme || d.pdf_template),
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -751,8 +752,8 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
         ? await resolvePurchaseBillNumber(client, companyId, d.bill_number, id)
         : validatePurchaseBillNumber(pi.bill_number);
 
-      const pdfTpl = ['standard', 'simple', 'performa', 'monochrome'].includes(String(d.pdf_template || '')) ? d.pdf_template : pi.pdf_template || 'monochrome';
-      const docTheme = ['classic', 'modern', 'compact', 'executive', 'sunrise', 'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal'].includes(String(d.document_theme || '')) ? d.document_theme : pi.document_theme || 'executive';
+      const pdfTpl = normalizeInvoicePrintTheme(d.pdf_template || d.document_theme || pi.pdf_template || pi.document_theme);
+      const docTheme = normalizeInvoicePrintTheme(d.document_theme || d.pdf_template || pi.document_theme || pi.pdf_template);
 
       await client.query(
         `UPDATE purchase_invoices SET
@@ -967,7 +968,7 @@ export async function getPurchaseInvoicePDF(req: Request, res: Response) {
     };
 
     const pdfBuffer = await generateInvoicePDF(invoiceLike, companyForPdf, partyRes.rows[0], itemsRes.rows, {
-      templateOverride: invRes.rows[0].pdf_template || undefined,
+      themeOverride: normalizeInvoicePrintTheme(invRes.rows[0].pdf_template || invRes.rows[0].document_theme),
     });
     const inline = String(req.query.inline || '') === '1';
     const filename = `${invoiceLike.invoice_number}.pdf`;

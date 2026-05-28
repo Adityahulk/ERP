@@ -5,6 +5,8 @@ import api from '@/lib/api';
 import {
   useCreateItemCategory,
   useCreateItemUnit,
+  useCreateUnitConversion,
+  useDeleteUnitConversion,
   useDeleteItem,
   useItem,
   useItemCategories,
@@ -69,6 +71,10 @@ export default function ItemList() {
   const [categoryName, setCategoryName] = useState('');
   const [unitName, setUnitName] = useState('');
   const [unitAbbreviation, setUnitAbbreviation] = useState('');
+  const [conversionOpen, setConversionOpen] = useState(false);
+  const [conversionBaseUnitId, setConversionBaseUnitId] = useState('');
+  const [conversionFactor, setConversionFactor] = useState('');
+  const [conversionSecondaryUnitId, setConversionSecondaryUnitId] = useState('');
   const [importing, setImporting] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [barcodeLines, setBarcodeLines] = useState('');
@@ -96,6 +102,8 @@ export default function ItemList() {
   const deleteMutation = useDeleteItem();
   const createCategory = useCreateItemCategory();
   const createUnit = useCreateItemUnit();
+  const createConversion = useCreateUnitConversion();
+  const deleteConversion = useDeleteUnitConversion();
 
   const items: Item[] = itemsRes?.data?.data || [];
   const itemDetailQuery = useItem(selectedItemId);
@@ -243,6 +251,37 @@ export default function ItemList() {
       toast.success('Unit added');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to add unit');
+    }
+  };
+
+  const openConversion = (baseUnitId?: string) => {
+    const base = baseUnitId || selectedUnitId || units[0]?.id || '';
+    setConversionBaseUnitId(base);
+    setConversionFactor('');
+    setConversionSecondaryUnitId('');
+    setConversionOpen(true);
+  };
+
+  const saveConversion = async (saveAndNew = false) => {
+    if (!conversionBaseUnitId) return toast.error('Select base unit');
+    if (!conversionSecondaryUnitId) return toast.error('Select secondary unit');
+    if (conversionBaseUnitId === conversionSecondaryUnitId) return toast.error('Secondary unit must be different');
+    const factor = Number(conversionFactor);
+    if (!Number.isFinite(factor) || factor <= 0) return toast.error('Enter a positive conversion rate');
+    try {
+      await createConversion.mutateAsync({
+        baseUnitId: conversionBaseUnitId,
+        data: { factor, secondary_unit_id: conversionSecondaryUnitId },
+      });
+      toast.success('Conversion saved');
+      if (saveAndNew) {
+        setConversionFactor('');
+        setConversionSecondaryUnitId('');
+      } else {
+        setConversionOpen(false);
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to save conversion');
     }
   };
 
@@ -611,7 +650,10 @@ export default function ItemList() {
                   <Label>Add unit</Label>
                   <Input value={unitName} onChange={(e) => setUnitName(e.target.value)} placeholder="e.g. Litres" />
                   <Input value={unitAbbreviation} onChange={(e) => setUnitAbbreviation(e.target.value)} placeholder="Abbreviation (e.g. Ltr)" />
-                  <Button className="w-full" loading={createUnit.isPending} onClick={saveUnit}>Save Unit</Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button loading={createUnit.isPending} onClick={saveUnit}>Save Unit</Button>
+                    <Button variant="outline" onClick={() => openConversion()} disabled={units.length < 2}>Add Conversion</Button>
+                  </div>
                 </div>
                 <div className="rounded-lg border max-h-[65vh] overflow-y-auto">
                   {units.map((unit: any) => (
@@ -637,11 +679,46 @@ export default function ItemList() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="font-semibold">{units.find((unit: any) => unit.id === selectedUnitId)?.name || 'Unit usage'}</h2>
-                    <p className="text-xs text-muted-foreground mt-1">Items using this unit today.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Items using this unit and configured conversions.</p>
                   </div>
-                  <Badge variant="secondary">
-                    {unitItems.filter((item) => item.unit_id === selectedUnitId).length} linked
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">
+                      {unitItems.filter((item) => item.unit_id === selectedUnitId).length} linked
+                    </Badge>
+                    <Button size="sm" onClick={() => openConversion(selectedUnitId)} disabled={!selectedUnitId || units.length < 2}>
+                      Add Conversion
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-lg border">
+                  <div className="grid grid-cols-[1fr_auto] border-b bg-muted/40 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
+                    <span>Conversion</span>
+                    <span>Action</span>
+                  </div>
+                  {((units.find((unit: any) => unit.id === selectedUnitId)?.conversions || []) as any[]).length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No conversions configured for this unit.</div>
+                  ) : (
+                    ((units.find((unit: any) => unit.id === selectedUnitId)?.conversions || []) as any[]).map((conversion) => (
+                      <div key={conversion.id} className="grid grid-cols-[1fr_auto] items-center border-b px-4 py-3 text-sm last:border-b-0">
+                        <span>
+                          1 {units.find((unit: any) => unit.id === selectedUnitId)?.name}
+                          {' = '}
+                          <span className="font-semibold tabular-nums">{Number(conversion.factor)}</span>
+                          {' '}
+                          {conversion.secondary_unit_name} ({conversion.secondary_unit_abbreviation || '—'})
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                          loading={deleteConversion.isPending}
+                          onClick={() => deleteConversion.mutate({ baseUnitId: selectedUnitId, conversionId: conversion.id })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {unitItems.filter((item) => item.unit_id === selectedUnitId).length === 0 && (
@@ -668,6 +745,46 @@ export default function ItemList() {
       </Tabs>
 
       <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} defaultItemType={activeTab === 'services' ? 'service' : 'product'} />
+      {conversionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between bg-blue-50 px-6 py-4">
+              <h2 className="text-xl font-semibold">Add Conversion</h2>
+              <Button type="button" variant="ghost" size="icon" onClick={() => setConversionOpen(false)}>×</Button>
+            </div>
+            <div className="grid gap-4 p-6 md:grid-cols-[1fr_80px_1fr] md:items-end">
+              <div>
+                <Label>Base Unit</Label>
+                <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={conversionBaseUnitId} onChange={(e) => setConversionBaseUnitId(e.target.value)}>
+                  <option value="">Select unit</option>
+                  {units.map((unit: any) => (
+                    <option key={unit.id} value={unit.id}>{unit.name} ({unit.abbreviation || '—'})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Rate</Label>
+                <Input type="number" min={0.0001} step={0.0001} className="mt-1 tabular-nums" value={conversionFactor} onChange={(e) => setConversionFactor(e.target.value)} placeholder="0" />
+              </div>
+              <div>
+                <Label>Secondary Unit</Label>
+                <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={conversionSecondaryUnitId} onChange={(e) => setConversionSecondaryUnitId(e.target.value)}>
+                  <option value="">None</option>
+                  {units.filter((unit: any) => unit.id !== conversionBaseUnitId).map((unit: any) => (
+                    <option key={unit.id} value={unit.id}>{unit.name} ({unit.abbreviation || '—'})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="hidden text-center text-lg font-semibold md:block">=</div>
+            </div>
+            <div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4">
+              <Button variant="outline" onClick={() => setConversionOpen(false)}>Cancel</Button>
+              <Button variant="secondary" loading={createConversion.isPending} onClick={() => saveConversion(false)}>Save</Button>
+              <Button loading={createConversion.isPending} onClick={() => saveConversion(true)}>Save & New</Button>
+            </div>
+          </div>
+        </div>
+      )}
       {showImportPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <Card className="w-full max-w-2xl bg-background shadow-xl">

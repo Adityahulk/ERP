@@ -5,14 +5,24 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, AlertTriangle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil, X, Printer, ReceiptText, Calculator, ChevronLeft, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
 import { normalizeRole, roleLabel } from '@/lib/roles';
 import { normalizeCurrencyCode, SUPPORTED_CURRENCIES, type CurrencyCode } from '@/lib/formatters';
-import { DOCUMENT_THEME_OPTIONS } from '@/components/invoices/InvoicePreviewWorkspace';
+import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, normalizeInvoiceThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
+import {
+  DEFAULT_PRINT_LAYOUT_COLORS,
+  PRINT_COLOR_PALETTE,
+  PRINT_LAYOUT_BY_ID,
+  PRINT_LAYOUT_LEGACY_ID_MAP,
+  PRINT_LAYOUT_OPTIONS,
+  PrintInvoiceLayoutPreview,
+  PrintLayoutPicker,
+  type PrintLayoutId,
+} from '@/components/settings/PrintLayoutPreview';
 
 type SalesCustomFieldDef = {
   id: string;
@@ -22,6 +32,423 @@ type SalesCustomFieldDef = {
   required: boolean;
   enabled: boolean;
 };
+
+type ItemCustomFieldDef = {
+  id: string;
+  label: string;
+  type: 'text' | 'number' | 'date';
+  enabled: boolean;
+  show_in_print: boolean;
+};
+
+type ItemSettingsState = {
+  enable_item: boolean;
+  sell_type: 'product' | 'service' | 'both';
+  barcode_scan: boolean;
+  stock_maintenance: boolean;
+  manufacturing: boolean;
+  show_low_stock_dialog: boolean;
+  items_unit: boolean;
+  default_unit: boolean;
+  item_category: boolean;
+  party_wise_item_rate: boolean;
+  description: boolean;
+  item_wise_tax: boolean;
+  item_wise_discount: boolean;
+  update_sale_price_from_transaction: boolean;
+  quantity_decimal_places: number;
+  wholesale_price: boolean;
+  mrp: boolean;
+  calculate_tax_based_on_mrp: boolean;
+  serial_tracking: boolean;
+  batch_tracking: boolean;
+  exp_date: boolean;
+  mfg_date: boolean;
+  model_no: boolean;
+  size: boolean;
+};
+
+type PrintColumnKey =
+  | 'serial_no' | 'item_name' | 'item_code' | 'hsn_code' | 'quantity' | 'unit' | 'unit_price'
+  | 'discount_amount' | 'discount_percent' | 'taxable_amount' | 'gst_rate' | 'tax_amount'
+  | 'amount' | 'description' | 'batch_no' | 'exp_date' | 'mfg_date' | 'mrp' | 'size'
+  | 'model_no' | 'brand' | 'material';
+
+type PrintSettingsState = {
+  regular: {
+    default: boolean;
+    layout: string;
+    paper_size: 'A4' | 'Letter';
+    orientation: 'portrait' | 'landscape';
+    company_name_text_size: 'small' | 'medium' | 'large';
+    invoice_text_size: 'small' | 'medium' | 'large';
+    repeat_header: boolean;
+    print_original_duplicate: boolean;
+    extra_top_space: number;
+    min_item_rows: number;
+  };
+  header: {
+    company_name: boolean;
+    company_logo: boolean;
+    address: boolean;
+    email: boolean;
+    phone: boolean;
+    gstin: boolean;
+  };
+  item_table: { columns: PrintColumnKey[] };
+  layout_colors: Record<string, string>;
+  totals: {
+    total_item_quantity: boolean;
+    amount_with_decimal: boolean;
+    received_amount: boolean;
+    balance_amount: boolean;
+    current_balance_of_party: boolean;
+    tax_details: boolean;
+    you_saved: boolean;
+    print_amount_with_grouping: boolean;
+    amount_in_words: 'indian' | 'international';
+  };
+  footer: {
+    print_description: boolean;
+    print_terms: boolean;
+    print_received_by: boolean;
+    print_delivered_by: boolean;
+    signature_enabled: boolean;
+    signature_text: string;
+    payment_mode: boolean;
+    acknowledgement: boolean;
+  };
+  transaction_names: Record<string, string | boolean>;
+};
+
+type TaxRateRow = { id: string; label: string; type: 'IGST' | 'CGST' | 'SGST' | 'CESS'; rate: number; active: boolean };
+type TaxGroupRow = { id: string; label: string; rate: number; components: Array<{ type: 'CGST' | 'SGST' | 'IGST' | 'CESS'; rate: number }>; active: boolean };
+type CustomTaxRateRow = { id: string; name: string; rate: number; isActive: boolean };
+type TaxSettingsState = {
+  enable_gst: boolean;
+  enable_hsn_sac: boolean;
+  additional_cess_on_item: boolean;
+  reverse_charge: boolean;
+  enable_place_of_supply: boolean;
+  composite_scheme: boolean;
+  enable_tcs: boolean;
+  enable_tds: boolean;
+  enabledSlabs: number[];
+  customRates: CustomTaxRateRow[];
+  rates: TaxRateRow[];
+  groups: TaxGroupRow[];
+};
+type TaxSettingsFlagKey = Exclude<keyof TaxSettingsState, 'enabledSlabs' | 'customRates' | 'rates' | 'groups'>;
+
+type TransactionSettingsState = {
+  showInvoiceNumber: boolean;
+  addTimeOnTransactions: boolean;
+  cashSaleByDefault: boolean;
+  showBillingNameOfParties: boolean;
+  showCustomerPODetails: boolean;
+  showInclusiveExclusiveTax: boolean;
+  showPurchasePriceInItems: boolean;
+  showLast5SalePrice: boolean;
+  showLast5PurchasePrice: boolean;
+  showFreeItemQuantity: boolean;
+  showCountColumn: boolean;
+  countColumnLabel: string;
+  enableTransactionWiseTax: boolean;
+  enableTransactionWiseDiscount: boolean;
+  roundOffTotal: boolean;
+  roundOffType: 'NEAREST' | 'FLOOR' | 'CEIL';
+  roundOffTo: 1 | 10 | 100;
+  enableEwayBill: boolean;
+  enableQuickEntry: boolean;
+  doNotShowInvoicePreview: boolean;
+  enablePasscodeForEditDelete: boolean;
+  enableDiscountDuringPayments: boolean;
+  linkPaymentsToInvoices: boolean;
+  enableDueDatesAndPaymentTerms: boolean;
+  showProfitWhileMakingSaleInvoice: boolean;
+  enableTermsAndConditions: boolean;
+  billingType: 'LITE_SALE' | 'FULL_SALE';
+};
+
+type TransactionPrefixesState = {
+  sale: string;
+  creditNote: string;
+  saleOrder: string;
+  purchaseOrder: string;
+  estimate: string;
+  proformaInvoice: string;
+  deliveryChallan: string;
+  paymentIn: string;
+};
+
+type TermsEntry = { id?: string; transactionType: string; title: string; content: string; isDefault: boolean; sortOrder?: number };
+type AdditionalFieldsState = Record<string, any>;
+type TransportationState = Record<string, any>;
+type AdditionalChargesState = Record<string, any>;
+
+const DEFAULT_ITEM_SETTINGS: ItemSettingsState = {
+  enable_item: true,
+  sell_type: 'both',
+  barcode_scan: false,
+  stock_maintenance: true,
+  manufacturing: false,
+  show_low_stock_dialog: true,
+  items_unit: true,
+  default_unit: false,
+  item_category: true,
+  party_wise_item_rate: false,
+  description: false,
+  item_wise_tax: true,
+  item_wise_discount: true,
+  update_sale_price_from_transaction: false,
+  quantity_decimal_places: 2,
+  wholesale_price: false,
+  mrp: false,
+  calculate_tax_based_on_mrp: false,
+  serial_tracking: false,
+  batch_tracking: false,
+  exp_date: false,
+  mfg_date: false,
+  model_no: false,
+  size: false,
+};
+
+const PRINT_COLUMNS: { key: PrintColumnKey; label: string; group: 'item' | 'additional' | 'amount' }[] = [
+  { key: 'serial_no', label: 'SI No.', group: 'item' },
+  { key: 'item_name', label: 'Item name', group: 'item' },
+  { key: 'item_code', label: 'Item Code', group: 'item' },
+  { key: 'hsn_code', label: 'HSN/SAC', group: 'item' },
+  { key: 'batch_no', label: 'Batch No.', group: 'additional' },
+  { key: 'exp_date', label: 'Exp. Date', group: 'additional' },
+  { key: 'mfg_date', label: 'Mfg. Date', group: 'additional' },
+  { key: 'mrp', label: 'MRP', group: 'additional' },
+  { key: 'size', label: 'Size', group: 'additional' },
+  { key: 'model_no', label: 'Model No.', group: 'additional' },
+  { key: 'description', label: 'Description', group: 'additional' },
+  { key: 'brand', label: 'Brand', group: 'additional' },
+  { key: 'material', label: 'Material', group: 'additional' },
+  { key: 'quantity', label: 'Quantity', group: 'amount' },
+  { key: 'unit', label: 'Unit', group: 'amount' },
+  { key: 'unit_price', label: 'Price/Unit', group: 'amount' },
+  { key: 'discount_amount', label: 'Discount', group: 'amount' },
+  { key: 'discount_percent', label: 'Discount%', group: 'amount' },
+  { key: 'taxable_amount', label: 'Taxable Amount', group: 'amount' },
+  { key: 'tax_amount', label: 'Tax Amount', group: 'amount' },
+  { key: 'gst_rate', label: 'Tax%', group: 'amount' },
+  { key: 'amount', label: 'Amount', group: 'amount' },
+];
+
+const TRANSACTION_NAME_FIELDS = [
+  ['sale', 'Sale'],
+  ['purchase', 'Purchase'],
+  ['payment_in', 'Payment-In'],
+  ['payment_out', 'Payment-Out'],
+  ['expense', 'Expense'],
+  ['other_income', 'Other Income'],
+  ['sale_order', 'Sale Order'],
+  ['purchase_order', 'Purchase Order'],
+  ['estimate', 'Estimate'],
+  ['proforma_invoice', 'Proforma Invoice'],
+  ['delivery_challan', 'Delivery Challan'],
+  ['credit_note', 'Credit Note'],
+  ['debit_note', 'Debit Note'],
+] as const;
+
+const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
+  regular: {
+    default: true,
+    layout: 'business-theme-1',
+    paper_size: 'A4',
+    orientation: 'portrait',
+    company_name_text_size: 'large',
+    invoice_text_size: 'medium',
+    repeat_header: true,
+    print_original_duplicate: false,
+    extra_top_space: 0,
+    min_item_rows: 0,
+  },
+  header: {
+    company_name: true,
+    company_logo: true,
+    address: true,
+    email: true,
+    phone: true,
+    gstin: true,
+  },
+  item_table: {
+    columns: ['serial_no', 'item_name', 'hsn_code', 'quantity', 'unit', 'unit_price', 'tax_amount', 'amount'],
+  },
+  layout_colors: DEFAULT_PRINT_LAYOUT_COLORS,
+  totals: {
+    total_item_quantity: true,
+    amount_with_decimal: true,
+    received_amount: true,
+    balance_amount: true,
+    current_balance_of_party: false,
+    tax_details: true,
+    you_saved: true,
+    print_amount_with_grouping: true,
+    amount_in_words: 'indian',
+  },
+  footer: {
+    print_description: true,
+    print_terms: true,
+    print_received_by: true,
+    print_delivered_by: true,
+    signature_enabled: true,
+    signature_text: 'Authorized Signatory',
+    payment_mode: false,
+    acknowledgement: false,
+  },
+  transaction_names: {
+    sale: 'Tax Invoice',
+    purchase: 'Bill',
+    payment_in: 'Payment Receipt',
+    payment_out: 'Payment Out',
+    expense: 'Expense',
+    other_income: 'Other Income',
+    sale_order: 'Sale Order',
+    purchase_order: 'Purchase Order',
+    estimate: 'Estimate',
+    proforma_invoice: 'Proforma Invoice',
+    delivery_challan: 'Delivery Challan',
+    credit_note: 'Credit Note',
+    debit_note: 'Debit Note',
+    non_tax_bill: false,
+  },
+};
+
+const STANDARD_GST_SLABS = [0, 0.1, 0.25, 0.5, 1, 1.5, 3, 5, 6, 7.5, 9, 12, 14, 18, 28, 40];
+const DEFAULT_GST_GROUP_RATES = [0, 0.25, 3, 5, 12, 18, 28, 40];
+const DEFAULT_TAX_SETTINGS: TaxSettingsState = {
+  enable_gst: true,
+  enable_hsn_sac: true,
+  additional_cess_on_item: false,
+  reverse_charge: false,
+  enable_place_of_supply: true,
+  composite_scheme: false,
+  enable_tcs: false,
+  enable_tds: false,
+  enabledSlabs: [...STANDARD_GST_SLABS],
+  customRates: [],
+  rates: DEFAULT_GST_GROUP_RATES.flatMap((rate) => {
+    const half = Number((rate / 2).toFixed(3));
+    return [
+      { id: `igst_${rate}`, label: `IGST@${rate}%`, type: 'IGST' as const, rate, active: true },
+      { id: `sgst_${half}`, label: `SGST@${half}%`, type: 'SGST' as const, rate: half, active: true },
+      { id: `cgst_${half}`, label: `CGST@${half}%`, type: 'CGST' as const, rate: half, active: true },
+    ];
+  }),
+  groups: DEFAULT_GST_GROUP_RATES.map((rate) => {
+    const half = Number((rate / 2).toFixed(3));
+    return {
+      id: `gst_${rate}`,
+      label: `GST@${rate}%`,
+      rate,
+      components: [{ type: 'SGST' as const, rate: half }, { type: 'CGST' as const, rate: half }],
+      active: true,
+    };
+  }),
+};
+
+const DEFAULT_TRANSACTION_SETTINGS: TransactionSettingsState = {
+  showInvoiceNumber: true,
+  addTimeOnTransactions: false,
+  cashSaleByDefault: false,
+  showBillingNameOfParties: false,
+  showCustomerPODetails: false,
+  showInclusiveExclusiveTax: true,
+  showPurchasePriceInItems: true,
+  showLast5SalePrice: false,
+  showLast5PurchasePrice: false,
+  showFreeItemQuantity: false,
+  showCountColumn: false,
+  countColumnLabel: 'Count',
+  enableTransactionWiseTax: false,
+  enableTransactionWiseDiscount: false,
+  roundOffTotal: true,
+  roundOffType: 'NEAREST',
+  roundOffTo: 1,
+  enableEwayBill: false,
+  enableQuickEntry: false,
+  doNotShowInvoicePreview: false,
+  enablePasscodeForEditDelete: false,
+  enableDiscountDuringPayments: false,
+  linkPaymentsToInvoices: false,
+  enableDueDatesAndPaymentTerms: false,
+  showProfitWhileMakingSaleInvoice: false,
+  enableTermsAndConditions: true,
+  billingType: 'FULL_SALE',
+};
+
+const DEFAULT_PREFIXES: TransactionPrefixesState = {
+  sale: '',
+  creditNote: '',
+  saleOrder: '',
+  purchaseOrder: '',
+  estimate: '',
+  proformaInvoice: '',
+  deliveryChallan: '',
+  paymentIn: '',
+};
+
+const DEFAULT_ADDITIONAL_FIELDS: AdditionalFieldsState = {
+  invoiceTheme: 'THEME_1',
+  firmField1Enabled: false,
+  firmField1Label: '',
+  firmField2Enabled: false,
+  firmField2Label: '',
+  txnField1Enabled: false,
+  txnField1Label: '',
+  txnField2Enabled: false,
+  txnField2Label: '',
+  txnField3Enabled: false,
+  txnField3Label: '',
+  txnDateFieldEnabled: false,
+  txnDateFieldLabel: '',
+  showOnSales: false,
+  showOnPurchase: false,
+  showOnExpense: false,
+  showOnPaymentIn: false,
+};
+
+const DEFAULT_TRANSPORTATION: TransportationState = Object.fromEntries(
+  Array.from({ length: 6 }, (_, i) => {
+    const n = i + 1;
+    const label = ['Transport Name', 'Vehicle Number', 'Delivery Date', 'Delivery Location', 'Field 5', 'Field 6'][i];
+    return [[`field${n}Label`, label], [`field${n}Enabled`, false], [`field${n}ShowInPrint`, true]];
+  }).flat(),
+);
+
+const DEFAULT_CHARGES: AdditionalChargesState = {
+  masterEnabled: false,
+  charge1Label: 'Shipping',
+  charge1Enabled: false,
+  charge1SacCode: '',
+  charge1TaxRate: '',
+  charge1TaxEnabled: false,
+  charge2Label: 'Packaging',
+  charge2Enabled: false,
+  charge2SacCode: '',
+  charge2TaxRate: '',
+  charge2TaxEnabled: false,
+  charge3Label: 'Adjustment',
+  charge3Enabled: false,
+  charge3SacCode: '',
+  charge3TaxRate: '',
+  charge3TaxEnabled: false,
+};
+
+const TRANSACTION_TYPES = [
+  ['SALE', 'Sale'],
+  ['PURCHASE_ORDER', 'Purchase Order'],
+  ['PURCHASE_BILL', 'Purchase Bill'],
+  ['PROFORMA_INVOICE', 'Proforma Invoice'],
+  ['ESTIMATE_QUOTATION', 'Estimate Quotation'],
+  ['DELIVERY_CHALLAN', 'Delivery Challan'],
+  ['SALE_ORDER', 'Sale Order'],
+  ['PAYMENT_IN', 'Payment In'],
+] as const;
 
 function normalizeFieldId(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
@@ -59,6 +486,168 @@ function prepareSalesCustomFields(fields: SalesCustomFieldDef[]) {
     });
 }
 
+function normalizeItemCustomFields(value: unknown): ItemCustomFieldDef[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows
+    .map((row: any, index) => {
+      const label = String(row?.label || row?.key || row?.id || '').trim();
+      const id = normalizeFieldId(String(row?.id || row?.key || label || `item_custom_${index + 1}`));
+      return {
+        id,
+        label,
+        type: (['number', 'date'].includes(String(row?.type)) ? row.type : 'text') as ItemCustomFieldDef['type'],
+        enabled: Boolean(row?.enabled),
+        show_in_print: Boolean(row?.show_in_print),
+      };
+    })
+    .filter((row) => row.id && row.label);
+}
+
+function prepareItemCustomFields(fields: ItemCustomFieldDef[]) {
+  const seen = new Set<string>();
+  return fields
+    .map((field) => ({
+      id: normalizeFieldId(field.id || field.label),
+      key: normalizeFieldId(field.id || field.label),
+      label: String(field.label || field.id || '').trim(),
+      type: field.type === 'number' || field.type === 'date' ? field.type : 'text',
+      enabled: Boolean(field.enabled),
+      show_in_print: Boolean(field.show_in_print),
+    }))
+    .filter((field) => {
+      if (!field.id || !field.label || seen.has(field.id)) return false;
+      seen.add(field.id);
+      return true;
+    });
+}
+
+function normalizeItemSettings(value: unknown): ItemSettingsState {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<ItemSettingsState> : {};
+  const sellType = raw.sell_type === 'product' || raw.sell_type === 'service' || raw.sell_type === 'both' ? raw.sell_type : DEFAULT_ITEM_SETTINGS.sell_type;
+  return {
+    ...DEFAULT_ITEM_SETTINGS,
+    ...raw,
+    sell_type: sellType,
+    quantity_decimal_places: Math.max(0, Math.min(4, Number(raw.quantity_decimal_places ?? DEFAULT_ITEM_SETTINGS.quantity_decimal_places) || 0)),
+  };
+}
+
+function normalizePrintSettings(value: unknown): PrintSettingsState {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<PrintSettingsState> : {};
+  const regular = (raw.regular || {}) as Partial<PrintSettingsState['regular']>;
+  const header = (raw.header || {}) as Partial<PrintSettingsState['header']>;
+  const itemTable = (raw.item_table || {}) as Partial<PrintSettingsState['item_table']>;
+  const totals = (raw.totals || {}) as Partial<PrintSettingsState['totals']>;
+  const footer = (raw.footer || {}) as Partial<PrintSettingsState['footer']>;
+  const layoutColors = raw.layout_colors && typeof raw.layout_colors === 'object' && !Array.isArray(raw.layout_colors)
+    ? raw.layout_colors as Record<string, unknown>
+    : {};
+  const rawLayout = String(regular.layout || '');
+  const layout = (PRINT_LAYOUT_BY_ID[rawLayout as PrintLayoutId]?.id || PRINT_LAYOUT_LEGACY_ID_MAP[rawLayout] || DEFAULT_PRINT_SETTINGS.regular.layout) as PrintLayoutId;
+  const normalizedLayoutColors = PRINT_LAYOUT_OPTIONS.reduce<Record<string, string>>((acc, entry) => {
+    const legacyColor = Object.entries(PRINT_LAYOUT_LEGACY_ID_MAP).find(([oldId, newId]) => newId === entry.id && layoutColors[oldId])?.[0];
+    const color = String(layoutColors[entry.id] || (legacyColor ? layoutColors[legacyColor] : '') || DEFAULT_PRINT_LAYOUT_COLORS[entry.id]).trim();
+    acc[entry.id] = /^#[0-9a-f]{6}$/i.test(color) ? color.toUpperCase() : DEFAULT_PRINT_LAYOUT_COLORS[entry.id];
+    return acc;
+  }, {});
+  const columns = Array.isArray(itemTable.columns)
+    ? itemTable.columns.filter((col: PrintColumnKey): col is PrintColumnKey => PRINT_COLUMNS.some((entry) => entry.key === col))
+    : DEFAULT_PRINT_SETTINGS.item_table.columns;
+  return {
+    regular: {
+      ...DEFAULT_PRINT_SETTINGS.regular,
+      ...regular,
+      layout,
+      paper_size: regular.paper_size === 'Letter' ? 'Letter' : 'A4',
+      orientation: regular.orientation === 'landscape' ? 'landscape' : 'portrait',
+      company_name_text_size: ['small', 'medium', 'large'].includes(String(regular.company_name_text_size)) ? regular.company_name_text_size! : DEFAULT_PRINT_SETTINGS.regular.company_name_text_size,
+      invoice_text_size: ['small', 'medium', 'large'].includes(String(regular.invoice_text_size)) ? regular.invoice_text_size! : DEFAULT_PRINT_SETTINGS.regular.invoice_text_size,
+      extra_top_space: Math.max(0, Math.min(80, Number(regular.extra_top_space ?? 0) || 0)),
+      min_item_rows: Math.max(0, Math.min(30, Number(regular.min_item_rows ?? 0) || 0)),
+    },
+    header: { ...DEFAULT_PRINT_SETTINGS.header, ...header },
+    item_table: { columns: columns.length ? columns : DEFAULT_PRINT_SETTINGS.item_table.columns },
+    layout_colors: normalizedLayoutColors,
+    totals: {
+      ...DEFAULT_PRINT_SETTINGS.totals,
+      ...totals,
+      amount_in_words: totals.amount_in_words === 'international' ? 'international' : 'indian',
+    },
+    footer: {
+      ...DEFAULT_PRINT_SETTINGS.footer,
+      ...footer,
+      signature_text: String(footer.signature_text || DEFAULT_PRINT_SETTINGS.footer.signature_text),
+    },
+    transaction_names: { ...DEFAULT_PRINT_SETTINGS.transaction_names, ...(raw.transaction_names || {}) },
+  };
+}
+
+function normalizeTaxSettings(value: unknown): TaxSettingsState {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<TaxSettingsState> : {};
+  const rates = Array.isArray(raw.rates)
+    ? raw.rates.map((row: any, index): TaxRateRow | null => {
+        const type = ['IGST', 'CGST', 'SGST', 'CESS'].includes(String(row?.type || '').toUpperCase())
+          ? String(row.type).toUpperCase() as TaxRateRow['type']
+          : 'IGST';
+        const rate = Math.max(0, Math.min(100, Number(row?.rate ?? 0) || 0));
+        return {
+          id: String(row?.id || `tax_rate_${index + 1}`),
+          label: String(row?.label || `${type}@${rate}%`),
+          type,
+          rate,
+          active: row?.active !== false,
+        };
+      }).filter(Boolean) as TaxRateRow[]
+    : DEFAULT_TAX_SETTINGS.rates;
+  const groups = Array.isArray(raw.groups)
+    ? raw.groups.map((row: any, index): TaxGroupRow | null => {
+        const rate = Math.max(0, Math.min(100, Number(row?.rate ?? 0) || 0));
+        const half = Number((rate / 2).toFixed(3));
+        const components = Array.isArray(row?.components) && row.components.length
+          ? row.components.map((part: any) => ({
+              type: ['CGST', 'SGST', 'IGST', 'CESS'].includes(String(part?.type || '').toUpperCase())
+                ? String(part.type).toUpperCase() as TaxGroupRow['components'][number]['type']
+                : 'CGST',
+              rate: Math.max(0, Math.min(100, Number(part?.rate ?? 0) || 0)),
+            }))
+          : [{ type: 'SGST' as const, rate: half }, { type: 'CGST' as const, rate: half }];
+        return {
+          id: String(row?.id || `tax_group_${index + 1}`),
+          label: String(row?.label || `GST@${rate}%`),
+          rate,
+          components,
+          active: row?.active !== false,
+        };
+      }).filter(Boolean) as TaxGroupRow[]
+    : DEFAULT_TAX_SETTINGS.groups;
+  const enabledSlabsRaw = Array.isArray((raw as any).enabledSlabs)
+    ? (raw as any).enabledSlabs
+    : (Array.isArray((raw as any).enabled_slabs) ? (raw as any).enabled_slabs : []);
+  const enabledSlabs: number[] = Array.from(new Set<number>(enabledSlabsRaw
+    .map((rate: any) => Number(rate))
+    .filter((rate: number) => STANDARD_GST_SLABS.includes(rate))))
+    .sort((a, b) => a - b);
+  const customRatesRaw = Array.isArray((raw as any).customRates)
+    ? (raw as any).customRates
+    : (Array.isArray((raw as any).custom_rates) ? (raw as any).custom_rates : []);
+  const customRates = customRatesRaw
+    .map((row: any, index: number) => ({
+      id: String(row?.id || `custom_tax_${index + 1}`),
+      name: String(row?.name || row?.label || '').trim(),
+      rate: Math.max(0.01, Math.min(100, Number(row?.rate ?? 0) || 0)),
+      isActive: row?.isActive !== false && row?.active !== false,
+    }))
+    .filter((row: CustomTaxRateRow) => row.name);
+  return {
+    ...DEFAULT_TAX_SETTINGS,
+    ...raw,
+    enabledSlabs: enabledSlabs.length ? enabledSlabs : DEFAULT_TAX_SETTINGS.enabledSlabs,
+    customRates,
+    rates: rates.length ? rates : DEFAULT_TAX_SETTINGS.rates,
+    groups: groups.length ? groups : DEFAULT_TAX_SETTINGS.groups,
+  };
+}
+
 export default function Settings() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
@@ -92,13 +681,38 @@ export default function Settings() {
   const [upiId, setUpiId] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceTerms, setInvoiceTerms] = useState('');
-  const [invoiceTemplate, setInvoiceTemplate] = useState('monochrome');
-  const [documentTheme, setDocumentTheme] = useState('executive');
+  const [invoiceTemplate, setInvoiceTemplate] = useState('business-theme-1');
+  const [documentTheme, setDocumentTheme] = useState('business-theme-1');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
   const [enabledCurrencies, setEnabledCurrencies] = useState<CurrencyCode[]>(['INR']);
   const [defaultCurrency, setDefaultCurrency] = useState<CurrencyCode>('INR');
   const [deliveryChallanShowPricing, setDeliveryChallanShowPricing] = useState(false);
   const [salesCustomFields, setSalesCustomFields] = useState<SalesCustomFieldDef[]>([]);
+  const [itemSettings, setItemSettings] = useState<ItemSettingsState>(DEFAULT_ITEM_SETTINGS);
+  const [itemCustomFields, setItemCustomFields] = useState<ItemCustomFieldDef[]>([]);
+  const [itemCustomModalOpen, setItemCustomModalOpen] = useState(false);
+  const [printSettings, setPrintSettings] = useState<PrintSettingsState>(DEFAULT_PRINT_SETTINGS);
+  const [printSection, setPrintSection] = useState<'layout' | 'colors'>('layout');
+  const [transactionNamesOpen, setTransactionNamesOpen] = useState(false);
+  const [itemTablePrintOpen, setItemTablePrintOpen] = useState(false);
+  const [taxSettings, setTaxSettings] = useState<TaxSettingsState>(DEFAULT_TAX_SETTINGS);
+  const [taxListOpen, setTaxListOpen] = useState(false);
+  const [editingTaxRate, setEditingTaxRate] = useState<TaxRateRow | null>(null);
+  const [editingTaxGroup, setEditingTaxGroup] = useState<TaxGroupRow | null>(null);
+  const [editingCustomTaxRate, setEditingCustomTaxRate] = useState<CustomTaxRateRow | null>(null);
+  const [transactionSettings, setTransactionSettings] = useState<TransactionSettingsState>(DEFAULT_TRANSACTION_SETTINGS);
+  const [transactionPrefixes, setTransactionPrefixes] = useState<TransactionPrefixesState>(DEFAULT_PREFIXES);
+  const [termsGrouped, setTermsGrouped] = useState<Record<string, TermsEntry[]>>({});
+  const [additionalFields, setAdditionalFields] = useState<AdditionalFieldsState>(DEFAULT_ADDITIONAL_FIELDS);
+  const [transportation, setTransportation] = useState<TransportationState>(DEFAULT_TRANSPORTATION);
+  const [additionalCharges, setAdditionalCharges] = useState<AdditionalChargesState>(DEFAULT_CHARGES);
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [additionalFieldsOpen, setAdditionalFieldsOpen] = useState(false);
+  const [transportationOpen, setTransportationOpen] = useState(false);
+  const [chargesOpen, setChargesOpen] = useState(false);
+  const [termForm, setTermForm] = useState<TermsEntry | null>(null);
+  const [expandedTerms, setExpandedTerms] = useState<Set<string>>(new Set());
+  const [termsBanner, setTermsBanner] = useState(true);
   const [itemTerminologySingular, setItemTerminologySingular] = useState('Item');
   const [itemTerminologyPlural, setItemTerminologyPlural] = useState('Items');
   const [defaultGstRate, setDefaultGstRate] = useState('18');
@@ -138,6 +752,7 @@ export default function Settings() {
       : `${uploadsBase()}${company.signature_url}`);
 
   const [tab, setTab] = useState('company');
+  const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(() => localStorage.getItem('settings_sidebar_collapsed') !== 'false');
 
   const [deleteConf, setDeleteConf] = useState('');
   const [dataDumping, setDataDumping] = useState(false);
@@ -145,6 +760,10 @@ export default function Settings() {
   const [testPrintRunning, setTestPrintRunning] = useState(false);
   const [tallyExporting, setTallyExporting] = useState(false);
   const [tallyImporting, setTallyImporting] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('settings_sidebar_collapsed', settingsSidebarCollapsed ? 'true' : 'false');
+  }, [settingsSidebarCollapsed]);
 
   const { data: usersPage, isLoading: usersLoading } = useQuery({
     queryKey: ['settings-users'],
@@ -162,6 +781,20 @@ export default function Settings() {
     queryKey: ['company-bank-accounts'],
     queryFn: () => api.get('/company/bank-accounts').then((r) => r.data?.data ?? r.data),
   });
+  const { data: transactionConfig } = useQuery({
+    queryKey: ['transaction-settings'],
+    queryFn: () => api.get('/settings/transaction').then((r) => r.data?.data ?? r.data),
+  });
+
+  useEffect(() => {
+    if (!transactionConfig) return;
+    setTransactionSettings({ ...DEFAULT_TRANSACTION_SETTINGS, ...(transactionConfig.settings || {}) });
+    setTransactionPrefixes({ ...DEFAULT_PREFIXES, ...(transactionConfig.prefixes || {}) });
+    setAdditionalFields({ ...DEFAULT_ADDITIONAL_FIELDS, ...(transactionConfig.additionalFields || {}) });
+    setTransportation({ ...DEFAULT_TRANSPORTATION, ...(transactionConfig.transportation || {}) });
+    setAdditionalCharges({ ...DEFAULT_CHARGES, ...(transactionConfig.charges || {}) });
+    setTermsGrouped(transactionConfig.terms || {});
+  }, [transactionConfig]);
   const [bankForm, setBankForm] = useState({
     account_label: '',
     bank_name: '',
@@ -439,8 +1072,8 @@ export default function Settings() {
     setUpiId(company.upi_id || '');
     setInvoicePrefix(company.invoice_prefix || 'INV');
     setInvoiceTerms(company.terms_and_conditions || '');
-    setInvoiceTemplate(company.invoice_pdf_template || 'monochrome');
-    setDocumentTheme(company.document_theme || 'executive');
+    setInvoiceTemplate(normalizeInvoiceThemeId(company.invoice_pdf_template));
+    setDocumentTheme(normalizeInvoiceThemeId(company.document_theme));
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
     const currencies = Array.isArray(company.enabled_currencies)
       ? company.enabled_currencies
@@ -451,6 +1084,10 @@ export default function Settings() {
     setDefaultCurrency(normalizeCurrencyCode(company.default_currency || company.currency || 'INR'));
     setDeliveryChallanShowPricing(!!company.delivery_challan_show_pricing);
     setSalesCustomFields(normalizeSalesCustomFields(company.sales_invoice_custom_fields));
+    setItemSettings(normalizeItemSettings(company.item_settings));
+    setItemCustomFields(normalizeItemCustomFields(company.item_custom_fields));
+    setPrintSettings(normalizePrintSettings(company.print_settings));
+    setTaxSettings(normalizeTaxSettings(company.tax_settings));
     setItemTerminologySingular(company.item_terminology || 'Item');
     setItemTerminologyPlural(company.item_terminology_plural || 'Items');
     setDefaultGstRate(String(company.default_gst_rate ?? 18));
@@ -546,6 +1183,212 @@ export default function Settings() {
     }
   };
 
+  const updatePrintSetting = <S extends keyof PrintSettingsState, K extends keyof PrintSettingsState[S]>(
+    section: S,
+    key: K,
+    value: PrintSettingsState[S][K],
+  ) => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      [section]: {
+        ...(prev[section] as Record<string, unknown>),
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateTransactionName = (key: string, value: string | boolean) => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      transaction_names: { ...prev.transaction_names, [key]: value },
+    }));
+  };
+
+  const updatePrintLayoutColor = (layoutId: string, color: string) => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      layout_colors: {
+        ...prev.layout_colors,
+        [layoutId]: color,
+      },
+    }));
+  };
+
+  const togglePrintColumn = (key: PrintColumnKey, checked: boolean) => {
+    if (key === 'item_name') return;
+    setPrintSettings((prev) => {
+      const columns = checked
+        ? (prev.item_table.columns.includes(key) ? prev.item_table.columns : [...prev.item_table.columns, key])
+        : prev.item_table.columns.filter((col) => col !== key);
+      return {
+        ...prev,
+        item_table: { columns },
+      };
+    });
+  };
+
+  const savePrintSettings = async () => {
+    try {
+      await updateCompany.mutateAsync({ print_settings: printSettings });
+      toast.success('Print settings saved');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const updateTaxFlag = (key: TaxSettingsFlagKey, value: boolean) => {
+    setTaxSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleEnabledGstSlab = (rate: number, checked: boolean) => {
+    setTaxSettings((prev) => {
+      const enabledSlabs = checked
+        ? Array.from(new Set([...prev.enabledSlabs, rate])).sort((a, b) => a - b)
+        : prev.enabledSlabs.filter((entry) => entry !== rate);
+      return { ...prev, enabledSlabs: enabledSlabs.length ? enabledSlabs : [0] };
+    });
+  };
+
+  const saveTaxSettings = async () => {
+    try {
+      await updateCompany.mutateAsync({ tax_settings: taxSettings });
+      qc.invalidateQueries({ queryKey: ['settings', 'taxes'] });
+      toast.success('Taxes & GST settings saved');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const saveTaxRateRow = () => {
+    if (!editingTaxRate) return;
+    const row = {
+      ...editingTaxRate,
+      rate: Math.max(0, Math.min(100, Number(editingTaxRate.rate) || 0)),
+      label: editingTaxRate.label.trim() || `${editingTaxRate.type}@${editingTaxRate.rate}%`,
+    };
+    setTaxSettings((prev) => ({
+      ...prev,
+      rates: prev.rates.some((rate) => rate.id === row.id)
+        ? prev.rates.map((rate) => rate.id === row.id ? row : rate)
+        : [...prev.rates, row],
+    }));
+    setEditingTaxRate(null);
+  };
+
+  const saveCustomTaxRateRow = () => {
+    if (!editingCustomTaxRate) return;
+    const row = {
+      ...editingCustomTaxRate,
+      name: editingCustomTaxRate.name.trim().slice(0, 50),
+      rate: Math.max(0.01, Math.min(100, Number(editingCustomTaxRate.rate) || 0)),
+      isActive: editingCustomTaxRate.isActive !== false,
+    };
+    if (!row.name) {
+      toast.error('Custom tax rate name is required');
+      return;
+    }
+    setTaxSettings((prev) => ({
+      ...prev,
+      customRates: prev.customRates.some((rate) => rate.id === row.id)
+        ? prev.customRates.map((rate) => rate.id === row.id ? row : rate)
+        : [...prev.customRates, row],
+    }));
+    setEditingCustomTaxRate(null);
+  };
+
+  const saveTaxGroupRow = () => {
+    if (!editingTaxGroup) return;
+    const rate = Math.max(0, Math.min(100, Number(editingTaxGroup.rate) || 0));
+    const half = Number((rate / 2).toFixed(3));
+    const row = {
+      ...editingTaxGroup,
+      rate,
+      label: editingTaxGroup.label.trim() || `GST@${rate}%`,
+      components: editingTaxGroup.components.length ? editingTaxGroup.components : [{ type: 'SGST' as const, rate: half }, { type: 'CGST' as const, rate: half }],
+    };
+    setTaxSettings((prev) => ({
+      ...prev,
+      groups: prev.groups.some((group) => group.id === row.id)
+        ? prev.groups.map((group) => group.id === row.id ? row : group)
+        : [...prev.groups, row],
+    }));
+    setEditingTaxGroup(null);
+  };
+
+  const saveTransactionSettings = async () => {
+    try {
+      await api.put('/settings/transaction', transactionSettings);
+      await api.put('/settings/transaction/prefixes', transactionPrefixes);
+      toast.success('Transaction settings saved');
+      qc.invalidateQueries({ queryKey: ['transaction-settings'] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const saveAdditionalFields = async () => {
+    try {
+      const res = await api.put('/settings/transaction/additional-fields', additionalFields);
+      setAdditionalFields({ ...DEFAULT_ADDITIONAL_FIELDS, ...(res.data?.data ?? res.data) });
+      toast.success('Additional fields saved');
+      setAdditionalFieldsOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const saveTransportation = async () => {
+    try {
+      const res = await api.put('/settings/transaction/transportation', transportation);
+      setTransportation({ ...DEFAULT_TRANSPORTATION, ...(res.data?.data ?? res.data) });
+      toast.success('Transportation details saved');
+      setTransportationOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const saveAdditionalCharges = async () => {
+    try {
+      const res = await api.put('/settings/transaction/charges', additionalCharges);
+      setAdditionalCharges({ ...DEFAULT_CHARGES, ...(res.data?.data ?? res.data) });
+      toast.success('Additional charges saved');
+      setChargesOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const saveTerm = async () => {
+    if (!termForm) return;
+    try {
+      if (termForm.id) {
+        await api.put(`/settings/transaction/terms/${termForm.id}`, termForm);
+      } else {
+        await api.post('/settings/transaction/terms', termForm);
+      }
+      const res = await api.get('/settings/transaction/terms');
+      setTermsGrouped(res.data?.data ?? res.data ?? {});
+      setTermForm(null);
+      toast.success('Terms saved');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Save failed');
+    }
+  };
+
+  const deleteTerm = async (entry: TermsEntry) => {
+    if (!entry.id) return;
+    if (!window.confirm('Delete this terms and condition entry?')) return;
+    try {
+      await api.delete(`/settings/transaction/terms/${entry.id}`);
+      const res = await api.get('/settings/transaction/terms');
+      setTermsGrouped(res.data?.data ?? res.data ?? {});
+      toast.success('Terms deleted');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Delete failed');
+    }
+  };
+
   const addSalesCustomField = () => {
     const base = `field_${salesCustomFields.length + 1}`;
     setSalesCustomFields((prev) => [
@@ -570,6 +1413,34 @@ export default function Settings() {
     setSalesCustomFields((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  const updateItemSetting = <K extends keyof ItemSettingsState>(key: K, value: ItemSettingsState[K]) => {
+    setItemSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const addItemCustomField = () => {
+    const base = `item_field_${itemCustomFields.length + 1}`;
+    setItemCustomFields((prev) => [
+      ...prev,
+      { id: base, label: '', type: 'text', enabled: true, show_in_print: false },
+    ]);
+  };
+
+  const updateItemCustomField = (idx: number, patch: Partial<ItemCustomFieldDef>) => {
+    setItemCustomFields((prev) => prev.map((field, i) => {
+      if (i !== idx) return field;
+      const next = { ...field, ...patch };
+      if (patch.label !== undefined && (!field.id || field.id.startsWith('item_field_'))) {
+        next.id = normalizeFieldId(String(patch.label)) || field.id;
+      }
+      if (patch.id !== undefined) next.id = normalizeFieldId(String(patch.id));
+      return next;
+    }));
+  };
+
+  const removeItemCustomField = (idx: number) => {
+    setItemCustomFields((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const toggleCurrency = (code: CurrencyCode, enabled: boolean) => {
     setEnabledCurrencies((prev) => {
       if (code === 'INR') return ['INR', ...prev.filter((c) => c !== 'INR')];
@@ -586,8 +1457,10 @@ export default function Settings() {
         item_terminology: itemTerminologySingular.trim() || 'Item',
         item_terminology_plural: itemTerminologyPlural,
         default_gst_rate: Math.round(Math.min(100, Math.max(0, Number(defaultGstRate) || 0))),
+        item_settings: itemSettings,
+        item_custom_fields: prepareItemCustomFields(itemCustomFields),
       });
-      toast.success('Item schema applied');
+      toast.success('Item settings saved');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Apply failed');
     }
@@ -686,44 +1559,109 @@ export default function Settings() {
     }
   };
 
+  const selectedPrintLayoutId = (PRINT_LAYOUT_BY_ID[printSettings.regular.layout as PrintLayoutId]?.id || PRINT_LAYOUT_LEGACY_ID_MAP[printSettings.regular.layout] || 'business-theme-1') as PrintLayoutId;
+  const selectedPrintLayout = PRINT_LAYOUT_BY_ID[selectedPrintLayoutId];
+  const selectedLayoutColor = printSettings.layout_colors?.[selectedPrintLayoutId] || DEFAULT_PRINT_LAYOUT_COLORS[selectedPrintLayoutId] || '#7C3AED';
+  const selectedLayoutColorName = PRINT_COLOR_PALETTE.find((color) => color.value.toLowerCase() === selectedLayoutColor.toLowerCase())?.name || 'Custom';
+  const savedCompanyName = company?.legal_name || company?.name || 'Company Name';
+  const savedCompanyAddress = [
+    company?.registered_address,
+    company?.city,
+    company?.state,
+    company?.pincode,
+  ].filter(Boolean).join(', ') || 'Saved company address';
+  const savedCompanyPhone = company?.phone || 'Phone number';
+  const savedCompanyEmail = company?.email || 'email@example.com';
+  const savedCompanyGstin = company?.gstin || 'GSTIN';
+  const primaryBank = Array.isArray(bankAccounts)
+    ? (bankAccounts as any[]).find((account) => account?.is_primary) || (bankAccounts as any[])[0]
+    : null;
+  const savedBankName = primaryBank?.bank_name || company?.bank_name || 'Bank name';
+  const savedBankAccount = primaryBank?.account_number || company?.bank_account_number || 'Account number';
+  const savedBankIfsc = primaryBank?.ifsc || company?.bank_ifsc || 'IFSC';
+  const previewAccent = selectedLayoutColor;
+  const previewTitle = String(printSettings.transaction_names.sale || 'Tax Invoice');
+  const previewMoney = (amount: number) => {
+    const options = printSettings.totals.amount_with_decimal
+      ? { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: Boolean(printSettings.totals.print_amount_with_grouping) }
+      : { maximumFractionDigits: 0, useGrouping: Boolean(printSettings.totals.print_amount_with_grouping) };
+    return `₹${amount.toLocaleString('en-IN', options)}`;
+  };
+  const previewColumns = PRINT_COLUMNS
+    .filter((column) => column.key === 'item_name' || printSettings.item_table.columns.includes(column.key));
+  const previewValueForColumn = (key: string, row: 1 | 2) => {
+    const rows = {
+      1: {
+        serial_no: '1', item_name: 'Premium Service', item_code: 'SVC001', hsn_code: '9983', quantity: '1.00', unit: 'N',
+        unit_price: previewMoney(500), discount_amount: previewMoney(25), discount_percent: '5%', taxable_amount: previewMoney(475),
+        gst_rate: '18%', tax_amount: previewMoney(85.5), amount: previewMoney(560.5), description: 'Service desc',
+        batch_no: 'B001', exp_date: '31-12-2026', mfg_date: '01-01-2026', mrp: previewMoney(600), size: 'M',
+        model_no: 'M001', brand: 'Brand A', material: 'Cotton',
+      },
+      2: {
+        serial_no: '2', item_name: 'Implementation', item_code: 'IMP-02', hsn_code: '9985', quantity: '2.00', unit: 'Hrs',
+        unit_price: previewMoney(350), discount_amount: previewMoney(0), discount_percent: '0%', taxable_amount: previewMoney(700),
+        gst_rate: '18%', tax_amount: previewMoney(126), amount: previewMoney(826), description: 'Setup work',
+        batch_no: 'B002', exp_date: '31-12-2026', mfg_date: '01-01-2026', mrp: previewMoney(700), size: 'L',
+        model_no: 'M002', brand: 'Brand B', material: 'Service',
+      },
+    };
+    return rows[row][key as PrintColumnKey] || '-';
+  };
+
   const TABS = [
      { id: 'company', label: 'Company Profile', icon: Building2 },
      { id: 'godowns', label: 'Locations / Godowns', icon: MapPin },
      { id: 'users', label: 'Users & Roles', icon: Users },
+     { id: 'print', label: 'Print', icon: Printer },
+     { id: 'transaction', label: 'Transaction', icon: ReceiptText },
      { id: 'invoices', label: 'Invoice Settings', icon: FileText },
+     { id: 'taxes', label: 'Taxes & GST', icon: Calculator },
      { id: 'items', label: 'Item Configuration', icon: Package },
      { id: 'data', label: 'Data Management', icon: Database },
-     { id: 'danger', label: 'Danger Zone', icon: AlertCircle, error: true },
+     { id: 'danger', label: 'Danger Zone', icon: AlertTriangle, error: true },
   ];
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6 animate-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full p-4 md:p-6 animate-in slide-in-from-bottom-4 duration-500">
       <div className="mb-6">
          <h1 className="text-2xl font-bold text-slate-900">Platform Settings</h1>
          <p className="text-slate-500 text-sm">Manage enterprise parameters, users, and core configurations.</p>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col md:flex-row gap-4">
          {/* Navigation Sidebar */}
-         <div className="md:w-64 shrink-0 flex flex-col gap-1">
+         <div className={`shrink-0 rounded-xl border bg-white p-2 shadow-sm transition-all duration-200 ease-in-out ${settingsSidebarCollapsed ? 'md:w-14' : 'md:w-64'} flex flex-col gap-1`}>
+            <button
+              type="button"
+              onClick={() => setSettingsSidebarCollapsed((value) => !value)}
+              className="mb-1 flex h-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              title={settingsSidebarCollapsed ? 'Expand settings sidebar' : 'Collapse settings sidebar'}
+            >
+              {settingsSidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
             {TABS.map(t => (
                <button 
                   key={t.id} 
-                  onClick={() => setTab(t.id)}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                  onClick={() => {
+                    setTab(t.id);
+                    setSettingsSidebarCollapsed(true);
+                  }}
+                  title={settingsSidebarCollapsed ? t.label : undefined}
+                  className={`flex items-center rounded-lg text-sm font-medium transition-colors ${settingsSidebarCollapsed ? 'h-10 justify-center px-0' : 'gap-3 px-4 py-3'} ${
                      tab === t.id 
-                       ? t.error ? 'bg-red-50 text-red-700' : 'bg-indigo-50 text-indigo-700' 
+                       ? t.error ? 'border-l-4 border-red-500 bg-red-50 text-red-700' : 'border-l-4 border-indigo-500 bg-indigo-50 text-indigo-700'
                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                >
                   <t.icon className={`w-4 h-4 ${tab === t.id && t.error ? 'text-red-600' : tab === t.id ? 'text-indigo-600' : 'text-slate-400'}`} /> 
-                  {t.label}
+                  {!settingsSidebarCollapsed && <span className="truncate">{t.label}</span>}
                </button>
             ))}
          </div>
 
          {/* Content Area */}
-         <div className="flex-1">
+         <div className="min-w-0 flex-1">
             <Card className="min-h-[500px]">
                {tab === 'company' && (
                   <CardContent className="p-6 space-y-6">
@@ -1254,6 +2192,870 @@ export default function Settings() {
                   </CardContent>
                )}
 
+               {tab === 'print' && (
+                  <CardContent className="p-0">
+                     <div className="border-b bg-white px-6 pt-5">
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                           <div>
+                              <h2 className="text-xl font-bold">Print Settings</h2>
+                              <p className="mt-1 text-sm text-slate-500">Configure regular printer invoice layout and PDF content. The sample invoice updates immediately; saved invoices and PDFs use these settings after you save.</p>
+                           </div>
+                           <Button onClick={savePrintSettings} loading={updateCompany.isPending}>Save Print Settings</Button>
+                        </div>
+                        <div className="mt-5 flex gap-2">
+                           <button type="button" className="border-b-2 border-indigo-600 px-5 py-3 text-sm font-bold text-indigo-700">REGULAR PRINTER</button>
+                           <button type="button" disabled className="px-5 py-3 text-sm font-bold text-slate-400">THERMAL PRINTER</button>
+                        </div>
+                     </div>
+
+                     <div className="grid gap-0 xl:grid-cols-[360px_minmax(0,1fr)]">
+                        <div className="max-h-[calc(100vh-220px)] overflow-auto border-r bg-white p-5">
+                           <div className="mb-5 flex border-b">
+                              <button
+                                 type="button"
+                                 onClick={() => setPrintSection('layout')}
+                                 className={`px-5 py-3 text-sm font-bold ${printSection === 'layout' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-600'}`}
+                              >
+                                 CHANGE LAYOUT
+                              </button>
+                              <button
+                                 type="button"
+                                 onClick={() => setPrintSection('colors')}
+                                 className={`px-5 py-3 text-sm font-bold ${printSection === 'colors' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-400'}`}
+                              >
+                                 CHANGE COLORS
+                              </button>
+                           </div>
+
+                           {printSection === 'colors' ? (
+                              <div className="space-y-4">
+                                 <div className="rounded-lg border bg-slate-50 p-4">
+                                    <p className="text-xs font-semibold uppercase text-slate-500">Active Layout</p>
+                                    <div className="mt-2 flex items-center gap-3">
+                                       <span className="h-4 w-4 rounded-full border" style={{ backgroundColor: selectedLayoutColor }} />
+                                       <div className="min-w-0">
+                                          <p className="truncate text-sm font-bold text-slate-900">{selectedPrintLayout.label}</p>
+                                          <p className="text-xs text-slate-500">{selectedLayoutColorName}</p>
+                                       </div>
+                                    </div>
+                                 </div>
+                                 <div className="grid grid-cols-5 gap-3">
+                                    {PRINT_COLOR_PALETTE.map((color) => {
+                                      const checked = selectedLayoutColor.toLowerCase() === color.value.toLowerCase();
+                                      return (
+                                        <button
+                                          key={color.value}
+                                          type="button"
+                                          onClick={() => updatePrintLayoutColor(selectedPrintLayout.id, color.value)}
+                                          className="group flex flex-col items-center gap-2 rounded-lg p-2 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                                          title={color.name}
+                                        >
+                                          <span
+                                            className={`flex h-10 w-10 items-center justify-center rounded-full border text-white shadow-sm transition ${checked ? 'ring-2 ring-indigo-500 ring-offset-2' : 'ring-0'}`}
+                                            style={{ backgroundColor: color.value }}
+                                          >
+                                            {checked ? '✓' : ''}
+                                          </span>
+                                          <span className="max-w-full truncate">{color.name}</span>
+                                        </button>
+                                      );
+                                    })}
+                                 </div>
+                              </div>
+	                           ) : (
+	                              <div className="space-y-7">
+	                                 <PrintLayoutPicker
+	                                    value={selectedPrintLayoutId}
+	                                    onChange={(layoutId) => updatePrintSetting('regular', 'layout', layoutId)}
+	                                 />
+
+	                                 <section className="space-y-4">
+                                    <h3 className="border-b pb-3 text-lg font-bold">Print Company Info / Header</h3>
+                                    {[
+                                      ['default', 'Make Regular Printer Default'],
+                                      ['repeat_header', 'Print repeat header in all pages'],
+                                      ['print_original_duplicate', 'Print Original/Duplicate'],
+                                    ].map(([key, label]) => (
+                                      <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                         <Switch checked={Boolean(printSettings.regular[key as keyof PrintSettingsState['regular']])} onCheckedChange={(v) => updatePrintSetting('regular', key as keyof PrintSettingsState['regular'], v as never)} />
+                                         {label}
+                                      </label>
+                                    ))}
+                                    <div className="grid gap-3">
+                                       {[
+                                         ['company_name', 'Company Name', savedCompanyName],
+                                         ['company_logo', 'Company Logo', 'Logo from company profile'],
+                                         ['address', 'Address', savedCompanyAddress],
+                                         ['email', 'Email', savedCompanyEmail],
+                                         ['phone', 'Phone Number', savedCompanyPhone],
+                                         ['gstin', 'GSTIN on Sale', savedCompanyGstin],
+                                       ].map(([key, label, sample]) => (
+                                          <div key={key} className="flex items-center gap-3">
+                                             <Switch checked={Boolean(printSettings.header[key as keyof PrintSettingsState['header']])} onCheckedChange={(v) => updatePrintSetting('header', key as keyof PrintSettingsState['header'], v as never)} />
+                                             <div className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2">
+                                                <p className="text-[11px] text-slate-500">{label}</p>
+                                                <p className="truncate text-sm font-medium text-slate-800">{sample}</p>
+                                             </div>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </section>
+
+                                 <section className="grid gap-4 border-t pt-5">
+                                    <label className="text-sm font-medium text-slate-700">Paper Size
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.paper_size} onChange={(e) => updatePrintSetting('regular', 'paper_size', e.target.value as 'A4' | 'Letter')}>
+                                          <option value="A4">A4</option>
+                                          <option value="Letter">Letter</option>
+                                       </select>
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">Orientation
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.orientation} onChange={(e) => updatePrintSetting('regular', 'orientation', e.target.value as 'portrait' | 'landscape')}>
+                                          <option value="portrait">Portrait</option>
+                                          <option value="landscape">Landscape</option>
+                                       </select>
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">Company Name Text Size
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.company_name_text_size} onChange={(e) => updatePrintSetting('regular', 'company_name_text_size', e.target.value as 'small' | 'medium' | 'large')}>
+                                          <option value="small">Small</option>
+                                          <option value="medium">Medium</option>
+                                          <option value="large">Large</option>
+                                       </select>
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">Invoice Text Size
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.invoice_text_size} onChange={(e) => updatePrintSetting('regular', 'invoice_text_size', e.target.value as 'small' | 'medium' | 'large')}>
+                                          <option value="small">Small</option>
+                                          <option value="medium">Medium</option>
+                                          <option value="large">Large</option>
+                                       </select>
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">Extra space on Top of PDF
+                                       <Input type="number" min={0} max={80} className="mt-1" value={printSettings.regular.extra_top_space} onChange={(e) => updatePrintSetting('regular', 'extra_top_space', Number(e.target.value) as never)} />
+                                    </label>
+                                    <label className="text-sm font-medium text-slate-700">Min No. of Rows in Item Table
+                                       <Input type="number" min={0} max={30} className="mt-1" value={printSettings.regular.min_item_rows} onChange={(e) => updatePrintSetting('regular', 'min_item_rows', Number(e.target.value) as never)} />
+                                    </label>
+                                 </section>
+
+                                 <section className="space-y-4 border-t pt-5">
+                                    <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setTransactionNamesOpen(true)}>Change Transaction Names &gt;</button>
+                                    <div>
+                                       <h3 className="mb-3 text-lg font-bold">Item Table</h3>
+                                       <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setItemTablePrintOpen(true)}>Item Table Customization &gt;</button>
+                                    </div>
+                                 </section>
+
+                                 <section className="space-y-4 border-t pt-5">
+                                    <h3 className="text-lg font-bold">Totals & Taxes</h3>
+                                    <div className="grid gap-3">
+                                       {[
+                                         ['total_item_quantity', 'Total Item Quantity'],
+                                         ['amount_with_decimal', 'Amount with Decimal'],
+                                         ['received_amount', 'Received Amount'],
+                                         ['balance_amount', 'Balance Amount'],
+                                         ['current_balance_of_party', 'Current Balance of Party'],
+                                         ['tax_details', 'Tax Details'],
+                                         ['you_saved', 'You Saved'],
+                                         ['print_amount_with_grouping', 'Print Amount with Grouping'],
+                                       ].map(([key, label]) => (
+                                          <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={Boolean(printSettings.totals[key as keyof PrintSettingsState['totals']])} onCheckedChange={(v) => updatePrintSetting('totals', key as keyof PrintSettingsState['totals'], v as never)} />
+                                             {label}
+                                          </label>
+                                       ))}
+                                       <label className="text-sm font-medium text-slate-700">Amount in Words
+                                          <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.totals.amount_in_words} onChange={(e) => updatePrintSetting('totals', 'amount_in_words', e.target.value as 'indian' | 'international')}>
+                                             <option value="indian">Indian</option>
+                                             <option value="international">International</option>
+                                          </select>
+                                       </label>
+                                    </div>
+                                 </section>
+
+                                 <section className="space-y-4 border-t pt-5">
+                                    <h3 className="text-base font-bold text-slate-900">Footer</h3>
+                                    <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                                       <div className="space-y-4">
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.print_description} onCheckedChange={(v) => updatePrintSetting('footer', 'print_description', v)} />
+                                             <span className="min-w-0 pt-0.5">Print Description</span>
+                                          </label>
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.print_received_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_received_by', v)} />
+                                             <span className="min-w-0 pt-0.5">Print Received by details</span>
+                                          </label>
+                                          <div>
+                                             <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                <Switch checked={printSettings.footer.signature_enabled} onCheckedChange={(v) => updatePrintSetting('footer', 'signature_enabled', v)} />
+                                                <span className="min-w-0 pt-0.5">Print Signature Text</span>
+                                             </label>
+                                             {printSettings.footer.signature_enabled && (
+                                                <div className="mt-2 pl-8">
+                                                   <label className="block text-xs font-semibold text-slate-500">Signature Text</label>
+                                                   <select
+                                                      className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm"
+                                                      value={['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) ? 'authorized' : 'custom'}
+                                                      onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value === 'authorized' ? 'Authorized Sign' : 'Custom Text')}
+                                                   >
+                                                      <option value="authorized">Authorized Sign</option>
+                                                      <option value="custom">Custom Text</option>
+                                                   </select>
+                                                   {!['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) && (
+                                                      <Input className="mt-2" value={printSettings.footer.signature_text} onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value)} />
+                                                   )}
+                                                </div>
+                                             )}
+                                          </div>
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.acknowledgement} onCheckedChange={(v) => updatePrintSetting('footer', 'acknowledgement', v)} />
+                                             <span className="min-w-0 pt-0.5">Print Acknowledgement</span>
+                                          </label>
+                                       </div>
+                                       <div className="space-y-4">
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.print_terms} onCheckedChange={(v) => updatePrintSetting('footer', 'print_terms', v)} />
+                                             <span className="min-w-0 pt-0.5">Print Terms and Conditions</span>
+                                          </label>
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.print_delivered_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_delivered_by', v)} />
+                                             <span className="min-w-0 pt-0.5">Print Delivered by details</span>
+                                          </label>
+                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                             <Switch checked={printSettings.footer.payment_mode} onCheckedChange={(v) => updatePrintSetting('footer', 'payment_mode', v)} />
+                                             <span className="min-w-0 pt-0.5">Payment Mode</span>
+                                          </label>
+                                       </div>
+                                    </div>
+                                 </section>
+
+                              </div>
+                           )}
+                        </div>
+
+                        <aside className="border-t bg-slate-100/70 p-5 xl:border-l xl:border-t-0">
+                           <div className="xl:sticky xl:top-4">
+                              <div className="mb-3 flex items-center justify-between gap-3">
+                                 <div>
+                                    <p className="text-xs font-semibold uppercase text-slate-500">Live Sample</p>
+                                    <h3 className="font-bold text-slate-900">{selectedPrintLayout.label}</h3>
+                                 </div>
+                                 <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                    {printSettings.regular.paper_size} · {printSettings.regular.orientation}
+                                 </span>
+                              </div>
+                              <PrintInvoiceLayoutPreview
+                                 layoutId={selectedPrintLayoutId}
+                                 accentColor={selectedLayoutColor}
+                                 columns={previewColumns}
+                                 getCellValue={previewValueForColumn}
+                                 data={{
+                                   firm: {
+                                     name: printSettings.header.company_name ? savedCompanyName : 'Firm Name',
+                                     address: printSettings.header.address ? savedCompanyAddress : '',
+                                     phone: printSettings.header.phone ? savedCompanyPhone : '',
+                                     email: printSettings.header.email ? savedCompanyEmail : '',
+                                     gstin: printSettings.header.gstin ? savedCompanyGstin : '',
+                                     state: company?.state || 'Gujarat',
+                                     logo: printSettings.header.company_logo ? logoSrc || undefined : undefined,
+                                     signature: printSettings.footer.signature_enabled ? signatureSrc || undefined : undefined,
+                                   },
+                                   invoice: {
+                                     number: 'INV-101',
+                                     date: '27-05-2026',
+                                     time: '12:30 PM',
+                                     dueDate: '03-06-2026',
+                                     type: previewTitle,
+                                   },
+                                   billTo: { name: 'Classic enterprises', address: 'Plot No. 1, Surat, Gujarat', contact: 'Contact No.: 8888888888' },
+                                   shipTo: { name: 'Mehta Textiles', address: 'Bengaluru, Karnataka, 560034' },
+                                   footer: {
+                                     description: 'Sale Description',
+                                     termsAndConditions: company?.terms_and_conditions || 'Thanks for doing business with us!',
+                                     bankName: savedBankName,
+                                     bankAccount: savedBankAccount,
+                                     bankIfsc: savedBankIfsc,
+                                     authorizedSignature: printSettings.footer.signature_text || 'Authorized Sign',
+                                     showQR: true,
+                                   },
+                                 }}
+                                 amountInWords={printSettings.totals.amount_in_words === 'indian' ? 'Rupees One Thousand Three Hundred Eighty Six and Fifty Paise only' : 'One Thousand Three Hundred Eighty Six and Fifty Cents only'}
+                                 showDescription={printSettings.footer.print_description}
+                                 showTerms={printSettings.footer.print_terms}
+                                 showReceived={printSettings.totals.received_amount}
+                                 showBalance={printSettings.totals.balance_amount}
+                                 showYouSaved={printSettings.totals.you_saved}
+                                 showTaxDetails={printSettings.totals.tax_details}
+                                 showPaymentMode={printSettings.footer.payment_mode}
+                                 showAcknowledgement={printSettings.footer.acknowledgement}
+                                 showReceivedBy={printSettings.footer.print_received_by}
+                                 showDeliveredBy={printSettings.footer.print_delivered_by}
+                                 showSignature={printSettings.footer.signature_enabled}
+                              />
+                           </div>
+                        </aside>
+                     </div>
+
+                     {transactionNamesOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg bg-white p-6 shadow-xl">
+                              <div className="mb-5 flex items-center justify-between">
+                                 <h3 className="text-xl font-bold">Change Transaction Names</h3>
+                                 <Button variant="ghost" size="icon" onClick={() => setTransactionNamesOpen(false)}><X className="h-5 w-5" /></Button>
+                              </div>
+                              <div className="grid gap-4 md:grid-cols-2">
+                                 {TRANSACTION_NAME_FIELDS.map(([key, label]) => (
+                                    <label key={key} className="text-sm font-medium text-slate-700">{label}
+                                       <Input className="mt-1" value={String(printSettings.transaction_names[key] || '')} onChange={(e) => updateTransactionName(key, e.target.value)} />
+                                    </label>
+                                 ))}
+                              </div>
+                              <label className="mt-4 flex items-center gap-3 text-sm font-medium text-slate-700">
+                                 <Switch checked={Boolean(printSettings.transaction_names.non_tax_bill)} onCheckedChange={(v) => updateTransactionName('non_tax_bill', v)} />
+                                 Bill of Supply for Non Tax Transaction
+                              </label>
+                              <div className="mt-6 flex justify-end gap-2">
+                                 <Button variant="outline" onClick={() => setTransactionNamesOpen(false)}>Cancel</Button>
+                                 <Button onClick={() => setTransactionNamesOpen(false)}>Save</Button>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+
+                     {itemTablePrintOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-lg bg-white p-6 shadow-xl">
+                              <div className="mb-5 flex items-center justify-between">
+                                 <h3 className="text-xl font-bold">Item Table Customization</h3>
+                                 <Button variant="ghost" size="icon" onClick={() => setItemTablePrintOpen(false)}><X className="h-5 w-5" /></Button>
+                              </div>
+                              <div className="mb-6 overflow-x-auto rounded border">
+                                 <div
+                                    className="grid min-w-max px-3 py-3 text-xs font-bold text-white"
+                                    style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(92px, 1fr))`, backgroundColor: previewAccent }}
+                                 >
+                                    {previewColumns.map((col) => <span key={col.key} className="truncate pr-2" title={col.label}>{col.label}</span>)}
+                                 </div>
+                                 <div
+                                    className="grid min-w-max border-t px-3 py-3 text-xs"
+                                    style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(92px, 1fr))` }}
+                                 >
+                                    {previewColumns.map((col) => <span key={col.key} className="truncate pr-2" title={previewValueForColumn(col.key, 1)}>{previewValueForColumn(col.key, 1)}</span>)}
+                                 </div>
+                              </div>
+                              <div className="grid gap-6 md:grid-cols-3">
+                                 {(['item', 'additional', 'amount'] as const).map((group) => (
+                                    <div key={group}>
+                                       <h4 className="mb-3 border-b pb-2 font-semibold">{group === 'item' ? 'Item related columns' : group === 'additional' ? 'Additional Item Columns' : 'Amounts, Totals & Taxes'}</h4>
+                                       <div className="space-y-3">
+                                          {PRINT_COLUMNS.filter((column) => column.group === group).map((column) => (
+                                             <label key={column.key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                                <Switch
+                                                   disabled={column.key === 'item_name'}
+                                                   checked={column.key === 'item_name' || printSettings.item_table.columns.includes(column.key)}
+                                                   onCheckedChange={(checked) => togglePrintColumn(column.key, checked)}
+                                                />
+                                                {column.label}
+                                             </label>
+                                          ))}
+                                       </div>
+                                    </div>
+                                 ))}
+                              </div>
+                              <div className="mt-6 flex justify-end">
+                                 <Button onClick={() => setItemTablePrintOpen(false)}>Done</Button>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+                  </CardContent>
+               )}
+
+               {tab === 'transaction' && (
+                  <CardContent className="p-6 space-y-6">
+                     <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                           <h2 className="text-xl font-bold">Transaction Settings</h2>
+                           <p className="mt-1 text-sm text-slate-500">Configure how transactions behave across billing, invoicing and payments.</p>
+                        </div>
+                        <Button onClick={saveTransactionSettings}>Save Transaction Settings</Button>
+                     </div>
+
+                     <div className="grid gap-6 xl:grid-cols-3">
+                        <section className="space-y-6">
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">Transaction Header</h3>
+                              {[
+                                ['showInvoiceNumber', 'Invoice/Bill No.'],
+                                ['addTimeOnTransactions', 'Add Time on Transactions'],
+                                ['cashSaleByDefault', 'Cash Sale by default'],
+                                ['showBillingNameOfParties', 'Billing Name of Parties'],
+                                ['showCustomerPODetails', 'Customers P.O. Details on Transactions'],
+                              ].map(([key, label]) => (
+                                 <label key={key} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                    <span>{label} <span className="text-slate-400">ⓘ</span></span>
+                                    <Switch checked={Boolean(transactionSettings[key as keyof TransactionSettingsState])} onCheckedChange={(v) => setTransactionSettings((p) => ({ ...p, [key]: v }))} />
+                                 </label>
+                              ))}
+                           </div>
+
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">More Transaction Features</h3>
+                              {[
+                                ['enableEwayBill', 'E-way bill no.'],
+                                ['enableQuickEntry', 'Quick Entry'],
+                                ['doNotShowInvoicePreview', 'Do not Show Invoice Preview'],
+                                ['enablePasscodeForEditDelete', 'Enable Passcode for transaction edit/delete'],
+                                ['enableDiscountDuringPayments', 'Discount During Payments'],
+                                ['linkPaymentsToInvoices', 'Link Payments to Invoices'],
+                                ['enableDueDatesAndPaymentTerms', 'Due Dates and Payment Terms'],
+                                ['showProfitWhileMakingSaleInvoice', 'Show Profit while making Sale Invoice'],
+                                ['enableTermsAndConditions', 'Terms and Conditions'],
+                              ].map(([key, label]) => (
+                                 <div key={key} className="rounded-md border bg-white px-3 py-2">
+                                    <label className="flex items-center justify-between gap-3 text-sm">
+                                       <span>{label} <span className="text-slate-400">ⓘ</span></span>
+                                       <Switch checked={Boolean(transactionSettings[key as keyof TransactionSettingsState])} onCheckedChange={(v) => setTransactionSettings((p) => ({ ...p, [key]: v }))} />
+                                    </label>
+                                    {key === 'enableTermsAndConditions' && (
+                                       <button type="button" className="mt-2 text-xs font-semibold text-blue-600" onClick={() => setTermsModalOpen(true)}>Set Terms and Conditions</button>
+                                    )}
+                                 </div>
+                              ))}
+                              <div className="grid gap-2">
+                                 <Button type="button" variant="outline" onClick={() => setAdditionalFieldsOpen(true)}>Additional Fields &gt;</Button>
+                                 <Button type="button" variant="outline" onClick={() => setTransportationOpen(true)}>Transportation Details &gt;</Button>
+                                 <Button type="button" variant="outline" onClick={() => setChargesOpen(true)}>Additional Charges &gt;</Button>
+                              </div>
+                           </div>
+                        </section>
+
+                        <section className="space-y-6">
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">Items Table</h3>
+                              {[
+                                ['showInclusiveExclusiveTax', 'Inclusive/Exclusive Tax on Rate (Price/Unit)'],
+                                ['showPurchasePriceInItems', 'Display Purchase Price of Items'],
+                                ['showLast5SalePrice', 'Show last 5 Sale Price of Items'],
+                                ['showLast5PurchasePrice', 'Show last 5 Purchase Price of Items'],
+                                ['showFreeItemQuantity', 'Free Item Quantity'],
+                                ['showCountColumn', 'Count'],
+                              ].map(([key, label]) => (
+                                 <label key={key} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                    <span>{key === 'showCountColumn' ? transactionSettings.countColumnLabel || label : label}</span>
+                                    <Switch checked={Boolean(transactionSettings[key as keyof TransactionSettingsState])} onCheckedChange={(v) => setTransactionSettings((p) => ({ ...p, [key]: v }))} />
+                                 </label>
+                              ))}
+                              <Input className="max-w-xs" value={transactionSettings.countColumnLabel} maxLength={30} onChange={(e) => setTransactionSettings((p) => ({ ...p, countColumnLabel: e.target.value }))} placeholder="Count column label" />
+                           </div>
+
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">Transaction Prefixes</h3>
+                              <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" value={company?.name || ''} disabled>
+                                 <option>{company?.name || legalName || 'Current firm'}</option>
+                              </select>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                 {[
+                                   ['sale', 'Sale'], ['creditNote', 'Credit Note'], ['saleOrder', 'Sale Order'], ['purchaseOrder', 'Purchase Order'],
+                                   ['estimate', 'Estimate'], ['proformaInvoice', 'Proforma Invoice'], ['deliveryChallan', 'Delivery Challan'], ['paymentIn', 'Payment In'],
+                                 ].map(([key, label]) => (
+                                    <label key={key} className="text-xs font-medium text-slate-600">{label}
+                                       <Input
+                                          className="mt-1"
+                                          list="prefix-options"
+                                          maxLength={10}
+                                          value={transactionPrefixes[key as keyof TransactionPrefixesState] || ''}
+                                          onChange={(e) => setTransactionPrefixes((p) => ({ ...p, [key]: e.target.value }))}
+                                          placeholder="None"
+                                       />
+                                    </label>
+                                 ))}
+                                 <datalist id="prefix-options">
+                                    {['', 'INV-', 'BILL-', 'ORD-', 'EST-', 'PO-', 'CN-', 'DC-', 'PI-'].map((p) => <option key={p || 'none'} value={p}>{p || 'None'}</option>)}
+                                 </datalist>
+                              </div>
+                           </div>
+                        </section>
+
+                        <section className="space-y-6">
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">Taxes, Discount & Totals</h3>
+                              {[
+                                ['enableTransactionWiseTax', 'Transaction wise Tax'],
+                                ['enableTransactionWiseDiscount', 'Transaction wise Discount'],
+                                ['roundOffTotal', 'Round Off Total'],
+                              ].map(([key, label]) => (
+                                 <label key={key} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                    <span>{label}</span>
+                                    <Switch checked={Boolean(transactionSettings[key as keyof TransactionSettingsState])} onCheckedChange={(v) => setTransactionSettings((p) => ({ ...p, [key]: v }))} />
+                                 </label>
+                              ))}
+                              {transactionSettings.roundOffTotal && (
+                                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-md border bg-slate-50 p-3 text-sm">
+                                    <select className="h-10 rounded-md border bg-white px-3" value={transactionSettings.roundOffType} onChange={(e) => setTransactionSettings((p) => ({ ...p, roundOffType: e.target.value as TransactionSettingsState['roundOffType'] }))}>
+                                       <option value="NEAREST">Nearest</option><option value="FLOOR">Floor</option><option value="CEIL">Ceil</option>
+                                    </select>
+                                    <span>To</span>
+                                    <select className="h-10 rounded-md border bg-white px-3" value={transactionSettings.roundOffTo} onChange={(e) => setTransactionSettings((p) => ({ ...p, roundOffTo: Number(e.target.value) as 1 | 10 | 100 }))}>
+                                       <option value={1}>1</option><option value={10}>10</option><option value={100}>100</option>
+                                    </select>
+                                 </div>
+                              )}
+                           </div>
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">Billing Type</h3>
+                              {[
+                                ['LITE_SALE', 'Lite Sale'],
+                                ['FULL_SALE', 'Full Sale'],
+                              ].map(([value, label]) => (
+                                 <label key={value} className="flex items-center gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                    <input type="radio" checked={transactionSettings.billingType === value} onChange={() => setTransactionSettings((p) => ({ ...p, billingType: value as TransactionSettingsState['billingType'] }))} />
+                                    {label}
+                                 </label>
+                              ))}
+                           </div>
+                        </section>
+                     </div>
+
+                     {termsModalOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-lg bg-white shadow-xl">
+                              <div className="flex items-center justify-between border-b px-6 py-4">
+                                 <h3 className="text-xl font-bold">Terms & Conditions <span className="text-slate-400">ⓘ</span></h3>
+                                 <div className="flex items-center gap-2">
+                                    <Button className="bg-rose-600 hover:bg-rose-700" onClick={() => setTermForm({ transactionType: 'SALE', title: '', content: '', isDefault: false })}>+ Add Terms & Condition</Button>
+                                    <Button variant="ghost" size="icon" onClick={() => setTermsModalOpen(false)}><X className="h-5 w-5" /></Button>
+                                 </div>
+                              </div>
+                              {termsBanner && (
+                                 <div className="m-6 rounded-md bg-blue-50 p-4 text-sm text-blue-900">
+                                    <div className="flex justify-between gap-4"><b>What has improved?</b><button onClick={() => setTermsBanner(false)}>×</button></div>
+                                    <p>Now you can add multiple terms and conditions for a transaction type, and choose between them when creating a transaction.</p>
+                                 </div>
+                              )}
+                              <div className="px-6 pb-6">
+                                 <div className="grid grid-cols-[1fr_110px] border-b py-2 text-xs font-bold text-slate-500"><span>HEADER</span><span>ACTIONS</span></div>
+                                 {TRANSACTION_TYPES.map(([type, label]) => (
+                                    <div key={type} className="border-b">
+                                       <div className="grid grid-cols-[1fr_110px] items-center py-3">
+                                          <button className="text-left font-medium" onClick={() => setExpandedTerms((prev) => { const n = new Set(prev); n.has(type) ? n.delete(type) : n.add(type); return n; })}>{expandedTerms.has(type) ? '▾' : '▸'} {label}</button>
+                                          <div className="flex gap-2">
+                                             <Button variant="ghost" size="icon" onClick={() => setTermForm({ transactionType: type, title: '', content: '', isDefault: false })}><Pencil className="h-4 w-4" /></Button>
+                                             <Button variant="ghost" size="icon" onClick={() => (termsGrouped[type] || []).forEach(deleteTerm)}><Trash2 className="h-4 w-4" /></Button>
+                                          </div>
+                                       </div>
+                                       {expandedTerms.has(type) && (
+                                          <div className="space-y-2 pb-3 pl-5">
+                                             {(termsGrouped[type] || []).length === 0 && <p className="text-sm text-slate-500">No saved terms.</p>}
+                                             {(termsGrouped[type] || []).map((entry) => (
+                                                <div key={entry.id || entry.title} className="flex items-center justify-between rounded bg-slate-50 px-3 py-2 text-sm">
+                                                   <span>{entry.title}{entry.isDefault ? ' (Default)' : ''}</span>
+                                                   <div><Button variant="ghost" size="sm" onClick={() => setTermForm(entry)}>Edit</Button><Button variant="ghost" size="sm" className="text-red-600" onClick={() => deleteTerm(entry)}>Delete</Button></div>
+                                                </div>
+                                             ))}
+                                          </div>
+                                       )}
+                                    </div>
+                                 ))}
+                              </div>
+                           </div>
+                        </div>
+                     )}
+
+                     {termForm && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+                           <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl">
+                              <h3 className="mb-4 text-lg font-bold">{termForm.id ? 'Edit' : 'Add'} Terms & Condition</h3>
+                              <div className="space-y-3">
+                                 <select className="h-10 w-full rounded-md border bg-white px-3" value={termForm.transactionType} onChange={(e) => setTermForm({ ...termForm, transactionType: e.target.value })}>{TRANSACTION_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                                 <Input maxLength={100} placeholder="Title" value={termForm.title} onChange={(e) => setTermForm({ ...termForm, title: e.target.value })} />
+                                 <textarea className="min-h-32 w-full rounded-md border p-3 text-sm" maxLength={2000} placeholder="Content" value={termForm.content} onChange={(e) => setTermForm({ ...termForm, content: e.target.value })} />
+                                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={termForm.isDefault} onChange={(e) => setTermForm({ ...termForm, isDefault: e.target.checked })} /> Is Default</label>
+                              </div>
+                              <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setTermForm(null)}>Cancel</Button><Button onClick={saveTerm}>Save</Button></div>
+                           </div>
+                        </div>
+                     )}
+
+                     {additionalFieldsOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[92vh] w-full max-w-6xl overflow-auto rounded-lg bg-white shadow-xl">
+                              <div className="flex items-center justify-between border-b px-6 py-4"><h3 className="text-xl font-bold">Additional Fields Setup</h3><Button variant="ghost" size="icon" onClick={() => setAdditionalFieldsOpen(false)}><X className="h-5 w-5" /></Button></div>
+                              <div className="grid gap-6 p-6 lg:grid-cols-[0.8fr_1.2fr]">
+                                 <div className="space-y-5">
+                                    <select className="h-10 w-full rounded-md border bg-white px-3" disabled><option>{company?.name || legalName || 'Current firm'}</option></select>
+                                    {[
+                                      ['Firm additional fields', [['firmField1Enabled', 'firmField1Label', 'Additional Field 1'], ['firmField2Enabled', 'firmField2Label', 'Additional Field 2']]],
+                                      ['Transaction additional fields', [['txnField1Enabled', 'txnField1Label', 'Additional Field 1'], ['txnField2Enabled', 'txnField2Label', 'Additional Field 2'], ['txnField3Enabled', 'txnField3Label', 'Additional Field 3'], ['txnDateFieldEnabled', 'txnDateFieldLabel', 'Date Field']]],
+                                    ].map(([title, rows]: any) => (
+                                       <div key={title} className="space-y-2">
+                                          <h4 className="font-semibold">{title} <span className="text-slate-400">?</span></h4>
+                                          {rows.map(([enabledKey, labelKey, fallback]: string[]) => (
+                                             <div key={enabledKey} className="rounded-md border p-3">
+                                                <label className="flex items-center justify-between text-sm"><span>{fallback}</span><Switch checked={Boolean(additionalFields[enabledKey])} onCheckedChange={(v) => setAdditionalFields((p) => ({ ...p, [enabledKey]: v }))} /></label>
+                                                {additionalFields[enabledKey] && <Input className="mt-2" maxLength={50} value={additionalFields[labelKey] || ''} onChange={(e) => setAdditionalFields((p) => ({ ...p, [labelKey]: e.target.value }))} placeholder={fallback} />}
+                                             </div>
+                                          ))}
+                                       </div>
+                                    ))}
+                                    <div className="space-y-2"><h4 className="font-semibold">Show fields on</h4>{[['showOnSales', 'Sales'], ['showOnPurchase', 'Purchase'], ['showOnExpense', 'Expense'], ['showOnPaymentIn', 'Payment In']].map(([k, l]) => <label key={k} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"><span>{l}</span><Switch checked={Boolean(additionalFields[k])} onCheckedChange={(v) => setAdditionalFields((p) => ({ ...p, [k]: v }))} /></label>)}</div>
+                                 </div>
+                                 <div className="space-y-4">
+                                    <select className="h-10 w-full max-w-xs rounded-md border bg-white px-3" value={additionalFields.invoiceTheme || 'THEME_1'} onChange={(e) => setAdditionalFields((p) => ({ ...p, invoiceTheme: e.target.value }))}>
+                                       {['THEME_1', 'THEME_2', 'THEME_3', 'THEME_4', 'GST_THEME_1', 'GST_THEME_2', 'GST_THEME_3', 'GST_THEME_4', 'GST_THEME_5'].map((theme) => <option key={theme} value={theme}>{theme.replace(/_/g, ' ')}</option>)}
+                                    </select>
+                                    <div className="rounded-lg border bg-white p-5 shadow-sm">
+                                       <div className="flex justify-between border-b pb-3"><div><h4 className="text-lg font-bold">{legalName || company?.name || 'Firm Name'}</h4><p className="text-xs text-slate-500">{registeredAddress || 'Firm address'} · GSTIN {gstin || '24AAAAA0000A1Z5'}</p></div><div className="h-12 w-20 rounded bg-indigo-100" /></div>
+                                       <div className="grid grid-cols-2 gap-4 py-4 text-sm"><div><b>Bill To</b><p>Sample Party</p><p>Surat, Gujarat</p></div><div className="text-right"><b>Invoice</b><p>INV-1</p><p>27/05/2026</p></div></div>
+                                       <div className="overflow-hidden rounded border text-xs"><div className="grid grid-cols-5 bg-indigo-500 p-2 font-bold text-white"><span>Item</span><span>HSN/SAC</span><span>Qty</span><span>Price</span><span>Amount</span></div><div className="grid grid-cols-5 p-2"><span>Sample Item</span><span>9983</span><span>1</span><span>₹500</span><span>₹590</span></div></div>
+                                       <div className="mt-4 grid grid-cols-2 gap-4 text-sm"><div><b>Bank Details</b><p>{bankName || 'Bank name'}</p></div><div className="text-right"><p>Total ₹590</p><p>Received ₹0</p><b>Balance ₹590</b></div></div>
+                                       <div className="mt-5 text-right text-sm">Authorized Signatory</div>
+                                    </div>
+                                 </div>
+                              </div>
+                              <div className="flex justify-end border-t bg-slate-50 px-6 py-4"><Button onClick={saveAdditionalFields}>Done</Button></div>
+                           </div>
+                        </div>
+                     )}
+
+                     {transportationOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-lg bg-white shadow-xl">
+                              <div className="flex items-center justify-between bg-blue-100 px-6 py-4"><h3 className="text-xl font-bold">Transportation Details</h3><Button variant="ghost" size="icon" onClick={() => setTransportationOpen(false)}><X className="h-5 w-5" /></Button></div>
+                              <div className="space-y-4 p-6">
+                                 {Array.from({ length: 6 }, (_, i) => i + 1).map((n) => (
+                                    <div key={n} className="rounded-md border p-4">
+                                       <label className="text-sm font-medium">Field {n} <span className="text-red-500">*</span></label>
+                                       <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_90px]">
+                                          <Input maxLength={50} value={transportation[`field${n}Label`] || ''} onChange={(e) => setTransportation((p) => ({ ...p, [`field${n}Label`]: e.target.value }))} />
+                                          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(transportation[`field${n}Enabled`])} onChange={(e) => setTransportation((p) => ({ ...p, [`field${n}Enabled`]: e.target.checked }))} /> Enable</label>
+                                       </div>
+                                       <label className="mt-3 flex items-center gap-3 text-sm">Show in print <Switch checked={transportation[`field${n}ShowInPrint`] !== false} onCheckedChange={(v) => setTransportation((p) => ({ ...p, [`field${n}ShowInPrint`]: v }))} /></label>
+                                    </div>
+                                 ))}
+                              </div>
+                              <div className="flex justify-end border-t bg-slate-50 px-6 py-4"><Button onClick={saveTransportation}>Done</Button></div>
+                           </div>
+                        </div>
+                     )}
+
+                     {chargesOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg bg-white shadow-xl">
+                              <div className="flex items-center justify-between border-b px-6 py-4"><h3 className="text-xl font-bold">Additional Charges <span className="text-slate-400">ⓘ</span></h3><Button variant="ghost" size="icon" onClick={() => setChargesOpen(false)}><X className="h-5 w-5" /></Button></div>
+                              <div className="space-y-5 p-6">
+                                 <label className="flex items-center justify-between rounded-md border p-3 font-medium">Enable Additional Charges <Switch checked={Boolean(additionalCharges.masterEnabled)} onCheckedChange={(v) => setAdditionalCharges((p) => ({ ...p, masterEnabled: v }))} /></label>
+                                 <div className="border-t border-dashed" />
+                                 {[1, 2, 3].map((n) => (
+                                    <div key={n} className={`rounded-md border p-4 ${additionalCharges.masterEnabled ? 'bg-white' : 'bg-slate-100 opacity-60'}`}>
+                                       <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr]">
+                                          <label className="text-sm font-medium">Additional Charge{n} <span className="text-red-500">*</span><div className="mt-1 flex gap-2"><input type="checkbox" disabled={!additionalCharges.masterEnabled} checked={Boolean(additionalCharges[`charge${n}Enabled`])} onChange={(e) => setAdditionalCharges((p) => ({ ...p, [`charge${n}Enabled`]: e.target.checked }))} /><Input disabled={!additionalCharges.masterEnabled} maxLength={50} value={additionalCharges[`charge${n}Label`] || ''} onChange={(e) => setAdditionalCharges((p) => ({ ...p, [`charge${n}Label`]: e.target.value }))} /></div></label>
+                                          <label className="text-sm font-medium">Default SAC<Input disabled={!additionalCharges.masterEnabled} className="mt-1" maxLength={6} value={additionalCharges[`charge${n}SacCode`] || ''} onChange={(e) => setAdditionalCharges((p) => ({ ...p, [`charge${n}SacCode`]: e.target.value.replace(/\D/g, '') }))} placeholder="Search SAC" /></label>
+                                          <label className="text-sm font-medium">Tax Rate<select disabled={!additionalCharges.masterEnabled} className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={additionalCharges[`charge${n}TaxRate`] ?? ''} onChange={(e) => setAdditionalCharges((p) => ({ ...p, [`charge${n}TaxRate`]: e.target.value }))}><option value="">NONE</option>{[0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 9, 12, 14, 18, 28].map((r) => <option key={r} value={r}>{r}%</option>)}</select></label>
+                                       </div>
+                                       <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>Can be changed during transaction</span><label className="flex items-center gap-2">Enable tax for {additionalCharges[`charge${n}Label`]} <Switch disabled={!additionalCharges.masterEnabled} checked={Boolean(additionalCharges[`charge${n}TaxEnabled`])} onCheckedChange={(v) => setAdditionalCharges((p) => ({ ...p, [`charge${n}TaxEnabled`]: v }))} /></label></div>
+                                    </div>
+                                 ))}
+                              </div>
+                              <div className="border-t bg-slate-50 px-6 py-4"><Button className="w-full bg-rose-600 hover:bg-rose-700" onClick={saveAdditionalCharges}>Save Details</Button></div>
+                           </div>
+                        </div>
+                     )}
+                  </CardContent>
+               )}
+
+               {tab === 'taxes' && (
+                  <CardContent className="p-6 space-y-6">
+                     <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                           <h2 className="text-xl font-bold">Taxes & GST</h2>
+                           <p className="mt-1 text-sm text-slate-500">Manage GST switches, tax rates and GST groups used in invoices and item creation.</p>
+                        </div>
+                        <Button onClick={saveTaxSettings} loading={updateCompany.isPending}>Save Taxes & GST</Button>
+                     </div>
+
+                     <div className="grid gap-6 xl:grid-cols-[0.9fr_2fr]">
+                        <section className="space-y-4">
+                           <h3 className="border-b pb-3 text-lg font-bold">GST Settings</h3>
+                           {[
+                             ['enable_gst', 'Enable GST'],
+                             ['enable_hsn_sac', 'Enable HSN/SAC Code'],
+                             ['additional_cess_on_item', 'Additional Cess On Item'],
+                             ['reverse_charge', 'Reverse Charge'],
+                             ['enable_place_of_supply', 'Enable Place of Supply'],
+                             ['composite_scheme', 'Composite Scheme'],
+                             ['enable_tcs', 'Enable TCS'],
+                             ['enable_tds', 'Enable TDS'],
+                           ].map(([key, label]) => (
+                              <label key={key} className="flex items-center gap-3 rounded-md border bg-white px-3 py-3 text-sm font-medium text-slate-700">
+                                 <Switch checked={Boolean(taxSettings[key as TaxSettingsFlagKey])} onCheckedChange={(v) => updateTaxFlag(key as TaxSettingsFlagKey, v)} />
+                                 {label}
+                              </label>
+                           ))}
+                           <div className="rounded-lg border bg-white p-4">
+                              <h4 className="font-semibold">Standard GST Rates</h4>
+                              <p className="mt-1 text-xs text-slate-500">Only selected slabs appear in invoice item GST dropdowns.</p>
+                              <div className="mt-4 grid grid-cols-3 gap-2">
+                                 {STANDARD_GST_SLABS.map((rate) => (
+                                    <label key={rate} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                                       <input
+                                          type="checkbox"
+                                          className="h-4 w-4 rounded border-slate-300"
+                                          checked={taxSettings.enabledSlabs.includes(rate)}
+                                          onChange={(e) => toggleEnabledGstSlab(rate, e.target.checked)}
+                                       />
+                                       {rate}%
+                                    </label>
+                                 ))}
+                              </div>
+                           </div>
+                           <Button type="button" variant="outline" onClick={() => setTaxListOpen(true)}>Tax List &gt;</Button>
+                        </section>
+
+                        <section className="space-y-4">
+                           <div className="rounded-lg border bg-white p-4">
+                              <div className="flex items-start justify-between gap-3 border-b pb-3">
+                                 <div>
+                                    <h3 className="font-bold">Custom Tax Rates</h3>
+                                    <p className="mt-1 text-xs text-slate-500">Add non-standard active rates to the invoice GST dropdown.</p>
+                                 </div>
+                                 <Button type="button" size="sm" onClick={() => setEditingCustomTaxRate({ id: `custom_tax_${Date.now()}`, name: '', rate: 4, isActive: true })}>+ Add Custom Rate</Button>
+                              </div>
+                              <div className="mt-3 overflow-hidden rounded-md border">
+                                 <div className="grid grid-cols-[1fr_90px_80px_80px] bg-slate-50 px-3 py-2 text-xs font-semibold uppercase text-slate-500">
+                                    <span>Name</span><span className="text-right">Rate %</span><span className="text-center">Active</span><span className="text-right">Actions</span>
+                                 </div>
+                                 {taxSettings.customRates.length === 0 ? (
+                                    <div className="px-3 py-6 text-center text-sm text-slate-500">No custom tax rates yet.</div>
+                                 ) : taxSettings.customRates.map((row) => (
+                                    <div key={row.id} className="grid grid-cols-[1fr_90px_80px_80px] items-center border-t px-3 py-2 text-sm">
+                                       <span className="font-medium">{row.name}</span>
+                                       <span className="text-right tabular-nums">{row.rate}</span>
+                                       <span className="text-center"><Switch checked={row.isActive} onCheckedChange={(checked) => setTaxSettings((prev) => ({ ...prev, customRates: prev.customRates.map((r) => r.id === row.id ? { ...r, isActive: checked } : r) }))} /></span>
+                                       <span className="flex justify-end gap-2">
+                                          <button type="button" className="text-slate-400 hover:text-blue-600" onClick={() => setEditingCustomTaxRate(row)}><Pencil className="h-4 w-4" /></button>
+                                          <button type="button" className="text-slate-400 hover:text-red-600" onClick={() => setTaxSettings((prev) => ({ ...prev, customRates: prev.customRates.map((r) => r.id === row.id ? { ...r, isActive: false } : r) }))}><Trash2 className="h-4 w-4" /></button>
+                                       </span>
+                                    </div>
+                                 ))}
+                              </div>
+                           </div>
+                        </section>
+                     </div>
+
+                     {taxListOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="max-h-[88vh] w-full max-w-6xl overflow-auto rounded-lg bg-white p-6 shadow-xl">
+                              <div className="mb-5 flex items-center justify-between">
+                                 <h3 className="text-xl font-bold">Tax List</h3>
+                                 <Button variant="ghost" size="icon" onClick={() => setTaxListOpen(false)}><X className="h-5 w-5" /></Button>
+                              </div>
+                              <div className="grid gap-8 md:grid-cols-2">
+                                 <div className="min-h-[520px]">
+                                    <div className="mb-3 flex items-center justify-between border-b pb-3">
+                                       <h4 className="text-lg font-bold">Tax Rates</h4>
+                                       <Button type="button" variant="ghost" size="icon" onClick={() => setEditingTaxRate({ id: `tax_rate_${Date.now()}`, label: 'IGST@0%', type: 'IGST', rate: 0, active: true })}>
+                                          <Plus className="h-5 w-5" />
+                                       </Button>
+                                    </div>
+                                    <div className="max-h-[60vh] overflow-auto pr-2">
+                                       {taxSettings.rates.filter((row) => row.active !== false).map((row) => (
+                                          <div key={row.id} className="grid grid-cols-[1fr_80px_36px_36px] items-center gap-2 border-b py-3 text-sm">
+                                             <span className="font-medium">{row.label}</span>
+                                             <span className="text-right tabular-nums">{row.rate}</span>
+                                             <button type="button" className="text-slate-400 hover:text-blue-600" onClick={() => setEditingTaxRate(row)}><Pencil className="h-4 w-4" /></button>
+                                             <button type="button" className="text-slate-400 hover:text-red-600" onClick={() => setTaxSettings((prev) => ({ ...prev, rates: prev.rates.map((r) => r.id === row.id ? { ...r, active: false } : r) }))}><Trash2 className="h-4 w-4" /></button>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </div>
+                                 <div className="min-h-[520px]">
+                                    <div className="mb-3 flex items-center justify-between border-b pb-3">
+                                       <h4 className="text-lg font-bold">Tax Group</h4>
+                                       <Button type="button" variant="ghost" size="icon" onClick={() => setEditingTaxGroup({ id: `tax_group_${Date.now()}`, label: 'GST@0%', rate: 0, components: [{ type: 'SGST', rate: 0 }, { type: 'CGST', rate: 0 }], active: true })}>
+                                          <Plus className="h-5 w-5" />
+                                       </Button>
+                                    </div>
+                                    <div className="max-h-[60vh] overflow-auto pr-2">
+                                       {taxSettings.groups.filter((row) => row.active !== false).map((row) => (
+                                          <div key={row.id} className="border-b py-4">
+                                             <div className="grid grid-cols-[1fr_36px_36px] items-center gap-2 text-sm">
+                                                <span className="font-medium">{row.label}</span>
+                                                <button type="button" className="text-slate-400 hover:text-blue-600" onClick={() => setEditingTaxGroup(row)}><Pencil className="h-4 w-4" /></button>
+                                                <button type="button" className="text-slate-400 hover:text-red-600" onClick={() => setTaxSettings((prev) => ({ ...prev, groups: prev.groups.map((g) => g.id === row.id ? { ...g, active: false } : g) }))}><Trash2 className="h-4 w-4" /></button>
+                                             </div>
+                                             <div className="mt-2 flex flex-wrap gap-5 text-xs font-medium text-blue-900">
+                                                {row.components.map((part, idx) => <span key={`${part.type}-${idx}`}>{part.type}@{part.rate}%</span>)}
+                                             </div>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+
+                     {editingCustomTaxRate && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                              <h3 className="mb-4 text-lg font-bold">Custom Tax Rate</h3>
+                              <div className="space-y-3">
+                                 <label className="block text-sm font-medium">Name
+                                    <Input className="mt-1" value={editingCustomTaxRate.name} onChange={(e) => setEditingCustomTaxRate({ ...editingCustomTaxRate, name: e.target.value })} placeholder="Special Rate" />
+                                 </label>
+                                 <label className="block text-sm font-medium">Rate %
+                                    <Input className="mt-1" type="number" min={0.01} max={100} step="0.01" value={editingCustomTaxRate.rate} onChange={(e) => setEditingCustomTaxRate({ ...editingCustomTaxRate, rate: Number(e.target.value) })} />
+                                 </label>
+                                 <label className="flex items-center gap-3 text-sm font-medium">
+                                    <Switch checked={editingCustomTaxRate.isActive} onCheckedChange={(checked) => setEditingCustomTaxRate({ ...editingCustomTaxRate, isActive: checked })} />
+                                    Active
+                                 </label>
+                              </div>
+                              <div className="mt-5 flex justify-end gap-2">
+                                 <Button variant="outline" onClick={() => setEditingCustomTaxRate(null)}>Cancel</Button>
+                                 <Button onClick={saveCustomTaxRateRow}>Save</Button>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+
+                     {editingTaxRate && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                              <h3 className="mb-4 text-lg font-bold">Tax Rate</h3>
+                              <div className="space-y-3">
+                                 <Input value={editingTaxRate.label} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, label: e.target.value })} placeholder="IGST@18%" />
+                                 <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" value={editingTaxRate.type} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, type: e.target.value as TaxRateRow['type'] })}>
+                                    <option value="IGST">IGST</option><option value="CGST">CGST</option><option value="SGST">SGST</option><option value="CESS">CESS</option>
+                                 </select>
+                                 <Input type="number" step="0.001" value={editingTaxRate.rate} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, rate: Number(e.target.value) })} />
+                              </div>
+                              <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setEditingTaxRate(null)}>Cancel</Button><Button onClick={saveTaxRateRow}>Save</Button></div>
+                           </div>
+                        </div>
+                     )}
+
+                     {editingTaxGroup && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                              <h3 className="mb-4 text-lg font-bold">Tax Group</h3>
+                              <div className="space-y-3">
+                                 <Input value={editingTaxGroup.label} onChange={(e) => setEditingTaxGroup({ ...editingTaxGroup, label: e.target.value })} placeholder="GST@18%" />
+                                 <Input type="number" step="0.001" value={editingTaxGroup.rate} onChange={(e) => {
+                                    const rate = Number(e.target.value) || 0;
+                                    const half = Number((rate / 2).toFixed(3));
+                                    setEditingTaxGroup({ ...editingTaxGroup, rate, components: [{ type: 'SGST', rate: half }, { type: 'CGST', rate: half }] });
+                                 }} />
+                                 <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+                                    Components: {editingTaxGroup.components.map((part) => `${part.type}@${part.rate}%`).join(' + ')}
+                                 </div>
+                              </div>
+                              <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setEditingTaxGroup(null)}>Cancel</Button><Button onClick={saveTaxGroupRow}>Save</Button></div>
+                           </div>
+                        </div>
+                     )}
+                  </CardContent>
+               )}
+
                {tab === 'invoices' && (
                   <CardContent className="p-6 space-y-6">
                      <h2 className="text-xl font-bold">Invoice Configuration</h2>
@@ -1271,10 +3073,7 @@ export default function Settings() {
                            <div>
                               <label className="text-sm font-medium text-slate-700">Default invoice layout</label>
                               <select className="mt-1 w-full h-10 rounded-md border bg-white px-3 text-sm" value={invoiceTemplate} onChange={(e) => setInvoiceTemplate(e.target.value)}>
-                                 <option value="standard">Detailed Tax Invoice</option>
-                                 <option value="simple">Professional Header</option>
-                                 <option value="performa">Centered Proforma</option>
-                                 <option value="monochrome">Black & White Standard</option>
+                                 {INVOICE_PDF_TEMPLATES.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
                               </select>
                            </div>
                            <div>
@@ -1408,61 +3207,142 @@ export default function Settings() {
 
                {tab === 'items' && (
                   <CardContent className="p-6 space-y-6">
-                     <h2 className="text-xl font-bold">Item & Vocabulary Schema</h2>
-                     <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 text-sm">
-                        <p className="font-semibold mb-1">Domain Translation Active</p>
-                        Microtechnique Accounts automatically translates UI text based on your domain setup.
-                     </div>
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                           <label className="text-sm font-medium text-slate-700">Default Item Name</label>
-                          <Input
-                            className="mt-1"
-                            list="item-terminology-suggestions"
-                            value={itemTerminologySingular}
-                            onChange={(e) => setItemTerminologySingular(e.target.value)}
-                            placeholder="e.g. Item, Product, Service"
-                          />
-                          <datalist id="item-terminology-suggestions">
-                            <option value="Item" />
-                            <option value="Product" />
-                            <option value="Part" />
-                            <option value="Medicine" />
-                            <option value="Service" />
-                            <option value="SKU" />
-                          </datalist>
-                          <p className="text-xs text-slate-500 mt-1">Type any word or pick a suggestion from the dropdown.</p>
+                           <h2 className="text-xl font-bold">Item Settings</h2>
+                           <p className="mt-1 text-sm text-slate-500">Configure item master fields without changing existing item records.</p>
                         </div>
-                        <div>
-                           <label className="text-sm font-medium text-slate-700">Primary Default GST %</label>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={1}
-                            className="mt-1"
-                            list="default-gst-suggestions"
-                            value={defaultGstRate}
-                            onChange={(e) => setDefaultGstRate(e.target.value)}
-                            placeholder="18"
-                          />
-                          <datalist id="default-gst-suggestions">
-                            <option value="0" />
-                            <option value="5" />
-                            <option value="12" />
-                            <option value="18" />
-                            <option value="28" />
-                          </datalist>
-                          <p className="text-xs text-slate-500 mt-1">Enter any whole number 0–100 or pick a suggestion (stored as integer).</p>
+                        <Button className="mt-1" onClick={applyItemSchema} loading={updateCompany.isPending}>Save Item Settings</Button>
+                     </div>
+
+                     <div className="grid gap-6 xl:grid-cols-[1fr_1.15fr_1fr]">
+                        <div className="space-y-4">
+                           <h3 className="border-b pb-3 font-semibold">Item Settings</h3>
+                           {[
+                              ['enable_item', 'Enable Item'],
+                              ['barcode_scan', 'Barcode Scan'],
+                              ['stock_maintenance', 'Stock Maintenance'],
+                              ['manufacturing', 'Manufacturing'],
+                              ['show_low_stock_dialog', 'Show Low Stock Dialog'],
+                              ['items_unit', 'Items Unit'],
+                              ['default_unit', 'Default Unit'],
+                              ['item_category', 'Item Category'],
+                              ['party_wise_item_rate', 'Party Wise Item Rate'],
+                              ['description', 'Description'],
+                              ['item_wise_tax', 'Item wise Tax'],
+                              ['item_wise_discount', 'Item wise Discount'],
+                              ['update_sale_price_from_transaction', 'Update Sale Price from Transaction'],
+                              ['wholesale_price', 'Wholesale Price'],
+                           ].map(([key, label]) => (
+                              <label key={key} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                 <span>{label}</span>
+                                 <Switch checked={Boolean(itemSettings[key as keyof ItemSettingsState])} onCheckedChange={(v) => updateItemSetting(key as keyof ItemSettingsState, v as never)} />
+                              </label>
+                           ))}
+                           <div className="grid gap-3 rounded-md border bg-white p-3 sm:grid-cols-2">
+                              <div>
+                                 <label className="text-xs font-medium text-slate-600">What do you sell?</label>
+                                 <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={itemSettings.sell_type} onChange={(e) => updateItemSetting('sell_type', e.target.value as ItemSettingsState['sell_type'])}>
+                                    <option value="both">Product/Service</option>
+                                    <option value="product">Product</option>
+                                    <option value="service">Service</option>
+                                 </select>
+                              </div>
+                              <div>
+                                 <label className="text-xs font-medium text-slate-600">Quantity decimal places</label>
+                                 <Input type="number" min={0} max={4} className="mt-1" value={itemSettings.quantity_decimal_places} onChange={(e) => updateItemSetting('quantity_decimal_places', Math.max(0, Math.min(4, Number(e.target.value) || 0)))} />
+                              </div>
+                           </div>
+                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                              <div>
+                                 <label className="text-sm font-medium text-slate-700">Default Item Name</label>
+                                 <Input className="mt-1" value={itemTerminologySingular} onChange={(e) => setItemTerminologySingular(e.target.value)} placeholder="Item, Product, Service" />
+                              </div>
+                              <div>
+                                 <label className="text-sm font-medium text-slate-700">Plural label</label>
+                                 <Input className="mt-1" value={itemTerminologyPlural} onChange={(e) => setItemTerminologyPlural(e.target.value)} />
+                              </div>
+                           </div>
+                        </div>
+
+                        <div className="space-y-4">
+                           <h3 className="border-b pb-3 font-semibold">Additional Item Fields</h3>
+                           <div className="rounded-md border bg-white p-4">
+                              <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
+                                 <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+                                    MRP / Price
+                                    <Switch checked={itemSettings.mrp} onCheckedChange={(v) => updateItemSetting('mrp', v)} />
+                                 </label>
+                                 <Input disabled={!itemSettings.mrp} placeholder="MRP" />
+                              </div>
+                              <label className="mt-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+                                 Calculate Tax based on MRP
+                                 <Switch checked={itemSettings.calculate_tax_based_on_mrp} onCheckedChange={(v) => updateItemSetting('calculate_tax_based_on_mrp', v)} />
+                              </label>
+                           </div>
+                           <div className="rounded-md border bg-white p-4">
+                              <h4 className="mb-3 font-semibold text-slate-600">Serial No. Tracking</h4>
+                              <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+                                 Serial No. / IMEI No.
+                                 <Switch checked={itemSettings.serial_tracking} onCheckedChange={(v) => updateItemSetting('serial_tracking', v)} />
+                              </label>
+                           </div>
+                           <div className="rounded-md border bg-white p-4">
+                              <h4 className="mb-3 font-semibold text-slate-600">Batch Tracking</h4>
+                              {[
+                                 ['batch_tracking', 'Batch No.'],
+                                 ['exp_date', 'Exp Date'],
+                                 ['mfg_date', 'Mfg Date'],
+                                 ['model_no', 'Model No.'],
+                                 ['size', 'Size'],
+                              ].map(([key, label]) => (
+                                 <label key={key} className="mb-2 flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm last:mb-0">
+                                    {label}
+                                    <Switch checked={Boolean(itemSettings[key as keyof ItemSettingsState])} onCheckedChange={(v) => updateItemSetting(key as keyof ItemSettingsState, v as never)} />
+                                 </label>
+                              ))}
+                           </div>
+                           <div>
+                              <label className="text-sm font-medium text-slate-700">Primary Default GST %</label>
+                              <Input type="number" min={0} max={100} step={1} className="mt-1 max-w-xs" value={defaultGstRate} onChange={(e) => setDefaultGstRate(e.target.value)} placeholder="18" />
+                           </div>
+                        </div>
+
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between gap-3 border-b pb-3">
+                              <h3 className="font-semibold">Item Custom Fields</h3>
+                              <Button type="button" variant="outline" size="sm" onClick={() => setItemCustomModalOpen(true)}>
+                                 Add Custom Fields
+                              </Button>
+                           </div>
+                           <div className="space-y-2">
+                              {itemCustomFields.length === 0 ? (
+                                 <div className="rounded-lg border border-dashed p-4 text-sm text-slate-500">
+                                    No item custom fields configured yet.
+                                 </div>
+                              ) : itemCustomFields.map((field, idx) => (
+                                 <div key={`${field.id}-${idx}`} className="rounded-lg border bg-white p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                       <div>
+                                          <p className="font-medium">{field.label || 'Untitled field'}</p>
+                                          <p className="text-xs text-slate-500">{field.id} · {field.type}</p>
+                                       </div>
+                                       <div className="flex items-center gap-2">
+                                          <Switch checked={field.enabled} onCheckedChange={(v) => updateItemCustomField(idx, { enabled: v })} />
+                                          <Button type="button" variant="ghost" size="icon" className="text-red-600 hover:text-red-700" onClick={() => removeItemCustomField(idx)}>
+                                             <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                       </div>
+                                    </div>
+                                    <label className="mt-3 flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                       Show in print / invoice item rows
+                                       <Switch checked={field.show_in_print} onCheckedChange={(v) => updateItemCustomField(idx, { show_in_print: v })} />
+                                    </label>
+                                 </div>
+                              ))}
+                           </div>
                         </div>
                      </div>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-sm font-medium text-slate-700">Plural label</label>
-                        <Input value={itemTerminologyPlural} onChange={(e) => setItemTerminologyPlural(e.target.value)} className="mt-1 max-w-xs" />
-                      </div>
-                      <Button className="mt-1" onClick={applyItemSchema} loading={updateCompany.isPending}>Apply Schema</Button>
-                    </div>
                   </CardContent>
                )}
 
@@ -1581,6 +3461,63 @@ export default function Settings() {
                )}
             </Card>
          </div>
+         {itemCustomModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4">
+               <div className="mt-8 max-h-[86vh] w-full max-w-5xl overflow-hidden rounded-xl bg-white shadow-2xl">
+                  <div className="flex items-center justify-between border-b px-6 py-4">
+                     <h2 className="text-2xl font-bold">Add Custom Fields</h2>
+                     <Button type="button" variant="ghost" size="icon" onClick={() => setItemCustomModalOpen(false)}>
+                        <X className="h-5 w-5" />
+                     </Button>
+                  </div>
+                  <div className="max-h-[64vh] overflow-y-auto p-6">
+                     <div className="grid gap-5 md:grid-cols-2">
+                        {itemCustomFields.map((field, idx) => (
+                           <div key={`${field.id}-${idx}`} className="grid grid-cols-[28px_1fr] gap-3 rounded-lg border p-4">
+                              <div className="pt-8">
+                                 <Switch checked={field.enabled} onCheckedChange={(v) => updateItemCustomField(idx, { enabled: v })} />
+                              </div>
+                              <div className="space-y-3">
+                                 <div>
+                                    <label className="text-sm font-medium text-slate-600">Custom Field {idx + 1}</label>
+                                    <Input className="mt-1" placeholder={idx === 0 ? 'E.g. Colour' : idx === 1 ? 'E.g. Material' : 'E.g. Brand'} value={field.label} onChange={(e) => updateItemCustomField(idx, { label: e.target.value })} />
+                                 </div>
+                                 <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-500">Field key</label>
+                                       <Input className="mt-1 font-mono text-xs" value={field.id} onChange={(e) => updateItemCustomField(idx, { id: e.target.value })} />
+                                    </div>
+                                    <div>
+                                       <label className="text-xs font-medium text-slate-500">Type</label>
+                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm" value={field.type} onChange={(e) => updateItemCustomField(idx, { type: e.target.value as ItemCustomFieldDef['type'] })}>
+                                          <option value="text">Text</option>
+                                          <option value="number">Number</option>
+                                          <option value="date">Date</option>
+                                       </select>
+                                    </div>
+                                 </div>
+                                 <label className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                                    Show in print
+                                    <Switch checked={field.show_in_print} onCheckedChange={(v) => updateItemCustomField(idx, { show_in_print: v })} />
+                                 </label>
+                              </div>
+                           </div>
+                        ))}
+                        {itemCustomFields.length === 0 && (
+                           <div className="rounded-lg border border-dashed p-6 text-sm text-slate-500 md:col-span-2">
+                              No custom fields yet. Add fields like Colour, Material, Mfg. Date, Exp. Date, Size, or Brand.
+                           </div>
+                        )}
+                     </div>
+                  </div>
+                  <div className="flex justify-end gap-3 border-t bg-slate-50 px-6 py-4">
+                     <Button type="button" variant="outline" onClick={addItemCustomField}>Add field</Button>
+                     <Button type="button" variant="secondary" onClick={() => setItemCustomModalOpen(false)}>Cancel</Button>
+                     <Button type="button" onClick={async () => { await applyItemSchema(); setItemCustomModalOpen(false); }} loading={updateCompany.isPending}>Save</Button>
+                  </div>
+               </div>
+            </div>
+         )}
       </div>
     </div>
   );

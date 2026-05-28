@@ -396,7 +396,7 @@ export async function stockSummary(req: Request, res: Response) {
   try {
     const result = await query(
       `SELECT i.id, i.name, i.sku,
-              COALESCE(SUM(s.quantity), 0)::bigint AS total_qty,
+              COALESCE(SUM(s.quantity), 0) AS total_qty,
               COALESCE(i.purchase_price, 0)::bigint AS purchase_price_paise,
               COALESCE(
                 SUM(
@@ -479,8 +479,8 @@ export async function stockMovement(req: Request, res: Response) {
 export async function lowStock(req: Request, res: Response) {
   try {
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.reorder_point::int,
-              COALESCE(SUM(s.quantity), 0)::bigint AS total_qty,
+      `SELECT i.id, i.name, i.sku, i.reorder_point,
+              COALESCE(SUM(s.quantity), 0) AS total_qty,
               COALESCE(i.purchase_price, 0)::bigint AS purchase_price_paise
        FROM items i
        LEFT JOIN item_stock s ON s.item_id = i.id AND s.company_id = i.company_id

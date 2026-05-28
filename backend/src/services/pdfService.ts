@@ -5,6 +5,12 @@ import QRCode from 'qrcode';
 import bwipjs from 'bwip-js';
 import { env } from '../config/env';
 import { amountToWordsINR } from '../lib/amountToWords';
+import {
+  PRINT_THEME_TO_PALETTE,
+  PRINT_THEME_TO_TEMPLATE_KIND,
+  normalizeInvoicePrintTheme,
+  type InvoicePrintTheme,
+} from '../lib/printThemes';
 
 function templatesRoot(): string {
   const dist = path.join(__dirname, '..', 'templates');
@@ -341,43 +347,284 @@ function themePalette(theme: string, fallback: string) {
   return palettes[theme] || palettes.classic;
 }
 
-function invoiceItemRows(items: any[], kind: string, currencyCode: string): string {
-  const showTax = kind !== 'simple';
-  return items
-    .map((it, i) => {
-      const name = escapeHtml(it.item_name || it.name || 'Item');
-      const desc = multilineHtml(it.item_description || it.description || '');
-      const tax = Number(it.cgst_amount || 0) + Number(it.sgst_amount || 0) + Number(it.igst_amount || 0);
-      return `<tr>
-        <td class="idx">${i + 1}</td>
-        <td>
-          <div class="item-name">${name}</div>
-          ${desc ? `<div class="item-desc">${desc}</div>` : ''}
-        </td>
-        <td class="mono">${escapeHtml(it.hsn_code || '')}</td>
-        <td class="right"><b>${fmtQty(it.quantity)}</b></td>
-        <td class="mono">${escapeHtml(it.unit || 'PCS')}</td>
-        <td class="right">${fmtMoney(Number(it.unit_price || 0), it.currency_code || currencyCode)}</td>
-        ${showTax ? `<td class="right">${fmtMoney(tax, it.currency_code || currencyCode)}</td>` : ''}
-        <td class="right amount">${fmtMoney(Number(it.total_amount || 0), it.currency_code || currencyCode)}</td>
-      </tr>`;
-    })
-    .join('');
+const PRINT_LAYOUT_THEME: Record<string, string> = {
+  'business-theme-1': PRINT_THEME_TO_PALETTE['business-theme-1'],
+  'business-theme-2': PRINT_THEME_TO_PALETTE['business-theme-2'],
+  'business-theme-3': PRINT_THEME_TO_PALETTE['business-theme-3'],
+  'business-theme-4': PRINT_THEME_TO_PALETTE['business-theme-4'],
+  'tally-theme-1': 'minimal',
+  'landscape-theme-1': 'modern',
+  'landscape-theme-2': 'retail',
+  'gst-theme-1': 'royal',
+  'gst-theme-2': 'modern',
+  'gst-theme-3': 'executive',
+  'gst-theme-4': 'slate',
+  'gst-theme-5': 'forest',
+  micro_theme_1: 'classic',
+  micro_theme_2: 'modern',
+  micro_theme_3: 'executive',
+  micro_theme_4: 'minimal',
+  micro_theme_5: 'retail',
+  landscape_theme_1: 'modern',
+  landscape_theme_2: 'retail',
+  gst_theme_1: 'royal',
+  gst_theme_2: 'modern',
+  gst_theme_3: 'executive',
+  gst_theme_4: 'slate',
+  gst_theme_5: 'forest',
+  gst_theme_6: 'sunrise',
+  gst_theme_7: 'midnight',
+  gst_theme_8: 'sunrise',
+  gst_theme_9: 'midnight',
+  gst_theme_10: 'minimal',
+  delivery_theme: 'minimal',
+  double_divine: 'minimal',
+};
+
+const PRINT_LAYOUT_KIND: Record<string, string> = {
+  'business-theme-1': PRINT_THEME_TO_TEMPLATE_KIND['business-theme-1'],
+  'business-theme-2': PRINT_THEME_TO_TEMPLATE_KIND['business-theme-2'],
+  'business-theme-3': PRINT_THEME_TO_TEMPLATE_KIND['business-theme-3'],
+  'business-theme-4': PRINT_THEME_TO_TEMPLATE_KIND['business-theme-4'],
+  'tally-theme-1': 'monochrome',
+  'landscape-theme-1': 'standard',
+  'landscape-theme-2': 'standard',
+  'gst-theme-1': 'standard',
+  'gst-theme-2': 'standard',
+  'gst-theme-3': 'performa',
+  'gst-theme-4': 'monochrome',
+  'gst-theme-5': 'standard',
+  micro_theme_1: 'standard',
+  micro_theme_2: 'simple',
+  micro_theme_3: 'performa',
+  micro_theme_4: 'monochrome',
+  micro_theme_5: 'standard',
+  landscape_theme_1: 'standard',
+  landscape_theme_2: 'standard',
+  gst_theme_1: 'standard',
+  gst_theme_2: 'standard',
+  gst_theme_3: 'performa',
+  gst_theme_4: 'monochrome',
+  gst_theme_5: 'standard',
+  gst_theme_6: 'standard',
+  gst_theme_7: 'simple',
+  gst_theme_8: 'standard',
+  gst_theme_9: 'simple',
+  gst_theme_10: 'monochrome',
+  delivery_theme: 'monochrome',
+  double_divine: 'monochrome',
+};
+
+const DEFAULT_PRINT_SETTINGS = {
+  regular: {
+    default: true,
+    layout: 'business-theme-1',
+    paper_size: 'A4',
+    orientation: 'portrait',
+    company_name_text_size: 'large',
+    invoice_text_size: 'medium',
+    repeat_header: true,
+    print_original_duplicate: false,
+    extra_top_space: 0,
+    min_item_rows: 0,
+  },
+  header: {
+    company_name: true,
+    company_logo: true,
+    address: true,
+    email: true,
+    phone: true,
+    gstin: true,
+  },
+  item_table: {
+    columns: ['serial_no', 'item_name', 'hsn_code', 'quantity', 'unit', 'unit_price', 'tax_amount', 'amount'],
+  },
+  layout_colors: {} as Record<string, string>,
+  totals: {
+    total_item_quantity: true,
+    amount_with_decimal: true,
+    received_amount: true,
+    balance_amount: true,
+    current_balance_of_party: false,
+    tax_details: true,
+    you_saved: true,
+    print_amount_with_grouping: true,
+    amount_in_words: 'indian',
+  },
+  footer: {
+    print_description: true,
+    print_terms: true,
+    print_received_by: true,
+    print_delivered_by: true,
+    signature_enabled: true,
+    signature_text: 'Authorized Signatory',
+    payment_mode: false,
+    acknowledgement: false,
+  },
+  transaction_names: {
+    sale: 'Tax Invoice',
+    purchase: 'Bill',
+    payment_in: 'Payment Receipt',
+    payment_out: 'Payment Out',
+    expense: 'Expense',
+    other_income: 'Other Income',
+    sale_order: 'Sale Order',
+    purchase_order: 'Purchase Order',
+    estimate: 'Estimate',
+    proforma_invoice: 'Proforma Invoice',
+    delivery_challan: 'Delivery Challan',
+    credit_note: 'Credit Note',
+    debit_note: 'Debit Note',
+    non_tax_bill: false,
+  },
+};
+
+type PrintSettings = typeof DEFAULT_PRINT_SETTINGS;
+
+function parseObject(value: unknown): Record<string, any> {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
-function totalsRows(invoice: any, currencyCode: string): string {
+function resolvePrintSettings(company: any): PrintSettings {
+  const raw = parseObject(company?.print_settings);
+  const regularRaw = parseObject(raw.regular);
+  const layout = normalizeInvoicePrintTheme(raw.invoiceTheme || raw.invoice_theme || regularRaw.layout || company?.invoice_pdf_template || company?.document_theme);
+  return {
+    regular: { ...DEFAULT_PRINT_SETTINGS.regular, ...regularRaw, layout },
+    header: { ...DEFAULT_PRINT_SETTINGS.header, ...parseObject(raw.header) },
+    item_table: {
+      ...DEFAULT_PRINT_SETTINGS.item_table,
+      ...parseObject(raw.item_table),
+      columns: Array.isArray(raw?.item_table?.columns) && raw.item_table.columns.length
+        ? raw.item_table.columns.map((col: unknown) => String(col)).filter(Boolean)
+        : DEFAULT_PRINT_SETTINGS.item_table.columns,
+    },
+    layout_colors: parseObject(raw.layout_colors) as Record<string, string>,
+    totals: { ...DEFAULT_PRINT_SETTINGS.totals, ...parseObject(raw.totals) },
+    footer: { ...DEFAULT_PRINT_SETTINGS.footer, ...parseObject(raw.footer) },
+    transaction_names: { ...DEFAULT_PRINT_SETTINGS.transaction_names, ...parseObject(raw.transaction_names) },
+  };
+}
+
+function printAwareCompany(company: any, settings: PrintSettings) {
+  return {
+    ...company,
+    name: settings.header.company_name ? company?.name : '',
+    legal_name: settings.header.company_name ? company?.legal_name : '',
+    gstin_legal_name: settings.header.company_name ? company?.gstin_legal_name : '',
+    registered_address: settings.header.address ? company?.registered_address : '',
+    gstin_address: settings.header.address ? company?.gstin_address : '',
+    address: settings.header.address ? company?.address : '',
+    city: settings.header.address ? company?.city : '',
+    state: settings.header.address ? company?.state : '',
+    pincode: settings.header.address ? company?.pincode : '',
+    phone: settings.header.phone ? company?.phone : '',
+    email: settings.header.email ? company?.email : '',
+    gstin: settings.header.gstin ? company?.gstin : '',
+  };
+}
+
+function printMoney(paise: number, currencyCode: string, settings: PrintSettings): string {
+  if (settings.totals.amount_with_decimal !== false) return fmtMoney(paise, currencyCode);
+  const code = normalizeCurrencyCode(currencyCode);
+  const symbol = currencySymbol(code);
+  const locale = code === 'USD' ? 'en-US' : 'en-IN';
+  const amount = Math.round(Number(paise || 0) / 100);
+  return `${symbol}${amount.toLocaleString(locale)}`;
+}
+
+const PRINT_COLUMN_LABELS: Record<string, string> = {
+  serial_no: '#',
+  item_name: 'Item name',
+  item_code: 'Item Code',
+  hsn_code: 'HSN/SAC',
+  quantity: 'Quantity',
+  unit: 'Unit',
+  unit_price: 'Price/Unit',
+  discount_amount: 'Discount',
+  discount_percent: 'Disc. %',
+  taxable_amount: 'Taxable',
+  gst_rate: 'GST %',
+  tax_amount: 'Tax Amount',
+  amount: 'Amount',
+  description: 'Description',
+  batch_no: 'Batch No.',
+  exp_date: 'Exp. Date',
+  mfg_date: 'Mfg. Date',
+  mrp: 'MRP',
+  size: 'Size',
+  model_no: 'Model No.',
+  brand: 'Brand',
+  material: 'Material',
+};
+
+const RIGHT_PRINT_COLUMNS = new Set(['quantity', 'unit_price', 'discount_amount', 'discount_percent', 'taxable_amount', 'gst_rate', 'tax_amount', 'amount', 'mrp']);
+
+function itemTaxAmount(it: any): number {
+  return Number(it.cgst_amount || 0) + Number(it.sgst_amount || 0) + Number(it.igst_amount || 0) + Number(it.cess_amount || 0);
+}
+
+function itemColumnValue(it: any, index: number, column: string, currencyCode: string, settings: PrintSettings): string {
+  if (column === 'serial_no') return String(index + 1);
+  if (column === 'item_name') {
+    const name = escapeHtml(it.item_name || it.name || 'Item');
+    const desc = multilineHtml(it.item_description || it.description || '');
+    return `<div class="item-name">${name}</div>${desc && settings.item_table.columns.includes('description') === false ? `<div class="item-desc">${desc}</div>` : ''}`;
+  }
+  if (column === 'description') return multilineHtml(it.item_description || it.description || '');
+  if (column === 'hsn_code') return escapeHtml(it.hsn_code || '');
+  if (column === 'item_code') return escapeHtml(it.item_code || it.sku || '');
+  if (column === 'quantity') return `<b>${fmtQty(it.quantity)}</b>`;
+  if (column === 'unit') return escapeHtml(it.unit || 'PCS');
+  if (column === 'unit_price') return printMoney(Number(it.unit_price || 0), it.currency_code || currencyCode, settings);
+  if (column === 'discount_amount') return printMoney(Number(it.discount_amount || 0), it.currency_code || currencyCode, settings);
+  if (column === 'discount_percent') return Number(it.discount_percent || it.discount_rate || 0) ? `${Number(it.discount_percent || it.discount_rate || 0).toFixed(2)}%` : '';
+  if (column === 'taxable_amount') return printMoney(Number(it.taxable_amount || 0), it.currency_code || currencyCode, settings);
+  if (column === 'gst_rate') return Number(it.gst_rate || 0) ? `${Number(it.gst_rate || 0).toFixed(2)}%` : '';
+  if (column === 'tax_amount') return printMoney(itemTaxAmount(it), it.currency_code || currencyCode, settings);
+  if (column === 'amount') return printMoney(Number(it.total_amount || 0), it.currency_code || currencyCode, settings);
+  if (column === 'mrp') return it.mrp ? printMoney(Number(it.mrp || 0), it.currency_code || currencyCode, settings) : '';
+  if (column === 'size') return escapeHtml(it.size || it.item_size || '');
+  if (column === 'model_no') return escapeHtml(it.model_no || '');
+  if (column === 'brand') return escapeHtml(it.brand || '');
+  if (column === 'material') return escapeHtml(it.material || '');
+  if (column === 'batch_no') return escapeHtml(it.batch_no || '');
+  if (column === 'exp_date') return it.exp_date ? formatDocDate(it.exp_date) : '';
+  if (column === 'mfg_date') return it.mfg_date ? formatDocDate(it.mfg_date) : '';
+  return '';
+}
+
+function invoiceItemTable(items: any[], currencyCode: string, settings: PrintSettings): string {
+  const columns = settings.item_table.columns.length ? settings.item_table.columns : DEFAULT_PRINT_SETTINGS.item_table.columns;
+  const headers = columns.map((col) => `<th class="${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''}">${escapeHtml(PRINT_COLUMN_LABELS[col] || col)}</th>`).join('');
+  const rows = items.map((it, i) => `<tr>${columns.map((col) => `<td class="${col === 'serial_no' ? 'idx' : ''} ${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''} ${col === 'amount' ? 'amount' : ''}">${itemColumnValue(it, i, col, currencyCode, settings)}</td>`).join('')}</tr>`).join('');
+  const blankRows = Math.max(0, Number(settings.regular.min_item_rows || 0) - items.length);
+  const blanks = Array.from({ length: blankRows }, () => `<tr class="blank-row">${columns.map(() => '<td>&nbsp;</td>').join('')}</tr>`).join('');
+  return `<table class="items"><thead><tr>${headers}</tr></thead><tbody>${rows}${blanks}</tbody></table>`;
+}
+
+function totalsRows(invoice: any, currencyCode: string, settings: PrintSettings): string {
   const rows: Array<[string, number, string?]> = [
     ['Sub Total', Number(invoice.subtotal || 0)],
     ['Discount', Number(invoice.discount_amount || 0)],
     ['Taxable Amount', Number(invoice.taxable_amount || 0)],
   ];
-  if (Number(invoice.cgst_amount || 0)) rows.push(['CGST', Number(invoice.cgst_amount || 0)]);
-  if (Number(invoice.sgst_amount || 0)) rows.push(['SGST', Number(invoice.sgst_amount || 0)]);
-  if (Number(invoice.igst_amount || 0)) rows.push(['IGST', Number(invoice.igst_amount || 0)]);
+  if (settings.totals.tax_details !== false && Number(invoice.cgst_amount || 0)) rows.push(['CGST', Number(invoice.cgst_amount || 0)]);
+  if (settings.totals.tax_details !== false && Number(invoice.sgst_amount || 0)) rows.push(['SGST', Number(invoice.sgst_amount || 0)]);
+  if (settings.totals.tax_details !== false && Number(invoice.igst_amount || 0)) rows.push(['IGST', Number(invoice.igst_amount || 0)]);
   if (Number(invoice.round_off || 0)) rows.push(['Round Off', Number(invoice.round_off || 0)]);
   return rows
     .filter(([, amount], idx) => idx < 3 || amount !== 0)
-    .map(([label, amount]) => `<div class="total-row"><span>${escapeHtml(label)}</span><b>${fmtMoney(amount, currencyCode)}</b></div>`)
+    .map(([label, amount]) => `<div class="total-row"><span>${escapeHtml(label)}</span><b>${printMoney(amount, currencyCode, settings)}</b></div>`)
     .join('');
 }
 
@@ -388,16 +635,25 @@ function buildInvoiceHtml(args: {
   items: any[];
   kind: string;
   theme: string;
+  printSettings: PrintSettings;
   logoSrc: string;
   signatureSrc: string;
   upiQr: string;
   einvBlock: string;
 }) {
-  const { invoice, company, party, items, kind, theme, logoSrc, signatureSrc, upiQr, einvBlock } = args;
+  const { invoice, party, items, kind, theme, printSettings, signatureSrc, upiQr, einvBlock } = args;
+  const company = printAwareCompany(args.company, printSettings);
+  const logoSrc = printSettings.header.company_logo === false ? '' : args.logoSrc;
   const currencyCode = normalizeCurrencyCode(invoice.currency_code || company.default_currency || company.currency || 'INR');
-  const palette = themePalette(theme, String(company.document_primary_color || ''));
+  const configuredLayout = String(printSettings.regular.layout || '');
+  const layoutColor = printSettings.layout_colors?.[configuredLayout];
+  const palette = themePalette(theme, String(layoutColor || company.document_primary_color || ''));
   const isPurchase = Boolean(invoice.bill_number || invoice.purchase_invoice_id);
-  const title = kind === 'performa' ? 'PROFORMA INVOICE' : isPurchase ? 'PURCHASE BILL' : 'INVOICE';
+  const title = kind === 'performa'
+    ? String(printSettings.transaction_names.proforma_invoice || 'PROFORMA INVOICE')
+    : isPurchase
+      ? String(printSettings.transaction_names.purchase || 'PURCHASE BILL')
+      : String(printSettings.transaction_names.non_tax_bill ? 'Bill of Supply' : printSettings.transaction_names.sale || 'Tax Invoice');
   const legalCompanyName = companyLegalDisplayName(company);
   const sellerName = isPurchase ? (party?.name || invoice.party_name_snapshot || 'Supplier') : legalCompanyName;
   const buyerName = isPurchase ? legalCompanyName : (party?.name || invoice.party_name_snapshot || 'Walk-in Customer');
@@ -483,21 +739,31 @@ function buildInvoiceHtml(args: {
     ? `<section class="bill-grid" style="margin-top:0"><div class="bill-card">${shipToBlock}</div><div>${gstSummary}</div></section>`
     : `<section style="margin-top:0">${gstSummary}</section>`;
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
-  const signBlock = `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>Authorised Signatory</p></div>`;
-  const itemsHead = `<thead><tr><th>#</th><th>Item & Description</th><th>HSN/SAC</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th>${kind === 'simple' ? '' : '<th class="right">Tax</th>'}<th class="right">Amount</th></tr></thead>`;
-  const itemTable = `<table class="items">${itemsHead}<tbody>${invoiceItemRows(items, kind, currencyCode)}</tbody></table>`;
-  const totals = `<div class="totals">${totalsRows(invoice, currencyCode)}<div class="grand total-row"><span>Total</span><b>${fmtMoney(Number(invoice.total_amount || 0), currencyCode)}</b></div><div class="due total-row"><span>Balance Due</span><b>${fmtMoney(balanceDue, currencyCode)}</b></div></div>`;
+  const visibleSignBlock = printSettings.footer.signature_enabled === false
+    ? ''
+    : `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>${escapeHtml(printSettings.footer.signature_text || 'Authorized Signatory')}</p></div>`;
+  const itemTable = invoiceItemTable(items, currencyCode, printSettings);
+  const paidAmount = Number(invoice.paid_amount || 0);
+  const totals = `<div class="totals">${totalsRows(invoice, currencyCode, printSettings)}<div class="grand total-row"><span>Total</span><b>${printMoney(Number(invoice.total_amount || 0), currencyCode, printSettings)}</b></div>${printSettings.totals.received_amount === false ? '' : `<div class="total-row"><span>Received</span><b>${printMoney(paidAmount, currencyCode, printSettings)}</b></div>`}${printSettings.totals.balance_amount === false ? '' : `<div class="due total-row"><span>Balance Due</span><b>${printMoney(balanceDue, currencyCode, printSettings)}</b></div>`}</div>`;
+  const notesBlock = printSettings.footer.print_description === false ? '' : `<div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div>`;
+  const termsBlock = printSettings.footer.print_terms === false ? '' : `<div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>`;
+  const receivedByBlock = printSettings.footer.print_received_by === false ? '' : `<div class="info-card"><h3>Received By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
+  const deliveredByBlock = printSettings.footer.print_delivered_by === false ? '' : `<div class="info-card"><h3>Delivered By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
+  const paymentModeBlock = printSettings.footer.payment_mode ? `<div class="info-card"><h3>Payment Mode</h3>${escapeHtml(invoice.payment_mode || invoice.payment_type || '—')}</div>` : '';
+  const topSpace = Math.max(0, Math.min(80, Number(printSettings.regular.extra_top_space || 0)));
+  const companyNameSize = printSettings.regular.company_name_text_size === 'small' ? '13px' : printSettings.regular.company_name_text_size === 'medium' ? '16px' : '19px';
+  const invoiceTitleSize = printSettings.regular.invoice_text_size === 'small' ? '24px' : printSettings.regular.invoice_text_size === 'large' ? '42px' : '32px';
 
   const baseCss = `<!doctype html><html><head><meta charset="utf-8"/>
   <style>
-    @page{size:A4;margin:8mm}
+    @page{size:${printSettings.regular.paper_size === 'Letter' ? 'Letter' : 'A4'};margin:8mm}
     *{box-sizing:border-box}
     body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}
-    .page{padding:8px 14px;position:relative}
+    .page{padding:${8 + topSpace}px 14px 8px;position:relative}
     .muted,.item-desc,.item-meta{color:#71717a}.mono,.mono-line{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .logo img{max-width:150px;max-height:88px;object-fit:contain;display:block}.logo-fallback{width:68px;height:68px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900}
-    .doc-title{font-size:38px;letter-spacing:.08em;font-weight:300;color:${palette.primary};margin:0}.doc-subtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
-    .company-name,.party-name,.business-name{font-size:15px;font-weight:800;color:${palette.accent}}.address,.business-address{color:#52525b}.gst{font-size:10px;margin-top:3px}
+    .doc-title{font-size:${invoiceTitleSize};letter-spacing:.08em;font-weight:300;color:${palette.primary};margin:0}.doc-subtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
+    .company-name,.party-name,.business-name{font-size:15px;font-weight:800;color:${palette.accent}}.business-block:first-child .business-name{font-size:${companyNameSize}}.address,.business-address{color:#52525b}.gst{font-size:10px;margin-top:3px}
     .business-block{line-height:1.45}.business-lines{font-size:10px;margin-top:4px;color:#374151}.business-lines .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.block-title{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary};font-weight:800}
     .bill-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.bill-card h3,.info-card h3{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary}}
     .bill-card{border:1px solid #e5e7eb;padding:10px;min-height:88px}.meta-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb}.meta-grid div{padding:7px 9px;border-bottom:1px solid #e5e7eb}.meta-grid div:nth-child(odd){border-right:1px solid #e5e7eb}.meta-grid div:nth-last-child(-n+2){border-bottom:0}.meta-grid span{display:block;color:#71717a;font-size:10px}.meta-grid b{display:block;margin-top:1px}
@@ -515,7 +781,7 @@ function buildInvoiceHtml(args: {
     </section>
     <section class="bill-grid"><div class="bill-card">${primaryPartyBlock}</div><div>${invoiceMeta}</div></section>
     ${shipToSection}
-    ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
+    ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
     <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
 
@@ -523,13 +789,13 @@ function buildInvoiceHtml(args: {
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>${fmtMoney(balanceDue, currencyCode)}</b></section>
     <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:24px">${shipToBlock}</div>` : ''}</div>${invoiceMeta}</div>
-    ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block">${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section></section>
+    ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section></section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-width:150px;max-height:82px}.performa .logo-fallback{margin:0 auto;width:64px;height:64px;font-size:30px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
     <div class="rule"></div><section class="bill-card">${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:10px">${shipToBlock}</div>` : ''}</section><div class="rule"></div>
-    ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div><div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div><div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>${bank}${qrBlock}${einvBlock}</div><div>${totals}${signBlock}</div></section>
+    ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
   </main></body></html>`;
 
   const monochrome = `${baseCss}<style>
@@ -560,7 +826,7 @@ function buildInvoiceHtml(args: {
       <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(supplyStateCode)}</td></tr>
     </table>
     ${itemTable}
-    <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}<div class="info-card"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div></div><div>${totals}${signBlock}</div></section>
+    <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}${termsBlock}${notesBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
     <div class="footer-line">${escapeHtml(notes || 'Thank you for your business.')}</div>
   </main></body></html>`;
 
@@ -572,11 +838,16 @@ export async function generateInvoicePDF(
   company: any,
   party: any | null,
   items: any[],
-  opts?: { templateOverride?: string },
+  opts?: { templateOverride?: string; themeOverride?: string },
 ): Promise<Buffer> {
-  const rawKind = String(opts?.templateOverride || invoice.pdf_template || company.invoice_pdf_template || 'monochrome');
-  const kind = ['standard', 'simple', 'performa', 'monochrome'].includes(rawKind) ? rawKind : 'monochrome';
-  const docTheme = String(invoice.document_theme || company.document_theme || 'executive');
+  const rawPrintSettings = parseObject(company?.print_settings);
+  const printSettings = resolvePrintSettings(company);
+  const explicitTheme = opts?.themeOverride || opts?.templateOverride;
+  const savedTheme = rawPrintSettings.invoiceTheme || rawPrintSettings.invoice_theme || rawPrintSettings.regular?.layout || company.invoice_pdf_template || company.document_theme;
+  const invoiceTheme = invoice.pdf_template || invoice.document_theme;
+  const resolvedTheme = normalizeInvoicePrintTheme(explicitTheme || savedTheme || invoiceTheme || 'business-theme-1') as InvoicePrintTheme;
+  const kind = PRINT_LAYOUT_KIND[resolvedTheme] || 'standard';
+  const docTheme = PRINT_LAYOUT_THEME[resolvedTheme] || 'classic';
 
   const upi = company.upi_id || invoice.upi_id_snapshot || '';
   let upiQr = '';
@@ -603,11 +874,16 @@ export async function generateInvoicePDF(
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
 
-  const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, logoSrc, signatureSrc, upiQr, einvBlock });
+  const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, printSettings, logoSrc, signatureSrc, upiQr, einvBlock });
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+  const pdf = await page.pdf({
+    format: printSettings.regular.paper_size === 'Letter' ? 'Letter' : 'A4',
+    landscape: printSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
+    printBackground: true,
+    margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
+  });
   await browser.close();
   return Buffer.from(pdf);
 }
@@ -1094,7 +1370,8 @@ export async function generateQuotationPDF(
     .join('');
 
   const primaryColor = String(company.document_primary_color || '#4F46E5');
-  const theme = String(quotation.document_theme || company.document_theme || 'executive');
+  const quotationTheme = normalizeInvoicePrintTheme(quotation.document_theme || quotation.pdf_template || company.document_theme || company.invoice_pdf_template);
+  const theme = PRINT_LAYOUT_THEME[quotationTheme] || 'classic';
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
   const legalCompanyName = companyLegalDisplayName(company);

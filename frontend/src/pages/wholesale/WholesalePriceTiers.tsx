@@ -99,7 +99,7 @@ export default function WholesalePriceTiers() {
                   </div>
                   <div className="col-span-3">
                     {i === 0 && <Label className="text-xs">Min Quantity ≥</Label>}
-                    <Input type="number" min={1} className="mt-1" value={tier.min_quantity || ''} onChange={e => updateTier(i, 'min_quantity', parseInt(e.target.value) || 0)} />
+                    <Input type="number" min={0.01} step="0.01" className="mt-1" value={tier.min_quantity || ''} onChange={e => updateTier(i, 'min_quantity', parseFloat(e.target.value) || 0)} />
                   </div>
                   <div className="col-span-3">
                     {i === 0 && <Label className="text-xs">Price (paise per unit)</Label>}

@@ -138,7 +138,7 @@ export default function StockAdjustment() {
                         <tr key={item.item_id} className="border-b">
                           <td className="p-3 font-medium">{item.name}</td>
                           <td className="p-3 text-right tabular-nums text-muted-foreground">{item.current_quantity}</td>
-                          <td className="p-3 text-right"><Input type="number" className="w-24 tabular-nums text-center ml-auto" min={0} value={item.adjusted_quantity} onChange={e => updateAdjusted(idx, parseInt(e.target.value) || 0)} /></td>
+                          <td className="p-3 text-right"><Input type="number" className="w-24 tabular-nums text-center ml-auto" min={0} step="0.01" value={item.adjusted_quantity} onChange={e => updateAdjusted(idx, parseFloat(e.target.value) || 0)} /></td>
                           <td className={`p-3 text-right tabular-nums font-semibold ${diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
                             {diff > 0 ? '+' : ''}{diff}
                           </td>

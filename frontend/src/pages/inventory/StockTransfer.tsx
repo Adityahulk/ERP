@@ -85,7 +85,7 @@ export default function StockTransfer() {
 
   const updateQty = (idx: number, qty: number) => {
     const updated = [...items];
-    updated[idx].quantity = Math.max(0, Math.min(Math.floor(qty), updated[idx].available));
+    updated[idx].quantity = Math.max(0, Math.min(qty, updated[idx].available));
     setItems(updated);
   };
 
@@ -272,10 +272,11 @@ export default function StockTransfer() {
                 <Input
                   type="number"
                   className="w-24 tabular-nums text-center"
-                  min={1}
+                  min={0.01}
+                  step="0.01"
                   max={item.available}
                   value={item.quantity || ''}
-                  onChange={(e) => updateQty(idx, parseInt(e.target.value, 10) || 0)}
+                  onChange={(e) => updateQty(idx, parseFloat(e.target.value) || 0)}
                 />
                 <Button variant="ghost" size="icon" type="button" onClick={() => removeItem(idx)}>
                   <Trash2 className="w-4 h-4 text-destructive" />

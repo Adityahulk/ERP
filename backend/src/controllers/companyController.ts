@@ -11,6 +11,7 @@ import {
   applyOnboardingSeeds,
   resolveStateName,
 } from '../services/onboardingService';
+import { INVOICE_PRINT_THEMES, normalizeInvoicePrintTheme } from '../lib/printThemes';
 
 function sanitizeCompany(row: Record<string, unknown>) {
   const { einvoice_gsp_password_enc: _enc, ...rest } = row;
@@ -24,6 +25,10 @@ const JSONB_COMPANY_FIELD_DEFAULTS: Record<string, unknown> = {
   enabled_currencies: ['INR'],
   bulk_sales_invoice_columns: [],
   sales_invoice_custom_fields: [],
+  item_custom_fields: [],
+  item_settings: {},
+  print_settings: {},
+  tax_settings: {},
   gstin_lookup_payload: null,
 };
 
@@ -100,6 +105,259 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
     return JSON.stringify(fields);
   }
 
+  if (field === 'item_custom_fields') {
+    const fields = asArrayPayload(value)
+      .map((entry, index) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const record = entry as Record<string, unknown>;
+        const label = String(record.label || record.key || '').trim().slice(0, 80);
+        if (!label) return null;
+        const key = normalizeFieldKey(record.key || record.id || label, `item_custom_${index + 1}`);
+        const type = ['text', 'number', 'date'].includes(String(record.type || '').toLowerCase())
+          ? String(record.type).toLowerCase()
+          : 'text';
+        return {
+          id: String(record.id || key || `item_custom_${index + 1}`).slice(0, 64),
+          key,
+          label,
+          type,
+          enabled: record.enabled === true,
+          show_in_print: record.show_in_print === true,
+        };
+      })
+      .filter(Boolean);
+    return JSON.stringify(fields);
+  }
+
+  if (field === 'item_settings') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return JSON.stringify({});
+    const record = value as Record<string, unknown>;
+    const normalized = {
+      enable_item: record.enable_item !== false,
+      sell_type: ['product', 'service', 'both'].includes(String(record.sell_type || 'both')) ? record.sell_type : 'both',
+      barcode_scan: record.barcode_scan === true,
+      stock_maintenance: record.stock_maintenance !== false,
+      manufacturing: record.manufacturing === true,
+      show_low_stock_dialog: record.show_low_stock_dialog !== false,
+      items_unit: record.items_unit !== false,
+      default_unit: record.default_unit === true,
+      item_category: record.item_category !== false,
+      party_wise_item_rate: record.party_wise_item_rate === true,
+      description: record.description === true,
+      item_wise_tax: record.item_wise_tax !== false,
+      item_wise_discount: record.item_wise_discount !== false,
+      update_sale_price_from_transaction: record.update_sale_price_from_transaction === true,
+      quantity_decimal_places: Math.max(0, Math.min(4, Number(record.quantity_decimal_places ?? 2) || 0)),
+      wholesale_price: record.wholesale_price === true,
+      mrp: record.mrp === true,
+      calculate_tax_based_on_mrp: record.calculate_tax_based_on_mrp === true,
+      serial_tracking: record.serial_tracking === true,
+      batch_tracking: record.batch_tracking === true,
+      exp_date: record.exp_date === true,
+      mfg_date: record.mfg_date === true,
+      model_no: record.model_no === true,
+      size: record.size === true,
+    };
+    return JSON.stringify(normalized);
+  }
+
+  if (field === 'print_settings') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return JSON.stringify({});
+    const record = value as Record<string, unknown>;
+    const regular = record.regular && typeof record.regular === 'object' && !Array.isArray(record.regular)
+      ? record.regular as Record<string, unknown>
+      : {};
+    const transactionNames = record.transaction_names && typeof record.transaction_names === 'object' && !Array.isArray(record.transaction_names)
+      ? record.transaction_names as Record<string, unknown>
+      : {};
+    const itemTable = record.item_table && typeof record.item_table === 'object' && !Array.isArray(record.item_table)
+      ? record.item_table as Record<string, unknown>
+      : {};
+    const totals = record.totals && typeof record.totals === 'object' && !Array.isArray(record.totals)
+      ? record.totals as Record<string, unknown>
+      : {};
+    const footer = record.footer && typeof record.footer === 'object' && !Array.isArray(record.footer)
+      ? record.footer as Record<string, unknown>
+      : {};
+    const header = record.header && typeof record.header === 'object' && !Array.isArray(record.header)
+      ? record.header as Record<string, unknown>
+      : {};
+    const layoutColors = record.layout_colors && typeof record.layout_colors === 'object' && !Array.isArray(record.layout_colors)
+      ? record.layout_colors as Record<string, unknown>
+      : {};
+    const allowedLayouts = new Set<string>(INVOICE_PRINT_THEMES);
+    const normalizedLayoutId = normalizeInvoicePrintTheme(regular.layout || record.invoiceTheme || record.invoice_theme);
+    const allowedColumns = new Set([
+      'serial_no', 'item_name', 'item_code', 'hsn_code', 'quantity', 'unit', 'unit_price',
+      'discount_amount', 'discount_percent', 'taxable_amount', 'gst_rate', 'tax_amount',
+      'amount', 'description', 'batch_no', 'exp_date', 'mfg_date', 'mrp', 'size',
+      'model_no', 'brand', 'material',
+    ]);
+    const columns = Array.from(new Set(asArrayPayload(itemTable.columns)
+      .map((entry) => String(entry || '').trim())
+      .filter((entry) => allowedColumns.has(entry))));
+    const normalized = {
+      regular: {
+        default: regular.default !== false,
+        layout: normalizedLayoutId,
+        paper_size: String(regular.paper_size || 'A4') === 'Letter' ? 'Letter' : 'A4',
+        orientation: String(regular.orientation || '').toLowerCase() === 'landscape' ? 'landscape' : 'portrait',
+        company_name_text_size: ['small', 'medium', 'large'].includes(String(regular.company_name_text_size || '')) ? regular.company_name_text_size : 'large',
+        invoice_text_size: ['small', 'medium', 'large'].includes(String(regular.invoice_text_size || '')) ? regular.invoice_text_size : 'medium',
+        repeat_header: regular.repeat_header !== false,
+        print_original_duplicate: regular.print_original_duplicate === true,
+        extra_top_space: Math.max(0, Math.min(80, Number(regular.extra_top_space ?? 0) || 0)),
+        min_item_rows: Math.max(0, Math.min(30, Number(regular.min_item_rows ?? 0) || 0)),
+      },
+      header: {
+        company_name: header.company_name !== false,
+        company_logo: header.company_logo !== false,
+        address: header.address !== false,
+        email: header.email !== false,
+        phone: header.phone !== false,
+        gstin: header.gstin !== false,
+      },
+      item_table: {
+        columns: columns.length ? columns : ['serial_no', 'item_name', 'hsn_code', 'quantity', 'unit', 'unit_price', 'tax_amount', 'amount'],
+      },
+      layout_colors: Object.fromEntries(
+        Array.from(allowedLayouts).map((layoutId) => {
+          const color = String(layoutColors[layoutId] || '').trim();
+          return [layoutId, /^#[0-9a-f]{6}$/i.test(color) ? color.toUpperCase() : undefined];
+        }).filter(([, color]) => Boolean(color)),
+      ),
+      totals: {
+        total_item_quantity: totals.total_item_quantity !== false,
+        amount_with_decimal: totals.amount_with_decimal !== false,
+        received_amount: totals.received_amount !== false,
+        balance_amount: totals.balance_amount !== false,
+        current_balance_of_party: totals.current_balance_of_party === true,
+        tax_details: totals.tax_details !== false,
+        you_saved: totals.you_saved !== false,
+        print_amount_with_grouping: totals.print_amount_with_grouping !== false,
+        amount_in_words: String(totals.amount_in_words || '').toLowerCase() === 'international' ? 'international' : 'indian',
+      },
+      footer: {
+        print_description: footer.print_description !== false,
+        print_terms: footer.print_terms !== false,
+        print_received_by: footer.print_received_by !== false,
+        print_delivered_by: footer.print_delivered_by !== false,
+        signature_enabled: footer.signature_enabled !== false,
+        signature_text: String(footer.signature_text || 'Authorized Signatory').trim().slice(0, 80) || 'Authorized Signatory',
+        payment_mode: footer.payment_mode === true,
+        acknowledgement: footer.acknowledgement === true,
+      },
+      transaction_names: {
+        sale: String(transactionNames.sale || 'Tax Invoice').trim().slice(0, 80) || 'Tax Invoice',
+        purchase: String(transactionNames.purchase || 'Bill').trim().slice(0, 80) || 'Bill',
+        payment_in: String(transactionNames.payment_in || 'Payment Receipt').trim().slice(0, 80) || 'Payment Receipt',
+        payment_out: String(transactionNames.payment_out || 'Payment Out').trim().slice(0, 80) || 'Payment Out',
+        expense: String(transactionNames.expense || 'Expense').trim().slice(0, 80) || 'Expense',
+        other_income: String(transactionNames.other_income || 'Other Income').trim().slice(0, 80) || 'Other Income',
+        sale_order: String(transactionNames.sale_order || 'Sale Order').trim().slice(0, 80) || 'Sale Order',
+        purchase_order: String(transactionNames.purchase_order || 'Purchase Order').trim().slice(0, 80) || 'Purchase Order',
+        estimate: String(transactionNames.estimate || 'Estimate').trim().slice(0, 80) || 'Estimate',
+        proforma_invoice: String(transactionNames.proforma_invoice || 'Proforma Invoice').trim().slice(0, 80) || 'Proforma Invoice',
+        delivery_challan: String(transactionNames.delivery_challan || 'Delivery Challan').trim().slice(0, 80) || 'Delivery Challan',
+        credit_note: String(transactionNames.credit_note || 'Credit Note').trim().slice(0, 80) || 'Credit Note',
+        debit_note: String(transactionNames.debit_note || 'Debit Note').trim().slice(0, 80) || 'Debit Note',
+        non_tax_bill: transactionNames.non_tax_bill === true,
+      },
+    };
+    return JSON.stringify(normalized);
+  }
+
+  if (field === 'tax_settings') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return JSON.stringify({});
+    const record = value as Record<string, unknown>;
+    const standardSlabs = new Set([0, 0.1, 0.25, 0.5, 1, 1.5, 3, 5, 6, 7.5, 9, 12, 14, 18, 28, 40].map((rate) => String(rate)));
+    const enabledSlabs = Array.from(new Set(asArrayPayload(record.enabledSlabs ?? record.enabled_slabs)
+      .map((entry) => Number(entry))
+      .filter((rate) => Number.isFinite(rate) && standardSlabs.has(String(rate)))))
+      .sort((a, b) => a - b);
+    const customRates = asArrayPayload(record.customRates ?? record.custom_rates)
+      .map((entry, index) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const row = entry as Record<string, unknown>;
+        const name = String(row.name || row.label || '').trim().slice(0, 50);
+        const rate = Math.max(0.01, Math.min(100, Number(row.rate ?? 0) || 0));
+        if (!name) return null;
+        return {
+          id: String(row.id || `custom_tax_${index + 1}`).trim().slice(0, 80) || `custom_tax_${index + 1}`,
+          name,
+          rate,
+          isActive: row.isActive !== false && row.active !== false,
+        };
+      })
+      .filter(Boolean);
+    const rawRates = asArrayPayload(record.rates);
+    const rates = rawRates
+      .map((entry, index) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const row = entry as Record<string, unknown>;
+        const type = ['IGST', 'CGST', 'SGST', 'CESS'].includes(String(row.type || '').toUpperCase())
+          ? String(row.type).toUpperCase()
+          : 'IGST';
+        const rate = Math.max(0, Math.min(100, Number(row.rate ?? 0) || 0));
+        const label = String(row.label || `${type}@${rate}%`).trim().slice(0, 80);
+        return {
+          id: String(row.id || `tax_rate_${index + 1}`).trim().slice(0, 80) || `tax_rate_${index + 1}`,
+          label,
+          type,
+          rate,
+          active: row.active !== false,
+        };
+      })
+      .filter(Boolean);
+    const rawGroups = asArrayPayload(record.groups);
+    const groups = rawGroups
+      .map((entry, index) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const row = entry as Record<string, unknown>;
+        const totalRate = Math.max(0, Math.min(100, Number(row.rate ?? row.total_rate ?? 0) || 0));
+        const label = String(row.label || `GST@${totalRate}%`).trim().slice(0, 80);
+        const components = asArrayPayload(row.components)
+          .map((component) => {
+            if (!component || typeof component !== 'object') return null;
+            const part = component as Record<string, unknown>;
+            const type = ['CGST', 'SGST', 'IGST', 'CESS'].includes(String(part.type || '').toUpperCase())
+              ? String(part.type).toUpperCase()
+              : '';
+            if (!type) return null;
+            return {
+              type,
+              rate: Math.max(0, Math.min(100, Number(part.rate ?? 0) || 0)),
+            };
+          })
+          .filter(Boolean);
+        return {
+          id: String(row.id || `tax_group_${index + 1}`).trim().slice(0, 80) || `tax_group_${index + 1}`,
+          label,
+          rate: totalRate,
+          components,
+          active: row.active !== false,
+        };
+      })
+      .filter(Boolean);
+    const normalized = {
+      enable_gst: record.enable_gst !== false,
+      enable_hsn_sac: record.enable_hsn_sac !== false,
+      additional_cess_on_item: record.additional_cess_on_item === true,
+      reverse_charge: record.reverse_charge === true,
+      enable_place_of_supply: record.enable_place_of_supply !== false,
+      composite_scheme: record.composite_scheme === true,
+      enable_tcs: record.enable_tcs === true,
+      enable_tds: record.enable_tds === true,
+      enabledSlabs: enabledSlabs.length ? enabledSlabs : undefined,
+      enabled_slabs: enabledSlabs.length ? enabledSlabs : undefined,
+      customRates,
+      custom_rates: customRates,
+      rates,
+      groups,
+    };
+    return JSON.stringify(normalized);
+  }
+
   if (field === 'gstin_lookup_payload') {
     if (value === undefined || value === null) return null;
     if (typeof value === 'string') {
@@ -151,6 +409,7 @@ export async function updateCompany(req: Request, res: Response) {
       'einvoice_gsp_username', 'eway_bill_only_above_50k',
       'document_primary_color', 'document_theme', 'receipt_footer_message', 'invoice_pdf_template',
       'delivery_challan_show_pricing', 'bulk_sales_invoice_columns', 'sales_invoice_custom_fields',
+      'item_settings', 'item_custom_fields', 'print_settings', 'tax_settings',
     ];
 
     const updates: string[] = [];

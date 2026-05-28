@@ -6,10 +6,12 @@ import { formatMoney, normalizeCurrencyCode, SUPPORTED_CURRENCIES, type Currency
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, ScanLine, UserPlus, Paperclip } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { ArrowLeft, ChevronDown, ScanLine, UserPlus, Paperclip } from 'lucide-react';
 import {
   DOCUMENT_THEME_OPTIONS,
   InvoicePreviewWorkspace,
+  normalizeInvoiceThemeId,
   readSkipInvoicePreview,
   type DocumentThemeId,
   INVOICE_PDF_TEMPLATES,
@@ -59,16 +61,33 @@ type SalesCustomFieldDef = {
 
 function salesCustomFieldDefs(company: any, scope: 'invoice' | 'item'): SalesCustomFieldDef[] {
   const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
-  return defs
+  const itemDefs = scope === 'item' && Array.isArray(company?.item_custom_fields)
+    ? company.item_custom_fields
+        .filter((d: any) => d?.enabled === true && d?.show_in_print === true)
+        .map((d: any) => ({
+          id: String(d?.id || d?.key || '').trim(),
+          label: String(d?.label || d?.id || d?.key || '').trim(),
+          scope: 'item' as const,
+          type: ['number', 'date'].includes(String(d?.type)) ? d.type : 'text',
+          required: false,
+          enabled: true,
+        }))
+    : [];
+  const seen = new Set<string>();
+  return [...defs, ...itemDefs]
     .map((d: any) => ({
       id: String(d?.id || '').trim(),
       label: String(d?.label || d?.id || '').trim(),
-      scope: 'item',
-      type: ['number', 'date'].includes(String(d?.type)) ? d.type : 'text',
+      scope: (d?.scope === 'invoice' ? 'invoice' : 'item') as SalesCustomFieldDef['scope'],
+      type: (['number', 'date'].includes(String(d?.type)) ? d.type : 'text') as SalesCustomFieldDef['type'],
       required: Boolean(d?.required),
       enabled: d?.enabled !== false,
     }))
-    .filter((d: SalesCustomFieldDef) => d.id && d.label && d.scope === scope && d.enabled);
+    .filter((d: SalesCustomFieldDef) => {
+      if (!d.id || !d.label || d.scope !== scope || !d.enabled || seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    });
 }
 
 function partyFullAddress(p: any, kind: 'shipping' | 'billing' = 'shipping') {
@@ -122,8 +141,9 @@ export default function InvoiceCreate() {
   const [placeOfSupply, setPlaceOfSupply] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
-  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('monochrome');
-  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('executive');
+  const [roundOffEnabled, setRoundOffEnabled] = useState(false);
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('business-theme-1');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('business-theme-1');
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const [notes, setNotes] = useState('');
@@ -135,6 +155,7 @@ export default function InvoiceCreate() {
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
 
   const invoiceCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'invoice'), [company]);
   const itemCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'item'), [company]);
@@ -152,6 +173,7 @@ export default function InvoiceCreate() {
 
   const hydratedIdRef = useRef<string | null>(null);
   const duplicateHydratedIdRef = useRef<string | null>(null);
+  const advancedAutoOpenedRef = useRef(false);
 
   useEffect(() => {
     if (!editInvoiceId) {
@@ -170,6 +192,7 @@ export default function InvoiceCreate() {
 
     const nonGst = inv.invoice_type === 'non_gst' || inv.is_gst_invoice === false;
     setIsGstInvoice(!nonGst);
+    setRoundOffEnabled(Boolean(inv.round_off_enabled) || Number(inv.round_off || 0) !== 0);
     setPartyId(String(inv.party_id || ''));
     setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
     setPartyPhone(String(inv.party_phone || ''));
@@ -188,10 +211,8 @@ export default function InvoiceCreate() {
     setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
-    const tpl = String(inv.pdf_template || 'monochrome');
-    setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === tpl) ? tpl : 'monochrome') as InvoicePdfTemplateId);
-    const th = String(inv.document_theme || 'executive');
-    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'executive') as DocumentThemeId);
+    setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
+    setDocumentTheme(normalizeInvoiceThemeId(inv.document_theme));
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
     setItems(((inv.items as any[]) || []).map((it: any) => ({
       item_id: it.item_id ? String(it.item_id) : undefined,
@@ -223,6 +244,7 @@ export default function InvoiceCreate() {
     const today = new Date().toISOString().split('T')[0];
     const nonGst = inv.invoice_type === 'non_gst' || inv.is_gst_invoice === false;
     setIsGstInvoice(!nonGst);
+    setRoundOffEnabled(Boolean(inv.round_off_enabled) || Number(inv.round_off || 0) !== 0);
     setPartyId(String(inv.party_id || ''));
     setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
     setPartyPhone(String(inv.party_phone || ''));
@@ -239,10 +261,8 @@ export default function InvoiceCreate() {
     setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
-    const tpl = String(inv.pdf_template || 'monochrome');
-    setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === tpl) ? tpl : 'monochrome') as InvoicePdfTemplateId);
-    const th = String(inv.document_theme || 'executive');
-    setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === th) ? th : 'executive') as DocumentThemeId);
+    setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
+    setDocumentTheme(normalizeInvoiceThemeId(inv.document_theme));
     setCompanyBankAccountId(inv.company_bank_account_id ? String(inv.company_bank_account_id) : '');
     setItems(((inv.items as any[]) || []).map((it: any) => ({
       item_id: it.item_id ? String(it.item_id) : undefined,
@@ -355,7 +375,7 @@ export default function InvoiceCreate() {
     setPartyResults([]);
     const companyStateCode = gstStateFromGstin((company as any)?.gstin) || String((company as any)?.state_code || '').trim();
     const partyStateCode = gstStateFromGstin(p.gstin) || String(p.billing_state_code || p.state_code || '').trim();
-    if (!placeOfSupply && companyStateCode && partyStateCode) setIsInterstate(companyStateCode !== partyStateCode);
+    if (isGstInvoice && !placeOfSupply && companyStateCode && partyStateCode) setIsInterstate(companyStateCode !== partyStateCode);
   };
 
   const updatePlaceOfSupply = (value: string) => {
@@ -364,7 +384,39 @@ export default function InvoiceCreate() {
     if (value && companyStateCode) setIsInterstate(companyStateCode !== value);
   };
 
-  const totals = useMemo(() => computeTotals(items, isGstInvoice), [items, isGstInvoice]);
+  const setGstEnabled = (enabled: boolean) => {
+    setIsGstInvoice(enabled);
+    if (!enabled) {
+      setIsInterstate(false);
+      setPlaceOfSupply('');
+    }
+  };
+
+  const totals = useMemo(() => computeTotals(items, isGstInvoice, roundOffEnabled), [items, isGstInvoice, roundOffEnabled]);
+  const taxBreakdown = useMemo(() => {
+    return items.reduce((acc, item) => {
+      if (!isGstInvoice) return acc;
+      const gross = Math.round((Number(item.quantity) || 0) * (Number(item.unit_price) || 0));
+      const taxable = Math.max(0, gross - (Number(item.discount_amount) || 0));
+      const rate = Number(item.gst_rate) || 0;
+      const components = Array.isArray(item.tax_components) ? item.tax_components : [];
+      if (isInterstate) {
+        const igstRate = Number(components.find((part) => String(part.type).toUpperCase() === 'IGST')?.rate ?? rate) || 0;
+        acc.igst += Math.round(taxable * igstRate / 100);
+        return acc;
+      }
+      const cgstRate = Number(components.find((part) => String(part.type).toUpperCase() === 'CGST')?.rate ?? rate / 2) || 0;
+      const sgstRate = Number(components.find((part) => String(part.type).toUpperCase() === 'SGST')?.rate ?? rate / 2) || 0;
+      const cessRate = Number(components.find((part) => ['CESS', 'OTHER'].includes(String(part.type).toUpperCase()))?.rate ?? 0) || 0;
+      acc.cgst += Math.round(taxable * cgstRate / 100);
+      acc.sgst += Math.round(taxable * sgstRate / 100);
+      acc.componentCess += Math.round(taxable * cessRate / 100);
+      return acc;
+    }, { cgst: 0, sgst: 0, igst: 0, componentCess: 0 });
+  }, [items, isGstInvoice, isInterstate]);
+  const cgstDisplay = taxBreakdown.cgst || Math.round(totals.tax / 2);
+  const sgstDisplay = taxBreakdown.sgst || (totals.tax - cgstDisplay);
+  const igstDisplay = taxBreakdown.igst || totals.tax;
   const effectivePartyName = partyId ? partyName.trim() : (partySearch.trim() || partyName.trim());
   const amountPaid = paymentRows
     .filter((row) => row.payment_mode !== 'credit')
@@ -403,6 +455,7 @@ export default function InvoiceCreate() {
     () => ({
       invoice_type: isGstInvoice ? 'sale' : 'non_gst',
       is_gst_invoice: isGstInvoice,
+      round_off_enabled: roundOffEnabled,
       pdf_template: pdfTemplate,
       document_theme: documentTheme,
       party_id: partyId || undefined,
@@ -424,14 +477,14 @@ export default function InvoiceCreate() {
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId],
   );
 
   const draftState = useMemo(() => ({
     partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode,
-    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate,
+    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate,
     documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items,
-  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:sales-invoice',
@@ -451,8 +504,9 @@ export default function InvoiceCreate() {
       setPlaceOfSupply(String(draft.placeOfSupply || ''));
       setShippingAddress(String(draft.shippingAddress || ''));
       setIsGstInvoice(draft.isGstInvoice !== false);
-      setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === draft.pdfTemplate) ? draft.pdfTemplate : 'monochrome') as InvoicePdfTemplateId);
-      setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === draft.documentTheme) ? draft.documentTheme : 'executive') as DocumentThemeId);
+      setRoundOffEnabled(Boolean(draft.roundOffEnabled));
+      setPdfTemplate(normalizeInvoiceThemeId(draft.pdfTemplate));
+      setDocumentTheme(normalizeInvoiceThemeId(draft.documentTheme));
       setCompanyBankAccountId(String(draft.companyBankAccountId || ''));
       setNotes(String(draft.notes || ''));
       setExternalDescription(String(draft.externalDescription || ''));
@@ -539,6 +593,7 @@ export default function InvoiceCreate() {
       notes,
       external_description: externalDescription || undefined,
       custom_fields: customFields,
+      round_off_enabled: roundOffEnabled,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
     };
@@ -591,6 +646,20 @@ export default function InvoiceCreate() {
   const canSave = !!effectivePartyName && items.some((item) => String(item.name || '').trim());
   const saving = createMutation.isPending || updateMutation.isPending;
   const cancelTo = editInvoiceId ? `/sales/${editInvoiceId}` : '/sales';
+  const advancedHasCustom = Boolean(
+    godownId ||
+    placeOfSupply ||
+    isInterstate ||
+    pdfTemplate !== 'business-theme-1' ||
+    documentTheme !== 'business-theme-1' ||
+    companyBankAccountId
+  );
+
+  useEffect(() => {
+    if (advancedAutoOpenedRef.current || !advancedHasCustom || (!editInvoiceId && !duplicateInvoiceId)) return;
+    setAdvancedOpen(true);
+    advancedAutoOpenedRef.current = true;
+  }, [advancedHasCustom, editInvoiceId, duplicateInvoiceId]);
 
   if ((editInvoiceId || duplicateInvoiceId) && editInvLoading) {
     return <div className="flex justify-center p-16 text-muted-foreground">Loading invoice…</div>;
@@ -612,21 +681,51 @@ export default function InvoiceCreate() {
           <p className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(totals.total, currencyCode)}</p>
         </div>
         <div className="space-y-1.5 border-t pt-3 text-sm">
-          <div className="flex justify-between"><span className="text-muted-foreground">Taxable</span><span className="tabular-nums">{formatMoney(totals.taxable, currencyCode)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">{isGstInvoice ? 'Taxable' : 'Subtotal'}</span><span className="tabular-nums">{formatMoney(totals.taxable, currencyCode)}</span></div>
           {totals.discount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tabular-nums">-{formatMoney(totals.discount, currencyCode)}</span></div>}
-          {!isGstInvoice ? (
-            <div className="flex justify-between"><span className="text-muted-foreground">GST</span><span>Non-GST</span></div>
-          ) : isInterstate ? (
-            <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatMoney(totals.tax, currencyCode)}</span></div>
+          {isGstInvoice && (isInterstate ? (
+            <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{formatMoney(igstDisplay, currencyCode)}</span></div>
           ) : (
             <>
-              <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{formatMoney(Math.round(totals.tax / 2), currencyCode)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{formatMoney(cgstDisplay, currencyCode)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{formatMoney(sgstDisplay, currencyCode)}</span></div>
             </>
-          )}
+          ))}
           {totals.cess > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cess</span><span className="tabular-nums">{formatMoney(totals.cess, currencyCode)}</span></div>}
+          <div className="flex items-center justify-between border-t pt-2">
+            <label className="flex items-center gap-2 text-muted-foreground">
+              <Switch checked={roundOffEnabled} onCheckedChange={setRoundOffEnabled} />
+              <span>Round Off</span>
+            </label>
+            <span className="min-w-20 rounded-md border bg-background px-2 py-1 text-right tabular-nums">
+              {formatMoney(totals.roundOff, currencyCode)}
+            </span>
+          </div>
           {!editInvoiceId && <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Received</span><span className="tabular-nums">{formatMoney(amountPaid, currencyCode)}</span></div>}
           {!editInvoiceId && <div className={`flex justify-between font-semibold ${balanceDue > 0 ? 'text-red-600' : 'text-emerald-600'}`}><span>Balance Due</span><span className="tabular-nums">{formatMoney(Math.max(balanceDue, 0), currencyCode)}</span></div>}
+        </div>
+        <div className="border-t pt-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-sm font-medium hover:bg-muted/50"
+            onClick={() => setTermsOpen((open) => !open)}
+          >
+            <span>Terms & Conditions</span>
+            <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          <div className="mt-2">
+            <select className="h-8 w-full rounded-md border bg-background px-2 text-xs" value="sale_invoice" onChange={() => undefined}>
+              <option value="sale_invoice">Sale Invoice</option>
+            </select>
+          </div>
+          {termsOpen && (
+            <textarea
+              className="mt-2 min-h-[74px] w-full resize-y rounded-md border bg-background px-3 py-2 text-xs leading-5 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={(company as any)?.terms_and_conditions || 'Thanks for doing business with us.'}
+            />
+          )}
         </div>
         <div className="hidden xl:block border-t pt-3">
           <DocumentActionsBar
@@ -665,8 +764,27 @@ export default function InvoiceCreate() {
         }
       />
 
+      <div className="rounded-lg border bg-card p-2 shadow-sm">
+        <div className="inline-flex rounded-md bg-muted p-1">
+          <button
+            type="button"
+            className={`h-8 rounded px-4 text-sm font-medium transition-colors ${isGstInvoice ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setGstEnabled(true)}
+          >
+            GST Bill
+          </button>
+          <button
+            type="button"
+            className={`h-8 rounded px-4 text-sm font-medium transition-colors ${!isGstInvoice ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setGstEnabled(false)}
+          >
+            Non-GST Bill
+          </button>
+        </div>
+      </div>
+
       <TransactionGrid sidebar={summary}>
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-3 lg:grid-cols-2">
           <TransactionSection title="Customer" compact>
             <div className="space-y-3">
               {partyId ? (
@@ -678,7 +796,7 @@ export default function InvoiceCreate() {
                 <>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
-                      <Input placeholder="Search by name, phone, GSTIN..." value={partySearch} onChange={(e) => searchParties(e.target.value)} />
+                      <Input className="h-9" placeholder="Search by name, phone, GSTIN..." value={partySearch} onChange={(e) => searchParties(e.target.value)} />
                       {partyResults.length > 0 && (
                         <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border bg-card shadow-lg">
                           {partyResults.map((p) => (
@@ -704,7 +822,7 @@ export default function InvoiceCreate() {
               )}
               <div>
                 <Label className="text-xs">Phone No. on this invoice</Label>
-                <Input className="mt-1" value={partyPhone} inputMode="tel" onChange={(e) => setPartyPhone(e.target.value)} placeholder="Mobile number for this invoice" />
+                <Input className="mt-1 h-9" value={partyPhone} inputMode="tel" onChange={(e) => setPartyPhone(e.target.value)} placeholder="Mobile number for this invoice" />
               </div>
             </div>
           </TransactionSection>
@@ -714,7 +832,7 @@ export default function InvoiceCreate() {
               <div className="col-span-2">
                 <Label className="text-xs">Invoice Number</Label>
                 <Input
-                  className="mt-1 font-mono"
+                  className="mt-1 h-9 font-mono"
                   value={invoiceNumber}
                   maxLength={16}
                   placeholder={invoiceNumberLoading ? 'Fetching next number...' : 'Auto generated'}
@@ -739,8 +857,8 @@ export default function InvoiceCreate() {
                   )}
                 </div>
               </div>
-              <div><Label className="text-xs">Invoice Date</Label><Input type="date" className="mt-1" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
-              <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
+              <div><Label className="text-xs">Invoice Date</Label><Input type="date" className="mt-1 h-9" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
+              <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
               <div className="col-span-2">
                 <Label className="text-xs">Currency</Label>
                 <select
@@ -760,13 +878,13 @@ export default function InvoiceCreate() {
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">Ship To / Place of Supply Address</Label>
-                <textarea className="mt-1 min-h-[64px] w-full resize-y rounded-md border bg-background px-3 py-2 text-sm" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Leave blank to use party shipping or billing address" />
+                <Input className="mt-1 h-9" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Leave blank to use party shipping or billing address" />
               </div>
             </div>
           </TransactionSection>
         </div>
 
-        <TransactionSection title="Items" description="Search catalog items, add services, and expand a row for HSN/SAC, unit and description.">
+        <TransactionSection title="Items" description="Search catalog items, add services, and expand a row only when extra details are needed." compact>
           <VyaparLineItems
             items={items}
             onChange={setItems}
@@ -775,10 +893,10 @@ export default function InvoiceCreate() {
             searchMode="invoice"
             defaultRateFrom="selling"
             godownId={godownId}
-            showHsn
+            showHsn={isGstInvoice}
             showUnit
             showDescription
-            showCess
+            showCess={isGstInvoice}
             currencyCode={currencyCode}
             customFields={itemCustomFieldDefs}
           />
@@ -804,41 +922,43 @@ export default function InvoiceCreate() {
           </TransactionSection>
         )}
 
-        {!editInvoiceId && (
-          <TransactionSection title="Payment" compact>
-            <PaymentRowsEditor
-              rows={paymentRows}
-              onChange={setPaymentRows}
-              defaultBankAccountId={companyBankAccountId}
-              currencyCode={currencyCode}
-            />
-          </TransactionSection>
-        )}
+        <div className={`grid gap-3 ${editInvoiceId ? '' : 'lg:grid-cols-2'}`}>
+          {!editInvoiceId && (
+            <TransactionSection title="Payment" compact>
+              <PaymentRowsEditor
+                rows={paymentRows}
+                onChange={setPaymentRows}
+                defaultBankAccountId={companyBankAccountId}
+                currencyCode={currencyCode}
+              />
+            </TransactionSection>
+          )}
 
-        <TransactionSection title="Notes & Attachments" compact>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <Label className="text-xs">Description / Work Details</Label>
-              <textarea rows={3} className="mt-1 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm" value={externalDescription} onChange={e => setExternalDescription(e.target.value)} placeholder="Optional printed description saved with this invoice" />
-            </div>
-            <div>
-              <Label className="text-xs">Notes</Label>
-              <textarea rows={3} className="mt-1 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
-            </div>
-            {!editInvoiceId && (
-              <div className="md:col-span-2">
-                <Label className="text-xs">Images / Documents</Label>
-                <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground hover:bg-muted/40">
-                  <Paperclip className="h-4 w-4" />
-                  <span>{invoiceFiles.length ? `${invoiceFiles.length} file(s) selected` : 'Attach files'}</span>
-                  <input type="file" multiple className="hidden" onChange={(e) => setInvoiceFiles(Array.from(e.target.files || []))} />
-                </label>
+          <TransactionSection title="Notes & Attachments" compact>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Label className="text-xs">Description / Work Details</Label>
+                <textarea className="mt-1 min-h-9 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm focus:min-h-[76px]" value={externalDescription} onChange={e => setExternalDescription(e.target.value)} placeholder="Optional printed description saved with this invoice" />
               </div>
-            )}
-          </div>
-        </TransactionSection>
+              <div>
+                <Label className="text-xs">Notes</Label>
+                <textarea className="mt-1 min-h-9 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm focus:min-h-[76px]" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Terms, notes, or internal comments" />
+              </div>
+              {!editInvoiceId && (
+                <div className="md:col-span-2">
+                  <Label className="text-xs">Images / Documents</Label>
+                  <label className="mt-1 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 text-sm text-muted-foreground hover:bg-muted/40">
+                    <Paperclip className="h-4 w-4" />
+                    <span>{invoiceFiles.length ? `${invoiceFiles.length} file(s) selected` : 'Attach files'}</span>
+                    <input type="file" multiple className="hidden" onChange={(e) => setInvoiceFiles(Array.from(e.target.files || []))} />
+                  </label>
+                </div>
+              )}
+            </div>
+          </TransactionSection>
+        </div>
 
-        <CollapsibleTransactionSection title="Advanced invoice settings" open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTransactionSection title={`Advanced invoice settings${advancedHasCustom ? ' •' : ''}`} open={advancedOpen} onOpenChange={setAdvancedOpen}>
           <div className="grid gap-3 md:grid-cols-3">
             <div>
               <Label className="text-xs">Godown</Label>
@@ -847,21 +967,25 @@ export default function InvoiceCreate() {
                 {godowns.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </div>
-            <div>
-              <Label className="text-xs">Place of Supply State</Label>
-              <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={placeOfSupply} onChange={e => updatePlaceOfSupply(e.target.value)} disabled={!isGstInvoice}>
-                <option value="">Same as party billing state</option>
-                {GST_STATE_OPTIONS.map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}
-              </select>
-            </div>
-            <label className="mt-5 flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
-              <input type="checkbox" checked={isGstInvoice} onChange={e => setIsGstInvoice(e.target.checked)} className="rounded border-input" />
-              GST invoice
-            </label>
-            <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
-              <input type="checkbox" checked={isInterstate} onChange={e => setIsInterstate(e.target.checked)} disabled={!isGstInvoice} className="rounded border-input" />
-              Interstate (IGST)
-            </label>
+            {isGstInvoice && (
+              <>
+                <div>
+                  <Label className="text-xs">Place of Supply State</Label>
+                  <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={placeOfSupply} onChange={e => updatePlaceOfSupply(e.target.value)}>
+                    <option value="">Same as party billing state</option>
+                    {GST_STATE_OPTIONS.map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}
+                  </select>
+                </div>
+                <label className="mt-5 flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
+                  <input type="checkbox" checked={isGstInvoice} onChange={e => setGstEnabled(e.target.checked)} className="rounded border-input" />
+                  GST invoice
+                </label>
+                <label className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
+                  <input type="checkbox" checked={isInterstate} onChange={e => setIsInterstate(e.target.checked)} className="rounded border-input" />
+                  Interstate (IGST)
+                </label>
+              </>
+            )}
             <div>
               <Label className="text-xs">PDF Template</Label>
               <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={pdfTemplate} onChange={e => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>

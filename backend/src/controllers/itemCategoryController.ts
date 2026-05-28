@@ -2,10 +2,12 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
+import { seedDefaultItemMasters } from '../services/onboardingService';
 
 // ── GET /api/item-categories ──────────────────────────────────
 export async function listCategories(req: Request, res: Response) {
   try {
+    await seedDefaultItemMasters(req.user!.company_id);
     const result = await query(
       `SELECT c.*, p.name as parent_name,
               (SELECT COUNT(*) FROM items i WHERE i.category_id = c.id AND i.is_deleted = false) as item_count

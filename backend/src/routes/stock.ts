@@ -15,14 +15,14 @@ const transferSchema = z.object({
   notes: z.string().optional(),
   items: z.array(z.object({
     item_id: z.string().uuid(),
-    quantity: z.number().int().positive(),
+    quantity: z.coerce.number().positive(),
   })).min(1, 'At least one item is required'),
 });
 
 const receiveSchema = z.object({
   items: z.array(z.object({
     item_id: z.string().uuid(),
-    quantity_received: z.number().int().min(0),
+    quantity_received: z.coerce.number().min(0),
   })).min(1),
 });
 
@@ -33,8 +33,8 @@ const adjustmentSchema = z.object({
   notes: z.string().optional(),
   items: z.array(z.object({
     item_id: z.string().uuid(),
-    current_quantity: z.number().int().min(0),
-    adjusted_quantity: z.number().int().min(0),
+    current_quantity: z.coerce.number().min(0),
+    adjusted_quantity: z.coerce.number().min(0),
     reason: z.string().optional(),
   })).min(1),
 });

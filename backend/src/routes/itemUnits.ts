@@ -12,9 +12,15 @@ const unitSchema = z.object({
   abbreviation: z.string().max(10).optional(),
   is_default: z.boolean().optional(),
 });
+const conversionSchema = z.object({
+  factor: z.coerce.number().positive(),
+  secondary_unit_id: z.string().uuid(),
+});
 
 router.get('/', ctrl.listUnits);
 router.post('/', validateBody(unitSchema), ctrl.createUnit);
 router.patch('/:id', ctrl.updateUnit);
+router.post('/:id/conversions', validateBody(conversionSchema), ctrl.createConversion);
+router.delete('/:id/conversions/:conversionId', ctrl.deleteConversion);
 
 export default router;

@@ -75,6 +75,22 @@ export function useCreateItemUnit() {
   });
 }
 
+export function useCreateUnitConversion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ baseUnitId, data }: { baseUnitId: string; data: any }) => api.post(`/item-units/${baseUnitId}/conversions`, data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-units'] }),
+  });
+}
+
+export function useDeleteUnitConversion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ baseUnitId, conversionId }: { baseUnitId: string; conversionId: string }) => api.delete(`/item-units/${baseUnitId}/conversions/${conversionId}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-units'] }),
+  });
+}
+
 export function useScanBarcode() {
   return useMutation({
     mutationFn: (barcode: string) => api.post('/items/scan', { barcode }).then(r => r.data),

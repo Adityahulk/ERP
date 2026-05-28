@@ -33,3 +33,6 @@ coverage/
 # Docker
 postgres_data/
 redis_data/
+docs/codebase-context.md
+
+.gitignore/

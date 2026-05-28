@@ -4,12 +4,7 @@ import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { redis } from '../config/redis';
 import { determineGSTType } from '../services/gstService';
-
-const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa', 'monochrome'] as const;
-const ALLOWED_DOCUMENT_THEMES = [
-  'classic', 'modern', 'compact', 'executive', 'sunrise',
-  'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal',
-] as const;
+import { normalizeInvoicePrintTheme } from '../lib/printThemes';
 
 function trimOrNull(v: unknown): string | null {
   if (v == null) return null;
@@ -208,8 +203,8 @@ export async function createQuotation(req: Request, res: Response) {
           trimOrNull(d.terms_and_conditions),
           req.user!.id,
           isGstQuote,
-          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : 'monochrome',
-          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'executive',
+          normalizeInvoicePrintTheme(d.pdf_template || d.document_theme),
+          normalizeInvoicePrintTheme(d.document_theme || d.pdf_template),
         ]
       );
       const quotation = qRes.rows[0];
@@ -426,10 +421,8 @@ export async function convertToInvoice(req: Request, res: Response) {
       const einvOn = compEinv.rows[0]?.einvoice_enabled && compEinv.rows[0]?.einvoice_turnover_above_5cr;
       const einvoiceStatus = einvOn ? 'pending' : 'not_applicable';
 
-      const pdfTpl = String(q.pdf_template || '');
-      const themeRaw = String(q.document_theme || '');
-      const pdfTemplate = ALLOWED_PDF_TEMPLATES.includes(pdfTpl as any) ? q.pdf_template : null;
-      const documentTheme = ALLOWED_DOCUMENT_THEMES.includes(themeRaw as any) ? themeRaw : 'executive';
+      const pdfTemplate = normalizeInvoicePrintTheme(q.pdf_template || q.document_theme);
+      const documentTheme = normalizeInvoicePrintTheme(q.document_theme || q.pdf_template);
 
       const invRes = await client.query(
         `INSERT INTO invoices (

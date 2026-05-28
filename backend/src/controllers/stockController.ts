@@ -139,8 +139,8 @@ export async function createTransfer(req: Request, res: Response) {
       const transferId = transferRes.rows[0].id;
 
       for (const item of items) {
-        const qty = Math.floor(Number(item.quantity));
-        if (qty <= 0) throw new Error('Each transfer quantity must be a positive integer');
+        const qty = Number(item.quantity);
+        if (!Number.isFinite(qty) || qty <= 0) throw new Error('Each transfer quantity must be a positive number');
 
         const itemRes = await client.query(
           `SELECT name, track_inventory FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
@@ -251,7 +251,7 @@ export async function createTransfer(req: Request, res: Response) {
   } catch (err: any) {
     const msg = err?.message || String(err);
     const badReq =
-      /Insufficient|Invalid|not found|not inventory-tracked|positive integer|Failed to deduct|No stock row|concurrent/i.test(
+      /Insufficient|Invalid|not found|not inventory-tracked|positive number|Failed to deduct|No stock row|concurrent/i.test(
         msg
       );
     res.status(badReq ? 400 : 500).json(error(msg));
@@ -301,7 +301,7 @@ export async function receiveTransfer(req: Request, res: Response) {
           [qtySent, companyId, item.item_id, transfer.from_godown_id]
         );
 
-        const recv = Math.floor(Number(item.quantity_received));
+        const recv = Number(item.quantity_received);
         await client.query(
           `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
            VALUES ($1,$2,$3,$4,$5)

@@ -403,7 +403,7 @@ export function calculateLineItemTax(
   gstType: 'intra' | 'inter',
   cessRate: number = 0
 ) {
-  const baseAmount = unitPrice * quantity;
+  const baseAmount = Math.round(unitPrice * quantity);
   let discountAmount = 0;
 
   if (discountType === 'percent') {
@@ -454,7 +454,8 @@ export function calculateInvoiceTotals(
   gstType: 'intra' | 'inter',
   invoiceDiscountType: 'percent' | 'flat' | 'none' = 'none',
   invoiceDiscountValue: number = 0,
-  tcsRate: number = 0
+  tcsRate: number = 0,
+  roundOffEnabled: boolean = true
 ) {
   let subtotal = 0;
   let totalDiscountLineLevel = 0;
@@ -519,8 +520,8 @@ export function calculateInvoiceTotals(
   
   // Calculate Rounding to nearest integer (in paise, 1 rupee = 100 paise. So nearest 100 paise)
   // Since we calculate in paise, round-off usually means nearest Re 1, so nearest 100 paise.
-  const roundedAmountPaise = Math.round(finalTotalWithTcs / 100) * 100;
-  const roundOff = roundedAmountPaise - finalTotalWithTcs;
+  const roundedAmountPaise = roundOffEnabled ? Math.round(finalTotalWithTcs / 100) * 100 : finalTotalWithTcs;
+  const roundOff = roundOffEnabled ? roundedAmountPaise - finalTotalWithTcs : 0;
 
   return {
     subtotal,

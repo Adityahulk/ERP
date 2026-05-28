@@ -10,7 +10,7 @@ import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
 import { ArrowLeft, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
-import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, type DocumentThemeId, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
+import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, normalizeInvoiceThemeId, type DocumentThemeId, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
@@ -47,8 +47,8 @@ export default function QuotationForm() {
   // Settings
   const [isGstQuote, setIsGstQuote] = useState(true);
   const [isInterstate, setIsInterstate] = useState(false);
-  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('monochrome');
-  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('executive');
+  const [pdfTemplate, setPdfTemplate] = useState<InvoicePdfTemplateId>('business-theme-1');
+  const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('business-theme-1');
   const [customerNotes, setCustomerNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
@@ -116,8 +116,8 @@ export default function QuotationForm() {
       setPartyEmailOverride(String(draft.partyEmailOverride || ''));
       setIsGstQuote(draft.isGstQuote !== false);
       setIsInterstate(Boolean(draft.isInterstate));
-      setPdfTemplate((INVOICE_PDF_TEMPLATES.some((opt) => opt.id === draft.pdfTemplate) ? draft.pdfTemplate : 'monochrome') as InvoicePdfTemplateId);
-      setDocumentTheme((DOCUMENT_THEME_OPTIONS.some((opt) => opt.id === draft.documentTheme) ? draft.documentTheme : 'executive') as DocumentThemeId);
+      setPdfTemplate(normalizeInvoiceThemeId(draft.pdfTemplate));
+      setDocumentTheme(normalizeInvoiceThemeId(draft.documentTheme));
       setCustomerNotes(String(draft.customerNotes || ''));
       setTermsAndConditions(String(draft.termsAndConditions || ''));
       setInternalNotes(String(draft.internalNotes || ''));

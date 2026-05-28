@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import api from '@/lib/api';
 import { currencySymbol, normalizeCurrencyCode, SUPPORTED_CURRENCIES, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
-import { GST_RATE_OPTIONS, gstRateLabel } from '@/lib/gstRates';
+import { companyGstRateOptions, gstRateLabel } from '@/lib/gstRates';
+import { enabledItemCustomFields } from '@/lib/itemCustomFields';
 
 
 import { Plus, X, Sparkles } from 'lucide-react';
@@ -45,12 +46,14 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
   const { data: unitData } = useItemUnits();
   const { data: godownData } = useGodowns();
   const { data: company } = useCompany();
+  const gstRateOptions = companyGstRateOptions(company);
   const categories = catData?.data?.flat || [];
   const units = unitData?.data || [];
   const godowns = godownData?.data || [];
   const enabledCurrencies = Array.isArray((company as any)?.enabled_currencies)
     ? (company as any).enabled_currencies.map((c: unknown) => normalizeCurrencyCode(c))
     : ['INR'];
+  const configuredCustomFields = enabledItemCustomFields((company as any)?.item_custom_fields);
 
   const [form, setForm] = useState<any>({});
   const [customFields, setCustomFields] = useState<Array<{ key: string; value: string }>>([]);
@@ -179,6 +182,19 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
     if (!newFieldKey.trim()) return;
     setCustomFields([...customFields, { key: newFieldKey, value: newFieldValue }]);
     setNewFieldKey(''); setNewFieldValue('');
+  };
+
+  const customValue = (key: string) => customFields.find((f) => f.key === key)?.value || '';
+  const setConfiguredCustomValue = (key: string, value: string) => {
+    setCustomFields((prev) => {
+      const idx = prev.findIndex((f) => f.key === key);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], value };
+        return next;
+      }
+      return [...prev, { key, value }];
+    });
   };
 
   const saveQuickCategory = async () => {
@@ -371,8 +387,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
             </div>
             <div>
               <Label>GST Rate</Label>
-              <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.gst_rate ?? 18} onChange={e => update('gst_rate', parseInt(e.target.value, 10))}>
-                {GST_RATE_OPTIONS.map((rate) => <option key={rate} value={rate}>{gstRateLabel(rate)}</option>)}
+              <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.gst_rate ?? 18} onChange={e => update('gst_rate', parseFloat(e.target.value) || 0)}>
+                {gstRateOptions.map((rate) => <option key={rate} value={rate}>{gstRateLabel(rate)}</option>)}
               </select>
               <p className="text-xs text-muted-foreground mt-1">CGST and SGST apply for local sales; IGST applies for interstate sales.</p>
             </div>
@@ -418,11 +434,12 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                         <Label className="text-xs">Min qty</Label>
                         <Input
                           type="number"
-                          min={1}
+                          min={0.01}
+                          step="0.01"
                           value={tier.min_quantity}
                           onChange={(e) => {
                             const next = [...wholesaleTiers];
-                            next[idx] = { ...next[idx], min_quantity: parseInt(e.target.value) || 1 };
+                            next[idx] = { ...next[idx], min_quantity: parseFloat(e.target.value) || 1 };
                             setWholesaleTiers(next);
                           }}
                         />
@@ -488,8 +505,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                       <Switch checked={form.is_serialized} onCheckedChange={v => update('is_serialized', v)} />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><Label>Opening Stock</Label><Input type="number" className="mt-1 tabular-nums" min={0} value={form.opening_stock || ''} onChange={e => update('opening_stock', parseInt(e.target.value) || 0)} /></div>
-                      <div><Label>Reorder Alert Point</Label><Input type="number" className="mt-1 tabular-nums" min={0} value={form.reorder_point || ''} onChange={e => update('reorder_point', parseInt(e.target.value) || 0)} /></div>
+                      <div><Label>Opening Stock</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.opening_stock || ''} onChange={e => update('opening_stock', parseFloat(e.target.value) || 0)} /></div>
+                      <div><Label>Reorder Alert Point</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.reorder_point || ''} onChange={e => update('reorder_point', parseFloat(e.target.value) || 0)} /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -512,12 +529,32 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
 
           {/* CUSTOM FIELDS */}
           <TabsContent value="custom" className="space-y-4">
+            {configuredCustomFields.length > 0 && (
+              <div className="rounded-lg border bg-slate-50 p-3">
+                <p className="mb-3 text-sm font-semibold">Configured item fields</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {configuredCustomFields.map((field) => (
+                    <div key={field.id}>
+                      <Label className="text-xs">{field.label}</Label>
+                      <Input
+                        type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                        className="mt-1"
+                        value={customValue(field.id)}
+                        onChange={(e) => setConfiguredCustomValue(field.id, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {customFields.map((f, i) => (
+              configuredCustomFields.some((field) => field.id === f.key) ? null : (
               <div key={i} className="flex items-center gap-2">
                 <Input placeholder="Field name" value={f.key} onChange={e => { const c = [...customFields]; c[i].key = e.target.value; setCustomFields(c); }} className="flex-1" />
                 <Input placeholder="Value" value={f.value} onChange={e => { const c = [...customFields]; c[i].value = e.target.value; setCustomFields(c); }} className="flex-1" />
                 <Button variant="ghost" size="icon" onClick={() => setCustomFields(customFields.filter((_, j) => j !== i))}><X className="w-4 h-4" /></Button>
               </div>
+              )
             ))}
             <div className="flex items-center gap-2">
               <Input placeholder="Field name" value={newFieldKey} onChange={e => setNewFieldKey(e.target.value)} className="flex-1" />

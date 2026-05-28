@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useExpenses, useCreateExpense } from '@/hooks/useBusiness';
+import { useCompany } from '@/hooks/useBusiness';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { determineGSTType, previewExpenseGst, stateCodeFromGstin } from '@/lib/expenseGst';
-import { GST_RATE_OPTIONS } from '@/lib/gstRates';
+import { companyGstRateOptions } from '@/lib/gstRates';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,10 @@ export default function ExpenseList() {
   const pagination = data?.data?.pagination;
   const meta = data?.meta || {};
 
-  const company = useAuthStore((s) => s.company);
+  const authCompany = useAuthStore((s) => s.company);
+  const { data: companyData } = useCompany();
+  const company = companyData || authCompany;
+  const gstRateOptions = companyGstRateOptions(company);
   const [form, setForm] = useState<any>({
     expense_date: new Date().toISOString().split('T')[0],
     payment_mode: 'cash',
@@ -203,7 +207,7 @@ export default function ExpenseList() {
             </div>
             <div><Label>Date</Label><Input type="date" className="mt-1" value={form.expense_date} onChange={e => u('expense_date', e.target.value)} /></div>
             <div><Label>GST Rate</Label><div className="flex gap-2 mt-1">
-              {GST_RATE_OPTIONS.map(r => (<button key={r} onClick={() => u('gst_rate', r)} className={`flex-1 py-1.5 rounded text-xs font-medium ${form.gst_rate === r ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{r}%</button>))}
+              {gstRateOptions.map(r => (<button key={r} onClick={() => u('gst_rate', r)} className={`flex-1 py-1.5 rounded text-xs font-medium ${form.gst_rate === r ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{r}%</button>))}
             </div></div>
             {(Number(form.amount) > 0 && (form.gst_rate ?? 0) > 0) && (
               <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1 tabular-nums">

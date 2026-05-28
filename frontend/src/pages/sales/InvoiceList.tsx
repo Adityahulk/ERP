@@ -82,6 +82,7 @@ export default function InvoiceList() {
   const [irnLoadingId, setIrnLoadingId] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<any | null>(null);
   const [menuInvoiceId, setMenuInvoiceId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPartySearch, setBulkPartySearch] = useState('');
   const [bulkPartyId, setBulkPartyId] = useState('');
@@ -108,6 +109,20 @@ export default function InvoiceList() {
   useEffect(() => {
     if (bulkOpen) setBulkColumns(companyDefaultBulkColumns);
   }, [bulkOpen, companyDefaultBulkColumns]);
+
+  useEffect(() => {
+    if (!menuInvoiceId) return;
+    const close = () => {
+      setMenuInvoiceId(null);
+      setMenuPosition(null);
+    };
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [menuInvoiceId]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['salesInvoices', tab, search],
@@ -402,6 +417,40 @@ export default function InvoiceList() {
   const meta = data?.meta || {};
   // Response: { success, data: { data: [...], pagination: {...} }, meta: {...} }
   const invoices: any[] = data?.data?.data || data?.data || [];
+  const activeMenuInvoice = menuInvoiceId ? invoices.find((inv: any) => inv.id === menuInvoiceId) : null;
+  const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
+  const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
+  const activeMenuCanIRN = activeMenuCanEdit;
+  const activeMenuCanEWB = !!activeMenuInvoice && activeMenuHasIrn && !activeMenuInvoice.ewb_no && activeMenuInvoice.status !== 'cancelled';
+  const activeMenuCanDelete = activeMenuCanEdit;
+  const activeMenuCanCancel = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled' && Number(activeMenuInvoice.paid_amount || 0) === 0;
+  const activeMenuCanReceive = !!activeMenuInvoice && activeMenuInvoice.status !== 'cancelled' && Number(activeMenuInvoice.balance_due ?? 0) > 0;
+
+  const closeActionMenu = useCallback(() => {
+    setMenuInvoiceId(null);
+    setMenuPosition(null);
+  }, []);
+
+  const toggleActionMenu = useCallback((inv: any, target: EventTarget & HTMLButtonElement) => {
+    if (menuInvoiceId === inv.id) {
+      closeActionMenu();
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const menuWidth = 280;
+    const margin = 12;
+    const belowSpace = window.innerHeight - rect.bottom - margin;
+    const aboveSpace = rect.top - margin;
+    const preferredHeight = 560;
+    const openAbove = belowSpace < 280 && aboveSpace > belowSpace;
+    const maxHeight = Math.max(220, Math.min(preferredHeight, openAbove ? aboveSpace : belowSpace));
+    const top = openAbove
+      ? Math.max(margin, rect.top - maxHeight - 6)
+      : Math.min(window.innerHeight - margin - maxHeight, rect.bottom + 6);
+    const left = Math.min(window.innerWidth - margin - menuWidth, Math.max(margin, rect.right - menuWidth));
+    setMenuPosition({ top, left, maxHeight });
+    setMenuInvoiceId(inv.id);
+  }, [closeActionMenu, menuInvoiceId]);
 
   return (
     <div className="space-y-6">
@@ -484,12 +533,8 @@ export default function InvoiceList() {
                   const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
                   const isOverdue = inv.due_date && new Date(inv.due_date) < new Date() && (inv.balance_due ?? inv.total_amount) > 0;
                   const hasActiveIrn = !!inv.irn && inv.einvoice_status === 'generated';
-                  const canEdit = !hasActiveIrn && inv.status !== 'cancelled';
-                  const canIRN = !hasActiveIrn && inv.status !== 'cancelled';
-                  const canEWB = hasActiveIrn && !inv.ewb_no && inv.status !== 'cancelled';
                   const canDelete = !hasActiveIrn && inv.status !== 'cancelled';
                   const canCancel = !hasActiveIrn && inv.status !== 'cancelled' && Number(inv.paid_amount || 0) === 0;
-                  const canReceive = inv.status !== 'cancelled' && Number(inv.balance_due ?? 0) > 0;
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
@@ -564,64 +609,11 @@ export default function InvoiceList() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => setMenuInvoiceId((current) => (current === inv.id ? null : inv.id))}
+                            onClick={(event) => toggleActionMenu(inv, event.currentTarget)}
                             title="More actions"
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
-
-                          {menuInvoiceId === inv.id && (
-                            <div className="absolute right-0 top-9 z-20 w-60 rounded-lg border bg-white p-1.5 shadow-xl">
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
-                                <Eye className="h-4 w-4" /> Preview / print
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
-                                <Send className="h-4 w-4" /> Share / WhatsApp / email
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setPreviewInvoice(inv); }}>
-                                <Printer className="h-4 w-4" /> Print A4 / receipt
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); generatePDF(inv.id, inv.invoice_number); }}>
-                                <Download className="h-4 w-4" /> Download invoice PDF
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); openDeliveryChallanPdf(inv); }}>
-                                <Truck className="h-4 w-4" /> Preview delivery challan
-                              </button>
-                              {hasActiveIrn && (
-                                <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); downloadEinvoicePdf(inv); }}>
-                                  <FileCheck className="h-4 w-4" /> Download e-Invoice PDF
-                                </button>
-                              )}
-                              <div className="my-1 border-t" />
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/${inv.id}`); }}>
-                                <Eye className="h-4 w-4" /> View / edit
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canReceive} onClick={() => { setMenuInvoiceId(null); if (canReceive) openReceivePayment(inv); }}>
-                                <ReceiptIndianRupee className="h-4 w-4" /> Receive payment
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); setHistoryInvoice(inv); }}>
-                                <History className="h-4 w-4" /> View history
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { setMenuInvoiceId(null); navigate(`/sales/new?duplicate_from=${inv.id}`); }}>
-                                <Copy className="h-4 w-4" /> Duplicate this invoice
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEdit} onClick={() => { setMenuInvoiceId(null); if (canEdit) navigate(`/sales/${inv.id}/edit`); }}>
-                                <Pencil className="h-4 w-4" /> Edit invoice
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canIRN || irnLoadingId === inv.id} onClick={() => { setMenuInvoiceId(null); if (canIRN) generateIRN(inv.id); }}>
-                                <FileCheck className="h-4 w-4" /> Generate e-Invoice
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!canEWB} onClick={() => { setMenuInvoiceId(null); if (canEWB) navigate(`/sales/${inv.id}?tab=ewb`); }}>
-                                <Truck className="h-4 w-4" /> Generate E-Way Bill
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-40" disabled={!canCancel} onClick={() => { if (canCancel) cancelInvoice(inv); }}>
-                                <Ban className="h-4 w-4" /> Cancel invoice
-                              </button>
-                              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-40" disabled={!canDelete} onClick={() => { if (canDelete) deleteInvoice(inv); }}>
-                                <Trash2 className="h-4 w-4" /> Delete invoice
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -632,6 +624,70 @@ export default function InvoiceList() {
           </table>
         </div>
       </Card>
+
+      {activeMenuInvoice && menuPosition && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-30 cursor-default bg-transparent"
+            aria-label="Close invoice actions"
+            onClick={closeActionMenu}
+          />
+          <div
+            className="fixed z-40 w-[280px] overflow-y-auto rounded-lg border bg-white p-1.5 shadow-2xl"
+            style={{ top: menuPosition.top, left: menuPosition.left, maxHeight: menuPosition.maxHeight }}
+          >
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); setPreviewInvoice(activeMenuInvoice); }}>
+              <Eye className="h-4 w-4" /> Preview / print
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); setPreviewInvoice(activeMenuInvoice); }}>
+              <Send className="h-4 w-4" /> Share / WhatsApp / email
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); setPreviewInvoice(activeMenuInvoice); }}>
+              <Printer className="h-4 w-4" /> Print A4 / receipt
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); generatePDF(activeMenuInvoice.id, activeMenuInvoice.invoice_number); }}>
+              <Download className="h-4 w-4" /> Download invoice PDF
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); openDeliveryChallanPdf(activeMenuInvoice); }}>
+              <Truck className="h-4 w-4" /> Preview delivery challan
+            </button>
+            {activeMenuHasIrn && (
+              <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); downloadEinvoicePdf(activeMenuInvoice); }}>
+                <FileCheck className="h-4 w-4" /> Download e-Invoice PDF
+              </button>
+            )}
+            <div className="my-1 border-t" />
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); navigate(`/sales/${activeMenuInvoice.id}`); }}>
+              <Eye className="h-4 w-4" /> View / edit
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanReceive} onClick={() => { closeActionMenu(); if (activeMenuCanReceive) openReceivePayment(activeMenuInvoice); }}>
+              <ReceiptIndianRupee className="h-4 w-4" /> Receive payment
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); setHistoryInvoice(activeMenuInvoice); }}>
+              <History className="h-4 w-4" /> View history
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => { closeActionMenu(); navigate(`/sales/new?duplicate_from=${activeMenuInvoice.id}`); }}>
+              <Copy className="h-4 w-4" /> Duplicate this invoice
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanEdit} onClick={() => { closeActionMenu(); if (activeMenuCanEdit) navigate(`/sales/${activeMenuInvoice.id}/edit`); }}>
+              <Pencil className="h-4 w-4" /> Edit invoice
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanIRN || irnLoadingId === activeMenuInvoice.id} onClick={() => { closeActionMenu(); if (activeMenuCanIRN) generateIRN(activeMenuInvoice.id); }}>
+              <FileCheck className="h-4 w-4" /> Generate e-Invoice
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanEWB} onClick={() => { closeActionMenu(); if (activeMenuCanEWB) navigate(`/sales/${activeMenuInvoice.id}?tab=ewb`); }}>
+              <Truck className="h-4 w-4" /> Generate E-Way Bill
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-40" disabled={!activeMenuCanCancel} onClick={() => { closeActionMenu(); if (activeMenuCanCancel) cancelInvoice(activeMenuInvoice); }}>
+              <Ban className="h-4 w-4" /> Cancel invoice
+            </button>
+            <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 disabled:opacity-40" disabled={!activeMenuCanDelete} onClick={() => { closeActionMenu(); if (activeMenuCanDelete) deleteInvoice(activeMenuInvoice); }}>
+              <Trash2 className="h-4 w-4" /> Delete invoice
+            </button>
+          </div>
+        </>
+      )}
 
       <Sheet open={bulkOpen} onOpenChange={setBulkOpen}>
         <SheetContent side="right" className="w-full sm:max-w-2xl">

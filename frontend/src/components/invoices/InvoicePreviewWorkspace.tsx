@@ -8,29 +8,45 @@ import toast from 'react-hot-toast';
 const SKIP_PREVIEW_KEY = 'bizflow_skip_invoice_preview_after_save';
 
 export const INVOICE_PDF_TEMPLATES = [
-  { id: 'standard', label: 'Detailed Tax Invoice', group: 'Business', tip: 'Complete GST-ready layout with buyer, seller, bank, signature, and tax details.' },
-  { id: 'simple', label: 'Professional Header', group: 'Business', tip: 'Bold header layout with clean item rows and compact totals.' },
-  { id: 'performa', label: 'Centered Proforma', group: 'Business', tip: 'Centered proforma-style layout for estimates and advance invoices.' },
-  { id: 'monochrome', label: 'Black & White Standard', group: 'Business', tip: 'Plain black-and-white invoice with boxed details, unit column, GST, bank, and signature.' },
+  { id: 'business-theme-1', label: 'Business Theme 1', group: 'Business', tip: 'Complete GST-ready layout with buyer, seller, bank, signature, and tax details.' },
+  { id: 'business-theme-2', label: 'Business Theme 2', group: 'Business', tip: 'Bold header layout with clean item rows and compact totals.' },
+  { id: 'business-theme-3', label: 'Business Theme 3', group: 'Business', tip: 'Centered proforma-style layout for estimates and advance invoices.' },
+  { id: 'business-theme-4', label: 'Business Theme 4', group: 'Business', tip: 'Plain black-and-white invoice with boxed details, unit column, GST, bank, and signature.' },
 ] as const;
 
 export type InvoicePdfTemplateId = (typeof INVOICE_PDF_TEMPLATES)[number]['id'];
-export const DOCUMENT_THEME_OPTIONS = [
-  { id: 'classic', label: 'Amber Corporate' },
-  { id: 'modern', label: 'Blue Professional' },
-  { id: 'compact', label: 'Compact Neutral' },
-  { id: 'executive', label: 'Black Executive' },
-  { id: 'sunrise', label: 'Orange Accent' },
-  { id: 'forest', label: 'Green Business' },
-  { id: 'midnight', label: 'Navy Header' },
-  { id: 'royal', label: 'Violet Premium' },
-  { id: 'slate', label: 'Slate Formal' },
-  { id: 'retail', label: 'Retail Teal' },
-  { id: 'minimal', label: 'Minimal Black' },
-] as const;
+export const DOCUMENT_THEME_OPTIONS = INVOICE_PDF_TEMPLATES;
 export type DocumentThemeId = (typeof DOCUMENT_THEME_OPTIONS)[number]['id'];
 
 type TemplateRow = (typeof INVOICE_PDF_TEMPLATES)[number];
+
+export const LEGACY_INVOICE_THEME_MAP: Record<string, InvoicePdfTemplateId> = {
+  standard: 'business-theme-1',
+  'detailed-tax-invoice': 'business-theme-1',
+  simple: 'business-theme-2',
+  'professional-header': 'business-theme-2',
+  performa: 'business-theme-3',
+  'centered-proforma': 'business-theme-3',
+  monochrome: 'business-theme-4',
+  'black-white-standard': 'business-theme-4',
+  classic: 'business-theme-1',
+  modern: 'business-theme-1',
+  compact: 'business-theme-1',
+  executive: 'business-theme-1',
+  sunrise: 'business-theme-1',
+  forest: 'business-theme-1',
+  midnight: 'business-theme-1',
+  royal: 'business-theme-1',
+  slate: 'business-theme-1',
+  retail: 'business-theme-1',
+  minimal: 'business-theme-1',
+};
+
+export function normalizeInvoiceThemeId(value: unknown, fallback: InvoicePdfTemplateId = 'business-theme-1'): InvoicePdfTemplateId {
+  const raw = String(value || '').trim();
+  if (INVOICE_PDF_TEMPLATES.some((theme) => theme.id === raw)) return raw as InvoicePdfTemplateId;
+  return LEGACY_INVOICE_THEME_MAP[raw] || fallback;
+}
 
 export type InvoicePreviewDraftPayload = {
   invoice_type: string;
@@ -77,7 +93,7 @@ function normalizePhone(raw?: string) {
 }
 
 export function readSkipInvoicePreview(): boolean {
-  return localStorage.getItem(SKIP_PREVIEW_KEY) === '1';
+  return false;
 }
 
 export function InvoicePreviewWorkspace({
@@ -91,11 +107,12 @@ export function InvoicePreviewWorkspace({
   partyPhone,
   companyName,
 }: Props) {
-  const [template, setTemplate] = useState<InvoicePdfTemplateId>('monochrome');
-  const [theme, setTheme] = useState<DocumentThemeId>('executive');
+  const [template, setTemplate] = useState<InvoicePdfTemplateId>('business-theme-1');
+  const [savedTheme, setSavedTheme] = useState<InvoicePdfTemplateId>('business-theme-1');
+  const [printSettingsLoaded, setPrintSettingsLoaded] = useState(false);
+  const [savingTheme, setSavingTheme] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [skipNext, setSkipNext] = useState(() => readSkipInvoicePreview());
   const [waSending, setWaSending] = useState(false);
   const [sharePhone, setSharePhone] = useState(partyPhone || '');
   const previewRequestSeq = useRef(0);
@@ -117,8 +134,33 @@ export function InvoicePreviewWorkspace({
     if (url) window.URL.revokeObjectURL(url);
   }, []);
 
-  const loadPdf = useCallback(async () => {
+  useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    setPrintSettingsLoaded(false);
+    api.get('/settings/print')
+      .then((response) => {
+        if (cancelled) return;
+        const settings = response.data?.data ?? response.data ?? {};
+        const nextTheme = normalizeInvoiceThemeId(settings.invoiceTheme || settings.regular?.layout || settings.invoice_theme);
+        setSavedTheme(nextTheme);
+        setTemplate(nextTheme);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSavedTheme('business-theme-1');
+        setTemplate('business-theme-1');
+      })
+      .finally(() => {
+        if (!cancelled) setPrintSettingsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const loadPdf = useCallback(async () => {
+    if (!open || !printSettingsLoaded) return;
     const seq = previewRequestSeq.current + 1;
     previewRequestSeq.current = seq;
     const previewKey = `${Date.now()}-${seq}`;
@@ -131,12 +173,12 @@ export function InvoicePreviewWorkspace({
       let blob: Blob;
       if (mode === 'saved' && invoiceId) {
         const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-          params: { template, theme, inline: 1, preview_key: previewKey },
+          params: { theme: template, inline: 1, preview_key: previewKey },
           responseType: 'blob',
         });
         blob = res.data as Blob;
       } else if (mode === 'draft' && draftPayload) {
-        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme, preview_key: previewKey }, { responseType: 'blob' });
+        const res = await api.post('/invoices/preview-pdf', { ...draftPayload, theme: template, preview_key: previewKey }, { responseType: 'blob' });
         blob = res.data as Blob;
       } else {
         return;
@@ -153,7 +195,7 @@ export function InvoicePreviewWorkspace({
     } finally {
       if (seq === previewRequestSeq.current) setLoading(false);
     }
-  }, [open, mode, invoiceId, draftPayload, template, theme, revoke]);
+  }, [open, printSettingsLoaded, mode, invoiceId, draftPayload, template, revoke]);
 
   useEffect(() => {
     if (!open) return;
@@ -181,15 +223,15 @@ Thank you.
 
   const fetchCurrentPdfFile = async (): Promise<File> => {
     let blob: Blob;
-    const previewKey = `${Date.now()}-export-${template}-${theme}`;
+    const previewKey = `${Date.now()}-export-${template}`;
     if (mode === 'saved' && invoiceId) {
       const res = await api.get(`/invoices/${invoiceId}/pdf`, {
-        params: { template, theme, inline: 1, preview_key: previewKey },
+        params: { theme: template, inline: 1, preview_key: previewKey },
         responseType: 'blob',
       });
       blob = res.data as Blob;
     } else if (mode === 'draft' && draftPayload) {
-      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, template, theme, preview_key: previewKey }, { responseType: 'blob' });
+      const res = await api.post('/invoices/preview-pdf', { ...draftPayload, theme: template, preview_key: previewKey }, { responseType: 'blob' });
       blob = res.data as Blob;
     } else {
       throw new Error('Nothing to share');
@@ -298,9 +340,23 @@ Thank you.
     window.location.href = href;
   };
 
-  const handleSaveClose = () => {
-    if (skipNext) localStorage.setItem(SKIP_PREVIEW_KEY, '1');
-    else localStorage.removeItem(SKIP_PREVIEW_KEY);
+  const handleSaveClose = async () => {
+    setSavingTheme(true);
+    try {
+      await api.put('/settings/print', { invoiceTheme: template });
+      setSavedTheme(template);
+      localStorage.removeItem(SKIP_PREVIEW_KEY);
+      toast.success('Default invoice theme saved');
+      onClose();
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not save theme');
+    } finally {
+      setSavingTheme(false);
+    }
+  };
+
+  const handleDismiss = () => {
+    setTemplate(savedTheme);
     onClose();
   };
 
@@ -335,28 +391,9 @@ Thank you.
                 </ul>
               </div>
             ))}
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase px-2 mb-1">Document Theme</p>
-              <ul className="space-y-0.5">
-                {DOCUMENT_THEME_OPTIONS.map((opt) => (
-                  <li key={opt.id}>
-                    <button
-                      type="button"
-                      onClick={() => setTheme(opt.id)}
-                      className={`w-full text-left rounded-lg px-2.5 py-2 text-sm transition-colors ${
-                        theme === opt.id ? 'bg-slate-900 text-white shadow' : 'text-slate-700 hover:bg-white'
-                      }`}
-                    >
-                      <span className="font-medium">{opt.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
           </div>
-          <div className="p-2 border-t border-slate-200 text-[11px] text-slate-500 leading-snug flex gap-2 bg-amber-50/80">
-            <span aria-hidden>💡</span>
-            <span>Default theme is set in company profile; this screen only overrides the preview and download.</span>
+          <div className="p-3 border-t border-slate-200 text-[11px] text-slate-500 leading-snug bg-white">
+            Selecting a theme here saves it as your default.
           </div>
         </aside>
 
@@ -364,14 +401,10 @@ Thank you.
         <div className="flex-1 flex flex-col min-w-0 bg-slate-100">
           <header className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white shrink-0">
             <h2 className="text-sm font-semibold text-slate-800 mr-auto">Preview</h2>
-            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
-              <input type="checkbox" checked={skipNext} onChange={(e) => setSkipNext(e.target.checked)} className="rounded border-slate-300" />
-              Don&apos;t show after save
-            </label>
-            <Button size="sm" onClick={handleSaveClose}>
+            <Button size="sm" onClick={handleSaveClose} loading={savingTheme}>
               Save &amp; close
             </Button>
-            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={onClose} aria-label="Close preview">
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={handleDismiss} aria-label="Close preview">
               <X className="h-4 w-4" />
             </Button>
           </header>
@@ -383,20 +416,6 @@ Thank you.
                 onClick={() => setTemplate(opt.id)}
                 className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
                   template === opt.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <div className="lg:hidden border-b border-slate-100 bg-white px-3 py-2 flex gap-1 overflow-x-auto">
-            {DOCUMENT_THEME_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setTheme(opt.id)}
-                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                  theme === opt.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
                 }`}
               >
                 {opt.label}

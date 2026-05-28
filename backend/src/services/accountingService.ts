@@ -61,6 +61,7 @@ const COA: Array<{
       { name: 'Input CGST', code: '1122', subtype: 'input_cgst' },
       { name: 'Input SGST', code: '1123', subtype: 'input_sgst' },
       { name: 'Input IGST', code: '1124', subtype: 'input_igst' },
+      { name: 'Input Cess', code: '1125', subtype: 'input_cess' },
       { name: 'Bank Accounts', code: '1130', subtype: 'bank' },
       { name: 'Cash Accounts', code: '1140', subtype: 'cash' },
       { name: 'Cash', code: '1141', subtype: 'cash' },
@@ -93,6 +94,7 @@ const COA: Array<{
       { name: 'Output CGST', code: '2122', subtype: 'output_cgst' },
       { name: 'Output SGST', code: '2123', subtype: 'output_sgst' },
       { name: 'Output IGST', code: '2124', subtype: 'output_igst' },
+      { name: 'Output Cess', code: '2125', subtype: 'output_cess' },
       { name: 'Other Current Liabilities', code: '2130', subtype: 'other_current_liabilities' },
     ],
   },
@@ -110,7 +112,16 @@ const COA: Array<{
     ],
   },
   { name: 'Other Incomes (Direct)', code: '4100', type: 'income', subtype: 'direct_income', category: 'Incomes' },
-  { name: 'Other Incomes (Indirect)', code: '4200', type: 'income', subtype: 'indirect_income', category: 'Incomes' },
+  {
+    name: 'Other Incomes (Indirect)',
+    code: '4200',
+    type: 'income',
+    subtype: 'indirect_income',
+    category: 'Incomes',
+    children: [
+      { name: 'Round Off Income', code: '4210', subtype: 'round_off_income' },
+    ],
+  },
   {
     name: 'Purchase Accounts',
     code: '5000',
@@ -134,7 +145,16 @@ const COA: Array<{
       { name: 'Rent', code: '5130', subtype: 'rent' },
     ],
   },
-  { name: 'Indirect Expenses', code: '5200', type: 'expense', subtype: 'indirect_expense', category: 'Expenses' },
+  {
+    name: 'Indirect Expenses',
+    code: '5200',
+    type: 'expense',
+    subtype: 'indirect_expense',
+    category: 'Expenses',
+    children: [
+      { name: 'Round Off Expense', code: '5210', subtype: 'round_off_expense' },
+    ],
+  },
 ];
 
 function normalBalance(type: string): NormalBalance {
@@ -382,12 +402,30 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
   return je.rows[0];
 }
 
+function paise(value: unknown): number {
+  const n = Math.round(Number(value) || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export async function postSalesInvoiceAccounting(db: Queryable, companyId: string, invoice: any, createdBy?: string | null) {
   const debtor = await getOrCreateDefaultAccount(db, companyId, 'Sundry Debtors', 'asset', 'Current Assets');
   const sales = await getOrCreateDefaultAccount(db, companyId, 'Sale (Revenue) Account', 'income', 'Sale Accounts');
   const outCgst = await getOrCreateDefaultAccount(db, companyId, 'Output CGST', 'liability', 'Current Liabilities');
   const outSgst = await getOrCreateDefaultAccount(db, companyId, 'Output SGST', 'liability', 'Current Liabilities');
   const outIgst = await getOrCreateDefaultAccount(db, companyId, 'Output IGST', 'liability', 'Current Liabilities');
+  const outCess = await getOrCreateDefaultAccount(db, companyId, 'Output Cess', 'liability', 'Current Liabilities');
+  const roundIncome = await getOrCreateDefaultAccount(db, companyId, 'Round Off Income', 'income', 'Other Incomes (Indirect)');
+  const roundExpense = await getOrCreateDefaultAccount(db, companyId, 'Round Off Expense', 'expense', 'Indirect Expenses');
+
+  const totalAmount = paise(invoice.total_amount);
+  const taxableAmount = paise(invoice.taxable_amount || invoice.subtotal);
+  const cgstAmount = paise(invoice.cgst_amount);
+  const sgstAmount = paise(invoice.sgst_amount);
+  const igstAmount = paise(invoice.igst_amount);
+  const cessAmount = paise(invoice.cess_amount);
+  const creditedBeforeRoundOff = taxableAmount + cgstAmount + sgstAmount + igstAmount + cessAmount;
+  const roundDifference = totalAmount - creditedBeforeRoundOff;
+
   return postJournalEntry(db, {
     companyId,
     entryDate: toSqlDate(invoice.invoice_date),
@@ -400,11 +438,15 @@ export async function postSalesInvoiceAccounting(db: Queryable, companyId: strin
     createdBy,
     skipIfEmpty: true,
     lines: [
-      { accountId: debtor, debit: Number(invoice.total_amount || 0), partyId: invoice.party_id || null },
-      { accountId: sales, credit: Number(invoice.taxable_amount || invoice.subtotal || 0) },
-      { accountId: outCgst, credit: Number(invoice.cgst_amount || 0) },
-      { accountId: outSgst, credit: Number(invoice.sgst_amount || 0) },
-      { accountId: outIgst, credit: Number(invoice.igst_amount || 0) },
+      { accountId: debtor, debit: totalAmount, partyId: invoice.party_id || null },
+      { accountId: sales, credit: taxableAmount },
+      { accountId: outCgst, credit: cgstAmount },
+      { accountId: outSgst, credit: sgstAmount },
+      { accountId: outIgst, credit: igstAmount },
+      { accountId: outCess, credit: cessAmount },
+      roundDifference > 0
+        ? { accountId: roundIncome, credit: roundDifference, description: 'Round off / invoice adjustment' }
+        : { accountId: roundExpense, debit: Math.abs(roundDifference), description: 'Round off / invoice adjustment' },
     ],
   });
 }
@@ -415,6 +457,19 @@ export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: st
   const inCgst = await getOrCreateDefaultAccount(db, companyId, 'Input CGST', 'asset', 'Current Assets');
   const inSgst = await getOrCreateDefaultAccount(db, companyId, 'Input SGST', 'asset', 'Current Assets');
   const inIgst = await getOrCreateDefaultAccount(db, companyId, 'Input IGST', 'asset', 'Current Assets');
+  const inCess = await getOrCreateDefaultAccount(db, companyId, 'Input Cess', 'asset', 'Current Assets');
+  const roundIncome = await getOrCreateDefaultAccount(db, companyId, 'Round Off Income', 'income', 'Other Incomes (Indirect)');
+  const roundExpense = await getOrCreateDefaultAccount(db, companyId, 'Round Off Expense', 'expense', 'Indirect Expenses');
+
+  const totalAmount = paise(invoice.total_amount);
+  const taxableAmount = paise(invoice.taxable_amount || invoice.subtotal);
+  const cgstAmount = paise(invoice.cgst_amount);
+  const sgstAmount = paise(invoice.sgst_amount);
+  const igstAmount = paise(invoice.igst_amount);
+  const cessAmount = paise(invoice.cess_amount);
+  const debitedBeforeRoundOff = taxableAmount + cgstAmount + sgstAmount + igstAmount + cessAmount;
+  const roundDifference = totalAmount - debitedBeforeRoundOff;
+
   return postJournalEntry(db, {
     companyId,
     entryDate: toSqlDate(invoice.bill_date),
@@ -427,11 +482,15 @@ export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: st
     createdBy,
     skipIfEmpty: true,
     lines: [
-      { accountId: purchase, debit: Number(invoice.taxable_amount || invoice.subtotal || 0) },
-      { accountId: inCgst, debit: Number(invoice.cgst_amount || 0) },
-      { accountId: inSgst, debit: Number(invoice.sgst_amount || 0) },
-      { accountId: inIgst, debit: Number(invoice.igst_amount || 0) },
-      { accountId: creditors, credit: Number(invoice.total_amount || 0), partyId: invoice.party_id || null },
+      { accountId: purchase, debit: taxableAmount },
+      { accountId: inCgst, debit: cgstAmount },
+      { accountId: inSgst, debit: sgstAmount },
+      { accountId: inIgst, debit: igstAmount },
+      { accountId: inCess, debit: cessAmount },
+      roundDifference > 0
+        ? { accountId: roundExpense, debit: roundDifference, description: 'Round off / bill adjustment' }
+        : { accountId: roundIncome, credit: Math.abs(roundDifference), description: 'Round off / bill adjustment' },
+      { accountId: creditors, credit: totalAmount, partyId: invoice.party_id || null },
     ],
   });
 }

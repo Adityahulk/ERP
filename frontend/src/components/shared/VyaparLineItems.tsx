@@ -13,7 +13,8 @@ import { Fragment, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { currencySymbol, formatMoney } from '@/lib/formatters';
-import { GST_RATE_OPTIONS } from '@/lib/gstRates';
+import TaxRateDropdown from '@/components/invoice/TaxRateDropdown';
+import { useTaxOptions, type TaxComponent } from '@/hooks/useTaxOptions';
 import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
 import api from '@/lib/api';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
@@ -31,6 +32,8 @@ export interface VyaparLineItem {
   unit_price: number;   // in paise
   discount_amount: number; // in paise
   gst_rate: number;    // percent
+  tax_option_id?: string;
+  tax_components?: TaxComponent[];
   cess_rate?: number;
   custom_fields?: Record<string, string>;
 }
@@ -54,10 +57,8 @@ interface Props {
   customFields?: Array<{ id: string; label: string; type?: string; required?: boolean }>;
 }
 
-const GST_OPTIONS = GST_RATE_OPTIONS;
-
 function calcLine(item: VyaparLineItem, isGst: boolean) {
-  const gross = item.quantity * item.unit_price;
+  const gross = Math.round(item.quantity * item.unit_price);
   const taxable = Math.max(0, gross - item.discount_amount);
   const gst = isGst ? Math.round(taxable * item.gst_rate / 100) : 0;
   const cess = isGst ? Math.round(taxable * (item.cess_rate || 0) / 100) : 0;
@@ -108,6 +109,7 @@ export default function VyaparLineItems({
   currencyCode = 'INR',
   customFields = [],
 }: Props) {
+  const { options: taxOptions, usingFallback: usingDefaultTaxOptions } = useTaxOptions();
   const moneySymbol = currencySymbol(currencyCode);
   const customColumnFields = customFields.filter((field) => field.id && field.label);
   const [query, setQuery] = useState('');
@@ -164,7 +166,10 @@ export default function VyaparLineItems({
     unit_price: lineUnitPriceFromItem(item),
     discount_amount: 0,
     gst_rate: Number(item.gst_rate ?? 18),
+    tax_option_id: undefined,
+    tax_components: undefined,
     cess_rate: Number(item.cess_rate ?? 0),
+    custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
   });
 
   const addFromCatalog = (item: any) => {
@@ -302,7 +307,7 @@ export default function VyaparLineItems({
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
-              className="pl-9 h-10"
+              className="h-9 pl-9"
               placeholder="Search items or type name to add manually…"
               value={query}
               onChange={(e) => runSearch(e.target.value)}
@@ -318,7 +323,7 @@ export default function VyaparLineItems({
             type="button"
             variant="outline"
             size="sm"
-            className="h-10 gap-1.5 shrink-0"
+            className="h-9 gap-1.5 shrink-0"
             onClick={openQuickAddItem}
           >
             <PackagePlus className="w-4 h-4" />
@@ -328,7 +333,7 @@ export default function VyaparLineItems({
             type="button"
             variant="outline"
             size="sm"
-            className="h-10 gap-1.5 shrink-0"
+            className="h-9 gap-1.5 shrink-0"
             onClick={addManualLine}
           >
             <Plus className="w-4 h-4" />
@@ -387,42 +392,52 @@ export default function VyaparLineItems({
         onCreated={onQuickItemCreated}
       />
 
+      {isGst && usingDefaultTaxOptions && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          Using default tax rates. Configure them in Settings &gt; Taxes &amp; GST.
+        </p>
+      )}
+
       {/* Items Table */}
       {items.length > 0 && (
-        <div className="max-w-full overflow-x-auto rounded-xl border">
+        <div className="max-w-full overflow-x-auto rounded-lg border">
           <table
             className="w-full table-fixed text-sm"
-            style={{ minWidth: `${(showPricing ? 760 : 520) + customColumnFields.length * 150}px` }}
+            style={{
+              minWidth: `${(showPricing ? 820 : 520) + (showHsn ? 90 : 0) + (showUnit && showPricing ? 84 : 0) + (isGst && showPricing ? 86 : 0) + customColumnFields.length * 140}px`,
+            }}
           >
             <colgroup>
-              <col className={showPricing ? 'w-[26%]' : 'w-[44%]'} />
-              <col className="w-[92px]" />
-              {showUnit && !showPricing && <col className="w-[92px]" />}
-              {showPricing && <col className="w-[120px]" />}
-              {showPricing && <col className="hidden w-[110px] sm:table-column" />}
-              {showPricing && isGst && <col className="hidden w-[92px] sm:table-column" />}
-              {customColumnFields.map((field) => <col key={field.id} className="w-[150px]" />)}
-              {showPricing && <col className="w-[132px]" />}
-              <col className="w-[56px]" />
+              <col className="w-[54px]" />
+              <col className={showPricing ? 'w-[220px]' : 'w-[320px]'} />
+              {showHsn && <col className="w-[92px]" />}
+              <col className="w-[74px]" />
+              {showUnit && <col className="w-[86px]" />}
+              {showPricing && <col className="w-[112px]" />}
+              {showPricing && <col className="w-[78px]" />}
+              {showPricing && isGst && <col className="w-[96px]" />}
+              {customColumnFields.map((field) => <col key={field.id} className="w-[140px]" />)}
+              {showPricing && <col className="w-[116px]" />}
+              <col className="w-[48px]" />
             </colgroup>
             <thead>
               <tr className="bg-muted/40 border-b">
-                <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Item</th>
-                <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20">Qty</th>
-                {showUnit && !showPricing && (
-                  <th className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">Unit</th>
-                )}
-                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Rate ({moneySymbol})</th>}
-                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24 hidden sm:table-cell">Disc ({moneySymbol})</th>}
+                <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">#</th>
+                <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">Item</th>
+                {showHsn && <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">HSN/SAC</th>}
+                <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Qty</th>
+                {showUnit && <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">Unit</th>}
+                {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Rate ({moneySymbol})</th>}
+                {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Disc%</th>}
                 {showPricing && isGst && (
-                  <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-20 hidden sm:table-cell">GST %</th>
+                  <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">GST%</th>
                 )}
                 {customColumnFields.map((field) => (
-                  <th key={field.id} className="px-3 py-2.5 text-left font-medium text-xs text-muted-foreground">
+                  <th key={field.id} className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">
                     {field.label}{field.required ? ' *' : ''}
                   </th>
                 ))}
-                {showPricing && <th className="px-3 py-2.5 text-right font-medium text-xs text-muted-foreground w-24">Total</th>}
+                {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Total</th>}
                 <th className="sticky right-0 z-10 w-12 bg-muted/40"></th>
               </tr>
             </thead>
@@ -432,33 +447,36 @@ export default function VyaparLineItems({
                 const expanded = expandedRows.has(idx);
                 return (
                   <Fragment key={idx}>
-                    <tr className="border-b hover:bg-muted/10">
-                      <td className="px-3 py-2">
+                    <tr className="h-10 border-b hover:bg-muted/10">
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className="w-4 text-right text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
+                          <button
+                            type="button"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={() => toggleExpand(idx)}
+                            title={expanded ? 'Collapse' : 'More options'}
+                          >
+                            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-1">
-                            <Input
-                              className="h-8 min-w-0 text-sm font-medium"
-                              value={item.name}
-                              onFocus={() => setRowSearch({ index: idx, query: item.name || '', results: [], searching: false })}
-                              onChange={(e) => runRowSearch(idx, e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key !== 'Enter') return;
-                                if (rowSearch?.index === idx && rowSearch.results[0]) {
-                                  e.preventDefault();
-                                  replaceRowFromCatalog(idx, rowSearch.results[0]);
-                                }
-                              }}
-                              placeholder="Search item or enter name"
-                            />
-                            <button
-                              type="button"
-                              className="p-1 text-muted-foreground hover:text-foreground"
-                              onClick={() => toggleExpand(idx)}
-                              title={expanded ? 'Collapse' : 'More options'}
-                            >
-                              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
+                          <Input
+                            className="h-8 min-w-0 text-sm font-medium"
+                            value={item.name}
+                            onFocus={() => setRowSearch({ index: idx, query: item.name || '', results: [], searching: false })}
+                            onChange={(e) => runRowSearch(idx, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return;
+                              if (rowSearch?.index === idx && rowSearch.results[0]) {
+                                e.preventDefault();
+                                replaceRowFromCatalog(idx, rowSearch.results[0]);
+                              }
+                            }}
+                            placeholder="Search item or enter name"
+                          />
                           {rowSearch?.index === idx && (rowSearch.searching || rowSearch.results.length > 0) && (
                             <div className="mt-1 max-h-52 overflow-y-auto rounded-lg border bg-card shadow-xl">
                               {rowSearch.searching && rowSearch.results.length === 0 && (
@@ -482,7 +500,17 @@ export default function VyaparLineItems({
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2">
+                      {showHsn && (
+                        <td className="px-2 py-1.5">
+                          <Input
+                            className="h-8 w-full text-xs font-mono"
+                            value={item.hsn_code || ''}
+                            onChange={(e) => update(idx, { hsn_code: e.target.value })}
+                            placeholder={item.item_type === 'service' ? 'SAC' : 'HSN'}
+                          />
+                        </td>
+                      )}
+                      <td className="px-2 py-1.5">
                         <Input
                           type="number"
                           className="h-8 w-full text-right tabular-nums"
@@ -492,8 +520,8 @@ export default function VyaparLineItems({
                           onChange={(e) => update(idx, { quantity: parseFloat(e.target.value) || 0 })}
                         />
                       </td>
-                      {showUnit && !showPricing && (
-                        <td className="px-3 py-2">
+                      {showUnit && (
+                        <td className="px-2 py-1.5">
                           <Input
                             className="h-8 w-full text-sm"
                             value={item.unit || ''}
@@ -502,7 +530,7 @@ export default function VyaparLineItems({
                           />
                         </td>
                       )}
-                      {showPricing && <td className="px-3 py-2">
+                      {showPricing && <td className="px-2 py-1.5">
                         <MoneyInput
                           className="h-8 w-full text-right tabular-nums"
                           placeholder="0"
@@ -510,29 +538,30 @@ export default function VyaparLineItems({
                           onChange={(unit_price) => update(idx, { unit_price })}
                         />
                       </td>}
-                      {showPricing && <td className="px-3 py-2 hidden sm:table-cell">
-                        <MoneyInput
+                      {showPricing && <td className="px-2 py-1.5">
+                        <Input
+                          type="number"
                           className="h-8 w-full text-right tabular-nums"
-                          placeholder="0"
-                          value={item.discount_amount}
-                          onChange={(discount_amount) => update(idx, { discount_amount })}
+                          min={0}
+                          max={100}
+                          step="0.01"
+                          value={Number(discountPercent(item).toFixed(2))}
+                          onChange={(e) => updateDiscountPercent(idx, parseFloat(e.target.value))}
                         />
                       </td>}
                       {showPricing && isGst && (
-                        <td className="px-3 py-2 hidden sm:table-cell">
-                          <select
+                        <td className="px-2 py-1.5">
+                          <TaxRateDropdown
                             className="h-8 w-full rounded-md border bg-transparent px-2 text-right text-sm tabular-nums"
                             value={item.gst_rate}
-                            onChange={(e) => update(idx, { gst_rate: parseInt(e.target.value) })}
-                          >
-                            {GST_OPTIONS.map((g) => (
-                              <option key={g} value={g}>{g}%</option>
-                            ))}
-                          </select>
+                            optionId={item.tax_option_id}
+                            options={taxOptions}
+                            onChange={(next) => update(idx, { gst_rate: next.rate, tax_option_id: next.optionId, tax_components: next.components })}
+                          />
                         </td>
                       )}
                       {customColumnFields.map((field) => (
-                        <td key={field.id} className="px-3 py-2">
+                        <td key={field.id} className="px-2 py-1.5">
                           <Input
                             type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
                             className="h-8 w-full text-sm"
@@ -542,10 +571,10 @@ export default function VyaparLineItems({
                           />
                         </td>
                       ))}
-                      {showPricing && <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">
+                      {showPricing && <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total, currencyCode)}
                       </td>}
-                      <td className="sticky right-0 z-10 bg-card px-2 py-2 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                      <td className="sticky right-0 z-10 bg-card px-1.5 py-1.5 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
                         <button
                           type="button"
                           onClick={() => remove(idx)}
@@ -562,7 +591,7 @@ export default function VyaparLineItems({
                       <tr className="bg-muted/20 border-b">
                         <td colSpan={99} className="px-4 py-3">
                           {showPricing && isGst && (
-                            <div className="mb-3 grid min-w-0 grid-cols-1 gap-3 rounded-lg border bg-background/70 p-3 text-xs sm:grid-cols-3">
+                            <div className="mb-3 grid min-w-0 grid-cols-1 gap-3 rounded-md border bg-background/70 p-3 text-xs sm:grid-cols-3">
                               <div className="min-w-0">
                                 <span className="mb-1 block text-muted-foreground">Selling price with GST</span>
                                 <MoneyInput
@@ -598,8 +627,8 @@ export default function VyaparLineItems({
                               </p>
                             </div>
                           )}
-                          <div className="grid min-w-0 grid-cols-1 gap-3 text-xs sm:grid-cols-[170px_120px_1fr_90px]">
-                            {showHsn && (
+                          <div className="grid min-w-0 grid-cols-1 gap-3 text-xs sm:grid-cols-[1fr_90px_140px]">
+                            {showHsn && !showPricing && (
                               <div className="min-w-0">
                                 <span className="mb-1 block text-muted-foreground">{item.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</span>
                                 <Input
@@ -607,17 +636,6 @@ export default function VyaparLineItems({
                                   value={item.hsn_code || ''}
                                   onChange={(e) => update(idx, { hsn_code: e.target.value })}
                                   placeholder={item.item_type === 'service' ? 'SAC' : 'HSN'}
-                                />
-                              </div>
-                            )}
-                            {showUnit && showPricing && (
-                              <div className="min-w-0">
-                                <span className="mb-1 block text-muted-foreground">Unit</span>
-                                <Input
-                                  className="h-8 w-full text-xs"
-                                  value={item.unit || ''}
-                                  onChange={(e) => update(idx, { unit: e.target.value })}
-                                  placeholder="PCS"
                                 />
                               </div>
                             )}
@@ -644,9 +662,8 @@ export default function VyaparLineItems({
                                 />
                               </div>
                             )}
-                            {/* Mobile: disc & gst in expanded row */}
-                            {showPricing && <div className="min-w-0 sm:hidden">
-                              <span className="mb-1 block text-muted-foreground">Disc ({moneySymbol})</span>
+                            {showPricing && <div className="min-w-0">
+                              <span className="mb-1 block text-muted-foreground">Discount ({moneySymbol})</span>
                               <MoneyInput
                                 className="h-8 w-full text-xs"
                                 placeholder="0"
@@ -654,18 +671,6 @@ export default function VyaparLineItems({
                                 onChange={(discount_amount) => update(idx, { discount_amount })}
                               />
                             </div>}
-                            {showPricing && isGst && (
-                              <div className="min-w-0 sm:hidden">
-                                <span className="mb-1 block text-muted-foreground">GST %</span>
-                                <select
-                                  className="h-8 w-full rounded border bg-transparent px-2 text-xs"
-                                  value={item.gst_rate}
-                                  onChange={(e) => update(idx, { gst_rate: parseInt(e.target.value) })}
-                                >
-                                  {GST_OPTIONS.map((g) => <option key={g} value={g}>{g}%</option>)}
-                                </select>
-                              </div>
-                            )}
                           </div>
                           {showPricing && isGst && (
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
@@ -695,7 +700,7 @@ export default function VyaparLineItems({
         <div className="flex justify-end">
           <div className="w-full max-w-xs space-y-1.5 text-sm bg-muted/30 rounded-xl px-4 py-3 border">
             <div className="flex justify-between text-muted-foreground">
-              <span>Subtotal (taxable)</span>
+              <span>{isGst ? 'Subtotal (taxable)' : 'Subtotal'}</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(totals.subtotal, currencyCode)}</span>
             </div>
             {isGst && (
@@ -725,11 +730,6 @@ export default function VyaparLineItems({
                 )}
               </>
             )}
-            {!isGst && (
-              <div className="flex justify-between text-muted-foreground text-xs italic">
-                <span>GST</span><span>Non-GST mode</span>
-              </div>
-            )}
             <div className="flex justify-between border-t pt-2 font-bold text-base">
               <span>Grand Total</span>
               <span className="tabular-nums">{formatMoney(totals.total, currencyCode)}</span>
@@ -742,14 +742,15 @@ export default function VyaparLineItems({
 }
 
 /** Compute overall totals from a list of line items */
-export function computeTotals(items: VyaparLineItem[], isGst: boolean) {
-  return items.reduce(
+export function computeTotals(items: VyaparLineItem[], isGst: boolean, roundOffEnabled = false) {
+  const base = items.reduce(
     (acc, item) => {
       const gross = item.quantity * item.unit_price;
-      const taxable = Math.max(0, gross - item.discount_amount);
+      const roundedGross = Math.round(gross);
+      const taxable = Math.max(0, roundedGross - item.discount_amount);
       const gst = isGst ? Math.round(taxable * item.gst_rate / 100) : 0;
       const cess = isGst ? Math.round(taxable * (item.cess_rate || 0) / 100) : 0;
-      acc.subtotal += gross;
+      acc.subtotal += roundedGross;
       acc.discount += item.discount_amount;
       acc.taxable += taxable;
       acc.tax += gst;
@@ -757,6 +758,8 @@ export function computeTotals(items: VyaparLineItem[], isGst: boolean) {
       acc.total += taxable + gst + cess;
       return acc;
     },
-    { subtotal: 0, discount: 0, taxable: 0, tax: 0, cess: 0, total: 0 },
+    { subtotal: 0, discount: 0, taxable: 0, tax: 0, cess: 0, total: 0, roundOff: 0 },
   );
+  const roundedTotal = roundOffEnabled ? Math.round(base.total / 100) * 100 : base.total;
+  return { ...base, roundOff: roundOffEnabled ? roundedTotal - base.total : 0, total: roundedTotal };
 }

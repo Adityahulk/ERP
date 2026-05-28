@@ -100,7 +100,7 @@ export default function BOMForm() {
           <CardContent className="p-4">
             <h3 className="font-bold text-emerald-800 mb-3 flex items-center gap-2"><Factory className="w-4 h-4" /> Produce Finished Goods</h3>
             <div className="grid grid-cols-3 gap-4">
-              <div><Label>Quantity to Produce</Label><Input type="number" min={1} value={produceQty} onChange={e => setProduceQty(parseInt(e.target.value) || 1)} className="mt-1" /></div>
+              <div><Label>Quantity to Produce</Label><Input type="number" min={0.01} step="0.01" value={produceQty} onChange={e => setProduceQty(parseFloat(e.target.value) || 1)} className="mt-1" /></div>
               <div><Label>Godown</Label>
                 <select className="mt-1 w-full h-9 rounded-md border bg-white px-3 text-sm" value={produceGodown} onChange={e => setProduceGodown(e.target.value)}>
                   <option value="">— Select —</option>

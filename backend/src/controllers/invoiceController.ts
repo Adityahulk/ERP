@@ -35,12 +35,7 @@ import {
   postSalesInvoiceAccounting,
   reverseAccountingForReference,
 } from '../services/accountingService';
-
-const ALLOWED_PDF_TEMPLATES = ['standard', 'simple', 'performa', 'monochrome'] as const;
-const ALLOWED_DOCUMENT_THEMES = [
-  'classic', 'modern', 'compact', 'executive', 'sunrise',
-  'forest', 'midnight', 'royal', 'slate', 'retail', 'minimal',
-] as const;
+import { normalizeInvoicePrintTheme } from '../lib/printThemes';
 
 function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | 'partial' | 'paid' {
   if (paidAmount >= totalAmount) return 'paid';
@@ -257,7 +252,7 @@ async function previewNextInvoiceNumber(companyId: string, invoiceKind: string, 
 function mapLineForGst(raw: any) {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
   const qty = Number(raw.quantity) || 0;
-  const base = unitPrice * qty;
+  const base = Math.round(unitPrice * qty);
   const pct = Number(raw.discount_percent) || 0;
   const flatFromPct = pct > 0 ? Math.round((base * pct) / 100) : 0;
   const lineDisc = Math.round(Number(raw.discount_amount) || 0) || flatFromPct;
@@ -466,6 +461,7 @@ export async function searchItems(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.custom_fields,
               i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
@@ -505,6 +501,7 @@ export async function scanBarcode(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.custom_fields,
               i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
@@ -613,11 +610,14 @@ export async function createInvoice(req: Request, res: Response) {
 
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
+      const roundOffEnabled = d.round_off_enabled === true;
       const totalsInfo = calculateInvoiceTotals(
         mappedItems,
         gstType,
         invDisc > 0 ? 'flat' : 'none',
         invDisc,
+        0,
+        roundOffEnabled,
       );
 
       const { payments: paymentRows, paidAmount: amountPaid } = normalizeInvoicePayments(d, totalsInfo.totalAmount);
@@ -671,7 +671,7 @@ export async function createInvoice(req: Request, res: Response) {
           invoice_date, due_date, currency_code, is_interstate, place_of_supply,
           party_name_snapshot, party_gstin_snapshot, party_phone_snapshot, party_email_snapshot, billing_address_snapshot, shipping_address_snapshot,
           subtotal, discount_amount, taxable_amount,
-          cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, total_amount,
+          cgst_amount, sgst_amount, igst_amount, cess_amount, round_off, round_off_enabled, total_amount,
           paid_amount, payment_status, payment_mode, status, einvoice_status,
           notes, external_description, terms_and_conditions, custom_fields, created_by, pdf_template, document_theme,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
@@ -679,7 +679,7 @@ export async function createInvoice(req: Request, res: Response) {
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
           $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
-          $36,$37,$38,$39,$40,$41,$42,$43,$44
+          $36,$37,$38,$39,$40,$41,$42,$43,$44,$45
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, godownId,
@@ -702,6 +702,7 @@ export async function createInvoice(req: Request, res: Response) {
           totalsInfo.totalIgst,
           totalsInfo.totalCess,
           totalsInfo.roundOff,
+          roundOffEnabled,
           totalsInfo.totalAmount,
           amountPaid,
           paymentStatus,
@@ -713,8 +714,8 @@ export async function createInvoice(req: Request, res: Response) {
           d.terms_and_conditions || null,
           JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : {}),
           req.user!.id,
-          ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : 'monochrome',
-          ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any) ? d.document_theme : 'executive',
+          normalizeInvoicePrintTheme(d.pdf_template || d.document_theme),
+          normalizeInvoicePrintTheme(d.document_theme || d.pdf_template),
           bankSnap.company_bank_account_id,
           bankSnap.bank_label_snapshot,
           bankSnap.bank_name_snapshot,
@@ -735,7 +736,7 @@ export async function createInvoice(req: Request, res: Response) {
           gst_rate: isGstInvoice ? item.gst_rate : 0,
           cess_rate: isGstInvoice ? item.cess_rate : 0,
         });
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
+        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
 
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const half = gstRt / 2;
@@ -1198,7 +1199,8 @@ export async function updateInvoice(req: Request, res: Response) {
 
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
-      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
+      const roundOffEnabled = d.round_off_enabled === true;
+      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled);
       const currencyCode = await resolveCompanyCurrency(client, companyId, d.currency_code || oldInv.currency_code);
 
       const itemsRes = await client.query(
@@ -1292,10 +1294,8 @@ export async function updateInvoice(req: Request, res: Response) {
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
 
-      const pdfTpl = ALLOWED_PDF_TEMPLATES.includes(String(d.pdf_template || '') as any) ? d.pdf_template : oldInv.pdf_template;
-      const docTheme = ALLOWED_DOCUMENT_THEMES.includes(String(d.document_theme || '') as any)
-        ? d.document_theme
-        : oldInv.document_theme || 'executive';
+      const pdfTpl = normalizeInvoicePrintTheme(d.pdf_template || d.document_theme || oldInv.pdf_template || oldInv.document_theme);
+      const docTheme = normalizeInvoicePrintTheme(d.document_theme || d.pdf_template || oldInv.document_theme || oldInv.pdf_template);
       const updatedGodownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
       const updatedPaymentStatus = paymentStatusFor(totalsInfo.totalAmount, Number(oldInv.paid_amount || 0));
 
@@ -1305,7 +1305,7 @@ export async function updateInvoice(req: Request, res: Response) {
           party_name_snapshot = $7, party_gstin_snapshot = $8, party_phone_snapshot = $9, party_email_snapshot = $10,
           billing_address_snapshot = $11, shipping_address_snapshot = $12,
           subtotal = $13, discount_amount = $14, taxable_amount = $15,
-          cgst_amount = $16, sgst_amount = $17, igst_amount = $18, cess_amount = $19, round_off = $20, total_amount = $21,
+          cgst_amount = $16, sgst_amount = $17, igst_amount = $18, cess_amount = $19, round_off = $20, round_off_enabled = $40, total_amount = $21,
           payment_status = $37, notes = $22, external_description = $23, pdf_template = $24, document_theme = $25,
           is_gst_invoice = $26,
           company_bank_account_id = $27, bank_label_snapshot = $28, bank_name_snapshot = $29,
@@ -1355,6 +1355,7 @@ export async function updateInvoice(req: Request, res: Response) {
           updatedPaymentStatus,
           JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : oldInv.custom_fields || {}),
           currencyCode,
+          roundOffEnabled,
         ],
       );
 
@@ -1367,7 +1368,7 @@ export async function updateInvoice(req: Request, res: Response) {
           gst_rate: isGstInvoice ? item.gst_rate : 0,
           cess_rate: isGstInvoice ? item.cess_rate : 0,
         });
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
+        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const half = gstRt / 2;
 
@@ -1700,17 +1701,15 @@ export async function getInvoicePDF(req: Request, res: Response) {
       ? await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2`, [invRes.rows[0].party_id, req.user!.company_id])
       : { rows: [null] };
 
-    const tpl = String(req.query.template || '');
-    const templateOverride = (ALLOWED_PDF_TEMPLATES as readonly string[]).includes(tpl) ? tpl : invRes.rows[0].pdf_template || undefined;
+    const tpl = String(req.query.theme || req.query.template || '');
+    const templateOverride = tpl ? normalizeInvoicePrintTheme(tpl) : undefined;
     if (templateOverride) {
       invRes.rows[0].pdf_template = templateOverride;
     }
-    if ((ALLOWED_DOCUMENT_THEMES as readonly string[]).includes(String(req.query.theme || ''))) {
-      invRes.rows[0].document_theme = String(req.query.theme);
-    }
+    if (templateOverride) invRes.rows[0].document_theme = templateOverride;
 
     const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyForPdf, partyRes.rows[0], itemsRes.rows, {
-      ...(templateOverride ? { templateOverride } : {}),
+      ...(templateOverride ? { themeOverride: templateOverride } : {}),
     });
 
     const inline = String(req.query.inline || '') === '1';
@@ -1969,9 +1968,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body || {};
-    const templateRaw = String(d.template || 'monochrome');
-    const template = ALLOWED_PDF_TEMPLATES.includes(templateRaw as any) ? templateRaw : 'monochrome';
-    const theme = ALLOWED_DOCUMENT_THEMES.includes(String(d.theme || '') as any) ? String(d.theme) : 'executive';
+    const template = normalizeInvoicePrintTheme(d.theme || d.template || d.invoiceTheme);
 
     if (!Array.isArray(d.items) || d.items.length === 0) {
       return res.status(400).json(error('At least one line item is required'));
@@ -2045,7 +2042,8 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       cess_rate: isGstInvoice ? it.cess_rate : 0,
     }));
     const invDisc = Math.round(Number(d.discount_amount) || 0);
-    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc);
+    const roundOffEnabled = d.round_off_enabled === true;
+    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled);
 
     const posRow = d.party_id
       ? await query(`SELECT gstin, billing_state_code, state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
@@ -2076,7 +2074,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     for (let i = 0; i < d.items.length; i++) {
       const item = d.items[i];
       const lineGst = mappedItems[i];
-      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0);
+      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
       pdfRows.push({
         item_name: invoiceLineName(item),
         item_description: item.item_description || item.description || null,
@@ -2111,14 +2109,15 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       sgst_amount: totals.totalSgst,
       igst_amount: totals.totalIgst,
       round_off: totals.roundOff,
+      round_off_enabled: roundOffEnabled,
       total_amount: totals.totalAmount,
       irn: null,
       qr_code_url: null,
       pdf_template: template,
-      document_theme: theme,
+      document_theme: template,
     };
 
-    const pdfBuffer = await generateInvoicePDF(invoice, company, party, pdfRows, { templateOverride: template });
+    const pdfBuffer = await generateInvoicePDF(invoice, company, party, pdfRows, { themeOverride: template });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename=invoice-preview.pdf');
     res.send(pdfBuffer);

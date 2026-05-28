@@ -178,7 +178,7 @@ export async function produceBOM(req: Request, res: Response) {
 
       // 1. Consume raw materials
       for (const bi of bomItemsRes.rows) {
-        const effectiveQty = Math.ceil(Number(bi.quantity) * qtyToProduce * (1 + (Number(bi.wastage_percent) || 0) / 100));
+        const effectiveQty = Number((Number(bi.quantity) * qtyToProduce * (1 + (Number(bi.wastage_percent) || 0) / 100)).toFixed(4));
         const stockRes = await client.query('SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3 FOR UPDATE', [bi.item_id, godownId, companyId]);
         const available = stockRes.rows[0]?.quantity || 0;
         if (available < effectiveQty) throw new Error(`Insufficient stock for "${bi.item_name}". Available: ${available}, required: ${effectiveQty}`);

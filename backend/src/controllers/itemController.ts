@@ -673,8 +673,8 @@ export async function updateItem(req: Request, res: Response) {
 
       if (data.opening_stock !== undefined && nextItemType !== 'service') {
         const trackInventory = nextItemType === 'service' ? false : data.track_inventory !== undefined ? data.track_inventory !== false : old.track_inventory !== false;
-        const nextOpening = Math.trunc(Number(data.opening_stock || 0));
-        const prevOpening = Math.trunc(Number(old.opening_stock || 0));
+        const nextOpening = Number(data.opening_stock || 0);
+        const prevOpening = Number(old.opening_stock || 0);
         const delta = nextOpening - prevOpening;
         if (delta !== 0) {
           if (!trackInventory) {
@@ -728,7 +728,7 @@ export async function deleteItem(req: Request, res: Response) {
     const stockCheck = await query(
       'SELECT COALESCE(SUM(quantity), 0) as total FROM item_stock WHERE item_id = $1', [id]
     );
-    if (parseInt(stockCheck.rows[0].total) > 0) {
+    if (Number(stockCheck.rows[0].total || 0) > 0) {
       return res.status(400).json(error('Cannot delete item with active stock. Adjust stock to zero first.'));
     }
 
@@ -796,8 +796,8 @@ export async function bulkImport(req: Request, res: Response) {
         selling_price: Math.round(Number(row['Selling Price'] || row['selling_price'] || 0) * 100),
         purchase_price: Math.round(Number(row['Purchase Price'] || row['purchase_price'] || 0) * 100),
         gst_rate: parseInt(row['GST Rate'] || row['gst_rate'] || 18),
-        opening_stock: importedIsService ? 0 : parseInt(row['Opening Stock'] || row['opening_stock'] || 0),
-        reorder_point: parseInt(row['Reorder Point'] || row['reorder_point'] || 0),
+        opening_stock: importedIsService ? 0 : Number(row['Opening Stock'] || row['opening_stock'] || 0),
+        reorder_point: Number(row['Reorder Point'] || row['reorder_point'] || 0),
       };
 
       const rowErrors: string[] = [];
