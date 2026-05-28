@@ -13,6 +13,7 @@ import api from '@/lib/api';
 import { currencySymbol, normalizeCurrencyCode, SUPPORTED_CURRENCIES, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 import { companyGstRateOptions, gstRateLabel } from '@/lib/gstRates';
 import { enabledItemCustomFields } from '@/lib/itemCustomFields';
+import { defaultItemTypeForSettings, itemSettingExtraFields, itemTypeOptionsForSettings, normalizeItemSettings } from '@/lib/itemSettings';
 
 
 import { Plus, X, Sparkles } from 'lucide-react';
@@ -27,14 +28,6 @@ interface Props {
   defaultItemType?: string;
 }
 
-const ITEM_TYPES = [
-  { value: 'finished_good', label: 'Finished Good' },
-  { value: 'raw_material', label: 'Raw Material' },
-  { value: 'consumable', label: 'Consumable' },
-  { value: 'product', label: 'Product' },
-  { value: 'service', label: 'Service' },
-];
-
 export default function ItemForm({ open, onOpenChange, item, defaultItemType = 'product' }: Props) {
   const qc = useQueryClient();
   const isEdit = !!item;
@@ -46,10 +39,14 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
   const { data: unitData } = useItemUnits();
   const { data: godownData } = useGodowns();
   const { data: company } = useCompany();
+  const itemSettings = normalizeItemSettings((company as any)?.item_settings);
+  const itemTypeOptions = itemTypeOptionsForSettings(itemSettings);
+  const settingsExtraFields = itemSettingExtraFields(itemSettings);
   const gstRateOptions = companyGstRateOptions(company);
   const categories = catData?.data?.flat || [];
   const units = unitData?.data || [];
   const godowns = godownData?.data || [];
+  const defaultUnit = units.find((u: any) => u.is_default) || units[0];
   const enabledCurrencies = Array.isArray((company as any)?.enabled_currencies)
     ? (company as any).enabled_currencies.map((c: unknown) => normalizeCurrencyCode(c))
     : ['INR'];
@@ -83,11 +80,12 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       setForm({
         name: item.name, description: item.description, sku: item.sku, barcode: item.barcode,
         hsn_code: item.hsn_code, category_id: item.category_id, brand: item.brand,
-        unit_id: item.unit_id, item_type: item.item_type,
+        unit_id: item.unit_id, item_type: item.item_type || defaultItemType,
         track_inventory: item.track_inventory, is_serialized: item.is_serialized,
         purchase_price: (item.purchase_price || 0) / 100, selling_price: (item.selling_price || 0) / 100,
         price_currency_code: normalizeCurrencyCode((item as any).price_currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'),
-        gst_rate: item.gst_rate, tax_preference: item.tax_preference,
+        gst_rate: itemSettings.item_wise_tax ? item.gst_rate : Number((company as any)?.default_gst_rate ?? item.gst_rate ?? 18),
+        tax_preference: itemSettings.item_wise_tax ? item.tax_preference : 'taxable',
         opening_stock: item.opening_stock || 0,
         opening_stock_value: item.opening_stock_value ? paiseToRupees(item.opening_stock_value).toFixed(2) : '',
         godown_id: item.stock?.[0]?.godown_id || '',
@@ -97,13 +95,29 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       setCustomFields(cf);
       setShowWholesalePricing(false);
     } else {
-      const isService = defaultItemType === 'service';
-      setForm({ name: '', item_type: defaultItemType, gst_rate: 18, tax_preference: 'taxable', track_inventory: !isService, is_serialized: false, purchase_price: 0, selling_price: 0, price_currency_code: normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'), opening_stock: 0, opening_stock_value: '', godown_id: '', reorder_point: 0 });
+      const nextType = defaultItemTypeForSettings(itemSettings, defaultItemType);
+      const isService = nextType === 'service';
+      setForm({
+        name: '',
+        item_type: nextType,
+        gst_rate: Number((company as any)?.default_gst_rate ?? 18),
+        tax_preference: 'taxable',
+        track_inventory: itemSettings.stock_maintenance && !isService,
+        is_serialized: false,
+        purchase_price: 0,
+        selling_price: 0,
+        price_currency_code: normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'),
+        opening_stock: 0,
+        opening_stock_value: '',
+        godown_id: '',
+        reorder_point: 0,
+        unit_id: itemSettings.default_unit ? defaultUnit?.id || '' : '',
+      });
       setCustomFields([]);
       setShowWholesalePricing(false);
       setWholesaleTiers([]);
     }
-  }, [item, open, defaultItemType, company]);
+  }, [item, open, defaultItemType, company, defaultUnit?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -133,14 +147,38 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
 
     const data: any = {
       ...form,
-      track_inventory: isService ? false : form.track_inventory,
-      is_serialized: isService ? false : form.is_serialized,
+      track_inventory: isService || (!itemSettings.stock_maintenance && !isEdit) ? false : form.track_inventory,
+      is_serialized: isService || (!itemSettings.serial_tracking && !isEdit) ? false : form.is_serialized,
       opening_stock: isService ? 0 : form.opening_stock,
       purchase_price: Math.round((form.purchase_price || 0) * 100),
       selling_price: Math.round((form.selling_price || 0) * 100),
       price_currency_code: normalizeCurrencyCode(form.price_currency_code),
       opening_stock_value: isService || form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
     };
+    if (!itemSettings.item_wise_tax) {
+      if (isEdit) {
+        delete data.gst_rate;
+        delete data.tax_preference;
+      } else {
+        data.gst_rate = Number((company as any)?.default_gst_rate ?? form.gst_rate ?? 0);
+        data.tax_preference = 'taxable';
+      }
+    }
+    if (!itemSettings.stock_maintenance && isEdit) {
+      delete data.track_inventory;
+      delete data.is_serialized;
+      delete data.opening_stock;
+      delete data.opening_stock_value;
+      delete data.opening_stock_date;
+      delete data.godown_id;
+      delete data.reorder_point;
+      delete data.max_stock_level;
+    }
+    if (!itemSettings.serial_tracking && isEdit) delete data.is_serialized;
+    if (!itemSettings.description) delete data.description;
+    if (!itemSettings.barcode_scan) delete data.barcode;
+    if (!itemSettings.item_category) delete data.category_id;
+    if (!itemSettings.items_unit) delete data.unit_id;
     if (isService) {
       delete data.godown_id;
       delete data.opening_stock_date;
@@ -229,6 +267,10 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
   };
 
   const isBusy = createMutation.isPending || updateMutation.isPending || saveWholesaleTiers.isPending;
+  const quantityStep = itemSettings.quantity_decimal_places > 0 ? `0.${'0'.repeat(itemSettings.quantity_decimal_places - 1)}1` : '1';
+  const visibleItemTypeOptions = itemTypeOptions.some((entry) => entry.value === form.item_type)
+    ? itemTypeOptions
+    : [{ value: form.item_type || 'product', label: String(form.item_type || 'Product').replace(/_/g, ' ') }, ...itemTypeOptions];
 
   /**
    * OCR auto-fill for items:
@@ -253,7 +295,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
         <SheetHeader className="mb-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <SheetTitle>{isEdit ? 'Edit' : 'New'} {form.item_type === 'service' ? 'Service' : 'Product'}</SheetTitle>
+              <SheetTitle>{isEdit ? 'Edit' : 'New'} {form.item_type === 'service' ? 'Service' : 'Item'}</SheetTitle>
               <SheetDescription>{isEdit ? 'Update item details' : 'Add a new item to your inventory'}</SheetDescription>
             </div>
             {!isEdit && (
@@ -287,7 +329,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
               <Label htmlFor="name">Product Name *</Label>
               <Input id="name" className="mt-1 text-base font-medium" placeholder="e.g. Basmati Rice 5kg" value={form.name || ''} onChange={e => update('name', e.target.value)} autoFocus />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className={`grid grid-cols-1 gap-4 ${itemSettings.barcode_scan ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
               <div>
                 <Label>SKU / Item Code</Label>
                 <div className="flex gap-1 mt-1">
@@ -295,11 +337,12 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                   <Button variant="outline" size="icon" title="Auto-generate" onClick={() => update('sku', `SKU-${Date.now().toString(36).toUpperCase()}`)}><Sparkles className="w-3.5 h-3.5" /></Button>
                 </div>
               </div>
-              <div><Label>Barcode</Label><Input className="mt-1 font-mono text-sm" value={form.barcode || ''} onChange={e => update('barcode', e.target.value)} /></div>
+              {itemSettings.barcode_scan && <div><Label>Barcode</Label><Input className="mt-1 font-mono text-sm" value={form.barcode || ''} onChange={e => update('barcode', e.target.value)} /></div>}
               <div><Label>Brand</Label><Input className="mt-1" value={form.brand || ''} onChange={e => update('brand', e.target.value)} /></div>
             </div>
-            <div><Label>Description</Label><textarea rows={3} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none focus:ring-1 focus:ring-ring" value={form.description || ''} onChange={e => update('description', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-4">
+            {itemSettings.description && <div><Label>Description</Label><textarea rows={3} className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none focus:ring-1 focus:ring-ring" value={form.description || ''} onChange={e => update('description', e.target.value)} /></div>}
+            {(itemSettings.item_category || itemSettings.items_unit) && <div className="grid grid-cols-2 gap-4">
+              {itemSettings.item_category && (
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <Label>Category</Label>
@@ -319,6 +362,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                   </div>
                 )}
               </div>
+              )}
+              {itemSettings.items_unit && (
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <Label>Unit</Label>
@@ -339,11 +384,12 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                   </div>
                 )}
               </div>
-            </div>
+              )}
+            </div>}
             <div>
               <Label>Item Type</Label>
               <div className="flex gap-2 mt-1 flex-wrap">
-                {ITEM_TYPES.map(t => (
+                {visibleItemTypeOptions.map(t => (
                   <button key={t.value} onClick={() => update('item_type', t.value)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${form.item_type === t.value ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{t.label}</button>
                 ))}
               </div>
@@ -373,7 +419,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                 {currencySymbol(form.price_currency_code)}{margin.toFixed(2)} profit ({marginPct}% margin)
               </div>
             )}
-            <div>
+            {itemSettings.item_wise_tax && <div>
               <Label>{form.item_type === 'service' ? 'SAC Code' : 'HSN Code'}</Label>
               <Input
                 className="mt-1"
@@ -384,22 +430,22 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
               <a href="https://cbic-gst.gov.in/gst-goods-services-rates.html" target="_blank" className="text-xs text-primary mt-1 inline-block hover:underline">
                 Look up {form.item_type === 'service' ? 'SAC' : 'HSN'} code →
               </a>
-            </div>
-            <div>
+            </div>}
+            {itemSettings.item_wise_tax && <div>
               <Label>GST Rate</Label>
               <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.gst_rate ?? 18} onChange={e => update('gst_rate', parseFloat(e.target.value) || 0)}>
                 {gstRateOptions.map((rate) => <option key={rate} value={rate}>{gstRateLabel(rate)}</option>)}
               </select>
               <p className="text-xs text-muted-foreground mt-1">CGST and SGST apply for local sales; IGST applies for interstate sales.</p>
-            </div>
-            <div>
+            </div>}
+            {itemSettings.item_wise_tax && <div>
               <Label>Tax Preference</Label>
               <select className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm" value={form.tax_preference || 'taxable'} onChange={e => update('tax_preference', e.target.value)}>
                 <option value="taxable">Taxable</option><option value="exempt">Exempt</option>
                 <option value="nil_rated">Nil Rated</option><option value="non_gst">Non-GST</option>
               </select>
-            </div>
-            <div className="pt-2 border-t">
+            </div>}
+            {itemSettings.wholesale_price && <div className="pt-2 border-t">
               <Button
                 type="button"
                 variant="outline"
@@ -485,12 +531,14 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                   </Button>
                 </div>
               )}
-            </div>
+            </div>}
           </TabsContent>
 
           {/* STOCK */}
           <TabsContent value="stock" className="space-y-4">
-            {form.item_type === 'service' ? (
+            {!itemSettings.stock_maintenance ? (
+              <div className="text-center py-8 text-muted-foreground"><p>Stock maintenance is disabled in item settings.</p></div>
+            ) : form.item_type === 'service' ? (
               <div className="text-center py-8 text-muted-foreground"><p>Stock tracking is not applicable for services.</p></div>
             ) : (
               <>
@@ -505,8 +553,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                       <Switch checked={form.is_serialized} onCheckedChange={v => update('is_serialized', v)} />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><Label>Opening Stock</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.opening_stock || ''} onChange={e => update('opening_stock', parseFloat(e.target.value) || 0)} /></div>
-                      <div><Label>Reorder Alert Point</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.reorder_point || ''} onChange={e => update('reorder_point', parseFloat(e.target.value) || 0)} /></div>
+                      <div><Label>Opening Stock</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={quantityStep} value={form.opening_stock || ''} onChange={e => update('opening_stock', parseFloat(e.target.value) || 0)} /></div>
+                      <div><Label>Reorder Alert Point</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={quantityStep} value={form.reorder_point || ''} onChange={e => update('reorder_point', parseFloat(e.target.value) || 0)} /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -529,6 +577,24 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
 
           {/* CUSTOM FIELDS */}
           <TabsContent value="custom" className="space-y-4">
+            {settingsExtraFields.length > 0 && (
+              <div className="rounded-lg border bg-slate-50 p-3">
+                <p className="mb-3 text-sm font-semibold">Fields enabled from item settings</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {settingsExtraFields.map((field) => (
+                    <div key={field.key}>
+                      <Label className="text-xs">{field.label}</Label>
+                      <Input
+                        type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                        className="mt-1"
+                        value={customValue(field.key)}
+                        onChange={(e) => setConfiguredCustomValue(field.key, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {configuredCustomFields.length > 0 && (
               <div className="rounded-lg border bg-slate-50 p-3">
                 <p className="mb-3 text-sm font-semibold">Configured item fields</p>
@@ -548,7 +614,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
               </div>
             )}
             {customFields.map((f, i) => (
-              configuredCustomFields.some((field) => field.id === f.key) ? null : (
+              configuredCustomFields.some((field) => field.id === f.key) || settingsExtraFields.some((field) => field.key === f.key) ? null : (
               <div key={i} className="flex items-center gap-2">
                 <Input placeholder="Field name" value={f.key} onChange={e => { const c = [...customFields]; c[i].key = e.target.value; setCustomFields(c); }} className="flex-1" />
                 <Input placeholder="Value" value={f.value} onChange={e => { const c = [...customFields]; c[i].value = e.target.value; setCustomFields(c); }} className="flex-1" />

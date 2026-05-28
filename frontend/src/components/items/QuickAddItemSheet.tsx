@@ -12,14 +12,8 @@ import { Switch } from '@/components/ui/switch';
 import { Loader2, Sparkles } from 'lucide-react';
 import { companyGstRateOptions, gstRateLabel } from '@/lib/gstRates';
 import { enabledItemCustomFields } from '@/lib/itemCustomFields';
-
-const ITEM_TYPES = [
-  { value: 'product', label: 'Product' },
-  { value: 'service', label: 'Service' },
-  { value: 'raw_material', label: 'Raw material' },
-  { value: 'finished_good', label: 'Finished good' },
-  { value: 'consumable', label: 'Consumable' },
-] as const;
+import { currencySymbol, normalizeCurrencyCode, SUPPORTED_CURRENCIES } from '@/lib/formatters';
+import { defaultItemTypeForSettings, itemSettingExtraFields, itemTypeOptionsForSettings, normalizeItemSettings } from '@/lib/itemSettings';
 
 type Props = {
   open: boolean;
@@ -46,11 +40,18 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
   const { data: unitData } = useItemUnits();
   const { data: godownRes } = useGodowns();
   const { data: company } = useCompany();
+  const itemSettings = normalizeItemSettings((company as any)?.item_settings);
+  const itemTypeOptions = itemTypeOptionsForSettings(itemSettings);
+  const settingsExtraFields = itemSettingExtraFields(itemSettings);
   const gstRateOptions = companyGstRateOptions(company);
 
   const categories = Array.isArray((catData as any)?.data?.flat) ? (catData as any).data.flat : [];
   const units = Array.isArray((unitData as any)?.data) ? (unitData as any).data : [];
   const godowns = godownRes?.data ?? [];
+  const defaultUnit = units.find((u: any) => u.is_default) || units[0];
+  const enabledCurrencies = Array.isArray((company as any)?.enabled_currencies)
+    ? (company as any).enabled_currencies.map((c: unknown) => normalizeCurrencyCode(c))
+    : ['INR'];
   const configuredCustomFields = enabledItemCustomFields((company as any)?.item_custom_fields);
 
   const [name, setName] = useState('');
@@ -64,6 +65,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
   const [isSerialized, setIsSerialized] = useState(false);
   const [sellingRupee, setSellingRupee] = useState('');
   const [purchaseRupee, setPurchaseRupee] = useState('');
+  const [priceCurrencyCode, setPriceCurrencyCode] = useState('INR');
   const [gstRate, setGstRate] = useState<number>(18);
   const [taxPreference, setTaxPreference] = useState<string>('taxable');
   const [cessRate, setCessRate] = useState('');
@@ -86,13 +88,15 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     setDescription('');
     setHsnCode('');
     setCategoryId('');
-    setUnitId('');
-    setItemType('product');
-    setTrackInventory(true);
+    setUnitId(itemSettings.default_unit ? defaultUnit?.id || '' : '');
+    const nextType = defaultItemTypeForSettings(itemSettings, 'product');
+    setItemType(nextType);
+    setTrackInventory(itemSettings.stock_maintenance && nextType !== 'service');
     setIsSerialized(false);
     setSellingRupee('');
     setPurchaseRupee('');
-    setGstRate(18);
+    setPriceCurrencyCode(normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'));
+    setGstRate(Number((company as any)?.default_gst_rate ?? 18));
     setTaxPreference('taxable');
     setCessRate('');
     setOpeningStock('');
@@ -106,7 +110,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     setCustomRows(emptyCustomRows());
     setNewCustomKey('');
     setNewCustomVal('');
-  }, [open, defaultName]);
+  }, [open, defaultName, company, defaultUnit?.id]);
 
   const addCustomRow = () => {
     const k = newCustomKey.trim();
@@ -159,21 +163,26 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     const body: Record<string, unknown> = {
       name: trimmedName,
       item_type: itemType,
-      track_inventory: isService ? false : trackInventory,
-      is_serialized: isService ? false : isSerialized,
+      track_inventory: isService || !itemSettings.stock_maintenance ? false : trackInventory,
+      is_serialized: isService || !itemSettings.serial_tracking ? false : isSerialized,
       gst_rate: gstRate,
       tax_preference: taxPreference,
       selling_price: parseMoneyPaise(sellingRupee),
       purchase_price: parseMoneyPaise(purchaseRupee),
+      price_currency_code: normalizeCurrencyCode(priceCurrencyCode),
     };
+    if (!itemSettings.item_wise_tax) {
+      body.gst_rate = Number((company as any)?.default_gst_rate ?? 0);
+      body.tax_preference = 'taxable';
+    }
 
     const s = sku.trim();
     if (s) body.sku = s;
     const desc = description.trim();
-    if (desc) body.description = desc;
-    if (hsn) body.hsn_code = hsn;
-    if (categoryId) body.category_id = categoryId;
-    if (unitId) body.unit_id = unitId;
+    if (itemSettings.description && desc) body.description = desc;
+    if (itemSettings.item_wise_tax && hsn) body.hsn_code = hsn;
+    if (itemSettings.item_category && categoryId) body.category_id = categoryId;
+    if (itemSettings.items_unit && unitId) body.unit_id = unitId;
     if (sec && sec !== unitId.trim()) {
       body.secondary_unit_id = sec;
       body.unit_conversion_factor = ucf;
@@ -182,7 +191,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     const cess = parseFloat(cessRate);
     if (!Number.isNaN(cess) && cess >= 0) body.cess_rate = cess;
 
-    if (os > 0) body.opening_stock = os;
+    if (itemSettings.stock_maintenance && os > 0) body.opening_stock = os;
     const osv = parseMoneyPaise(openingStockValueRupee);
     if (os > 0 && osv > 0) body.opening_stock_value = osv;
     const osd = openingStockDate.trim();
@@ -279,7 +288,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   </div>
                 </div>
               </div>
-              <div>
+              {itemSettings.description && <div>
                 <Label>Description</Label>
                 <textarea
                   rows={3}
@@ -288,8 +297,9 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   onChange={(e) => setDescription(e.target.value)}
                   disabled={createItem.isPending}
                 />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              </div>}
+              {(itemSettings.item_category || itemSettings.items_unit) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {itemSettings.item_category && (
                 <div>
                   <Label>Category</Label>
                   <select
@@ -306,6 +316,8 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                     ))}
                   </select>
                 </div>
+                )}
+                {itemSettings.items_unit && (
                 <div>
                   <Label>Unit</Label>
                   <select
@@ -322,15 +334,24 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                     ))}
                   </select>
                 </div>
-              </div>
+                )}
+              </div>}
               <div>
                 <Label>Item type</Label>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {ITEM_TYPES.map((t) => (
+                  {itemTypeOptions.map((t) => (
                     <button
                       key={t.value}
                       type="button"
-                      onClick={() => setItemType(t.value)}
+                      onClick={() => {
+                        setItemType(t.value);
+                        if (t.value === 'service') {
+                          setTrackInventory(false);
+                          setIsSerialized(false);
+                        } else if (itemSettings.stock_maintenance) {
+                          setTrackInventory(true);
+                        }
+                      }}
                       disabled={createItem.isPending}
                       className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                         itemType === t.value ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
@@ -344,9 +365,22 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
             </TabsContent>
 
             <TabsContent value="pricing" className="mt-0 space-y-4 pb-2">
+              <div>
+                <Label>Price currency</Label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                  value={priceCurrencyCode}
+                  onChange={(e) => setPriceCurrencyCode(normalizeCurrencyCode(e.target.value))}
+                  disabled={createItem.isPending}
+                >
+                  {SUPPORTED_CURRENCIES.filter((c) => enabledCurrencies.includes(c.code)).map((currency) => (
+                    <option key={currency.code} value={currency.code}>{currency.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <Label>Purchase price (₹)</Label>
+                  <Label>Purchase price ({currencySymbol(priceCurrencyCode)})</Label>
                   <Input
                     type="number"
                     min={0}
@@ -358,7 +392,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   />
                 </div>
                 <div>
-                  <Label>Selling price (₹)</Label>
+                  <Label>Selling price ({currencySymbol(priceCurrencyCode)})</Label>
                   <Input
                     type="number"
                     min={0}
@@ -370,7 +404,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   />
                 </div>
               </div>
-              <div>
+              {itemSettings.item_wise_tax && <div>
                 <Label>{itemType === 'service' ? 'SAC code' : 'HSN code'}</Label>
                 <Input
                   className="mt-1 font-mono text-sm"
@@ -380,8 +414,8 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   placeholder={itemType === 'service' ? 'Service Accounting Code' : 'HSN code'}
                   disabled={createItem.isPending}
                 />
-              </div>
-              <div>
+              </div>}
+              {itemSettings.item_wise_tax && <div>
                 <Label>GST %</Label>
                 <select
                   className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm"
@@ -396,8 +430,8 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   ))}
                 </select>
                 <p className="text-xs text-muted-foreground mt-1">CGST/SGST are used for local sales; IGST is used for interstate sales.</p>
-              </div>
-              <div>
+              </div>}
+              {itemSettings.item_wise_tax && <div>
                 <Label>Tax preference</Label>
                 <select
                   className="mt-1 w-full h-9 rounded-md border bg-transparent px-3 text-sm"
@@ -410,8 +444,8 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   <option value="nil_rated">Nil rated</option>
                   <option value="non_gst">Non-GST</option>
                 </select>
-              </div>
-              <div>
+              </div>}
+              {itemSettings.item_wise_tax && <div>
                 <Label>Cess % (optional)</Label>
                 <Input
                   type="number"
@@ -422,11 +456,13 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   onChange={(e) => setCessRate(e.target.value)}
                   disabled={createItem.isPending}
                 />
-              </div>
+              </div>}
             </TabsContent>
 
             <TabsContent value="stock" className="mt-0 space-y-4 pb-2">
-              {itemType === 'service' ? (
+              {!itemSettings.stock_maintenance ? (
+                <p className="text-sm text-muted-foreground">Stock maintenance is disabled in item settings.</p>
+              ) : itemType === 'service' ? (
                 <p className="text-sm text-muted-foreground">Stock fields do not apply to services.</p>
               ) : (
                 <>
@@ -545,6 +581,22 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
               <div className="border-t pt-3">
                 <Label className="text-sm">Custom fields</Label>
                 <p className="text-xs text-muted-foreground mt-1 mb-2">Optional key–value pairs stored on the item.</p>
+                {settingsExtraFields.length > 0 && (
+                  <div className="mb-3 grid gap-3 rounded-lg border bg-slate-50 p-3 sm:grid-cols-2">
+                    {settingsExtraFields.map((field) => (
+                      <div key={field.key}>
+                        <Label className="text-xs">{field.label}</Label>
+                        <Input
+                          type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                          className="mt-1"
+                          value={customValue(field.key)}
+                          onChange={(e) => setConfiguredCustomValue(field.key, e.target.value)}
+                          disabled={createItem.isPending}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {configuredCustomFields.length > 0 && (
                   <div className="mb-3 grid gap-3 rounded-lg border bg-slate-50 p-3 sm:grid-cols-2">
                     {configuredCustomFields.map((field) => (
@@ -562,7 +614,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                   </div>
                 )}
                 {customRows.map((row, i) => (
-                  configuredCustomFields.some((field) => field.id === row.key) ? null : (
+                  configuredCustomFields.some((field) => field.id === row.key) || settingsExtraFields.some((field) => field.key === row.key) ? null : (
                   <div key={`${row.key}-${i}`} className="flex gap-2 mb-2">
                     <Input value={row.key} readOnly className="flex-1 text-xs" />
                     <Input value={row.value} readOnly className="flex-1 text-xs" />
