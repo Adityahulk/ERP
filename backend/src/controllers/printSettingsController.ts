@@ -50,6 +50,30 @@ const DEFAULT_PRINT_SETTINGS = {
     acknowledgement: false,
   },
   transaction_names: {},
+  reference_invoice: {
+    fields: {
+      eway_bill_no: true,
+      delivery_note: true,
+      mode_terms_payment: true,
+      reference_no_date: true,
+      other_references: true,
+      buyer_order_no: true,
+      buyer_order_date: true,
+      dispatch_doc_no: true,
+      delivery_note_date: true,
+      dispatched_through: true,
+      destination: true,
+      vessel_flight_no: true,
+      receipt_by_shipper: true,
+      port_loading: true,
+      port_discharge: true,
+      terms_delivery: true,
+    },
+    show_item_custom_fields: true,
+    include_eway_appendix: true,
+    declaration: '',
+    terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
+  },
 };
 
 function parseObject(value: unknown): Record<string, any> {
@@ -82,6 +106,14 @@ function normalizeSettings(rawValue: unknown) {
     totals: { ...DEFAULT_PRINT_SETTINGS.totals, ...parseObject(raw.totals) },
     footer: { ...DEFAULT_PRINT_SETTINGS.footer, ...parseObject(raw.footer) },
     transaction_names: { ...DEFAULT_PRINT_SETTINGS.transaction_names, ...parseObject(raw.transaction_names) },
+    reference_invoice: {
+      ...DEFAULT_PRINT_SETTINGS.reference_invoice,
+      ...parseObject(raw.reference_invoice),
+      fields: {
+        ...DEFAULT_PRINT_SETTINGS.reference_invoice.fields,
+        ...parseObject(parseObject(raw.reference_invoice).fields),
+      },
+    },
     invoiceTheme,
   };
 }
@@ -133,6 +165,14 @@ export async function updatePrintSettings(req: Request, res: Response) {
       totals: { ...existing.totals, ...parseObject(incoming.totals) },
       footer: { ...existing.footer, ...parseObject(incoming.footer) },
       transaction_names: { ...existing.transaction_names, ...parseObject(incoming.transaction_names) },
+      reference_invoice: {
+        ...existing.reference_invoice,
+        ...parseObject(incoming.reference_invoice),
+        fields: {
+          ...parseObject(existing.reference_invoice?.fields),
+          ...parseObject(parseObject(incoming.reference_invoice).fields),
+        },
+      },
       invoiceTheme,
     };
     await query(

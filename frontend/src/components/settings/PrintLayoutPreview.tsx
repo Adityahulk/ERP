@@ -13,9 +13,10 @@ export type PrintLayoutId =
   | 'gst-theme-2'
   | 'gst-theme-3'
   | 'gst-theme-4'
-  | 'gst-theme-5';
+  | 'gst-theme-5'
+  | 'reference-tax-eway-theme';
 
-export type PrintLayoutGroup = 'Business' | 'Landscape' | 'GST Style' | 'Tally Style';
+export type PrintLayoutGroup = 'Business' | 'Landscape' | 'GST Style' | 'Tally Style' | 'Reference';
 
 export type PrintLayoutOption = {
   id: PrintLayoutId;
@@ -50,6 +51,7 @@ export const PRINT_LAYOUT_OPTIONS: PrintLayoutOption[] = [
   { id: 'gst-theme-4', label: 'GST Theme 4', group: 'GST Style', orientation: 'portrait' },
   { id: 'gst-theme-5', label: 'GST Theme 5', group: 'GST Style', orientation: 'portrait' },
   { id: 'tally-theme-1', label: 'Tally Theme', group: 'Tally Style', orientation: 'portrait' },
+  { id: 'reference-tax-eway-theme', label: 'Reference Tax + E-Way Theme', group: 'Reference', orientation: 'portrait' },
 ];
 
 export const PRINT_LAYOUT_BY_ID = Object.fromEntries(PRINT_LAYOUT_OPTIONS.map((layout) => [layout.id, layout])) as Record<PrintLayoutId, PrintLayoutOption>;
@@ -93,11 +95,13 @@ export const PRINT_LAYOUT_LEGACY_ID_MAP: Record<string, PrintLayoutId> = {
   gst_theme_10: 'tally-theme-1',
   delivery_theme: 'tally-theme-1',
   double_divine: 'tally-theme-1',
+  reference_tax_eway_theme: 'reference-tax-eway-theme',
+  reference_tax_invoice: 'reference-tax-eway-theme',
 };
 
 export const DEFAULT_PRINT_LAYOUT_COLORS = Object.fromEntries(PRINT_LAYOUT_OPTIONS.map((layout) => [layout.id, '#7C3AED']));
 
-const PRINT_LAYOUT_GROUPS: PrintLayoutGroup[] = ['Business', 'Landscape', 'GST Style', 'Tally Style'];
+const PRINT_LAYOUT_GROUPS: PrintLayoutGroup[] = ['Business', 'Landscape', 'GST Style', 'Tally Style', 'Reference'];
 
 type PreviewColumn = { key: string; label: string };
 
@@ -180,6 +184,7 @@ function LayoutThumbnail({ layoutId }: { layoutId: PrintLayoutId }) {
     'gst-theme-3': 'grid-rows-[18px_14px_1fr_18px]',
     'gst-theme-4': 'grid-rows-[16px_8px_1fr_18px]',
     'gst-theme-5': 'grid-rows-[10px_1fr_14px_12px]',
+    'reference-tax-eway-theme': 'grid-rows-[8px_14px_16px_1fr_10px_16px]',
   }[layoutId];
   return (
     <div className={`grid shrink-0 gap-[3px] rounded border border-[#333] bg-white p-1 ${landscape ? 'h-[60px] w-20' : 'h-[60px] w-12'} ${layoutClass}`}>
@@ -545,6 +550,7 @@ const LAYOUT_COMPONENTS: Record<PrintLayoutId, (props: PreviewProps) => JSX.Elem
   'gst-theme-3': GstTheme3,
   'gst-theme-4': GstTheme4,
   'gst-theme-5': GstTheme5,
+  'reference-tax-eway-theme': TallyTheme,
 };
 
 export function PrintInvoiceLayoutPreview(props: PreviewProps) {

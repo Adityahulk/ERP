@@ -119,6 +119,13 @@ type PrintSettingsState = {
     acknowledgement: boolean;
   };
   transaction_names: Record<string, string | boolean>;
+  reference_invoice: {
+    fields: Record<string, boolean>;
+    show_item_custom_fields: boolean;
+    include_eway_appendix: boolean;
+    declaration: string;
+    terms: string;
+  };
 };
 
 type TaxRateRow = { id: string; label: string; type: 'IGST' | 'CGST' | 'SGST' | 'CESS'; rate: number; active: boolean };
@@ -254,6 +261,27 @@ const TRANSACTION_NAME_FIELDS = [
   ['debit_note', 'Debit Note'],
 ] as const;
 
+const REFERENCE_INVOICE_FIELDS = [
+  ['eway_bill_no', 'e-Way Bill No.'],
+  ['delivery_note', 'Delivery Note'],
+  ['mode_terms_payment', 'Mode/Terms of Payment'],
+  ['reference_no_date', 'Reference No. & Date'],
+  ['other_references', 'Other References'],
+  ['buyer_order_no', "Buyer's Order No."],
+  ['buyer_order_date', "Buyer's Order Date"],
+  ['dispatch_doc_no', 'Dispatch Doc No.'],
+  ['delivery_note_date', 'Delivery Note Date'],
+  ['dispatched_through', 'Dispatched through'],
+  ['destination', 'Destination'],
+  ['vessel_flight_no', 'Vessel/Flight No.'],
+  ['receipt_by_shipper', 'Place of receipt by shipper'],
+  ['port_loading', 'City/Port of Loading'],
+  ['port_discharge', 'City/Port of Discharge'],
+  ['terms_delivery', 'Terms of Delivery'],
+] as const;
+
+const DEFAULT_REFERENCE_FIELD_VISIBILITY = Object.fromEntries(REFERENCE_INVOICE_FIELDS.map(([key]) => [key, true])) as Record<string, boolean>;
+
 const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
   regular: {
     default: true,
@@ -315,6 +343,13 @@ const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
     credit_note: 'Credit Note',
     debit_note: 'Debit Note',
     non_tax_bill: false,
+  },
+  reference_invoice: {
+    fields: DEFAULT_REFERENCE_FIELD_VISIBILITY,
+    show_item_custom_fields: true,
+    include_eway_appendix: true,
+    declaration: '',
+    terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
   },
 };
 
@@ -539,6 +574,7 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
   const itemTable = (raw.item_table || {}) as Partial<PrintSettingsState['item_table']>;
   const totals = (raw.totals || {}) as Partial<PrintSettingsState['totals']>;
   const footer = (raw.footer || {}) as Partial<PrintSettingsState['footer']>;
+  const referenceInvoice = (raw.reference_invoice || {}) as Partial<PrintSettingsState['reference_invoice']>;
   const layoutColors = raw.layout_colors && typeof raw.layout_colors === 'object' && !Array.isArray(raw.layout_colors)
     ? raw.layout_colors as Record<string, unknown>
     : {};
@@ -579,6 +615,18 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
       signature_text: String(footer.signature_text || DEFAULT_PRINT_SETTINGS.footer.signature_text),
     },
     transaction_names: { ...DEFAULT_PRINT_SETTINGS.transaction_names, ...(raw.transaction_names || {}) },
+    reference_invoice: {
+      ...DEFAULT_PRINT_SETTINGS.reference_invoice,
+      ...referenceInvoice,
+      fields: {
+        ...DEFAULT_REFERENCE_FIELD_VISIBILITY,
+        ...(referenceInvoice.fields && typeof referenceInvoice.fields === 'object' ? referenceInvoice.fields : {}),
+      },
+      declaration: String(referenceInvoice.declaration ?? DEFAULT_PRINT_SETTINGS.reference_invoice.declaration),
+      terms: String(referenceInvoice.terms ?? DEFAULT_PRINT_SETTINGS.reference_invoice.terms),
+      show_item_custom_fields: referenceInvoice.show_item_custom_fields !== false,
+      include_eway_appendix: referenceInvoice.include_eway_appendix !== false,
+    },
   };
 }
 
@@ -1244,6 +1292,32 @@ export default function Settings() {
         item_table: { columns },
       };
     });
+  };
+
+  const updateReferenceInvoiceSetting = <K extends keyof PrintSettingsState['reference_invoice']>(
+    key: K,
+    value: PrintSettingsState['reference_invoice'][K],
+  ) => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      reference_invoice: {
+        ...prev.reference_invoice,
+        [key]: value,
+      },
+    }));
+  };
+
+  const toggleReferenceInvoiceField = (key: string, checked: boolean) => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      reference_invoice: {
+        ...prev.reference_invoice,
+        fields: {
+          ...prev.reference_invoice.fields,
+          [key]: checked,
+        },
+      },
+    }));
   };
 
   const savePrintSettings = async () => {
@@ -3125,6 +3199,60 @@ export default function Settings() {
                                  <input type="color" className="h-10 w-12 rounded border bg-white p-1" value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} />
                                  <Input value={documentPrimaryColor} onChange={(e) => setDocumentPrimaryColor(e.target.value)} className="font-mono" />
                               </div>
+                           </div>
+                        </div>
+                        <div className="border-t pt-6 space-y-4">
+                           <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                 <h3 className="font-semibold">Reference Invoice Template Fields</h3>
+                                 <p className="mt-1 text-xs text-slate-500">
+                                    These fields appear on sale invoices only when the Reference Tax + E-Way Theme is selected. Disabled fields stay out of the entry form and print blank in the fixed grid.
+                                 </p>
+                              </div>
+                              <Button type="button" variant="outline" size="sm" onClick={() => setInvoiceTemplate('reference-tax-eway-theme')}>
+                                 Select reference theme
+                              </Button>
+                           </div>
+                           <div className="grid gap-3 lg:grid-cols-2">
+                              {REFERENCE_INVOICE_FIELDS.map(([key, label]) => (
+                                 <label key={key} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                    <span className="min-w-0">{label}</span>
+                                    <Switch checked={printSettings.reference_invoice.fields[key] !== false} onCheckedChange={(checked) => toggleReferenceInvoiceField(key, checked)} />
+                                 </label>
+                              ))}
+                           </div>
+                           <div className="grid gap-3 lg:grid-cols-2">
+                              <label className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                 <span>
+                                    Print item custom fields inside Description of Goods
+                                    <span className="mt-0.5 block text-xs text-slate-500">Keeps the exact fixed columns while showing extra item values.</span>
+                                 </span>
+                                 <Switch checked={printSettings.reference_invoice.show_item_custom_fields} onCheckedChange={(checked) => updateReferenceInvoiceSetting('show_item_custom_fields', checked)} />
+                              </label>
+                              <label className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2 text-sm">
+                                 <span>
+                                    Include e-Way Bill appendix
+                                    <span className="mt-0.5 block text-xs text-slate-500">Prints the second page when e-Way Bill details are present.</span>
+                                 </span>
+                                 <Switch checked={printSettings.reference_invoice.include_eway_appendix} onCheckedChange={(checked) => updateReferenceInvoiceSetting('include_eway_appendix', checked)} />
+                              </label>
+                           </div>
+                           <div className="grid gap-3 lg:grid-cols-2">
+                              <label className="text-sm font-medium text-slate-700">Declaration
+                                 <textarea
+                                    className="mt-1 min-h-[88px] w-full rounded-md border bg-white p-3 text-sm"
+                                    value={printSettings.reference_invoice.declaration}
+                                    onChange={(e) => updateReferenceInvoiceSetting('declaration', e.target.value)}
+                                    placeholder="Optional declaration printed above terms"
+                                 />
+                              </label>
+                              <label className="text-sm font-medium text-slate-700">Reference Terms & Conditions
+                                 <textarea
+                                    className="mt-1 min-h-[88px] w-full rounded-md border bg-white p-3 text-sm"
+                                    value={printSettings.reference_invoice.terms}
+                                    onChange={(e) => updateReferenceInvoiceSetting('terms', e.target.value)}
+                                 />
+                              </label>
                            </div>
                         </div>
                         <div className="border-t pt-6 space-y-3 max-w-2xl">

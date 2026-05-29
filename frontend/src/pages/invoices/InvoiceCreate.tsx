@@ -54,6 +54,25 @@ const GST_STATE_OPTIONS = [
 const INVOICE_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
 const INVOICE_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
 
+const REFERENCE_INVOICE_FIELDS = [
+  ['eway_bill_no', 'e-Way Bill No.'],
+  ['delivery_note', 'Delivery Note'],
+  ['mode_terms_payment', 'Mode/Terms of Payment'],
+  ['reference_no_date', 'Reference No. & Date'],
+  ['other_references', 'Other References'],
+  ['buyer_order_no', "Buyer's Order No."],
+  ['buyer_order_date', "Buyer's Order Date"],
+  ['dispatch_doc_no', 'Dispatch Doc No.'],
+  ['delivery_note_date', 'Delivery Note Date'],
+  ['dispatched_through', 'Dispatched through'],
+  ['destination', 'Destination'],
+  ['vessel_flight_no', 'Vessel/Flight No.'],
+  ['receipt_by_shipper', 'Place of receipt by shipper'],
+  ['port_loading', 'City/Port of Loading'],
+  ['port_discharge', 'City/Port of Discharge'],
+  ['terms_delivery', 'Terms of Delivery'],
+] as const;
+
 type SalesCustomFieldDef = {
   id: string;
   label: string;
@@ -130,6 +149,16 @@ function defaultLayoutColor(company: any, layoutId: string) {
   );
 }
 
+function referenceInvoiceSettings(company: any) {
+  const settings = companyPrintSettings(company);
+  const reference = settings.reference_invoice && typeof settings.reference_invoice === 'object' ? settings.reference_invoice : {};
+  const fields = reference.fields && typeof reference.fields === 'object' ? reference.fields : {};
+  return {
+    fields,
+    enabledKeys: REFERENCE_INVOICE_FIELDS.map(([key]) => key).filter((key) => fields[key] !== false),
+  };
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: routeParamId } = useParams();
@@ -173,7 +202,7 @@ export default function InvoiceCreate() {
 
   const [notes, setNotes] = useState('');
   const [externalDescription, setExternalDescription] = useState('');
-  const [customFields, setCustomFields] = useState<Record<string, string>>({});
+  const [customFields, setCustomFields] = useState<Record<string, any>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentEditorRow[]>([newPaymentEditorRow()]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [items, setItems] = useState<VyaparLineItem[]>([]);
@@ -184,6 +213,18 @@ export default function InvoiceCreate() {
 
   const invoiceCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'invoice'), [company]);
   const itemCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'item'), [company]);
+  const referenceSettings = useMemo(() => referenceInvoiceSettings(company), [company]);
+  const selectedReferenceValues = (customFields.reference_invoice && typeof customFields.reference_invoice === 'object' ? customFields.reference_invoice : {}) as Record<string, string>;
+  const referenceTemplateSelected = pdfTemplate === 'reference-tax-eway-theme';
+  const updateReferenceValue = (key: string, value: string) => {
+    setCustomFields((prev) => ({
+      ...prev,
+      reference_invoice: {
+        ...(prev.reference_invoice && typeof prev.reference_invoice === 'object' ? prev.reference_invoice : {}),
+        [key]: value,
+      },
+    }));
+  };
   const enabledCurrencies = useMemo(() => {
     const raw = Array.isArray((company as any)?.enabled_currencies) ? (company as any).enabled_currencies : ['INR'];
     const normalized = raw.map((c: unknown) => normalizeCurrencyCode(c)).filter((c: CurrencyCode, idx: number, arr: CurrencyCode[]) => arr.indexOf(c) === idx);
@@ -243,7 +284,7 @@ export default function InvoiceCreate() {
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setExternalDescription(String(inv.external_description || ''));
-    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
+    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, any>);
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
     setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
@@ -294,7 +335,7 @@ export default function InvoiceCreate() {
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setExternalDescription(String(inv.external_description || ''));
-    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, string>);
+    setCustomFields((inv.custom_fields && typeof inv.custom_fields === 'object' ? inv.custom_fields : {}) as Record<string, any>);
     setPaymentRows([newPaymentEditorRow()]);
     setInvoiceFiles([]);
     setPdfTemplate(normalizeInvoiceThemeId(inv.pdf_template));
@@ -960,6 +1001,28 @@ export default function InvoiceCreate() {
                     className="mt-1"
                     value={customFields[field.id] || ''}
                     onChange={(e) => setCustomFields((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
+          </TransactionSection>
+        )}
+
+        {referenceTemplateSelected && referenceSettings.enabledKeys.length > 0 && (
+          <TransactionSection
+            title="Reference Invoice Details"
+            description="Fields enabled in Invoice Settings for the Reference Tax + E-Way template."
+            compact
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              {REFERENCE_INVOICE_FIELDS.filter(([key]) => referenceSettings.enabledKeys.includes(key)).map(([key, label]) => (
+                <div key={key}>
+                  <Label className="text-xs">{label}</Label>
+                  <Input
+                    className="mt-1 h-9"
+                    value={selectedReferenceValues[key] || ''}
+                    onChange={(e) => updateReferenceValue(key, e.target.value)}
+                    placeholder={label}
                   />
                 </div>
               ))}

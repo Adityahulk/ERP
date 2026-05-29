@@ -360,6 +360,7 @@ const PRINT_LAYOUT_THEME: Record<string, string> = {
   'gst-theme-3': 'executive',
   'gst-theme-4': 'slate',
   'gst-theme-5': 'forest',
+  'reference-tax-eway-theme': 'minimal',
   micro_theme_1: 'classic',
   micro_theme_2: 'modern',
   micro_theme_3: 'executive',
@@ -394,6 +395,7 @@ const PRINT_LAYOUT_KIND: Record<string, string> = {
   'gst-theme-3': 'performa',
   'gst-theme-4': 'monochrome',
   'gst-theme-5': 'standard',
+  'reference-tax-eway-theme': 'reference',
   micro_theme_1: 'standard',
   micro_theme_2: 'simple',
   micro_theme_3: 'performa',
@@ -477,6 +479,30 @@ const DEFAULT_PRINT_SETTINGS = {
     debit_note: 'Debit Note',
     non_tax_bill: false,
   },
+  reference_invoice: {
+    fields: {
+      eway_bill_no: true,
+      delivery_note: true,
+      mode_terms_payment: true,
+      reference_no_date: true,
+      other_references: true,
+      buyer_order_no: true,
+      buyer_order_date: true,
+      dispatch_doc_no: true,
+      delivery_note_date: true,
+      dispatched_through: true,
+      destination: true,
+      vessel_flight_no: true,
+      receipt_by_shipper: true,
+      port_loading: true,
+      port_discharge: true,
+      terms_delivery: true,
+    },
+    show_item_custom_fields: true,
+    include_eway_appendix: true,
+    declaration: '',
+    terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
+  },
 };
 
 type PrintSettings = typeof DEFAULT_PRINT_SETTINGS;
@@ -512,6 +538,14 @@ function resolvePrintSettings(company: any): PrintSettings {
     totals: { ...DEFAULT_PRINT_SETTINGS.totals, ...parseObject(raw.totals) },
     footer: { ...DEFAULT_PRINT_SETTINGS.footer, ...parseObject(raw.footer) },
     transaction_names: { ...DEFAULT_PRINT_SETTINGS.transaction_names, ...parseObject(raw.transaction_names) },
+    reference_invoice: {
+      ...DEFAULT_PRINT_SETTINGS.reference_invoice,
+      ...parseObject(raw.reference_invoice),
+      fields: {
+        ...DEFAULT_PRINT_SETTINGS.reference_invoice.fields,
+        ...parseObject(parseObject(raw.reference_invoice).fields),
+      },
+    },
   };
 }
 
@@ -626,6 +660,226 @@ function totalsRows(invoice: any, currencyCode: string, settings: PrintSettings)
     .filter(([, amount], idx) => idx < 3 || amount !== 0)
     .map(([label, amount]) => `<div class="total-row"><span>${escapeHtml(label)}</span><b>${printMoney(amount, currencyCode, settings)}</b></div>`)
     .join('');
+}
+
+function formatReferenceDate(value: unknown): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(d.getTime())) return escapeHtml(String(value));
+  const day = String(d.getDate()).padStart(2, '0');
+  const mon = d.toLocaleString('en-IN', { month: 'short', timeZone: 'Asia/Kolkata' });
+  const yr = String(d.getFullYear()).slice(-2);
+  return `${day}-${mon}-${yr}`;
+}
+
+function referenceInvoiceCustomDefs(company: any): Array<{ id: string; label: string }> {
+  const sales = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
+  const item = Array.isArray(company?.item_custom_fields) ? company.item_custom_fields : [];
+  const seen = new Set<string>();
+  return [...sales, ...item]
+    .map((field: any) => ({
+      id: String(field?.id || field?.key || '').trim(),
+      label: String(field?.label || field?.id || field?.key || '').trim(),
+      enabled: field?.enabled !== false,
+      show: field?.show_in_print !== false,
+    }))
+    .filter((field) => {
+      if (!field.id || !field.label || !field.enabled || !field.show || seen.has(field.id)) return false;
+      seen.add(field.id);
+      return true;
+    });
+}
+
+function referenceItemDescription(it: any, company: any, settings: PrintSettings): string {
+  const description = multilineHtml(it.item_description || it.description || '');
+  const custom = parseObject(it.custom_fields);
+  const customLines = settings.reference_invoice.show_item_custom_fields === false
+    ? ''
+    : referenceInvoiceCustomDefs(company)
+        .map((field) => {
+          const value = String(custom[field.id] ?? '').trim();
+          return value ? `<div class="ref-custom-line"><span>${escapeHtml(field.label)}:</span> ${escapeHtml(value)}</div>` : '';
+        })
+        .join('');
+  return `<b>${escapeHtml(it.item_name || it.name || 'Item')}</b>${description ? `<div class="ref-desc">${description}</div>` : ''}${customLines}`;
+}
+
+function referenceMoney(paise: unknown): string {
+  return fmtPaise(Number(paise || 0));
+}
+
+function referenceWordsFromPaise(paise: unknown): string {
+  const rupees = Math.round(Number(paise || 0) / 100);
+  return amountToWordsINR(rupees)
+    .replace(/^Rupees\s+/i, '')
+    .replace(/\s+Only$/i, ' Only')
+    .trim();
+}
+
+function referenceFieldEnabled(settings: PrintSettings, key: string): boolean {
+  return parseObject(settings.reference_invoice?.fields)[key] !== false;
+}
+
+function referenceFieldValue(settings: PrintSettings, values: Record<string, any>, key: string, fallback: unknown = ''): string {
+  if (!referenceFieldEnabled(settings, key)) return '';
+  return String(values[key] ?? fallback ?? '').trim();
+}
+
+function referenceTaxSummary(items: any[], invoice: any): string {
+  const grouped = new Map<string, { taxable: number; cgst: number; sgst: number; igst: number; cess: number; cgstRate: number; sgstRate: number; igstRate: number }>();
+  for (const it of items) {
+    const hsn = String(it.hsn_code || '').trim() || '—';
+    const existing = grouped.get(hsn) || { taxable: 0, cgst: 0, sgst: 0, igst: 0, cess: 0, cgstRate: 0, sgstRate: 0, igstRate: 0 };
+    existing.taxable += Number(it.taxable_amount || 0);
+    existing.cgst += Number(it.cgst_amount || 0);
+    existing.sgst += Number(it.sgst_amount || 0);
+    existing.igst += Number(it.igst_amount || 0);
+    existing.cess += Number(it.cess_amount || 0);
+    existing.cgstRate = Number(it.cgst_rate || existing.cgstRate || 0);
+    existing.sgstRate = Number(it.sgst_rate || existing.sgstRate || 0);
+    existing.igstRate = Number(it.igst_rate || existing.igstRate || 0);
+    grouped.set(hsn, existing);
+  }
+  const rows = Array.from(grouped.entries());
+  const body = rows.map(([hsn, row]) => {
+    const totalTax = row.cgst + row.sgst + row.igst + row.cess;
+    return `<tr>
+      <td>${escapeHtml(hsn)}</td>
+      <td class="num">${referenceMoney(row.taxable)}</td>
+      <td class="num">${row.igst ? '' : `${row.cgstRate.toFixed(2)}%`}</td>
+      <td class="num">${referenceMoney(row.cgst)}</td>
+      <td class="num">${row.igst ? `${row.igstRate.toFixed(2)}%` : `${row.sgstRate.toFixed(2)}%`}</td>
+      <td class="num">${referenceMoney(row.sgst + row.igst)}</td>
+      <td class="num">${referenceMoney(totalTax)}</td>
+    </tr>`;
+  }).join('');
+  const totalTaxable = rows.reduce((sum, [, row]) => sum + row.taxable, 0) || Number(invoice.taxable_amount || 0);
+  const totalCgst = rows.reduce((sum, [, row]) => sum + row.cgst, 0) || Number(invoice.cgst_amount || 0);
+  const totalSgstIgst = rows.reduce((sum, [, row]) => sum + row.sgst + row.igst, 0) || Number(invoice.sgst_amount || 0) + Number(invoice.igst_amount || 0);
+  const totalTax = totalCgst + totalSgstIgst + rows.reduce((sum, [, row]) => sum + row.cess, 0);
+  return `<table class="ref-tax-summary">
+    <thead>
+      <tr><th rowspan="2">HSN/SAC</th><th rowspan="2">Taxable<br/>Value</th><th colspan="2">CGST</th><th colspan="2">SGST/UTGST</th><th>Total<br/>Tax Amount</th></tr>
+      <tr><th>Rate</th><th>Amount</th><th>Rate</th><th>Amount</th><th></th></tr>
+    </thead>
+    <tbody>${body}
+      <tr class="ref-total-row"><td>Total</td><td class="num">${referenceMoney(totalTaxable)}</td><td></td><td class="num">${referenceMoney(totalCgst)}</td><td></td><td class="num">${referenceMoney(totalSgstIgst)}</td><td class="num">${referenceMoney(totalTax)}</td></tr>
+    </tbody>
+  </table>`;
+}
+
+function buildReferenceTaxInvoiceHtml(args: {
+  invoice: any;
+  company: any;
+  party: any | null;
+  items: any[];
+  printSettings: PrintSettings;
+}) {
+  const { invoice, company, party, items, printSettings } = args;
+  const refValues = parseObject(parseObject(invoice.custom_fields).reference_invoice);
+  const ewayDetails = { ...parseObject(invoice.eway_bill_details), ...parseObject(refValues.eway_details) };
+  const ewayNo = referenceFieldValue(printSettings, refValues, 'eway_bill_no', invoice.eway_bill_no || ewayDetails.ewb_no);
+  const sellerName = companyLegalDisplayName(company);
+  const sellerGstin = String(company.gstin || '').trim();
+  const sellerStateCode = stateCodeFromGstin(sellerGstin) || String(company.state_code || '').slice(0, 2);
+  const sellerStateName = GST_STATE_NAMES[sellerStateCode] || company.state || '';
+  const buyerName = invoice.party_name_snapshot || party?.name || 'Customer';
+  const buyerGstin = invoice.party_gstin_snapshot || party?.gstin || '';
+  const buyerStateCode = stateCodeFromGstin(buyerGstin) || String(invoice.place_of_supply || party?.billing_state_code || party?.state_code || '').slice(0, 2);
+  const buyerStateName = GST_STATE_NAMES[buyerStateCode] || party?.billing_state || party?.state || '';
+  const billingAddress = invoice.billing_address_snapshot || buyerAddress(party) || '';
+  const shippingAddress = invoice.shipping_address_snapshot || party?.shipping_address || billingAddress;
+  const amountWords = referenceWordsFromPaise(invoice.total_amount);
+  const taxWords = referenceWordsFromPaise(Number(invoice.cgst_amount || 0) + Number(invoice.sgst_amount || 0) + Number(invoice.igst_amount || 0) + Number(invoice.cess_amount || 0));
+  const currency = currencySymbol(invoice.currency_code || 'INR');
+  const totalQty = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+  const firstUnit = items.find((it) => it.unit)?.unit || '';
+  const refItemHeight = Math.max(18, Math.min(70, 70 / Math.max(items.length, 1)));
+  const itemRows = items.map((it, index) => {
+    const taxLabelBlock = index === 0
+      ? `<div class="ref-tax-lines"><b>CGST</b><b>SGST</b>${Number(invoice.round_off || 0) ? '<b>Round Off</b>' : ''}</div>`
+      : '';
+    const taxAmountBlock = index === 0
+      ? `<div class="ref-tax-amounts"><b>${referenceMoney(invoice.cgst_amount)}</b><b>${referenceMoney(invoice.sgst_amount || invoice.igst_amount)}</b>${Number(invoice.round_off || 0) ? `<b>${referenceMoney(invoice.round_off)}</b>` : ''}</div>`
+      : '';
+    return `<tr class="ref-item-row" style="height:${refItemHeight}mm">
+      <td class="center">${index + 1}</td>
+      <td>${referenceItemDescription(it, company, printSettings)}${taxLabelBlock}</td>
+      <td class="center">${escapeHtml(it.hsn_code || '')}</td>
+      <td class="num"><b>${fmtQty(it.quantity)} ${escapeHtml(it.unit || '')}</b></td>
+      <td class="num">${referenceMoney(it.unit_price)}</td>
+      <td class="center">${escapeHtml(it.unit || '')}</td>
+      <td class="num"><b>${referenceMoney(it.taxable_amount || it.total_amount)}</b>${taxAmountBlock}</td>
+    </tr>`;
+  }).join('');
+  const declaration = String(refValues.declaration || printSettings.reference_invoice.declaration || '').trim();
+  const terms = String(refValues.terms || printSettings.reference_invoice.terms || invoice.terms_and_conditions || company.terms_and_conditions || '').trim();
+  const ewayAppendix = printSettings.reference_invoice.include_eway_appendix !== false && ewayNo
+    ? `<main class="ref-eway-page">
+        <h2>e-Way Bill</h2>
+        <div class="ref-eway-head">
+          <div><p><span>Doc No.</span> : <b>Tax Invoice - ${escapeHtml(invoice.invoice_number || '')}</b></p><p><span>Date</span> : <b>${formatReferenceDate(invoice.invoice_date)}</b></p></div>
+          <div class="ref-eway-qr"><b>e-Way Bill</b>${invoice.__eway_qr_src ? `<img src="${invoice.__eway_qr_src}" />` : ''}</div>
+        </div>
+        <div class="ref-eway-rule"></div>
+        <section class="ref-eway-section">
+          <h3>1. e-Way Bill Details</h3>
+          <div class="ref-eway-detail-grid">
+            <p><span>e-Way Bill No.</span> : <b>${escapeHtml(ewayNo)}</b></p>
+            <p><span>Mode</span> : <b>${escapeHtml(String(ewayDetails.mode || ewayDetails.transport_mode || refValues.transport_mode || ''))}</b></p>
+            <p><span>Generated Date</span> : <b>${escapeHtml(formatReferenceDate(ewayDetails.generated_date || invoice.eway_bill_date))}</b></p>
+            <p><span>Generated By</span> : <b>${escapeHtml(String(ewayDetails.generated_by || sellerGstin))}</b></p>
+            <p><span>Approx Distance</span> : <b>${escapeHtml(String(ewayDetails.distance_km || ewayDetails.distance || refValues.distance_km || ''))}${ewayDetails.distance_km || refValues.distance_km ? ' KM' : ''}</b></p>
+            <p><span>Valid Upto</span> : <b>${escapeHtml(formatReferenceDate(ewayDetails.valid_upto || invoice.eway_bill_valid_upto))}</b></p>
+            <p><span>Supply Type</span> : <b>${escapeHtml(String(ewayDetails.supply_type || 'Outward-Supply'))}</b></p>
+            <p><span>Transaction Type</span> : <b>${escapeHtml(String(ewayDetails.transaction_type || 'Regular'))}</b></p>
+          </div>
+        </section>
+        <div class="ref-eway-rule"></div>
+        <section class="ref-eway-section">
+          <h3>2. Address Details</h3>
+          <div class="ref-eway-address-grid">
+            <div><b>From</b><br/>${escapeHtml(sellerName)}<br/>${addressHtml(companyAddress(company))}</div>
+            <div><b>To</b><br/>${escapeHtml(buyerName)}<br/>${addressHtml(shippingAddress || billingAddress)}</div>
+          </div>
+        </section>
+      </main>`
+    : '';
+
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    @page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:8.35px;line-height:1.04}.ref-page{width:100%;min-height:281mm;padding:15mm 15mm 5mm}.ref-title{text-align:center;font-size:12px;font-weight:700;margin:0 0 -1px}.ref-grid,.ref-grid td,.ref-grid th,.ref-tax-summary,.ref-tax-summary td,.ref-tax-summary th{border:.75px solid #000;border-collapse:collapse}.ref-grid{width:100%;table-layout:fixed}.ref-grid td,.ref-grid th{padding:2px 4px;vertical-align:top}.ref-top-grid{height:88mm}.ref-firm{font-size:10.25px;font-weight:700;letter-spacing:.01em}.ref-left-block{padding:2px 4px;overflow:hidden}.ref-seller{height:21mm}.ref-consignee{height:31mm;border-top:.75px solid #000}.ref-buyer{height:36mm;border-top:.75px solid #000}.ref-party-title{font-size:8.4px;margin:0 0 2px}.ref-party-name{font-weight:700;font-size:9.3px}.ref-meta{width:100%;height:88mm;border-collapse:collapse;table-layout:fixed}.ref-meta td{border:.75px solid #000;padding:2px 4px;height:8mm;overflow:hidden}.ref-meta tr:first-child td{height:9mm}.ref-meta tr:nth-child(9) td{height:23mm}.ref-label{display:block;color:#000;font-size:8px}.ref-value{font-weight:700}.ref-items{width:100%;border-collapse:collapse;border-left:.75px solid #000;border-right:.75px solid #000;table-layout:fixed}.ref-items th,.ref-items td{border:.75px solid #000;padding:3px 4px;vertical-align:top}.ref-items th{text-align:center;font-weight:400;height:8mm}.center{text-align:center}.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.ref-desc,.ref-custom-line{font-size:7.9px;margin-top:1px}.ref-custom-line span{font-weight:700}.ref-tax-lines{margin-top:23mm;text-align:right;padding-right:10px;display:grid;gap:3px;font-style:italic;font-size:9px}.ref-tax-amounts{margin-top:23mm;display:grid;gap:3px}.ref-total-line td{height:6mm}.ref-total-row{font-weight:700}.ref-total-row td{font-weight:700}.ref-words{border-left:.75px solid #000;border-right:.75px solid #000;border-bottom:.75px solid #000;padding:2px 4px;min-height:6mm}.ref-tax-summary{width:100%;text-align:center;table-layout:fixed}.ref-tax-summary th,.ref-tax-summary td{padding:1.5px 4px;height:4.5mm}.ref-bottom{display:grid;grid-template-columns:1fr 1fr;border-left:.75px solid #000;border-right:.75px solid #000;border-bottom:.75px solid #000}.ref-bottom>div{min-height:19mm;padding:2px 4px}.ref-sign{border-left:.75px solid #000;text-align:right;display:flex;flex-direction:column;justify-content:space-between;padding-top:5px!important}.ref-computer{text-align:center;margin-top:4px;font-size:8.4px}.ref-eway-page{page-break-before:always;padding:25mm 12mm 8mm;font-size:9.5px;line-height:1.16}.ref-eway-page h2{text-align:center;text-decoration:underline;font-size:13px;margin:0 0 26px}.ref-eway-head{display:grid;grid-template-columns:1fr 170px;align-items:start;margin:0 0 18px;min-height:42mm}.ref-eway-head span{display:inline-block;width:58px}.ref-eway-qr{text-align:center;font-size:9px}.ref-eway-qr img{display:block;width:130px;height:130px;margin:9px auto}.ref-eway-rule{border-top:.75px solid #000;margin:8px 0}.ref-eway-section h3{font-size:9.5px;margin:0 0 8px}.ref-eway-detail-grid{display:grid;grid-template-columns:1fr 1fr 1.15fr;column-gap:18px;row-gap:4px}.ref-eway-detail-grid p{margin:0}.ref-eway-detail-grid span{display:inline-block;width:72px}.ref-eway-address-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;min-height:34mm}
+  </style></head><body>
+    <main class="ref-page">
+      <h1 class="ref-title">Tax Invoice</h1>
+      <table class="ref-grid ref-top-grid"><tr>
+        <td style="width:50%;padding:0">
+          <div class="ref-left-block ref-seller"><div class="ref-firm">${escapeHtml(sellerName)}</div>${addressHtml(companyAddress(company))}<br/>GSTIN/UIN: ${escapeHtml(sellerGstin)}<br/>State Name : ${escapeHtml(sellerStateName)}, Code : ${escapeHtml(sellerStateCode)}</div>
+          <div class="ref-left-block ref-consignee"><div class="ref-party-title">Consignee (Ship to)</div><div class="ref-party-name">${escapeHtml(buyerName)}</div>${addressHtml(shippingAddress)}<br/>GSTIN/UIN : ${escapeHtml(buyerGstin)}<br/>State Name : ${escapeHtml(buyerStateName)}, Code : ${escapeHtml(buyerStateCode)}</div>
+          <div class="ref-left-block ref-buyer"><div class="ref-party-title">Buyer (Bill to)</div><div class="ref-party-name">${escapeHtml(buyerName)}</div>${addressHtml(billingAddress)}<br/>GSTIN/UIN : ${escapeHtml(buyerGstin)}<br/>State Name : ${escapeHtml(buyerStateName)}, Code : ${escapeHtml(buyerStateCode)}<br/>Place of Supply : ${escapeHtml(buyerStateName || String(invoice.place_of_supply || ''))}</div>
+        </td>
+        <td style="width:50%;padding:0">
+          <table class="ref-meta">
+            <tr><td><span class="ref-label">Invoice No.</span><span class="ref-value">${escapeHtml(invoice.invoice_number || '')}</span></td><td><span class="ref-label">e-Way Bill No.</span><span class="ref-value">${escapeHtml(ewayNo)}</span></td><td><span class="ref-label">Dated</span><span class="ref-value">${formatReferenceDate(invoice.invoice_date)}</span></td></tr>
+            <tr><td><span class="ref-label">Delivery Note</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'delivery_note'))}</td><td colspan="2"><span class="ref-label">Mode/Terms of Payment</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'mode_terms_payment'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">Reference No. & Date.</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'reference_no_date'))}</td><td><span class="ref-label">Other References</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'other_references'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">Buyer's Order No.</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'buyer_order_no'))}</td><td><span class="ref-label">Dated</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'buyer_order_date'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">Dispatch Doc No.</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'dispatch_doc_no'))}</td><td><span class="ref-label">Delivery Note Date</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'delivery_note_date'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">Dispatched through</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'dispatched_through'))}</td><td><span class="ref-label">Destination</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'destination'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">Vessel/Flight No.</span><span class="ref-value">${escapeHtml(referenceFieldValue(printSettings, refValues, 'vessel_flight_no'))}</span></td><td><span class="ref-label">Place of receipt by shipper:</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'receipt_by_shipper'))}</td></tr>
+            <tr><td colspan="2"><span class="ref-label">City/Port of Loading</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'port_loading'))}</td><td><span class="ref-label">City/Port of Discharge</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'port_discharge'))}</td></tr>
+            <tr><td colspan="3" style="height:35mm"><span class="ref-label">Terms of Delivery</span>${escapeHtml(referenceFieldValue(printSettings, refValues, 'terms_delivery'))}</td></tr>
+          </table>
+        </td>
+      </tr></table>
+      <table class="ref-items"><thead><tr><th style="width:5mm">Sl<br/>No</th><th>Description of Goods</th><th style="width:20mm">HSN/SAC</th><th style="width:24mm">Quantity</th><th style="width:20mm">Rate</th><th style="width:9mm">per</th><th style="width:30mm">Amount</th></tr></thead><tbody>${itemRows}<tr class="ref-total-line"><td></td><td class="num">Total</td><td></td><td class="num"><b>${fmtQty(totalQty)} ${escapeHtml(firstUnit)}</b></td><td></td><td></td><td class="num"><b>${currency} ${referenceMoney(invoice.total_amount)}</b></td></tr></tbody></table>
+      <div class="ref-words"><span>Amount Chargeable (in words)</span><span style="float:right"><i>E. & O.E</i></span><br/><b>INR ${escapeHtml(amountWords)}</b></div>
+      ${referenceTaxSummary(items, invoice)}
+      <div class="ref-words">Tax Amount (in words) : <b>INR ${escapeHtml(taxWords)}</b></div>
+      <div class="ref-bottom"><div><b>Declaration</b><br/>${multilineHtml(declaration)}<br/><b>Terms & Condition :</b><br/>${multilineHtml(terms)}</div><div class="ref-sign"><b>for ${escapeHtml(sellerName)}</b><span>Authorised Signatory</span></div></div>
+      <div class="ref-computer">This is a Computer Generated Invoice</div>
+    </main>
+    ${ewayAppendix}
+  </body></html>`;
 }
 
 function buildInvoiceHtml(args: {
@@ -883,6 +1137,28 @@ export async function generateInvoicePDF(
 
   const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
   const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  if (kind === 'reference') {
+    const ewayNo = String(invoice.eway_bill_no || parseObject(invoice.eway_bill_details).ewb_no || parseObject(parseObject(invoice.custom_fields).reference_invoice).eway_bill_no || '').trim();
+    if (ewayNo) {
+      invoice.__eway_qr_src = await QRCode.toDataURL(JSON.stringify({
+        ewbNo: ewayNo,
+        docNo: invoice.invoice_number,
+        date: invoice.invoice_date,
+        total: Number(invoice.total_amount || 0) / 100,
+      }), { width: 180, margin: 1 });
+    }
+    const html = buildReferenceTaxInvoiceHtml({ invoice, company, party, items, printSettings: effectivePrintSettings });
+    const browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+    });
+    await browser.close();
+    return Buffer.from(pdf);
+  }
 
   const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
   const browser = await launchBrowser();

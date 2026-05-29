@@ -2089,6 +2089,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
         sgst_amount: taxInfo.totalSgst,
         igst_amount: taxInfo.totalIgst,
         total_amount: taxInfo.totalAmount,
+        custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
       });
     }
 
@@ -2423,9 +2424,25 @@ export async function generateEwayBill(req: Request, res: Response) {
            eway_bill_date = $2,
            eway_bill_valid_upto = $3,
            eway_bill_status = 'generated',
+           eway_bill_details = $4::jsonb,
            updated_at = now()
-       WHERE id = $4 AND company_id = $5`,
-      [out.ewb_no, out.ewb_date, out.valid_upto, id, companyId],
+       WHERE id = $5 AND company_id = $6`,
+      [out.ewb_no, out.ewb_date, out.valid_upto, JSON.stringify({
+        ...out,
+        transporter_id: cleanTransporterId,
+        transporter_name: transporter_name ? String(transporter_name) : '',
+        transport_mode: transport_mode ? String(transport_mode) : '',
+        mode: transport_mode ? String(transport_mode) : '',
+        distance_km: Number(distance_km || 0),
+        trans_doc_no: trans_doc_no ? String(trans_doc_no) : '',
+        trans_doc_dt: trans_doc_dt ? String(trans_doc_dt) : '',
+        vehicle_no: cleanVehicleNo,
+        vehicle_type: String(vehicle_type || 'R').toUpperCase() === 'O' ? 'O' : 'R',
+        generated_by: sellerGstin,
+        supply_type: 'Outward-Supply',
+        transaction_type: 'Regular',
+        generated_date: out.ewb_date,
+      }), id, companyId],
     );
 
     res.json(success(out));
@@ -2466,9 +2483,10 @@ export async function cancelEwayBill(req: Request, res: Response) {
     await query(
       `UPDATE invoices
        SET eway_bill_status = 'cancelled',
+           eway_bill_details = COALESCE(eway_bill_details, '{}'::jsonb) || $1::jsonb,
            updated_at = now()
-       WHERE id = $1 AND company_id = $2`,
-      [id, companyId],
+       WHERE id = $2 AND company_id = $3`,
+      [JSON.stringify({ cancel_date: out.cancel_date, cancel_reason: reason_description, status: 'cancelled' }), id, companyId],
     );
 
     res.json(success(out));

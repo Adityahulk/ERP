@@ -11,6 +11,7 @@ export const INVOICE_PRINT_THEMES = [
   'gst-theme-4',
   'gst-theme-5',
   'tally-theme-1',
+  'reference-tax-eway-theme',
 ] as const;
 
 export type InvoicePrintTheme = (typeof INVOICE_PRINT_THEMES)[number];
@@ -61,6 +62,8 @@ export const LEGACY_PRINT_THEME_MAP: Record<string, InvoicePrintTheme> = {
   gst_theme_10: 'tally-theme-1',
   delivery_theme: 'tally-theme-1',
   double_divine: 'tally-theme-1',
+  reference_tax_eway_theme: 'reference-tax-eway-theme',
+  reference_tax_invoice: 'reference-tax-eway-theme',
 };
 
 export const PRINT_THEME_TO_TEMPLATE_KIND: Record<InvoicePrintTheme, 'standard' | 'simple' | 'performa' | 'monochrome'> = {
@@ -76,6 +79,7 @@ export const PRINT_THEME_TO_TEMPLATE_KIND: Record<InvoicePrintTheme, 'standard' 
   'gst-theme-4': 'monochrome',
   'gst-theme-5': 'standard',
   'tally-theme-1': 'monochrome',
+  'reference-tax-eway-theme': 'monochrome',
 };
 
 export const PRINT_THEME_TO_PALETTE: Record<InvoicePrintTheme, string> = {
@@ -91,6 +95,7 @@ export const PRINT_THEME_TO_PALETTE: Record<InvoicePrintTheme, string> = {
   'gst-theme-4': 'slate',
   'gst-theme-5': 'forest',
   'tally-theme-1': 'minimal',
+  'reference-tax-eway-theme': 'minimal',
 };
 
 export function isInvoicePrintTheme(value: unknown): value is InvoicePrintTheme {
