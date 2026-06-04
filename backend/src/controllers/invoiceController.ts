@@ -509,7 +509,7 @@ export async function scanBarcode(req: Request, res: Response) {
        LEFT JOIN item_units u ON u.id = i.unit_id
        ${godownJoin}
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.is_active = true
-       AND (i.barcode = $2 OR i.sku = $2)
+       AND (i.barcode = $2 OR i.sku = $2 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $2 LIMIT 1))
        LIMIT 1`,
       params
     );

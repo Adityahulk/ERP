@@ -2,6 +2,10 @@
 // SHARED TYPES FOR BIZFLOW FRONTEND
 // ═══════════════════════════════════════════════════════════════
 
+export type { LabelConfig } from './labelConfig';
+export { defaultLabelConfig, printModeToApiParams, PRINT_MODE_LABELS } from './labelConfig';
+export * from './label';
+
 export interface Pagination {
   page: number;
   limit: number;

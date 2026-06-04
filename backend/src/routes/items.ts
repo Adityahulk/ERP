@@ -53,5 +53,6 @@ router.get('/:id', ctrl.getItem);
 router.patch('/:id', ctrl.updateItem);
 router.delete('/:id', ctrl.deleteItem);
 router.get('/:id/barcode-image', ctrl.barcodeImage);
+router.post('/:id/barcode', ctrl.getOrGenerateBarcode);
 
 export default router;
