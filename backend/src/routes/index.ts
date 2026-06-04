@@ -38,6 +38,7 @@ import taxSettingsRoutes from './taxSettings';
 import printSettingsRoutes from './printSettings';
 
 import { verifyToken } from '../middleware/auth';
+import barcodeRoutes from './barcode';
 import { moduleGuard } from '../middleware/moduleGuard';
 import { getDashboard } from '../controllers/reportController';
 
@@ -72,6 +73,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
+router.use('/barcode', barcodeRoutes);
 
 // Dashboard is always accessible — no module guard (it's the home screen)
 router.get('/reports/dashboard', verifyToken, getDashboard);

@@ -6,10 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Edit2, Trash2, Printer, Barcode, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Trash2, Printer, AlertTriangle, Loader2 } from 'lucide-react';
 import ItemForm from './ItemForm';
 import PrintLabels from '@/components/shared/PrintLabels';
-import { openItemBarcodeInNewTab } from '@/lib/itemBarcode';
 
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
@@ -65,7 +64,6 @@ export default function ItemDetail() {
             <Printer className="w-4 h-4 mr-1" />
             Print Label
           </Button>
-          <Button variant="outline" size="sm" onClick={() => id && openItemBarcodeInNewTab(id)}><Barcode className="w-4 h-4 mr-1" />Barcode</Button>
           <Button variant="outline" size="sm" onClick={() => setShowEdit(true)}><Edit2 className="w-4 h-4 mr-1" />Edit</Button>
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
             <Trash2 className="w-4 h-4 mr-1" />

@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
+import { decodeSmartBarcode, isSmartBarcode, getOrCreateItemBarcode } from '../utils/barcodeUtils';
 
 const VALID_GST_RATES = new Set([0, 1, 3, 5, 6, 12, 18, 28, 40]);
 
@@ -409,6 +410,31 @@ export async function createItem(req: Request, res: Response) {
     const halfRate = gstRate / 2;
 
     const result = await withTransaction(async (client) => {
+      let barcode = data.barcode || null;
+      if (!barcode && itemType !== 'service') {
+        let unique = false;
+        let attempts = 0;
+        while (!unique && attempts < 100) {
+          attempts++;
+          const seqRes = await client.query("SELECT nextval('barcode_num_seq')");
+          const nextVal = seqRes.rows[0].nextval;
+          barcode = String(nextVal).padStart(10, '0');
+          
+          const dupRes = await client.query(
+            `SELECT 1 FROM items WHERE barcode = $1 AND is_deleted = false
+             UNION
+             SELECT 1 FROM barcode_registry WHERE barcode = $1`,
+            [barcode]
+          );
+          if (dupRes.rows.length === 0) {
+            unique = true;
+          }
+        }
+        if (!unique) {
+          throw new Error('Failed to generate a unique sequential barcode after multiple attempts.');
+        }
+      }
+
       const itemRes = await client.query(
         `INSERT INTO items (
           company_id, name, description, sku, barcode, hsn_code, category_id, brand, unit_id,
@@ -422,7 +448,7 @@ export async function createItem(req: Request, res: Response) {
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
         ) RETURNING *`,
         [
-          companyId, data.name, data.description, data.sku, data.barcode || null, data.hsn_code,
+          companyId, data.name, data.description, data.sku, barcode, data.hsn_code,
           data.category_id, data.brand, data.unit_id,
           data.secondary_unit_id, data.unit_conversion_factor,
           itemType,
@@ -440,6 +466,14 @@ export async function createItem(req: Request, res: Response) {
       );
 
       const item = itemRes.rows[0];
+
+      // Save barcode to registry if it exists
+      if (item.barcode) {
+        await client.query(
+          'INSERT INTO barcode_registry (barcode, item_id) VALUES ($1, $2) ON CONFLICT (barcode) DO NOTHING',
+          [item.barcode, item.id]
+        );
+      }
 
       // Create initial stock if opening_stock > 0
       if (openingStock > 0 && trackInventory) {
@@ -925,31 +959,10 @@ export async function barcodeImage(req: Request, res: Response) {
     const { id } = req.params;
     const companyId = req.user!.company_id;
 
-    const itemRes = await query(
-      'SELECT id, sku, barcode, name FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-      [id, companyId]
-    );
-    if (!itemRes.rows.length) return res.status(404).json(error('Item not found'));
-
-    const item = itemRes.rows[0];
-    let barcodeText = item.barcode || item.sku;
-
-    // Auto-generate EAN-13 if no barcode
-    if (!barcodeText) {
-      const timestamp = Date.now().toString().slice(-9);
-      const base = '890' + timestamp;
-      let sum = 0;
-      for (let i = 0; i < 12; i++) {
-        sum += parseInt(base[i]) * (i % 2 === 0 ? 1 : 3);
-      }
-      const check = (10 - (sum % 10)) % 10;
-      barcodeText = base + check;
-
-      await query('UPDATE items SET barcode = $1 WHERE id = $2', [barcodeText, id]);
-    }
+    const barcodeText = await getOrCreateItemBarcode(id, companyId);
 
     const png = await bwipjs.toBuffer({
-      bcid: barcodeText.length === 13 ? 'ean13' : 'code128',
+      bcid: 'code128',
       text: barcodeText,
       scale: 3,
       height: 12,
@@ -958,10 +971,23 @@ export async function barcodeImage(req: Request, res: Response) {
     } as any);
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Content-Disposition', `inline; filename=barcode-${item.sku || id}.png`);
+    res.setHeader('Content-Disposition', `inline; filename=barcode-${id}.png`);
     res.send(png);
   } catch (err: any) {
-    console.error('itemController error:', err.message, err.detail, err.position);
+    console.error('itemController error:', err.message);
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/items/:id/barcode ──────────────────────────────
+export async function getOrGenerateBarcode(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const companyId = req.user!.company_id;
+    const barcode = await getOrCreateItemBarcode(id, companyId);
+    res.json(success({ barcode }));
+  } catch (err: any) {
+    console.error('getOrGenerateBarcode error:', err.message);
     res.status(500).json(error(err.message));
   }
 }
@@ -972,17 +998,46 @@ export async function scanBarcode(req: Request, res: Response) {
     const { barcode } = req.body;
     const companyId = req.user!.company_id;
 
-    const result = await query(
-      `SELECT i.*, c.name as category_name, u.name as unit_name,
-              COALESCE(ts.total_stock, 0) as total_stock
-       FROM items i
-       LEFT JOIN item_categories c ON i.category_id = c.id
-       LEFT JOIN item_units u ON i.unit_id = u.id
-       LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
-       WHERE (i.barcode = $1 OR i.sku = $1) AND i.company_id = $2 AND i.is_deleted = false
-       LIMIT 1`,
-      [barcode, companyId]
-    );
+    let result;
+
+    if (isSmartBarcode(barcode)) {
+      // ── Smart barcode path ──────────────────────────────────
+      // Decode "SC|companyId|itemId" and look up directly by UUID.
+      // This is faster and more reliable than text-matching.
+      const decoded = decodeSmartBarcode(barcode);
+      if (!decoded) {
+        return res.status(400).json(error('Invalid smart barcode format'));
+      }
+      // Enforce that the barcode belongs to the caller's company
+      if (decoded.companyId !== companyId) {
+        return res.status(404).json(error('No item found for this barcode'));
+      }
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [decoded.itemId, companyId]
+      );
+    } else {
+      // ── Legacy barcode path ─────────────────────────────────
+      // Plain SKU, EAN-13, or any other barcode — match barcode, sku or registry mapping.
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE (i.barcode = $1 OR i.sku = $1 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $1 LIMIT 1)) AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [barcode, companyId]
+      );
+    }
 
     if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
     res.json(success(result.rows[0]));

@@ -35,12 +35,18 @@ export async function getDashboard(req: Request, res: Response) {
       [companyId]
     );
 
-    // Total receivable & payable
+    // Total receivable & payable (calculated from unpaid invoices and party records)
     const balances = await query(
       `SELECT 
-         COALESCE(SUM(balance) FILTER (WHERE balance > 0), 0) as total_receivable,
-         COALESCE(SUM(ABS(balance)) FILTER (WHERE balance < 0), 0) as total_payable
-       FROM parties WHERE company_id = $1 AND is_deleted = false`,
+         COALESCE(SUM(balance_due), 0) as total_receivable,
+         COALESCE((SELECT SUM(ABS(balance)) FROM parties WHERE company_id = $1 AND balance < 0 AND is_deleted = false), 0) as total_payable,
+         COUNT(DISTINCT COALESCE(party_id::text, NULLIF(party_name_snapshot, ''), id::text)) as due_customers_count
+       FROM invoices
+       WHERE company_id = $1 
+         AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice')
+         AND balance_due > 0 
+         AND status != 'cancelled' 
+         AND is_deleted = false`,
       [companyId]
     );
 
@@ -92,16 +98,24 @@ export async function getDashboard(req: Request, res: Response) {
       [companyId]
     );
 
-    // Top selling items (this month)
-    const topItems = await query(
-      `SELECT it.name, it.sku, SUM(ii.quantity) as total_qty, SUM(ii.total_amount) as total_amount
-       FROM invoice_items ii
-       JOIN invoices inv ON ii.invoice_id = inv.id
-       LEFT JOIN items it ON ii.item_id = it.id
-       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice') AND inv.status != 'cancelled' AND inv.is_deleted = false
-         AND inv.invoice_date >= date_trunc('month', CURRENT_DATE)
-       GROUP BY it.name, it.sku
-       ORDER BY total_amount DESC LIMIT 5`,
+    // Top customer dues (all time) - aggregated by unique customer from invoices and parties
+    const topDueParties = await query(
+      `SELECT 
+         COALESCE(i.party_id::text, NULLIF(i.party_name_snapshot, ''), i.id::text) as id,
+         COALESCE(p.name, NULLIF(i.party_name_snapshot, ''), 'Walk-in Customer') as name,
+         COALESCE(p.phone, i.party_phone_snapshot) as phone,
+         SUM(i.balance_due)::bigint as balance
+       FROM invoices i
+       LEFT JOIN parties p ON i.party_id = p.id
+       WHERE 
+         i.company_id = $1 
+         AND (i.invoice_type = 'sale' OR i.invoice_type = 'tax_invoice')
+         AND i.balance_due > 0 
+         AND i.status != 'cancelled' 
+         AND i.is_deleted = false
+       GROUP BY COALESCE(i.party_id::text, NULLIF(i.party_name_snapshot, ''), i.id::text), COALESCE(p.name, NULLIF(i.party_name_snapshot, ''), 'Walk-in Customer'), COALESCE(p.phone, i.party_phone_snapshot)
+       ORDER BY balance DESC
+       LIMIT 5`,
       [companyId]
     );
 
@@ -117,7 +131,7 @@ export async function getDashboard(req: Request, res: Response) {
     // Stock valuation
     const stockValue = await query(
       `SELECT COALESCE(SUM(s.quantity * COALESCE(i.purchase_price, 0)), 0) as total_value,
-              SUM(s.quantity) as total_qty
+               SUM(s.quantity) as total_qty
        FROM item_stock s
        JOIN items i ON s.item_id = i.id
        WHERE s.company_id = $1 AND i.is_deleted = false`,
@@ -150,7 +164,7 @@ export async function getDashboard(req: Request, res: Response) {
       stock_qty: Number(stockValue.rows[0].total_qty || 0),
       recent_invoices: recentInvoices.rows,
       sales_trend: salesTrend.rows,
-      top_items: topItems.rows,
+      topDueParties: topDueParties.rows,
     }));
   } catch (err: any) { res.status(500).json(error(err.message)); }
 }

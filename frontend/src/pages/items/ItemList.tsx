@@ -37,10 +37,9 @@ import {
 } from 'lucide-react';
 import type { Item } from '@/types';
 import ItemForm from './ItemForm';
-import { BarcodeGeneratorPanel } from '@/components/items/BarcodeGeneratorPanel';
 import toast from 'react-hot-toast';
 
-type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units' | 'barcodes';
+type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
 
 function qtyText(value: unknown) {
   const num = Number(value || 0);
@@ -329,12 +328,11 @@ export default function ItemList() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ItemWorkspaceTab)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5 lg:w-[680px]">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[550px]">
           <TabsTrigger value="products">Products</TabsTrigger>
           <TabsTrigger value="services">Services</TabsTrigger>
           <TabsTrigger value="categories">Categories</TabsTrigger>
           <TabsTrigger value="units">Units</TabsTrigger>
-          <TabsTrigger value="barcodes">Barcodes</TabsTrigger>
         </TabsList>
 
         <TabsContent value="products" className="space-y-4">
@@ -738,9 +736,6 @@ export default function ItemList() {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
-        <TabsContent value="barcodes" className="space-y-4">
-          <BarcodeGeneratorPanel />
         </TabsContent>
       </Tabs>
 
