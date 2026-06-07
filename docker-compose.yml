@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: bizflow
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bizflow_dev}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,11 +21,12 @@ services:
     image: redis:7-alpine
     container_name: bizflow_redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli SET __bizflow_write_health 1 EX 10 | grep -q OK"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -42,7 +43,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
     env_file:
       - ./backend/.env
     environment:

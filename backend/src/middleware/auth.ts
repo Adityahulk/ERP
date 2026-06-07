@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { env } from '../config/env';
-import { redis } from '../config/redis';
+import { query } from '../config/db';
 
 function refreshTokenHash(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -28,24 +28,9 @@ declare global {
 }
 
 /**
- * Cache the current session_version for a user in Redis (TTL: 24h).
- * We set this on login so verifyToken can check without a DB query.
- */
-export async function cacheSessionVersion(userId: string, version: number): Promise<void> {
-  await redis.setex(`session_ver:${userId}`, 24 * 60 * 60, String(version));
-}
-
-/**
- * Retrieve cached session_version. Returns null if not cached.
- */
-async function getCachedSessionVersion(userId: string): Promise<number | null> {
-  const val = await redis.get(`session_ver:${userId}`);
-  return val !== null ? parseInt(val, 10) : null;
-}
-
-/**
  * Verify JWT access token, attach user to request, and enforce single-device login.
- * If the token's session_version doesn't match the DB/cache value, the old device is rejected.
+ * PostgreSQL is authoritative so a stale or read-only Redis node can never
+ * revive an old session.
  */
 export async function verifyToken(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -70,10 +55,20 @@ export async function verifyToken(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  // Single-device enforcement: check session_version against Redis cache
-  // If not cached (e.g. Redis restart), skip check — next login will reset it
-  const cachedVersion = await getCachedSessionVersion(decoded.id);
-  if (cachedVersion !== null && decoded.session_version !== cachedVersion) {
+  const versionResult = await query(
+    `SELECT session_version
+     FROM users
+     WHERE id = $1 AND is_deleted = false AND is_active = true`,
+    [decoded.id]
+  );
+
+  if (!versionResult.rows.length) {
+    res.status(401).json({ success: false, error: 'Account not found or deactivated' });
+    return;
+  }
+
+  const currentVersion = Number(versionResult.rows[0].session_version);
+  if (decoded.session_version !== currentVersion) {
     res.status(401).json({
       success: false,
       error: 'You have been signed in on another device. Please log in again.',
@@ -109,28 +104,50 @@ export function verifyRefreshTokenJWT(token: string): JwtPayload {
 }
 
 /**
- * Store refresh token hash in Redis with 7-day TTL.
- * Storing only ONE hash per user means logging in on a new device
- * automatically invalidates the previous device's refresh token.
+ * Store one refresh token hash per user in PostgreSQL. A new login replaces
+ * the previous hash, preserving single-device refresh semantics without
+ * depending on Redis availability.
  */
 export async function storeRefreshToken(userId: string, token: string): Promise<void> {
-  await redis.setex(`refresh:${userId}`, 7 * 24 * 60 * 60, refreshTokenHash(token));
+  const hash = refreshTokenHash(token);
+  await query(
+    `UPDATE users
+     SET refresh_token_hash = $1,
+         refresh_token_expires_at = NOW() + INTERVAL '7 days'
+     WHERE id = $2 AND is_deleted = false`,
+    [hash, userId]
+  );
 }
 
 /**
- * Validate refresh token exists in Redis
+ * Validate the active refresh token against PostgreSQL.
  */
 export async function validateRefreshToken(userId: string, token: string): Promise<boolean> {
-  const stored = await redis.get(`refresh:${userId}`);
-  return stored === refreshTokenHash(token);
+  const expectedHash = refreshTokenHash(token);
+
+  const result = await query(
+    `SELECT refresh_token_hash
+     FROM users
+     WHERE id = $1
+       AND is_deleted = false
+       AND is_active = true
+       AND refresh_token_expires_at > NOW()`,
+    [userId]
+  );
+  return result.rows[0]?.refresh_token_hash === expectedHash;
 }
 
 /**
- * Remove refresh token from Redis (logout)
+ * Remove the active refresh token on logout or account invalidation.
  */
 export async function removeRefreshToken(userId: string): Promise<void> {
-  await redis.del(`refresh:${userId}`);
-  await redis.del(`session_ver:${userId}`);
+  await query(
+    `UPDATE users
+     SET refresh_token_hash = NULL,
+         refresh_token_expires_at = NULL
+    WHERE id = $1`,
+    [userId]
+  );
 }
 
 /**
