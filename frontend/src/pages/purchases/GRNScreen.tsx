@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -16,6 +16,7 @@ const BILL_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character
 export default function GRNScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [billNumber, setBillNumber] = useState('');
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
@@ -34,6 +35,13 @@ export default function GRNScreen() {
     if (data.bill_date) setBillDate(data.bill_date);
     toast.success('Bill details applied — verify and confirm receipt');
   };
+
+  useEffect(() => {
+    if (location.state?.ocrData) {
+      handleOcrConfirm(location.state.ocrData);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const receiveAction = useMutation({
     mutationFn: async () => {

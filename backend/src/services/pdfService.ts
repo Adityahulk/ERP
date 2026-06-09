@@ -11,6 +11,7 @@ import {
   normalizeInvoicePrintTheme,
   type InvoicePrintTheme,
 } from '../lib/printThemes';
+import { getConvertedPrice } from './gstService';
 
 function templatesRoot(): string {
   const dist = path.join(__dirname, '..', 'templates');
@@ -637,9 +638,19 @@ function itemColumnValue(it: any, index: number, column: string, currencyCode: s
   return '';
 }
 
-function invoiceItemTable(items: any[], currencyCode: string, settings: PrintSettings): string {
+function invoiceItemTable(items: any[], currencyCode: string, settings: PrintSettings, pricingMode?: string): string {
   const columns = settings.item_table.columns.length ? settings.item_table.columns : DEFAULT_PRINT_SETTINGS.item_table.columns;
-  const headers = columns.map((col) => `<th class="${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''}">${escapeHtml(PRINT_COLUMN_LABELS[col] || col)}</th>`).join('');
+  const headers = columns.map((col) => {
+    let label = PRINT_COLUMN_LABELS[col] || col;
+    if (col === 'unit_price') {
+      if (pricingMode === 'inclusive') {
+        label = 'Rate (Incl. GST)';
+      } else if (pricingMode === 'exclusive') {
+        label = 'Rate (Excl. GST)';
+      }
+    }
+    return `<th class="${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''}">${escapeHtml(label)}</th>`;
+  }).join('');
   const rows = items.map((it, i) => `<tr>${columns.map((col) => `<td class="${col === 'serial_no' ? 'idx' : ''} ${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''} ${col === 'amount' ? 'amount' : ''}">${itemColumnValue(it, i, col, currencyCode, settings)}</td>`).join('')}</tr>`).join('');
   const blankRows = Math.max(0, Number(settings.regular.min_item_rows || 0) - items.length);
   const blanks = Array.from({ length: blankRows }, () => `<tr class="blank-row">${columns.map(() => '<td>&nbsp;</td>').join('')}</tr>`).join('');
@@ -996,7 +1007,7 @@ function buildInvoiceHtml(args: {
   const visibleSignBlock = printSettings.footer.signature_enabled === false
     ? ''
     : `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>${escapeHtml(printSettings.footer.signature_text || 'Authorized Signatory')}</p></div>`;
-  const itemTable = invoiceItemTable(items, currencyCode, printSettings);
+  const itemTable = invoiceItemTable(items, currencyCode, printSettings, invoice.pricing_mode);
   const paidAmount = Number(invoice.paid_amount || 0);
   const totals = `<div class="totals">${totalsRows(invoice, currencyCode, printSettings)}<div class="grand total-row"><span>Total</span><b>${printMoney(Number(invoice.total_amount || 0), currencyCode, printSettings)}</b></div>${printSettings.totals.received_amount === false ? '' : `<div class="total-row"><span>Received</span><b>${printMoney(paidAmount, currencyCode, printSettings)}</b></div>`}${printSettings.totals.balance_amount === false ? '' : `<div class="due total-row"><span>Balance Due</span><b>${printMoney(balanceDue, currencyCode, printSettings)}</b></div>`}</div>`;
   const notesBlock = printSettings.footer.print_description === false ? '' : `<div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div>`;
@@ -1094,6 +1105,19 @@ export async function generateInvoicePDF(
   items: any[],
   opts?: { templateOverride?: string; themeOverride?: string },
 ): Promise<Buffer> {
+  const pricingMode = invoice.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
+  const convertedItems = items.map((it) => {
+    const originalPrice = Number(it.unit_price) || 0;
+    const itemIncludesTax = it.price_includes_tax === true;
+    const gstRate = Number(it.gst_rate) || 0;
+    const cessRate = Number(it.cess_rate) || 0;
+    const convertedPrice = getConvertedPrice(originalPrice, itemIncludesTax, pricingMode, gstRate, cessRate);
+    return {
+      ...it,
+      unit_price: convertedPrice,
+    };
+  });
+
   const rawPrintSettings = parseObject(company?.print_settings);
   const printSettings = resolvePrintSettings(company);
   const explicitTheme = opts?.themeOverride || opts?.templateOverride;
@@ -1147,7 +1171,7 @@ export async function generateInvoicePDF(
         total: Number(invoice.total_amount || 0) / 100,
       }), { width: 180, margin: 1 });
     }
-    const html = buildReferenceTaxInvoiceHtml({ invoice, company, party, items, printSettings: effectivePrintSettings });
+    const html = buildReferenceTaxInvoiceHtml({ invoice, company, party, items: convertedItems, printSettings: effectivePrintSettings });
     const browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
@@ -1160,7 +1184,7 @@ export async function generateInvoicePDF(
     return Buffer.from(pdf);
   }
 
-  const tpl = buildInvoiceHtml({ invoice, company, party, items, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
+  const tpl = buildInvoiceHtml({ invoice, company, party, items: convertedItems, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });

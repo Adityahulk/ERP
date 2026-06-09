@@ -10,12 +10,13 @@
  */
 
 import { Fragment, useRef, useState } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { currencySymbol, formatMoney } from '@/lib/formatters';
 import TaxRateDropdown from '@/components/invoice/TaxRateDropdown';
 import { useTaxOptions, type TaxComponent } from '@/hooks/useTaxOptions';
-import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronDown, ChevronUp, PackagePlus, Check } from 'lucide-react';
 import api from '@/lib/api';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import MoneyInput from '@/components/transactions/MoneyInput';
@@ -36,6 +37,9 @@ export interface VyaparLineItem {
   tax_components?: TaxComponent[];
   cess_rate?: number;
   custom_fields?: Record<string, string>;
+  selling_price_includes_tax?: boolean;
+  purchase_price_includes_tax?: boolean;
+  price_includes_tax?: boolean;
 }
 
 interface Props {
@@ -55,42 +59,85 @@ interface Props {
   showPricing?: boolean;
   currencyCode?: string;
   customFields?: Array<{ id: string; label: string; type?: string; required?: boolean }>;
+  pricingMode?: 'inclusive' | 'exclusive';
 }
 
 function calcLine(item: VyaparLineItem, isGst: boolean) {
-  const gross = Math.round(item.quantity * item.unit_price);
-  const taxable = Math.max(0, gross - item.discount_amount);
-  const gst = isGst ? Math.round(taxable * item.gst_rate / 100) : 0;
-  const cess = isGst ? Math.round(taxable * (item.cess_rate || 0) / 100) : 0;
-  return { gross, taxable, gst, cess, total: taxable + gst + cess };
-}
+  const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
+  const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
+  const totalRate = gstRate + cessRate;
+  const qty = Number(item.quantity) || 0;
+  const unitPrice = Number(item.unit_price) || 0;
+  const discountAmount = Number(item.discount_amount) || 0;
 
-function gstMultiplier(item: VyaparLineItem, isGst: boolean) {
-  return isGst ? 1 + (Number(item.gst_rate) || 0) / 100 : 1;
+  const isInclusive = item.price_includes_tax === true;
+
+  let gross = 0;
+  let taxable = 0;
+  let total = 0;
+  let totalTax = 0;
+
+  if (isInclusive) {
+    const subtotal_row = unitPrice * qty;
+    total = Math.max(0, subtotal_row - discountAmount);
+    taxable = total / (1 + totalRate / 100);
+    totalTax = total - taxable;
+    gross = subtotal_row / (1 + totalRate / 100);
+  } else {
+    const subtotal_row = unitPrice * qty;
+    gross = subtotal_row;
+    taxable = Math.max(0, subtotal_row - discountAmount);
+    totalTax = (taxable * totalRate) / 100;
+    total = taxable + totalTax;
+  }
+
+  const adjustedCess = totalTax * (cessRate / (totalRate || 1));
+  const adjustedGst = totalTax - adjustedCess;
+
+  return {
+    gross: Math.round(gross),
+    taxable: Math.round(taxable),
+    gst: Math.round(adjustedGst),
+    cess: Math.round(adjustedCess),
+    total: Math.round(total)
+  };
 }
 
 function priceWithGst(item: VyaparLineItem, isGst: boolean) {
-  return Math.round((Number(item.unit_price) || 0) * gstMultiplier(item, isGst));
+  const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
+  const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
+  const rate = (gstRate + cessRate) / 100;
+  const price = Number(item.unit_price) || 0;
+  const val = item.price_includes_tax === true ? price : price * (1 + rate);
+  return Math.round(val / 100) * 100;
 }
 
 function discountedPriceWithGst(item: VyaparLineItem, isGst: boolean) {
-  const qty = Math.max(Number(item.quantity) || 1, 1);
-  const discountPerUnit = (Number(item.discount_amount) || 0) / qty;
-  return Math.round(Math.max(0, (Number(item.unit_price) || 0) - discountPerUnit) * gstMultiplier(item, isGst));
+  const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
+  const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
+  const rate = (gstRate + cessRate) / 100;
+  const price = Number(item.unit_price) || 0;
+  const discount = Number(item.discount_amount) || 0;
+  const qty = Math.max(1, Number(item.quantity) || 1);
+  const discountPerUnit = discount / qty;
+
+  const priceIncl = item.price_includes_tax === true ? price : price * (1 + rate);
+  const discountPerUnitIncl = item.price_includes_tax === true ? discountPerUnit : discountPerUnit * (1 + rate);
+  const val = Math.max(0, priceIncl - discountPerUnitIncl);
+  return Math.round(val / 100) * 100;
 }
 
 function discountPercent(item: VyaparLineItem) {
-  const gross = (Number(item.unit_price) || 0) * (Number(item.quantity) || 0);
-  if (gross <= 0) return 0;
-  return Math.max(0, Math.min(100, ((Number(item.discount_amount) || 0) / gross) * 100));
-}
-
-function priceExcludingGst(inclusivePaise: number, item: VyaparLineItem, isGst: boolean) {
-  return Math.max(0, Math.round((Number(inclusivePaise) || 0) / gstMultiplier(item, isGst)));
+  const price = Number(item.unit_price) || 0;
+  const qty = Number(item.quantity) || 0;
+  const subtotal_row = price * qty;
+  if (subtotal_row <= 0) return 0;
+  const discount = Number(item.discount_amount) || 0;
+  return Math.max(0, Math.min(100, (discount / subtotal_row) * 100));
 }
 
 function emptyLine(): VyaparLineItem {
-  return { name: '', quantity: 1, unit_price: 0, discount_amount: 0, gst_rate: 18 };
+  return { name: '', quantity: 1, unit_price: 0, discount_amount: 0, gst_rate: 18, price_includes_tax: false };
 }
 
 export default function VyaparLineItems({
@@ -108,6 +155,7 @@ export default function VyaparLineItems({
   showPricing = true,
   currencyCode = 'INR',
   customFields = [],
+  pricingMode: _pricingMode = 'exclusive',
 }: Props) {
   const { options: taxOptions, usingFallback: usingDefaultTaxOptions } = useTaxOptions();
   const moneySymbol = currencySymbol(currencyCode);
@@ -154,23 +202,35 @@ export default function VyaparLineItems({
     }, 250);
   };
 
-  const catalogToLine = (item: any): VyaparLineItem => ({
-    item_id: item.id,
-    name: item.name,
-    description: item.description || '',
-    hsn_code: item.hsn_code || '',
-    item_type: item.item_type,
-    track_inventory: item.track_inventory,
-    unit: item.unit || item.unit_name || 'PCS',
-    quantity: 1,
-    unit_price: lineUnitPriceFromItem(item),
-    discount_amount: 0,
-    gst_rate: Number(item.gst_rate ?? 18),
-    tax_option_id: undefined,
-    tax_components: undefined,
-    cess_rate: Number(item.cess_rate ?? 0),
-    custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
-  });
+  const catalogToLine = (item: any): VyaparLineItem => {
+    const basePrice = lineUnitPriceFromItem(item);
+    const gstRate = Number(item.gst_rate ?? 18);
+    const cessRate = Number(item.cess_rate ?? 0);
+    const itemIncludesTax = defaultRateFrom === 'purchase'
+      ? item.purchase_price_includes_tax === true
+      : item.selling_price_includes_tax === true;
+
+    return {
+      item_id: item.id,
+      name: item.name,
+      description: item.description || '',
+      hsn_code: item.hsn_code || '',
+      item_type: item.item_type,
+      track_inventory: item.track_inventory,
+      unit: item.unit || item.unit_name || 'PCS',
+      quantity: 1,
+      unit_price: basePrice,
+      discount_amount: 0,
+      gst_rate: gstRate,
+      tax_option_id: undefined,
+      tax_components: undefined,
+      cess_rate: cessRate,
+      custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
+      selling_price_includes_tax: item.selling_price_includes_tax,
+      purchase_price_includes_tax: item.purchase_price_includes_tax,
+      price_includes_tax: itemIncludesTax,
+    };
+  };
 
   const addFromCatalog = (item: any) => {
     if (items.find((i) => i.item_id === item.id)) return;
@@ -226,6 +286,8 @@ export default function VyaparLineItems({
       cess_rate: row.cess_rate ?? 0,
       unit_price: row.selling_price,
       unit_name: row.unit_name,
+      selling_price_includes_tax: row.selling_price_includes_tax,
+      purchase_price_includes_tax: row.purchase_price_includes_tax,
     };
     addFromCatalog(item);
   };
@@ -252,10 +314,13 @@ export default function VyaparLineItems({
   const updateSellingPriceWithGst = (idx: number, priceInclGst: number) => {
     const current = items[idx];
     const oldPct = discountPercent(current);
-    const unitPrice = priceExcludingGst(priceInclGst, current, isGst);
+    const gstRate = isGst ? Number(current.gst_rate) || 0 : 0;
+    const cessRate = isGst ? Number(current.cess_rate) || 0 : 0;
+    const rate = (gstRate + cessRate) / 100;
+    const unitPrice = current.price_includes_tax === true ? priceInclGst : priceInclGst / (1 + rate);
     const quantity = Number(current.quantity) || 0;
     update(idx, {
-      unit_price: unitPrice,
+      unit_price: Math.round(unitPrice),
       discount_amount: Math.round((unitPrice * quantity * oldPct) / 100),
     });
   };
@@ -263,17 +328,26 @@ export default function VyaparLineItems({
   const updateDiscountedPriceWithGst = (idx: number, priceInclGst: number) => {
     const current = items[idx];
     const qty = Math.max(Number(current.quantity) || 1, 1);
-    const discountedBase = priceExcludingGst(priceInclGst, current, isGst);
+    const gstRate = isGst ? Number(current.gst_rate) || 0 : 0;
+    const cessRate = isGst ? Number(current.cess_rate) || 0 : 0;
+    const rate = (gstRate + cessRate) / 100;
+    const priceIncl = current.price_includes_tax === true ? current.unit_price : current.unit_price * (1 + rate);
+    const discountPerUnitIncl = Math.max(0, priceIncl - priceInclGst);
+    const discountPerUnit = current.price_includes_tax === true ? discountPerUnitIncl : discountPerUnitIncl / (1 + rate);
     update(idx, {
-      discount_amount: Math.max(0, Math.round(((Number(current.unit_price) || 0) - discountedBase) * qty)),
+      discount_amount: Math.round(discountPerUnit * qty),
     });
   };
 
   const updateDiscountPercent = (idx: number, pct: number) => {
     const current = items[idx];
     const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
+    const qty = Number(current.quantity) || 0;
+    const unitPrice = Number(current.unit_price) || 0;
+    const subtotal_row = unitPrice * qty;
+    const discountAmount = (subtotal_row * safePct) / 100;
     update(idx, {
-      discount_amount: Math.round(((Number(current.unit_price) || 0) * (Number(current.quantity) || 0) * safePct) / 100),
+      discount_amount: Math.round(discountAmount),
     });
   };
 
@@ -400,7 +474,7 @@ export default function VyaparLineItems({
 
       {/* Items Table */}
       {items.length > 0 && (
-        <div className="max-w-full overflow-x-auto rounded-lg border">
+        <div className="max-w-full overflow-x-auto rounded-xl border">
           <table
             className="w-full table-fixed text-sm"
             style={{
@@ -421,7 +495,7 @@ export default function VyaparLineItems({
               <col className="w-[48px]" />
             </colgroup>
             <thead>
-              <tr className="bg-muted/40 border-b">
+              <tr className="bg-muted/50 border-b">
                 <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">#</th>
                 <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">Item</th>
                 {showHsn && <th className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">HSN/SAC</th>}
@@ -430,7 +504,7 @@ export default function VyaparLineItems({
                 {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Rate ({moneySymbol})</th>}
                 {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Disc%</th>}
                 {showPricing && isGst && (
-                  <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">GST%</th>
+                  <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Tax%</th>
                 )}
                 {customColumnFields.map((field) => (
                   <th key={field.id} className="px-2 py-2 text-left font-medium text-xs text-muted-foreground">
@@ -438,16 +512,21 @@ export default function VyaparLineItems({
                   </th>
                 ))}
                 {showPricing && <th className="px-2 py-2 text-right font-medium text-xs text-muted-foreground">Total</th>}
-                <th className="sticky right-0 z-10 w-12 bg-muted/40"></th>
+                <th className="sticky right-0 z-10 w-12 bg-muted/50"></th>
               </tr>
             </thead>
             <tbody>
               {items.map((item, idx) => {
                 const c = calcLine(item, isGst);
                 const expanded = expandedRows.has(idx);
+                const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
+                const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
+                const totalRate = gstRate + cessRate;
+                const exclPrice = item.price_includes_tax === true ? item.unit_price / (1 + totalRate / 100) : item.unit_price;
+                const inclPrice = item.price_includes_tax === true ? item.unit_price : item.unit_price * (1 + totalRate / 100);
                 return (
                   <Fragment key={idx}>
-                    <tr className="h-10 border-b hover:bg-muted/10">
+                    <tr className={`h-11 border-b group transition-colors ${idx % 2 === 1 ? 'bg-muted/[0.03]' : ''} hover:bg-primary/[0.03]`}>
                       <td className="px-2 py-1.5">
                         <div className="flex items-center gap-1">
                           <span className="w-4 text-right text-xs text-muted-foreground tabular-nums">{idx + 1}</span>
@@ -531,12 +610,69 @@ export default function VyaparLineItems({
                         </td>
                       )}
                       {showPricing && <td className="px-2 py-1.5">
-                        <MoneyInput
-                          className="h-8 w-full text-right tabular-nums"
-                          placeholder="0"
-                          value={item.unit_price}
-                          onChange={(unit_price) => update(idx, { unit_price })}
-                        />
+                        <div className="flex items-center gap-1">
+                          <MoneyInput
+                            className="h-7 flex-1 min-w-0 text-right text-xs tabular-nums"
+                            placeholder="0"
+                            value={item.unit_price}
+                            onChange={(value) => update(idx, { unit_price: value })}
+                          />
+                          {isGst && (
+                            <DropdownMenu.Root>
+                              <DropdownMenu.Trigger asChild>
+                                <button
+                                  type="button"
+                                  className="h-6 shrink-0 rounded border bg-muted/30 px-1.5 text-[10px] font-medium text-muted-foreground flex items-center gap-0.5 hover:bg-muted/60 hover:text-foreground transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
+                                >
+                                  <span>{item.price_includes_tax === true ? 'Incl.' : 'Excl.'}</span>
+                                  <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+                                </button>
+                              </DropdownMenu.Trigger>
+                              <DropdownMenu.Portal>
+                                <DropdownMenu.Content
+                                  align="end"
+                                  sideOffset={4}
+                                  className="z-[9999] min-w-[170px] overflow-hidden rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-80"
+                                >
+                                  <DropdownMenu.Item
+                                    className="relative flex cursor-pointer select-none items-center justify-between rounded-md px-2.5 py-2 text-xs outline-none transition-colors hover:bg-accent hover:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                                    onClick={() => {
+                                      update(idx, {
+                                        price_includes_tax: false,
+                                        unit_price: Math.round(exclPrice),
+                                      });
+                                    }}
+                                  >
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="font-medium text-foreground">Without Tax (Excl.)</span>
+                                      <span className="text-[10px] text-muted-foreground font-mono">{formatMoney(exclPrice, currencyCode)}</span>
+                                    </div>
+                                    {item.price_includes_tax !== true && (
+                                      <Check className="h-3.5 w-3.5 text-primary shrink-0 ml-2" />
+                                    )}
+                                  </DropdownMenu.Item>
+                                  <DropdownMenu.Item
+                                    className="relative flex cursor-pointer select-none items-center justify-between rounded-md px-2.5 py-2 text-xs outline-none transition-colors hover:bg-accent hover:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                                    onClick={() => {
+                                      update(idx, {
+                                        price_includes_tax: true,
+                                        unit_price: Math.round(inclPrice),
+                                      });
+                                    }}
+                                  >
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="font-medium text-foreground">With Tax (Incl.)</span>
+                                      <span className="text-[10px] text-muted-foreground font-mono">{formatMoney(inclPrice, currencyCode)}</span>
+                                    </div>
+                                    {item.price_includes_tax === true && (
+                                      <Check className="h-3.5 w-3.5 text-primary shrink-0 ml-2" />
+                                    )}
+                                  </DropdownMenu.Item>
+                                </DropdownMenu.Content>
+                              </DropdownMenu.Portal>
+                            </DropdownMenu.Root>
+                          )}
+                        </div>
                       </td>}
                       {showPricing && <td className="px-2 py-1.5">
                         <Input
@@ -574,21 +710,21 @@ export default function VyaparLineItems({
                       {showPricing && <td className="px-2 py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">
                         {formatMoney(c.total, currencyCode)}
                       </td>}
-                      <td className="sticky right-0 z-10 bg-card px-1.5 py-1.5 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.5)]">
+                      <td className="sticky right-0 z-10 bg-card px-1.5 py-1.5">
                         <button
                           type="button"
                           onClick={() => remove(idx)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded opacity-0 group-hover:opacity-100 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive"
                           title="Delete line"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
 
                     {/* Expanded row for extra fields */}
                     {expanded && (
-                      <tr className="bg-muted/20 border-b">
+                      <tr className="bg-muted/10 border-b">
                         <td colSpan={99} className="px-4 py-3">
                           {showPricing && isGst && (
                             <div className="mb-3 grid min-w-0 grid-cols-1 gap-3 rounded-md border bg-background/70 p-3 text-xs sm:grid-cols-3">
@@ -674,7 +810,7 @@ export default function VyaparLineItems({
                           </div>
                           {showPricing && isGst && (
                             <p className="mt-1.5 text-[10px] text-muted-foreground">
-                              Taxable: {formatMoney(c.taxable, currencyCode)} · GST: {formatMoney(c.gst, currencyCode)}
+                              Taxable: {formatMoney(c.taxable, currencyCode)} · Tax: {formatMoney(c.gst, currencyCode)}
                               {isInterstate ? ' (IGST)' : ' (CGST + SGST)'}
                             </p>
                           )}
@@ -690,15 +826,16 @@ export default function VyaparLineItems({
       )}
 
       {items.length === 0 && (
-        <div className="border-2 border-dashed rounded-xl p-8 text-center text-muted-foreground text-sm">
-          Search for items above, use <strong>Add item</strong> to save to your catalog, or <strong>Add Line</strong> for a one-off row
+        <div className="border-2 border-dashed rounded-xl p-10 text-center text-muted-foreground text-sm">
+          <p className="text-base font-medium text-foreground/60 mb-1">No items added yet</p>
+          <p>Search for items above, use <strong>Add item</strong> to save to your catalog, or <strong>Add Line</strong> for a one-off row</p>
         </div>
       )}
 
       {/* Totals */}
       {items.length > 0 && showPricing && (
         <div className="flex justify-end">
-          <div className="w-full max-w-xs space-y-1.5 text-sm bg-muted/30 rounded-xl px-4 py-3 border">
+          <div className="w-full max-w-sm space-y-1.5 text-sm bg-muted/30 rounded-xl px-5 py-4 border">
             <div className="flex justify-between text-muted-foreground">
               <span>{isGst ? 'Subtotal (taxable)' : 'Subtotal'}</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(totals.subtotal, currencyCode)}</span>
@@ -730,7 +867,7 @@ export default function VyaparLineItems({
                 )}
               </>
             )}
-            <div className="flex justify-between border-t pt-2 font-bold text-base">
+            <div className="flex justify-between border-t pt-2.5 font-bold text-lg">
               <span>Grand Total</span>
               <span className="tabular-nums">{formatMoney(totals.total, currencyCode)}</span>
             </div>
@@ -741,25 +878,79 @@ export default function VyaparLineItems({
   );
 }
 
-/** Compute overall totals from a list of line items */
-export function computeTotals(items: VyaparLineItem[], isGst: boolean, roundOffEnabled = false) {
-  const base = items.reduce(
-    (acc, item) => {
-      const gross = item.quantity * item.unit_price;
-      const roundedGross = Math.round(gross);
-      const taxable = Math.max(0, roundedGross - item.discount_amount);
-      const gst = isGst ? Math.round(taxable * item.gst_rate / 100) : 0;
-      const cess = isGst ? Math.round(taxable * (item.cess_rate || 0) / 100) : 0;
-      acc.subtotal += roundedGross;
-      acc.discount += item.discount_amount;
-      acc.taxable += taxable;
-      acc.tax += gst;
-      acc.cess += cess;
-      acc.total += taxable + gst + cess;
-      return acc;
-    },
-    { subtotal: 0, discount: 0, taxable: 0, tax: 0, cess: 0, total: 0, roundOff: 0 },
-  );
-  const roundedTotal = roundOffEnabled ? Math.round(base.total / 100) * 100 : base.total;
-  return { ...base, roundOff: roundOffEnabled ? roundedTotal - base.total : 0, total: roundedTotal };
+/**
+ * Compute overall totals from a list of line items.
+ * Supports both line-level discounts (per item) and invoice-level discounts
+ * (flat ₹ amount or % off the whole bill).
+ * Delegates per-item base calculation to calcLine() so that each item's
+ * price_includes_tax flag and the invoice pricingMode are handled correctly.
+ */
+export function computeTotals(
+  items: VyaparLineItem[],
+  isGst: boolean,
+  roundOffEnabled = false,
+  _pricingMode: 'inclusive' | 'exclusive' = 'exclusive', // kept for backwards compatibility in args, but ignored
+  invoiceDiscountType: 'percent' | 'flat' | 'none' = 'none',
+  invoiceDiscountValue: number = 0,
+) {
+  let subtotal = 0;
+  let lineDiscount = 0;
+  let baseTax = 0;
+  let baseCess = 0;
+
+  for (const item of items) {
+    const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
+    const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
+    const totalRate = gstRate + cessRate;
+    const qty = Number(item.quantity) || 0;
+    const unitPrice = Number(item.unit_price) || 0;
+    const discountAmount = Number(item.discount_amount) || 0;
+
+    const isInclusive = item.price_includes_tax === true;
+
+    const gross_exclusive = isInclusive ? (unitPrice * qty) / (1 + totalRate / 100) : (unitPrice * qty);
+    const discount_exclusive = isInclusive ? discountAmount / (1 + totalRate / 100) : discountAmount;
+
+    subtotal += gross_exclusive;
+    lineDiscount += discount_exclusive;
+
+    const baseTax_row = gross_exclusive * (totalRate / 100);
+    const cess_share = totalRate > 0 ? cessRate / totalRate : 0;
+    baseCess += baseTax_row * cess_share;
+    baseTax += baseTax_row * (1 - cess_share);
+  }
+
+  const taxableBeforeInvoiceDiscount = Math.max(0, subtotal - lineDiscount);
+  let invoiceDiscountAmt = 0;
+  if (invoiceDiscountType === 'percent' && invoiceDiscountValue > 0) {
+    invoiceDiscountAmt = (taxableBeforeInvoiceDiscount * invoiceDiscountValue) / 100;
+  } else if (invoiceDiscountType === 'flat' && invoiceDiscountValue > 0) {
+    invoiceDiscountAmt = Math.min(invoiceDiscountValue, taxableBeforeInvoiceDiscount);
+  }
+  invoiceDiscountAmt = Math.max(0, Math.min(invoiceDiscountAmt, taxableBeforeInvoiceDiscount));
+
+  const taxableAfterDiscount = taxableBeforeInvoiceDiscount - invoiceDiscountAmt;
+  const scale = subtotal > 0 ? taxableAfterDiscount / subtotal : 1;
+  const adjTax = baseTax * scale;
+  const adjCess = baseCess * scale;
+
+  const finalTaxable = taxableAfterDiscount;
+  const finalTotal = taxableAfterDiscount + adjTax + adjCess;
+
+  const roundedTotal = roundOffEnabled ? Math.round(finalTotal / 100) * 100 : Math.round(finalTotal);
+  const roundOff = roundOffEnabled ? roundedTotal - Math.round(finalTotal) : 0;
+
+  const safeVal = (v: number) => (Number.isFinite(v) && !Number.isNaN(v) ? Math.round(v) : 0);
+
+  return {
+    subtotal: safeVal(subtotal),
+    lineDiscount: safeVal(lineDiscount),
+    invoiceDiscount: safeVal(invoiceDiscountAmt),
+    discount: safeVal(lineDiscount + invoiceDiscountAmt),
+    taxable: safeVal(finalTaxable),
+    tax: safeVal(adjTax),
+    cess: safeVal(adjCess),
+    roundOff: safeVal(roundOff),
+    total: safeVal(roundedTotal),
+  };
 }

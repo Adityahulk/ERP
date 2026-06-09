@@ -249,10 +249,20 @@ async function previewNextInvoiceNumber(companyId: string, invoiceKind: string, 
   return `${prefix}/${branchCode}/${fyShort}${String(seq).padStart(4, '0')}`;
 }
 
-function mapLineForGst(raw: any) {
+function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclusive') {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
   const qty = Number(raw.quantity) || 0;
-  const base = Math.round(unitPrice * qty);
+  
+  const isInclusive = raw.price_includes_tax === true;
+
+  let base = 0;
+  if (isInclusive) {
+    const divisor = 1 + ((Number(raw.gst_rate) || 0) + (Number(raw.cess_rate) || 0)) / 100;
+    base = Math.round((unitPrice / divisor) * qty);
+  } else {
+    base = Math.round(unitPrice * qty);
+  }
+
   const pct = Number(raw.discount_percent) || 0;
   const flatFromPct = pct > 0 ? Math.round((base * pct) / 100) : 0;
   const lineDisc = Math.round(Number(raw.discount_amount) || 0) || flatFromPct;
@@ -263,6 +273,7 @@ function mapLineForGst(raw: any) {
     cess_rate: Number(raw.cess_rate) || 0,
     discount_type: lineDisc > 0 ? ('flat' as const) : ('none' as const),
     discount_value: lineDisc,
+    price_includes_tax: isInclusive,
   };
 }
 
@@ -461,6 +472,7 @@ export async function searchItems(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
               i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
@@ -501,6 +513,7 @@ export async function scanBarcode(req: Request, res: Response) {
 
     const result = await query(
       `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+              i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
               i.item_type, i.track_inventory,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
@@ -563,13 +576,14 @@ export async function createInvoice(req: Request, res: Response) {
       return res.status(400).json(error('Use the purchase module for supplier bills. This form only creates sales invoices.'));
     }
     const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
+    const pricingMode = d.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
 
     const mappedItems = d.items.map((it: any) => mapLineForGst({
       ...it,
       item_name: it.item_name || it.name,
       gst_rate: isGstInvoice ? it.gst_rate : 0,
       cess_rate: isGstInvoice ? it.cess_rate : 0,
-    }));
+    }, pricingMode));
 
     const result = await withTransaction(async (client) => {
       const rawType = d.invoice_type === 'non_gst' ? 'sale' : (d.invoice_type || 'tax_invoice');
@@ -618,7 +632,12 @@ export async function createInvoice(req: Request, res: Response) {
         invDisc,
         0,
         roundOffEnabled,
+        pricingMode
       );
+
+      if (!Number.isFinite(totalsInfo.totalAmount) || totalsInfo.totalAmount < 0) {
+        throw new Error('Invalid invoice total calculated');
+      }
 
       const { payments: paymentRows, paidAmount: amountPaid } = normalizeInvoicePayments(d, totalsInfo.totalAmount);
       const paymentStatus = paymentStatusFor(totalsInfo.totalAmount, amountPaid);
@@ -675,11 +694,12 @@ export async function createInvoice(req: Request, res: Response) {
           paid_amount, payment_status, payment_mode, status, einvoice_status,
           notes, external_description, terms_and_conditions, custom_fields, created_by, pdf_template, document_theme,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
-          bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
+          bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot,
+          pricing_mode
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
           $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
-          $36,$37,$38,$39,$40,$41,$42,$43,$44,$45
+          $36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46
         ) RETURNING *`,
         [
           companyId, invoiceNumber, invoiceType, d.party_id || null, godownId,
@@ -723,6 +743,7 @@ export async function createInvoice(req: Request, res: Response) {
           bankSnap.bank_ifsc_snapshot,
           bankSnap.bank_branch_snapshot,
           bankSnap.upi_id_snapshot,
+          pricingMode,
         ]
       );
 
@@ -735,8 +756,8 @@ export async function createInvoice(req: Request, res: Response) {
           item_name: item.item_name || item.name,
           gst_rate: isGstInvoice ? item.gst_rate : 0,
           cess_rate: isGstInvoice ? item.cess_rate : 0,
-        });
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
+        }, pricingMode);
+        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
 
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const half = gstRt / 2;
@@ -747,8 +768,8 @@ export async function createInvoice(req: Request, res: Response) {
             quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order, custom_fields
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+            total_amount, sort_order, custom_fields, price_includes_tax
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
           [
             invoice.id, companyId, item.item_id || null,
             invoiceLineName(item),
@@ -771,6 +792,7 @@ export async function createInvoice(req: Request, res: Response) {
             taxInfo.totalAmount,
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
+            item.price_includes_tax === true,
           ]
         );
 
@@ -1184,13 +1206,14 @@ export async function updateInvoice(req: Request, res: Response) {
       await backupInvoiceSnapshot(client, companyId, id, 'before_update_invoice', req.user!.id);
 
       const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
+      const pricingMode = d.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
       const mappedItems = d.items.map((it: any) =>
         mapLineForGst({
           ...it,
           item_name: it.item_name || it.name,
           gst_rate: isGstInvoice ? it.gst_rate : 0,
           cess_rate: isGstInvoice ? it.cess_rate : 0,
-        }),
+        }, pricingMode),
       );
 
       const explicitPlaceOfSupply = String(d.place_of_supply || '').trim().slice(0, 5);
@@ -1200,7 +1223,10 @@ export async function updateInvoice(req: Request, res: Response) {
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
       const roundOffEnabled = d.round_off_enabled === true;
-      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled);
+      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled, pricingMode);
+      if (!Number.isFinite(totalsInfo.totalAmount) || totalsInfo.totalAmount < 0) {
+        throw new Error('Invalid invoice total calculated');
+      }
       const currencyCode = await resolveCompanyCurrency(client, companyId, d.currency_code || oldInv.currency_code);
 
       const itemsRes = await client.query(
@@ -1313,6 +1339,7 @@ export async function updateInvoice(req: Request, res: Response) {
           invoice_number = $34,
           custom_fields = $38,
           currency_code = $39,
+          pricing_mode = $41,
           updated_at = NOW()
         WHERE id = $35 AND company_id = $36`,
         [
@@ -1356,6 +1383,7 @@ export async function updateInvoice(req: Request, res: Response) {
           JSON.stringify(d.custom_fields && typeof d.custom_fields === 'object' ? d.custom_fields : oldInv.custom_fields || {}),
           currencyCode,
           roundOffEnabled,
+          pricingMode,
         ],
       );
 
@@ -1367,8 +1395,8 @@ export async function updateInvoice(req: Request, res: Response) {
           item_name: item.item_name || item.name,
           gst_rate: isGstInvoice ? item.gst_rate : 0,
           cess_rate: isGstInvoice ? item.cess_rate : 0,
-        });
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
+        }, pricingMode);
+        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const half = gstRt / 2;
 
@@ -1378,8 +1406,8 @@ export async function updateInvoice(req: Request, res: Response) {
             quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order, custom_fields
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+            total_amount, sort_order, custom_fields, price_includes_tax
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
           [
             id,
             companyId,
@@ -1404,6 +1432,7 @@ export async function updateInvoice(req: Request, res: Response) {
             taxInfo.totalAmount,
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
+            item.price_includes_tax === true,
           ],
         );
 
@@ -2035,15 +2064,19 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     const gstType = isInterstate ? 'inter' : 'intra';
 
     const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
+    const pricingMode = d.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
     const mappedItems = d.items.map((it: any) => mapLineForGst({
       ...it,
       item_name: it.item_name || it.name,
       gst_rate: isGstInvoice ? it.gst_rate : 0,
       cess_rate: isGstInvoice ? it.cess_rate : 0,
-    }));
+    }, pricingMode));
     const invDisc = Math.round(Number(d.discount_amount) || 0);
     const roundOffEnabled = d.round_off_enabled === true;
-    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled);
+    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled, pricingMode);
+    if (!Number.isFinite(totals.totalAmount) || totals.totalAmount < 0) {
+      return res.status(400).json(error('Invalid invoice total calculated'));
+    }
 
     const posRow = d.party_id
       ? await query(`SELECT gstin, billing_state_code, state_code FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
@@ -2074,7 +2107,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     for (let i = 0; i < d.items.length; i++) {
       const item = d.items[i];
       const lineGst = mappedItems[i];
-      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false);
+      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
       pdfRows.push({
         item_name: invoiceLineName(item),
         item_description: item.item_description || item.description || null,
@@ -2090,6 +2123,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
         igst_amount: taxInfo.totalIgst,
         total_amount: taxInfo.totalAmount,
         custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
+        price_includes_tax: lineGst.price_includes_tax,
       });
     }
 

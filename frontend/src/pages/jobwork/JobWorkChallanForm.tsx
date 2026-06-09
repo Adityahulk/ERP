@@ -1,13 +1,14 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { ArrowLeft, Plus, X, Wrench, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { ArrowLeft, Plus, X, Wrench, ArrowUpRight, ArrowDownLeft, ScanLine } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
+import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
@@ -16,7 +17,9 @@ import api from '@/lib/api';
 import toast from 'react-hot-toast';
 
 export default function JobWorkChallanForm() {
-  const navigate = useNavigate(); const qc = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const qc = useQueryClient();
   const [form, setForm] = useState<any>({
     challan_type: 'outward', party_id: '', godown_id: '',
     challan_date: new Date().toISOString().split('T')[0],
@@ -25,6 +28,7 @@ export default function JobWorkChallanForm() {
   });
   const [items, setItems] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [ocrOpen, setOcrOpen] = useState(false);
 
   const { data: partiesData } = useQuery({
     queryKey: ['parties-jw'],
@@ -83,6 +87,51 @@ export default function JobWorkChallanForm() {
     clearDraft();
     toast.success('Draft cleared');
   };
+
+  const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
+    if (data.bill_date) {
+      setForm((prev: any) => ({ ...prev, challan_date: data.bill_date }));
+    }
+    if (data.items && data.items.length > 0) {
+      const mapped = data.items.map((item) => {
+        const rate = item.rate_paise != null
+          ? Number(item.rate_paise)
+          : (item.amount_paise != null && item.quantity ? Math.round(Number(item.amount_paise) / Number(item.quantity)) : Number(item.amount_paise || 0));
+        
+        const matchedItem = allItems.find((it: any) =>
+          it.name.toLowerCase() === item.description.toLowerCase() ||
+          (it.hsn_code && item.hsn_code && it.hsn_code === item.hsn_code)
+        );
+
+        return {
+          item_id: matchedItem ? matchedItem.id : '',
+          item_name: matchedItem ? matchedItem.name : String(item.description || ''),
+          hsn_code: matchedItem ? (matchedItem.hsn_code || '') : (item.hsn_code ? String(item.hsn_code) : ''),
+          unit: matchedItem ? (matchedItem.unit || matchedItem.unit_abbr || 'PCS') : String(item.unit || 'PCS'),
+          quantity: Number(item.quantity) || 1,
+          unit_price: rate,
+        };
+      });
+      setItems((prev) => {
+        const isEmpty = prev.length === 0 || (prev.length === 1 && !prev[0].item_id && !prev[0].unit_price);
+        return isEmpty ? mapped : [...prev, ...mapped];
+      });
+      toast.success(`Imported ${data.items.length} item(s) from scan`);
+    }
+    if (data.matched_party_id && data.matched_party) {
+      selectParty(data.matched_party);
+      toast.success('Matched job worker from OCR and applied it');
+    } else if (data.party_name) {
+      toast(`Party name from scan: "${data.party_name}" — please select manually`, { icon: 'ℹ️' });
+    }
+  };
+
+  useEffect(() => {
+    if (location.state?.ocrData) {
+      handleOcrConfirm(location.state.ocrData);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => api.post('/job-work/challans', data),
@@ -144,6 +193,9 @@ export default function JobWorkChallanForm() {
             <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
             <Button type="button" variant="outline" size="sm" disabled={!hasDraft} onClick={loadSavedDraft}>Load draft</Button>
             {hasDraft && <Button type="button" variant="ghost" size="sm" onClick={clearSavedDraft}>Clear draft</Button>}
+            <Button type="button" variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => setOcrOpen(true)}>
+              <ScanLine className="w-4 h-4" /> Scan Challan
+            </Button>
             <Wrench className="w-5 h-5 text-indigo-600" />
           </div>
         )}
@@ -285,6 +337,12 @@ export default function JobWorkChallanForm() {
         />
       </div>
       <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={selectParty} />
+      <OcrBillSheet
+        open={ocrOpen}
+        onOpenChange={setOcrOpen}
+        context="Delivery Challan"
+        onConfirm={handleOcrConfirm}
+      />
     </TransactionPageShell>
   );
 }
