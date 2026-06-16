@@ -17,6 +17,7 @@ export interface Company {
   logoUrl?: string;
   itemTerminology: string;
   itemTerminologyPlural: string;
+  onboardingCompleted?: boolean;
 }
 
 export interface LicenseInfo {

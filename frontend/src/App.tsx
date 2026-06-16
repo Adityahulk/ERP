@@ -97,6 +97,7 @@ function LoginPage() {
                 gstin: company.gstin,
                 itemTerminology: company.item_terminology || 'Product',
                 itemTerminologyPlural: company.item_terminology_plural || 'Products',
+                onboardingCompleted: Boolean(company.onboarding_completed),
               }
             : null,
           res.data.accessToken,
@@ -192,10 +193,18 @@ function LoginEntry() {
 }
 
 function OnboardingEntry() {
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, user, company } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.role === 'super_admin') return <Navigate to="/superadmin" replace />;
+  if (company?.onboardingCompleted) return <Navigate to="/dashboard" replace />;
   return <Onboarding />;
+}
+
+function OnboardingRequiredGate({ children }: { children: React.ReactNode }) {
+  const { user, company } = useAuthStore();
+  if (user?.role === 'super_admin') return <>{children}</>;
+  if (company && !company.onboardingCompleted) return <Navigate to="/onboarding" replace />;
+  return <>{children}</>;
 }
 
 function RoleGate({ allowed, children }: { allowed: NormalizedRole[]; children: React.ReactNode }) {
@@ -239,7 +248,7 @@ export default function App() {
         <Route path="companies/:id" element={<SuperAdminCompanyDetail />} />
       </Route>
 
-      <Route element={<ProtectedRoute><TenantGate><AppLayout /></TenantGate></ProtectedRoute>}>
+      <Route element={<ProtectedRoute><TenantGate><OnboardingRequiredGate><AppLayout /></OnboardingRequiredGate></TenantGate></ProtectedRoute>}>
         {/* Items */}
         <Route path="/items" element={<RoleGate allowed={['admin', 'manager']}><ItemList /></RoleGate>} />
         <Route path="/items/:id" element={<RoleGate allowed={['admin', 'manager']}><ItemDetail /></RoleGate>} />

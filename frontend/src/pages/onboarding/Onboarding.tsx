@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 // import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { CheckCircle2, Building2, MapPin, Zap, ArrowRight, Upload } from 'lucide-react';
@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 
 export default function Onboarding() {
+  const { company: authCompany, updateCompany } = useAuthStore();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
 
@@ -15,6 +17,15 @@ export default function Onboarding() {
   const [company, setCompany] = useState({ name: '', type: '', gst: '', state: '' });
   const [location, setLocation] = useState({ name: 'Main Branch', city: '', pin: '' });
   const [quickSetup, setQuickSetup] = useState({ items: true, coa: true, leaves: true });
+
+  useEffect(() => {
+    if (!authCompany) return;
+    setCompany((prev) => ({
+      ...prev,
+      name: prev.name || authCompany.name || '',
+      gst: prev.gst || authCompany.gstin || '',
+    }));
+  }, [authCompany]);
 
   const completeOnboarding = async () => {
     try {
@@ -37,6 +48,7 @@ export default function Onboarding() {
           leaves: quickSetup.leaves,
         },
       });
+      updateCompany({ onboardingCompleted: true });
       toast.success('All set! Welcome to Microtechnique Accounts.');
       window.location.href = '/dashboard';
     } catch (e: any) {

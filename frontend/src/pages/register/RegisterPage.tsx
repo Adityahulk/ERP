@@ -12,7 +12,6 @@ export default function RegisterPage() {
   const tier = searchParams.get('tier') || '';
 
   const [form, setForm] = useState({
-    business_name: '',
     name: '',
     email: '',
     phone: '',
@@ -36,15 +35,9 @@ export default function RegisterPage() {
       toast.error('Password must be at least 8 characters');
       return;
     }
-    if (!form.business_name.trim()) {
-      toast.error('Business name is required');
-      return;
-    }
-
     setLoading(true);
     try {
       const { data: res } = await registrantApi.post('/register', {
-        business_name: form.business_name.trim(),
         name: form.name,
         email: form.email,
         phone: form.phone || undefined,
@@ -60,7 +53,7 @@ export default function RegisterPage() {
             verificationToken: res.data.verification_token,
             emailMasked: res.data.email_masked,
             email: form.email,
-            businessName: form.business_name.trim(),
+            businessName: form.name.trim() ? `${form.name.trim()}'s Business` : '',
             intent,
             tier,
             devCode: res.data.dev_code,
@@ -144,18 +137,6 @@ export default function RegisterPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-purple-200 mb-1">Business / Company Name *</label>
-                <input
-                  type="text"
-                  value={form.business_name}
-                  onChange={(e) => update('business_name', e.target.value)}
-                  required
-                  placeholder="Your business name"
-                  className="w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition"
-                />
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-purple-200 mb-1">Full Name *</label>
                 <input

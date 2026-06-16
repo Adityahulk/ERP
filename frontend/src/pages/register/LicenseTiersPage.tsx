@@ -29,6 +29,13 @@ interface ContactInfo {
   email: string;
 }
 
+interface PaymentInfo {
+  mode: 'upi';
+  upi_link: string;
+  upi_id: string;
+  amount_inr: number;
+}
+
 const TIER_META: Record<string, { icon: any; gradient: string; badge?: string; ring: string }> = {
   silver: {
     icon: Star,
@@ -64,6 +71,7 @@ export default function LicenseTiersPage() {
   const [requesting, setRequesting] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
   const [requestedLicense, setRequestedLicense] = useState<any>(null);
+  const [payment, setPayment] = useState<PaymentInfo | null>(null);
   const [highlightedTierApplied, setHighlightedTierApplied] = useState(false);
 
   useEffect(() => {
@@ -111,6 +119,7 @@ export default function LicenseTiersPage() {
       const { data: res } = await registrantApi.post('/licenses/request', { tier_id: selectedTier.id });
       if (res.success) {
         setRequestedLicense(res.data.license);
+        setPayment(res.data.payment || null);
         setSelectedTier(null);
         setShowContactModal(true);
         toast.success('License request submitted!');
@@ -301,7 +310,7 @@ export default function LicenseTiersPage() {
               <CheckCircle2 className="w-14 h-14 text-emerald-400 mx-auto mb-4" />
               <h3 className="text-xl font-bold text-white mb-2">Request Submitted!</h3>
               <p className="text-slate-400 text-sm">
-                Your license request has been received. Contact us to complete payment and activate.
+                Your license request has been received. You can pay instantly via UPI, or contact us for assisted activation.
               </p>
               {requestedLicense && (
                 <p className="text-purple-300 text-sm mt-2 font-mono">
@@ -311,6 +320,18 @@ export default function LicenseTiersPage() {
             </div>
 
             <div className="space-y-3">
+              {payment?.upi_link && (
+                <a
+                  href={payment.upi_link}
+                  className="flex items-center gap-3 w-full px-5 py-3 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-400/40 rounded-xl text-white transition-colors"
+                >
+                  <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                  <div className="text-left">
+                    <p className="text-xs text-emerald-200">Pay now via UPI</p>
+                    <p className="font-semibold">{payment.upi_id} • {formatPrice(payment.amount_inr)}</p>
+                  </div>
+                </a>
+              )}
               <a
                 href={`tel:${contact.phone}`}
                 className="flex items-center gap-3 w-full px-5 py-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-white transition-colors"

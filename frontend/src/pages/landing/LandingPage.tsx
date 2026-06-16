@@ -250,17 +250,17 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              to="/register/dashboard"
+              to="/register/login"
               className="text-sm font-medium text-[#420662] hover:text-[#2d0444] transition-colors hidden sm:block"
             >
-              Sign in
+              Buyer Sign in
             </Link>
             <Link
               to="/register?intent=trial"
               className="hidden sm:inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-amber-500/30"
             >
               <Zap className="w-4 h-4" />
-              Start / Register
+              Start Free Trial
             </Link>
             <button
               onClick={() => setShowPhone(!showPhone)}
@@ -684,7 +684,7 @@ export default function LandingPage() {
               className="px-10 py-5 bg-white text-[#420662] hover:bg-purple-50 rounded-xl font-extrabold text-xl transition-all shadow-2xl hover:shadow-white/20 hover:scale-105 flex items-center justify-center gap-3"
             >
               <UserPlus className="w-6 h-6" />
-              Start / Register
+              Start 15-Day Free Trial
             </Link>
             <button
               onClick={() => setShowPhone(true)}

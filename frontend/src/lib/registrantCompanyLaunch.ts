@@ -16,6 +16,7 @@ type LaunchResponse = {
     logo_url?: string | null;
     item_terminology?: string | null;
     item_terminology_plural?: string | null;
+    onboarding_completed?: boolean | null;
   } | null;
   accessToken: string;
   refreshToken: string;
@@ -43,6 +44,7 @@ export async function launchRegistrantCompany(licenseId: string) {
           logoUrl: payload.company.logo_url ?? undefined,
           itemTerminology: payload.company.item_terminology || 'Item',
           itemTerminologyPlural: payload.company.item_terminology_plural || 'Items',
+          onboardingCompleted: Boolean((payload.company as any).onboarding_completed),
         }
       : null,
     payload.accessToken,

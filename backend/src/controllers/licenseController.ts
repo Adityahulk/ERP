@@ -6,7 +6,21 @@ import { clearTierFeaturesCache } from '../middleware/moduleGuard';
 
 const CONTACT_PHONE = '+91 6355 997 080';
 const CONTACT_EMAIL = 'support@microtechnique.in';
+const PAYMENT_UPI_ID = process.env.PAYMENT_UPI_ID || '';
+const PAYMENT_PAYEE_NAME = process.env.PAYMENT_PAYEE_NAME || 'Microtechnique Accounts';
 const TRIAL_DAYS = 15;
+
+function buildUpiDeepLink(amountInr: number, note: string): string | null {
+  if (!PAYMENT_UPI_ID) return null;
+  const params = new URLSearchParams({
+    pa: PAYMENT_UPI_ID,
+    pn: PAYMENT_PAYEE_NAME,
+    am: String(amountInr),
+    cu: 'INR',
+    tn: note.slice(0, 80),
+  });
+  return `upi://pay?${params.toString()}`;
+}
 
 async function enforceCurrentTierPrices() {
   await query(
@@ -96,10 +110,19 @@ export async function requestLicense(req: Request, res: Response) {
     );
 
     const license = result.rows[0];
+    const upiLink = buildUpiDeepLink(Number(tier.price_inr || 0), `BizFlow ${tier.display_name} ${license.license_key}`);
 
     res.status(201).json(success({
       license: { ...license, tier },
       contact: { phone: CONTACT_PHONE, email: CONTACT_EMAIL },
+      payment: upiLink
+        ? {
+            mode: 'upi',
+            upi_link: upiLink,
+            upi_id: PAYMENT_UPI_ID,
+            amount_inr: Number(tier.price_inr || 0),
+          }
+        : null,
       message: `Your license request for the ${tier.display_name} plan has been received. Please contact us at ${CONTACT_PHONE} or ${CONTACT_EMAIL} to complete payment and activate your license.`,
     }));
   } catch (err: any) {

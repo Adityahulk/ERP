@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
@@ -18,6 +19,7 @@ function getGreeting() {
 export default function Dashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
   
   if (normalizeRole(user?.role) === 'staff') {
       return <Navigate to="/attendance" replace />;
@@ -50,6 +52,17 @@ export default function Dashboard() {
   const overdueCount = jwOverdue?.length ?? 0;
   const wsOrdersThisMonth = (wsStats?.confirmed_count ?? 0) + (wsStats?.dispatched_count ?? 0) + (wsStats?.delivered_count ?? 0);
 
+  useEffect(() => {
+    if (!user?.companyId) return;
+    setChecklistDismissed(localStorage.getItem(`bizflow_first_run_done_${user.companyId}`) === '1');
+  }, [user?.companyId]);
+
+  const dismissChecklist = () => {
+    if (!user?.companyId) return;
+    localStorage.setItem(`bizflow_first_run_done_${user.companyId}`, '1');
+    setChecklistDismissed(true);
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500 max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
       <div className="flex justify-between items-end">
@@ -69,6 +82,27 @@ export default function Dashboard() {
               <p className="text-xs text-red-600">Materials not returned within GST Section 143 deadline — may be treated as deemed supply.</p>
             </div>
             <Link to="/job-work" className="text-xs font-medium text-red-700 hover:underline flex items-center gap-1">View <ArrowRight className="w-3 h-3" /></Link>
+          </CardContent>
+        </Card>
+      )}
+
+      {!checklistDismissed && (
+        <Card className="border-indigo-200 bg-indigo-50/60">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold text-indigo-900">Getting started checklist</p>
+                <p className="text-xs text-indigo-700 mt-1">Complete these once to set up your business faster.</p>
+                <div className="mt-3 grid sm:grid-cols-3 gap-2">
+                  <Link to="/items" className="text-xs rounded-md border border-indigo-200 bg-white px-3 py-2 hover:bg-indigo-100">1. Add your first item</Link>
+                  <Link to="/parties" className="text-xs rounded-md border border-indigo-200 bg-white px-3 py-2 hover:bg-indigo-100">2. Add a customer/supplier</Link>
+                  <Link to="/sales/new" className="text-xs rounded-md border border-indigo-200 bg-white px-3 py-2 hover:bg-indigo-100">3. Create first invoice</Link>
+                </div>
+              </div>
+              <button type="button" onClick={dismissChecklist} className="text-xs text-indigo-700 hover:text-indigo-900">
+                Mark done
+              </button>
+            </div>
           </CardContent>
         </Card>
       )}

@@ -234,7 +234,7 @@ function SidebarNavigation({
 }
 
 export default function AppLayout() {
-  const { user, logout, license, setLicense } = useAuthStore();
+  const { user, logout, license, setLicense, updateCompany } = useAuthStore();
   const location = useLocation();
   const navigate = useNavigate();
   const actualRole = normalizeRole(user?.role);
@@ -252,8 +252,17 @@ export default function AppLayout() {
       if (data?.license !== undefined) {
         setLicense(data.license);
       }
+      if (data?.company) {
+        updateCompany({
+          name: data.company.name,
+          gstin: data.company.gstin || undefined,
+          itemTerminology: data.company.item_terminology || 'Item',
+          itemTerminologyPlural: data.company.item_terminology_plural || 'Items',
+          onboardingCompleted: Boolean(data.company.onboarding_completed),
+        });
+      }
     }).catch(() => { /* non-blocking — license info is supplemental */ });
-  }, []);
+  }, [setLicense, updateCompany]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [ownedCompanies, setOwnedCompanies] = useState<OwnedCompanyLicense[]>([]);

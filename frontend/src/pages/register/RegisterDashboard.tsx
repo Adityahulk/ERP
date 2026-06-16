@@ -119,8 +119,13 @@ export default function RegisterDashboard() {
   const handleStartTrial = async () => {
     try {
       setStartingTrial(true);
-      await registrantApi.post('/licenses/start-trial', {});
+      const { data: res } = await registrantApi.post('/licenses/start-trial', {});
       toast.success('Your 15-day full Diamond trial is active.');
+      const trialLicenseId = res?.data?.license?.id;
+      if (trialLicenseId) {
+        await handleOpenCompany(trialLicenseId);
+        return;
+      }
       await fetchData();
     } catch (err: any) {
       if (err?.response?.status === 409) {
