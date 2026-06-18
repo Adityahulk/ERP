@@ -421,7 +421,7 @@ export default function InvoiceList() {
   const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
   const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
   const activeMenuCanIRN = activeMenuCanEdit;
-  const activeMenuCanEWB = !!activeMenuInvoice && activeMenuHasIrn && !activeMenuInvoice.ewb_no && activeMenuInvoice.status !== 'cancelled';
+  const activeMenuCanEWB = !!activeMenuInvoice && activeMenuHasIrn && !activeMenuInvoice.eway_bill_no && activeMenuInvoice.status !== 'cancelled';
   const activeMenuCanDelete = activeMenuCanEdit;
   const activeMenuCanCancel = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled' && Number(activeMenuInvoice.paid_amount || 0) === 0;
   const activeMenuCanReceive = !!activeMenuInvoice && activeMenuInvoice.status !== 'cancelled' && Number(activeMenuInvoice.balance_due ?? 0) > 0;
@@ -545,7 +545,7 @@ export default function InvoiceList() {
                         </button>
                         {hasActiveIrn && <span className="ml-1 text-xs text-emerald-600 font-semibold">IRN</span>}
                         {inv.irn && inv.einvoice_status === 'cancelled' && <span className="ml-1 text-xs text-slate-500 font-semibold">IRN cancelled</span>}
-                        {inv.ewb_no && <span className="ml-1 text-xs text-blue-600 font-semibold">EWB</span>}
+                        {inv.eway_bill_no && <span className="ml-1 text-xs text-blue-600 font-semibold">EWB</span>}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-medium">{inv.party_name || 'Walk-in Customer'}</div>

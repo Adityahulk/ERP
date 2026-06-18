@@ -36,6 +36,7 @@ import superAdminRoutes from './superAdmin';
 import transactionSettingsRoutes from './transactionSettings';
 import taxSettingsRoutes from './taxSettings';
 import printSettingsRoutes from './printSettings';
+import bankReconciliationRoutes from './bankReconciliation';
 
 import { verifyToken } from '../middleware/auth';
 import barcodeRoutes from './barcode';
@@ -69,6 +70,7 @@ router.use('/labels', labelRoutes);
 router.use('/print', printRoutes);
 router.use('/search', searchRoutes);
 router.use('/accounting', accountingRoutes);
+router.use('/bank-reconciliation', verifyToken, bankReconciliationRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);

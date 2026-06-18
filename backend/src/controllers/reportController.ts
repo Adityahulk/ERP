@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
 import { getExpenseGstSql } from '../services/expenseReportingService';
+import { buildCashFlowReport } from '../lib/cashFlowReport';
 import fs from 'fs';
 import { XMLParser } from 'fast-xml-parser';
 
@@ -533,6 +534,55 @@ export async function itemWiseProfit(req: Request, res: Response) {
       [companyId, from, to]
     );
     res.json(success(result.rows));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function cashFlow(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { from, to } = parseRange(req);
+    const report = await buildCashFlowReport(companyId, from, to);
+    res.json(success(report));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function partyWisePl(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid) AS party_id,
+              COALESCE(p.name, inv.party_name_snapshot, 'Walk-in / unassigned') AS party_name,
+              COUNT(DISTINCT inv.id)::int AS invoice_count,
+              COALESCE(SUM(ii.taxable_amount), 0)::bigint AS revenue_paise,
+              COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0)::bigint AS cogs_paise,
+              (COALESCE(SUM(ii.taxable_amount), 0) - COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0))::bigint AS gross_profit_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       LEFT JOIN parties p ON inv.party_id = p.id AND p.is_deleted = false
+       LEFT JOIN items it ON ii.item_id = it.id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid),
+                COALESCE(p.name, inv.party_name_snapshot, 'Walk-in / unassigned')
+       ORDER BY gross_profit_paise DESC`,
+      [companyId, from, to],
+    );
+    const rows = result.rows.map((r: any) => {
+      const revenue = Number(r.revenue_paise || 0);
+      const gross = Number(r.gross_profit_paise || 0);
+      return {
+        ...r,
+        net_profit_paise: gross,
+        gross_margin_pct: revenue > 0 ? ((gross / revenue) * 100).toFixed(1) : '0',
+      };
+    });
+    res.json(success({ period: { from, to }, expense_allocation: false, rows }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

@@ -8,6 +8,10 @@ import {
   getLicenseTiers,
   requestLicense,
   startTrialLicense,
+  getTenantBillingContext,
+  createTenantUpgradeOrder,
+  handlePaymentWebhook,
+  simulateTenantOrderPaid,
   getMyLicenses,
   getLicenseDetail,
   activateLicense,
@@ -25,6 +29,10 @@ const startTrialSchema = z.object({
   business_name: z.string().trim().min(2).max(500).optional(),
 }).optional().default({});
 
+const tenantUpgradeSchema = z.object({
+  target_tier_id: z.string().uuid(),
+});
+
 const activateSchema = z.object({
   company_name: z.string().min(2).max(500),
   admin_name: z.string().min(2).max(500),
@@ -36,11 +44,15 @@ const activateSchema = z.object({
 
 // Public
 router.get('/tiers', getLicenseTiers);
+router.post('/payments/webhook', handlePaymentWebhook);
 
 // Registrant-authenticated routes
 router.post('/request', verifyRegistrantToken, validateBody(requestSchema), requestLicense);
 router.post('/start-trial', verifyRegistrantToken, validateBody(startTrialSchema), startTrialLicense);
 router.get('/', verifyRegistrantToken, getMyLicenses);
+router.get('/tenant/context', verifyToken, requireRole('admin', 'super_admin'), getTenantBillingContext);
+router.post('/tenant/upgrade-order', verifyToken, requireRole('admin', 'super_admin'), validateBody(tenantUpgradeSchema), createTenantUpgradeOrder);
+router.post('/tenant/orders/:id/simulate-paid', verifyToken, requireRole('admin', 'super_admin'), simulateTenantOrderPaid);
 router.get('/:id', verifyRegistrantToken, getLicenseDetail);
 
 // Super-admin routes (application user JWT)

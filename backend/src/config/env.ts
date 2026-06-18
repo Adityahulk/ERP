@@ -94,6 +94,9 @@ const envSchema = z.object({
   GSTIN_LOOKUP_API_KEY_HEADER: z.string().default('Authorization'),
   /** 64 hex chars (32 bytes) for AES-256-GCM storage of GSP passwords at rest */
   CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
+  PAYMENT_UPI_ID: z.string().optional(),
+  PAYMENT_PAYEE_NAME: z.string().optional(),
+  PAYMENT_WEBHOOK_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

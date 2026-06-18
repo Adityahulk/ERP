@@ -18,6 +18,8 @@ router.get('/outstanding-payables', ctrl.outstandingPayables);
 router.get('/stock-movement', ctrl.stockMovement);
 router.get('/low-stock', ctrl.lowStock);
 router.get('/item-wise-profit', ctrl.itemWiseProfit);
+router.get('/cash-flow', ctrl.cashFlow);
+router.get('/party-pl', ctrl.partyWisePl);
 router.get('/party-wise-sales', ctrl.partyWiseSales);
 router.get('/party-wise-purchase', ctrl.partyWisePurchase);
 router.get('/day-book', ctrl.dayBook);

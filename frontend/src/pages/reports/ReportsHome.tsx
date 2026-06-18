@@ -28,6 +28,8 @@ type ReportName =
   | 'Stock Movement'
   | 'Low Stock Alert'
   | 'Profit & Loss'
+  | 'Cash Flow Statement'
+  | 'Party-wise P&L'
   | 'Balance Sheet'
   | 'Trial Balance'
   | 'Day Book'
@@ -40,7 +42,7 @@ const reportCategories = [
   { id: 'sales', title: 'Sales Reports', reports: ['Sales Register', 'Item-wise Sales', 'Party-wise Sales', 'Outstanding Receivables'] as const },
   { id: 'purchase', title: 'Purchase Reports', reports: ['Purchase Register', 'Party-wise Purchase', 'Outstanding Payables'] as const },
   { id: 'inventory', title: 'Inventory Reports', reports: ['Stock Summary', 'Stock Movement', 'Low Stock Alert'] as const },
-  { id: 'financial', title: 'Financial Reports', reports: ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Day Book', 'Expense Summary', 'Payment Collection', 'TCS / TDS'] as const },
+  { id: 'financial', title: 'Financial Reports', reports: ['Profit & Loss', 'Cash Flow Statement', 'Party-wise P&L', 'Balance Sheet', 'Trial Balance', 'Day Book', 'Expense Summary', 'Payment Collection', 'TCS / TDS'] as const },
 ];
 
 function monthYearFromDate(isoDate: string): { month: string; year: string } {
@@ -114,6 +116,12 @@ export default function ReportsHome() {
           return unwrap(await api.get('/reports/party-wise-purchase', { params }));
         case 'Profit & Loss':
           return unwrap(await api.get('/reports/profit-loss', { params }));
+        case 'Cash Flow Statement':
+          return unwrap(await api.get('/reports/cash-flow', { params }));
+        case 'Party-wise P&L': {
+          const pl = unwrap(await api.get('/reports/party-pl', { params })) as { rows?: Record<string, unknown>[] };
+          return pl.rows || pl;
+        }
         case 'GSTR-1 Data':
           return unwrap(await api.get('/gst/gstr1', { params: { month, year } }));
         case 'GSTR-3B Summary':
@@ -153,6 +161,9 @@ export default function ReportsHome() {
     }
     if (activeReport === 'Trial Balance' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
       return (data as { rows: Record<string, unknown>[] }).rows;
+    }
+    if (activeReport === 'Party-wise P&L' && Array.isArray(data)) {
+      return data as Record<string, unknown>[];
     }
     return [];
   }, [data, activeReport]);
@@ -230,6 +241,13 @@ export default function ReportsHome() {
     'sales_taxable_paise',
     'cogs_paise',
     'gross_profit_paise',
+    'revenue_paise',
+    'net_profit_paise',
+    'inflows_paise',
+    'outflows_paise',
+    'net_paise',
+    'net_change_paise',
+    'gross_margin_pct',
     'tds_deducted_paise',
     'tcs_collected_paise',
     'taxable_value',
@@ -261,6 +279,45 @@ export default function ReportsHome() {
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return formatDate(value);
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  };
+
+  const renderCashFlow = (cf: Record<string, unknown>) => {
+    const period = cf.period as { from?: string; to?: string } | undefined;
+    const section = (key: string, title: string) => {
+      const s = cf[key] as { inflows_paise?: number; outflows_paise?: number; net_paise?: number; lines?: { label: string; amount_paise: number; direction: string }[] } | undefined;
+      return (
+        <div className="rounded-lg border p-4 space-y-2" key={key}>
+          <h3 className="font-semibold">{title}</h3>
+          {(s?.lines || []).map((line) => (
+            <div key={line.label} className="flex justify-between text-muted-foreground">
+              <span>{line.label}</span>
+              <span className={`tabular-nums ${line.direction === 'inflow' ? 'text-emerald-700' : 'text-red-700'}`}>
+                {line.direction === 'inflow' ? '+' : '−'}{formatMoney(line.amount_paise)}
+              </span>
+            </div>
+          ))}
+          <div className="pt-2 border-t flex justify-between font-semibold">
+            <span>Net {title.toLowerCase()}</span>
+            <span className="tabular-nums">{formatMoney(Number(s?.net_paise || 0))}</span>
+          </div>
+        </div>
+      );
+    };
+    return (
+      <div className="space-y-4 text-sm max-w-2xl">
+        <p className="text-muted-foreground">
+          Period {period?.from ? formatDate(period.from) : formatDate(appliedFrom)} –{' '}
+          {period?.to ? formatDate(period.to) : formatDate(appliedTo)}
+        </p>
+        {section('operating', 'Operating activities')}
+        {section('investing', 'Investing activities')}
+        {section('financing', 'Financing activities')}
+        <div className="rounded-lg border p-4 bg-indigo-50/50 border-indigo-100 flex justify-between text-lg font-bold">
+          <span>Net change in cash</span>
+          <span className="tabular-nums">{formatMoney(Number(cf.net_change_paise || 0))}</span>
+        </div>
+      </div>
+    );
   };
 
   const renderProfitLoss = (pl: Record<string, unknown>) => {
@@ -438,6 +495,9 @@ export default function ReportsHome() {
   const renderDataTable = () => {
     if (activeReport === 'Profit & Loss' && data && typeof data === 'object' && !Array.isArray(data)) {
       return renderProfitLoss(data as Record<string, unknown>);
+    }
+    if (activeReport === 'Cash Flow Statement' && data && typeof data === 'object' && !Array.isArray(data)) {
+      return renderCashFlow(data as Record<string, unknown>);
     }
     if (activeReport === 'Balance Sheet' && data && typeof data === 'object') {
       return renderBalanceSheet(data as Record<string, unknown>);

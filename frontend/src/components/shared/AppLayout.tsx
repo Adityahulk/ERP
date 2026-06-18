@@ -88,12 +88,16 @@ const navGroups = [
      items: [
         { to: '/accounting', icon: Receipt, label: 'Accounting' },
         { to: '/cash-bank', icon: Landmark, label: 'Cash & Bank' },
+        { to: '/cash-bank/reconciliation', icon: Landmark, label: 'Bank Reconciliation' },
         { to: '/reports', icon: BarChart3, label: 'Business Reports' },
      ]
   },
   {
      label: 'COMPLIANCE',
-     items: [ { to: '/gst-filing', icon: Cloud, label: 'GST Returns' } ]
+     items: [
+        { to: '/gst-filing', icon: Cloud, label: 'GST Returns' },
+        { to: '/gst-filing/eway-bill', icon: Cloud, label: 'E-way Bills' },
+     ]
   },
   {
      label: 'PEOPLE',

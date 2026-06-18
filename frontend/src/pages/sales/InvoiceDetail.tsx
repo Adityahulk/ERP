@@ -98,6 +98,14 @@ export default function InvoiceDetail() {
     setSearchParams(next, { replace: true });
   }, [params, setSearchParams]);
 
+  useEffect(() => {
+    if (!inv || params.get('tab') !== 'ewb') return;
+    setEwbOpen(true);
+    const next = new URLSearchParams(params);
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [inv, params, setSearchParams]);
+
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading invoice details...</div>;
   if (isError || !inv) return <div className="p-8 text-center text-destructive">Invoice not found.</div>;
 

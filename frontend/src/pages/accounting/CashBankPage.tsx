@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDownRight, ArrowUpRight, Landmark, Plus } from 'lucide-react';
@@ -73,9 +74,14 @@ export default function CashBankPage() {
             <h1 className="text-2xl font-bold tracking-tight">Cash & Bank</h1>
             <p className="text-sm text-slate-500">Bank accounts, cash in hand, cheques, loans, deposits and withdrawals.</p>
           </div>
-          <Button onClick={() => setAddBankOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Add Bank
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" asChild>
+              <Link to="/cash-bank/reconciliation">Reconcile bank</Link>
+            </Button>
+            <Button onClick={() => setAddBankOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Add Bank
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -38,7 +38,7 @@ services:
       dockerfile: Dockerfile
     container_name: bizflow_backend
     ports:
-      - "${BACKEND_PORT:-5000}:5000"
+      - "${BACKEND_PORT:-5001}:5001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       - ./backend/.env
     environment:
       # Keep container-internal port stable for nginx upstream (frontend/nginx.conf -> backend:5000)
-      PORT: 5000
+      PORT: 5001
       # Force docker-internal service discovery to avoid localhost/127.0.0.1 mistakes in .env
       DATABASE_URL: postgresql://bizflow:${POSTGRES_PASSWORD:-bizflow_dev}@postgres:5432/bizflow
       REDIS_URL: redis://redis:6379

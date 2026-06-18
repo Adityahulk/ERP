@@ -25,6 +25,7 @@ import GRNScreen from '@/pages/purchases/GRNScreen';
 import QuotationForm from '@/pages/quotations/QuotationForm';
 import QuotationDetail from '@/pages/quotations/QuotationDetail';
 import GSTDashboard from '@/pages/reports/GSTDashboard';
+import EwayBillPage from '@/pages/compliance/EwayBillPage';
 import AttendancePage from '@/pages/hr/AttendancePage';
 import ProfilePage from '@/pages/hr/ProfilePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
@@ -33,6 +34,7 @@ import BillingScreen from '@/pages/billing/BillingScreen';
 import ReportsHome from '@/pages/reports/ReportsHome';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import CashBankPage from '@/pages/accounting/CashBankPage';
+import BankReconciliationPage from '@/pages/accounting/BankReconciliationPage';
 import Settings from '@/pages/settings/Settings';
 import LandingPage from '@/pages/landing/LandingPage';
 
@@ -296,7 +298,9 @@ export default function App() {
         <Route path="/reports" element={<RoleGate allowed={['admin', 'manager']}><ModuleGate featureKey="basic_reports" featureLabel="Business Reports"><ReportsHome /></ModuleGate></RoleGate>} />
         <Route path="/accounting" element={<RoleGate allowed={['admin', 'manager']}><AccountingDashboard /></RoleGate>} />
         <Route path="/cash-bank" element={<RoleGate allowed={['admin', 'manager']}><CashBankPage /></RoleGate>} />
+        <Route path="/cash-bank/reconciliation" element={<RoleGate allowed={['admin', 'manager']}><BankReconciliationPage /></RoleGate>} />
         <Route path="/gst-filing" element={<RoleGate allowed={['admin']}><ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><GSTDashboard /></ModuleGate></RoleGate>} />
+        <Route path="/gst-filing/eway-bill" element={<RoleGate allowed={['admin']}><ModuleGate featureKey="gst_filing" featureLabel="GST Filing"><EwayBillPage /></ModuleGate></RoleGate>} />
 
         {/* HR & Attendance */}
         <Route path="/attendance" element={<ModuleGate featureKey="hr" featureLabel="HR & Attendance"><AttendancePage /></ModuleGate>} />

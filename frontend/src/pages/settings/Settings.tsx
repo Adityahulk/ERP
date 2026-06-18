@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, AlertTriangle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil, X, Printer, ReceiptText, Calculator, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, AlertTriangle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil, X, Printer, ReceiptText, Calculator, ChevronLeft, ChevronRight, CreditCard, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
@@ -192,6 +192,8 @@ type TermsEntry = { id?: string; transactionType: string; title: string; content
 type AdditionalFieldsState = Record<string, any>;
 type TransportationState = Record<string, any>;
 type AdditionalChargesState = Record<string, any>;
+type BillingTier = { id: string; name: string; display_name: string; max_users: number; price_inr: number };
+
 
 const DEFAULT_ITEM_SETTINGS: ItemSettingsState = {
   enable_item: true,
@@ -801,6 +803,9 @@ export default function Settings() {
 
   const [tab, setTab] = useState('company');
   const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(() => localStorage.getItem('settings_sidebar_collapsed') !== 'false');
+  const [selectedUpgradeTierId, setSelectedUpgradeTierId] = useState('');
+  const [latestUpgradeOrder, setLatestUpgradeOrder] = useState<any | null>(null);
+  const [latestUpgradePayment, setLatestUpgradePayment] = useState<any | null>(null);
 
   const [deleteConf, setDeleteConf] = useState('');
   const [dataDumping, setDataDumping] = useState(false);
@@ -833,6 +838,10 @@ export default function Settings() {
     queryKey: ['transaction-settings'],
     queryFn: () => api.get('/settings/transaction').then((r) => r.data?.data ?? r.data),
   });
+  const { data: billingContext, isLoading: billingLoading } = useQuery({
+    queryKey: ['tenant-billing-context'],
+    queryFn: () => api.get('/licenses/tenant/context').then((r) => r.data?.data ?? r.data),
+  });
 
   useEffect(() => {
     if (!transactionConfig) return;
@@ -843,6 +852,15 @@ export default function Settings() {
     setAdditionalCharges({ ...DEFAULT_CHARGES, ...(transactionConfig.charges || {}) });
     setTermsGrouped(transactionConfig.terms || {});
   }, [transactionConfig]);
+
+  useEffect(() => {
+    const tiers: BillingTier[] = Array.isArray(billingContext?.tiers) ? billingContext.tiers : [];
+    const currentTierId = String(billingContext?.current?.tier_id || '');
+    if (!tiers.length) return;
+    if (selectedUpgradeTierId && tiers.some((t) => t.id === selectedUpgradeTierId)) return;
+    const nextTier = tiers.find((t) => t.id !== currentTierId) || tiers[0];
+    setSelectedUpgradeTierId(nextTier?.id || '');
+  }, [billingContext, selectedUpgradeTierId]);
   const [bankForm, setBankForm] = useState({
     account_label: '',
     bank_name: '',
@@ -904,6 +922,36 @@ export default function Settings() {
       qc.invalidateQueries({ queryKey: ['company-bank-accounts'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Remove failed'),
+  });
+
+  const createUpgradeOrder = useMutation({
+    mutationFn: async () => {
+      if (!selectedUpgradeTierId) throw new Error('Select a plan first');
+      return api.post('/licenses/tenant/upgrade-order', { target_tier_id: selectedUpgradeTierId });
+    },
+    onSuccess: (res: any) => {
+      const data = res?.data?.data ?? res?.data;
+      setLatestUpgradeOrder(data?.order || null);
+      setLatestUpgradePayment(data?.payment || null);
+      toast.success('Upgrade payment order created');
+      qc.invalidateQueries({ queryKey: ['tenant-billing-context'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Unable to create order'),
+  });
+
+  const simulatePaidUpgrade = useMutation({
+    mutationFn: async () => {
+      const orderId = latestUpgradeOrder?.id || billingContext?.latest_order?.id;
+      if (!orderId) throw new Error('No pending order found');
+      return api.post(`/licenses/tenant/orders/${orderId}/simulate-paid`);
+    },
+    onSuccess: () => {
+      toast.success('Payment simulated and plan upgraded');
+      setLatestUpgradeOrder(null);
+      setLatestUpgradePayment(null);
+      qc.invalidateQueries({ queryKey: ['tenant-billing-context'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Simulation failed'),
   });
 
   const createUser = useMutation({
@@ -1708,6 +1756,7 @@ export default function Settings() {
      { id: 'users', label: 'Users & Roles', icon: Users },
      { id: 'print', label: 'Print', icon: Printer },
      { id: 'transaction', label: 'Transaction', icon: ReceiptText },
+     { id: 'billing', label: 'Plan & Billing', icon: CreditCard },
      { id: 'invoices', label: 'Invoice Settings', icon: FileText },
      { id: 'taxes', label: 'Taxes & GST', icon: Calculator },
      { id: 'items', label: 'Item Configuration', icon: Package },
@@ -2952,6 +3001,93 @@ export default function Settings() {
                            </div>
                         </div>
                      )}
+                  </CardContent>
+               )}
+
+               {tab === 'billing' && (
+                  <CardContent className="p-6 space-y-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-bold">Plan & Billing</h2>
+                        <p className="text-sm text-slate-500">Upgrade instantly with payment reconciliation webhook support.</p>
+                      </div>
+                    </div>
+
+                    {billingLoading ? (
+                      <p className="text-sm text-slate-500">Loading billing context…</p>
+                    ) : (
+                      <>
+                        <div className="rounded-xl border bg-slate-50 p-4">
+                          <p className="text-sm text-slate-500">Current plan</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {billingContext?.current?.tier_display_name || '—'}{' '}
+                            <span className="text-xs text-slate-500">({String(billingContext?.current?.status || 'unknown').toUpperCase()})</span>
+                          </p>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Expiry: {billingContext?.current?.expires_at ? new Date(billingContext.current.expires_at).toLocaleDateString('en-IN') : 'Not set'}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border p-4 space-y-3">
+                          <label className="text-sm font-medium text-slate-700">Choose upgrade plan</label>
+                          <select
+                            className="h-10 w-full rounded-md border bg-white px-3 text-sm"
+                            value={selectedUpgradeTierId}
+                            onChange={(e) => setSelectedUpgradeTierId(e.target.value)}
+                          >
+                            {(Array.isArray(billingContext?.tiers) ? billingContext.tiers : [])
+                              .filter((tier: BillingTier) => tier.id !== billingContext?.current?.tier_id)
+                              .map((tier: BillingTier) => (
+                                <option key={tier.id} value={tier.id}>
+                                  {tier.display_name} — {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(tier.price_inr || 0))}
+                                </option>
+                              ))}
+                          </select>
+                          <div className="flex flex-wrap gap-2">
+                            <Button onClick={() => createUpgradeOrder.mutate()} loading={createUpgradeOrder.isPending} disabled={!selectedUpgradeTierId}>
+                              Create Payment Order
+                            </Button>
+                            <Button variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ['tenant-billing-context'] })}>
+                              Refresh
+                            </Button>
+                          </div>
+                        </div>
+
+                        {(latestUpgradeOrder || billingContext?.latest_order) && (
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                            <p className="text-sm font-semibold text-emerald-900">Latest order</p>
+                            <p className="text-xs text-emerald-800">
+                              Ref: {(latestUpgradeOrder?.provider_order_id || billingContext?.latest_order?.provider_order_id || '—')} • Status: {String(latestUpgradeOrder?.status || billingContext?.latest_order?.status || 'unknown').toUpperCase()}
+                            </p>
+                            {latestUpgradePayment?.upi_link && (
+                              <div className="flex flex-wrap gap-2">
+                                <a href={latestUpgradePayment.upi_link} className="inline-flex items-center rounded-md bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">
+                                  Pay with UPI
+                                </a>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={async () => {
+                                    await navigator.clipboard.writeText(latestUpgradePayment.upi_link);
+                                    toast.success('UPI link copied');
+                                  }}
+                                >
+                                  <Copy className="mr-1 h-3 w-3" /> Copy Link
+                                </Button>
+                              </div>
+                            )}
+                            <div className="pt-1">
+                              <Button variant="outline" onClick={() => simulatePaidUpgrade.mutate()} loading={simulatePaidUpgrade.isPending}>
+                                Mark Paid (Test)
+                              </Button>
+                            </div>
+                            <p className="text-[11px] text-emerald-700">
+                              Production webhook endpoint: <code>/api/licenses/payments/webhook</code> with header <code>x-payment-webhook-secret</code>.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </CardContent>
                )}
 

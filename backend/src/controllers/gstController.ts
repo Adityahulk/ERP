@@ -438,3 +438,35 @@ export async function getInputCredit(req: Request, res: Response) {
     gstErrorResponse(res, err);
   }
 }
+
+export async function getEwayBillEligible(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `SELECT inv.id, inv.invoice_number,
+              COALESCE(p.name, inv.party_name_snapshot, 'Customer') AS party_name,
+              inv.total_amount, inv.eway_bill_status, inv.eway_bill_no,
+              inv.invoice_date, inv.irn, inv.einvoice_status
+       FROM invoices inv
+       LEFT JOIN parties p ON p.id = inv.party_id AND p.is_deleted = false
+       JOIN companies c ON c.id = inv.company_id AND c.is_deleted = false
+       WHERE inv.company_id = $1
+         AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled'
+         AND inv.is_deleted = false
+         AND inv.einvoice_status = 'generated'
+         AND inv.irn IS NOT NULL
+         AND (inv.eway_bill_no IS NULL OR inv.eway_bill_status = 'cancelled')
+         AND (
+           c.eway_bill_only_above_50k = false
+           OR inv.total_amount > 5000000
+         )
+       ORDER BY inv.invoice_date DESC, inv.invoice_number DESC
+       LIMIT 200`,
+      [companyId],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}

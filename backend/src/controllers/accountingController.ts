@@ -11,6 +11,7 @@ import {
   postSalesInvoiceAccounting,
   type Queryable,
 } from '../services/accountingService';
+import { buildCashFlowReport } from '../lib/cashFlowReport';
 
 /** Default report window for GL-style statements (matches reports module). */
 function parseRange(req: Request): { from: string; to: string } {
@@ -550,15 +551,10 @@ export async function getBalanceSheet(req: Request, res: Response) {
 
 export async function getCashFlow(req: Request, res: Response) {
   try {
+    const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
-    res.json(
-      success({
-        implemented: false,
-        period: { from, to },
-        message:
-          'Cash flow is not computed from journals in this build. Review bank/cash ledgers (asset accounts) and the trial balance for liquidity.',
-      }),
-    );
+    const report = await buildCashFlowReport(companyId, from, to);
+    res.json(success(report));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

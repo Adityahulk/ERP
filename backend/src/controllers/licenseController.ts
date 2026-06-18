@@ -3,11 +3,12 @@ import bcrypt from 'bcryptjs';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { clearTierFeaturesCache } from '../middleware/moduleGuard';
+import { env } from '../config/env';
 
 const CONTACT_PHONE = '+91 6355 997 080';
 const CONTACT_EMAIL = 'support@microtechnique.in';
-const PAYMENT_UPI_ID = process.env.PAYMENT_UPI_ID || '';
-const PAYMENT_PAYEE_NAME = process.env.PAYMENT_PAYEE_NAME || 'Microtechnique Accounts';
+const PAYMENT_UPI_ID = env.PAYMENT_UPI_ID || '';
+const PAYMENT_PAYEE_NAME = env.PAYMENT_PAYEE_NAME || 'Microtechnique Accounts';
 const TRIAL_DAYS = 15;
 
 function buildUpiDeepLink(amountInr: number, note: string): string | null {
@@ -20,6 +21,65 @@ function buildUpiDeepLink(amountInr: number, note: string): string | null {
     tn: note.slice(0, 80),
   });
   return `upi://pay?${params.toString()}`;
+}
+
+async function applyPaidUpgrade(orderId: string, providerPaymentId: string | null, rawPayload: unknown) {
+  return withTransaction(async (client) => {
+    const orderRes = await client.query(
+      `SELECT lpo.id, lpo.license_id, lpo.company_id, lpo.target_tier_id, lpo.status,
+              lpo.amount_inr, lpo.provider_order_id, lt.name as target_tier_name
+       FROM license_payment_orders lpo
+       JOIN license_tiers lt ON lt.id = lpo.target_tier_id
+       WHERE lpo.id = $1 AND lpo.is_deleted = false
+       LIMIT 1`,
+      [orderId]
+    );
+    if (!orderRes.rows.length) {
+      throw Object.assign(new Error('Payment order not found'), { status: 404 });
+    }
+    const order = orderRes.rows[0];
+    if (order.status === 'paid') {
+      return { alreadyPaid: true, companyId: order.company_id, tierName: order.target_tier_name };
+    }
+    if (!['pending', 'processing'].includes(String(order.status))) {
+      throw Object.assign(new Error(`Cannot settle order in status ${order.status}`), { status: 400 });
+    }
+
+    await client.query(
+      `UPDATE licenses
+       SET tier_id = $1,
+           status = 'active',
+           activated_at = COALESCE(activated_at, NOW()),
+           expires_at = COALESCE(expires_at, NOW() + INTERVAL '365 days'),
+           updated_at = NOW()
+       WHERE id = $2`,
+      [order.target_tier_id, order.license_id]
+    );
+
+    await client.query(
+      `UPDATE companies
+       SET plan_type = $1,
+           plan_expires_at = COALESCE(plan_expires_at, NOW() + INTERVAL '365 days'),
+           is_active = true,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [order.target_tier_name, order.company_id]
+    );
+
+    await client.query(
+      `UPDATE license_payment_orders
+       SET status = 'paid',
+           paid_at = NOW(),
+           provider_payment_id = COALESCE($2, provider_payment_id),
+           raw_payload = COALESCE($3::jsonb, raw_payload),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [order.id, providerPaymentId, rawPayload ? JSON.stringify(rawPayload) : null]
+    );
+
+    await clearTierFeaturesCache(order.company_id);
+    return { alreadyPaid: false, companyId: order.company_id, tierName: order.target_tier_name };
+  });
 }
 
 async function enforceCurrentTierPrices() {
@@ -238,6 +298,186 @@ export async function startTrialLicense(req: Request, res: Response) {
     }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
+  }
+}
+
+// ── GET /api/licenses/tenant/context ──────────────────────────
+// Tenant admin — show current plan and upgrade options.
+export async function getTenantBillingContext(req: Request, res: Response) {
+  try {
+    const companyId = req.user?.company_id;
+    if (!companyId) return res.status(400).json(error('Company context is required'));
+
+    const currentResult = await query(
+      `SELECT lic.id as license_id, lic.status, lic.expires_at, lt.id as tier_id, lt.name as tier_name,
+              lt.display_name as tier_display_name, lt.max_users, lt.price_inr
+       FROM companies c
+       JOIN licenses lic ON lic.id = c.license_id AND lic.is_deleted = false
+       JOIN license_tiers lt ON lt.id = lic.tier_id
+       WHERE c.id = $1 AND c.is_deleted = false
+       LIMIT 1`,
+      [companyId]
+    );
+    if (!currentResult.rows.length) return res.status(404).json(error('Active license context not found'));
+
+    const tiersResult = await query(
+      `SELECT id, name, display_name, max_users, price_inr
+       FROM license_tiers
+       WHERE is_active = true
+       ORDER BY sort_order ASC`
+    );
+
+    const latestOrderResult = await query(
+      `SELECT id, status, provider_order_id, amount_inr, created_at
+       FROM license_payment_orders
+       WHERE company_id = $1 AND is_deleted = false
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [companyId]
+    );
+
+    res.json(success({
+      current: currentResult.rows[0],
+      tiers: tiersResult.rows,
+      latest_order: latestOrderResult.rows[0] || null,
+      payment: { upi_id: PAYMENT_UPI_ID || null },
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/licenses/tenant/upgrade-order ───────────────────
+// Tenant admin — create a payment order for license tier upgrade.
+export async function createTenantUpgradeOrder(req: Request, res: Response) {
+  try {
+    const companyId = req.user?.company_id;
+    const { target_tier_id } = req.body || {};
+    if (!companyId) return res.status(400).json(error('Company context is required'));
+    if (!target_tier_id) return res.status(400).json(error('target_tier_id is required'));
+
+    const contextResult = await query(
+      `SELECT c.id as company_id, lic.id as license_id, lic.tier_id as current_tier_id, lic.registrant_id
+       FROM companies c
+       JOIN licenses lic ON lic.id = c.license_id AND lic.is_deleted = false
+       WHERE c.id = $1 AND c.is_deleted = false
+       LIMIT 1`,
+      [companyId]
+    );
+    if (!contextResult.rows.length) return res.status(404).json(error('License context not found'));
+    const ctx = contextResult.rows[0];
+
+    const targetTierResult = await query(
+      `SELECT id, name, display_name, price_inr, max_users
+       FROM license_tiers WHERE id = $1 AND is_active = true LIMIT 1`,
+      [target_tier_id]
+    );
+    if (!targetTierResult.rows.length) return res.status(404).json(error('Target tier not found'));
+    const targetTier = targetTierResult.rows[0];
+    if (ctx.current_tier_id === targetTier.id) {
+      return res.status(400).json(error('You are already on this plan'));
+    }
+
+    const providerOrderId = `BZF-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const note = `Plan upgrade ${providerOrderId}`;
+    const upiLink = buildUpiDeepLink(Number(targetTier.price_inr || 0), note);
+
+    const orderResult = await query(
+      `INSERT INTO license_payment_orders
+       (license_id, company_id, registrant_id, current_tier_id, target_tier_id, amount_inr, provider, provider_order_id, status, metadata, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'upi', $7, 'pending', $8::jsonb, NOW() + INTERVAL '24 hours')
+       RETURNING id, status, provider_order_id, amount_inr, created_at, expires_at`,
+      [
+        ctx.license_id,
+        companyId,
+        ctx.registrant_id,
+        ctx.current_tier_id,
+        targetTier.id,
+        Number(targetTier.price_inr || 0),
+        providerOrderId,
+        JSON.stringify({ note }),
+      ]
+    );
+
+    res.status(201).json(success({
+      order: orderResult.rows[0],
+      target_tier: targetTier,
+      payment: upiLink
+        ? { mode: 'upi', upi_link: upiLink, upi_id: PAYMENT_UPI_ID, amount_inr: Number(targetTier.price_inr || 0) }
+        : null,
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/licenses/payments/webhook ───────────────────────
+// Provider webhook — marks payment paid and upgrades plan instantly.
+export async function handlePaymentWebhook(req: Request, res: Response) {
+  try {
+    if (!env.PAYMENT_WEBHOOK_SECRET) {
+      return res.status(501).json(error('PAYMENT_WEBHOOK_SECRET is not configured'));
+    }
+    const incomingSecret = String(req.get('x-payment-webhook-secret') || '');
+    if (incomingSecret !== env.PAYMENT_WEBHOOK_SECRET) {
+      return res.status(401).json(error('Invalid webhook secret'));
+    }
+
+    const providerOrderId = String(req.body?.provider_order_id || '').trim();
+    const status = String(req.body?.status || '').toLowerCase();
+    const providerPaymentId = req.body?.provider_payment_id ? String(req.body.provider_payment_id) : null;
+    if (!providerOrderId) return res.status(400).json(error('provider_order_id is required'));
+
+    const orderResult = await query(
+      `SELECT id FROM license_payment_orders
+       WHERE provider_order_id = $1 AND is_deleted = false
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [providerOrderId]
+    );
+    if (!orderResult.rows.length) return res.status(404).json(error('Payment order not found'));
+    const orderId = orderResult.rows[0].id as string;
+
+    if (status !== 'paid' && status !== 'success') {
+      await query(
+        `UPDATE license_payment_orders
+         SET status = CASE WHEN $2 IN ('failed', 'cancelled', 'expired') THEN $2 ELSE status END,
+             raw_payload = $3::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [orderId, status, JSON.stringify(req.body || {})]
+      );
+      return res.json(success({ acknowledged: true, order_id: orderId, status }));
+    }
+
+    const upgraded = await applyPaidUpgrade(orderId, providerPaymentId, req.body || {});
+    res.json(success({ acknowledged: true, upgraded }));
+  } catch (err: any) {
+    res.status(err?.status || 500).json(error(err.message));
+  }
+}
+
+// ── POST /api/licenses/tenant/orders/:id/simulate-paid ────────
+// Tenant admin testing helper — simulates successful webhook settlement.
+export async function simulateTenantOrderPaid(req: Request, res: Response) {
+  try {
+    const companyId = req.user?.company_id;
+    const orderId = String(req.params.id || '');
+    if (!companyId || !orderId) return res.status(400).json(error('Invalid request'));
+
+    const orderResult = await query(
+      `SELECT id FROM license_payment_orders
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false
+       LIMIT 1`,
+      [orderId, companyId]
+    );
+    if (!orderResult.rows.length) return res.status(404).json(error('Order not found'));
+
+    const providerPaymentId = `SIM-${Date.now()}`;
+    const upgraded = await applyPaidUpgrade(orderId, providerPaymentId, { simulated: true, at: new Date().toISOString() });
+    res.json(success({ message: 'Order marked as paid (simulation)', upgraded }));
+  } catch (err: any) {
+    res.status(err?.status || 500).json(error(err.message));
   }
 }
 

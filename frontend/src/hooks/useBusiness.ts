@@ -236,6 +236,7 @@ export function useGenerateEwayBill() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['invoice', id] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['eway-bill', 'eligible'] });
     },
   });
 }
