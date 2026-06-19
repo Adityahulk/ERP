@@ -15,7 +15,11 @@ import { getConvertedPrice } from './gstService';
 
 function templatesRoot(): string {
   const dist = path.join(__dirname, '..', 'templates');
-  if (fs.existsSync(dist)) return dist;
+  if (fs.existsSync(dist)) {
+    const nested = path.join(dist, 'templates');
+    if (fs.existsSync(nested)) return nested;
+    return dist;
+  }
   const dev = path.join(process.cwd(), 'src', 'templates');
   if (fs.existsSync(dev)) return dev;
   return dist;
@@ -1495,13 +1499,16 @@ export async function generateThermalReceipt(
   items: any[],
   widthMm: 58 | 80 = 80,
 ): Promise<Buffer> {
-  const paperW = widthMm === 58 ? '58mm' : '72mm';
+  const paperW = widthMm === 58 ? '58mm' : '80mm';
   let tpl = readTpl('thermal/receipt_80mm.html');
   const rows = items
     .map((it) => {
       const name = escapeHtml(String(it.item_name || '').slice(0, 24));
-      return `<div class="row"><span style="max-width:70%">${name}</span></div>
-        <div class="row"><span>${it.quantity} x ₹${fmtPaise(it.unit_price)}</span><span>₹${fmtPaise(it.total_amount)}</span></div>`;
+      return `<div class="row">
+        <span class="col-item">${name}</span>
+        <span class="col-qty">${it.quantity}</span>
+        <span class="col-price">₹${fmtPaise(it.total_amount)}</span>
+      </div>`;
     })
     .join('');
 
@@ -1559,7 +1566,7 @@ export async function generateThermalReceipt(
     CHANGE_LINE:
       change > 0 ? `<div class="row"><span>Change</span><span>₹${fmtPaise(change)}</span></div>` : '',
     UPI_QR_BLOCK: upiQr
-      ? `<div class="qr"><p>UPI</p><img src="${upiQr}" width="140" height="140" alt="UPI"/></div>`
+      ? `<div class="qr"><img src="${upiQr}" alt="UPI"/></div>`
       : '',
     FOOTER_MSG: escapeHtml(company.receipt_footer_message || 'Thank you for your business!'),
     BARCODE_IMG: barcodePng ? `<div class="bc"><img src="${barcodePng}" alt="barcode"/></div>` : '',
@@ -1568,13 +1575,21 @@ export async function generateThermalReceipt(
   tpl = replaceAll(tpl, vars);
   const browser = await launchBrowser();
   const page = await browser.newPage();
-  await page.setViewport({ width: Math.round((widthMm / 25.4) * 96), height: 1200, deviceScaleFactor: 2 });
+  await page.setViewport({ width: Math.round((widthMm / 25.4) * 96), height: 800, deviceScaleFactor: 2 });
   await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+  const heightPx = await page.evaluate(() => {
+    const doc = (globalThis as any).document;
+    const el = doc.querySelector('.receipt');
+    return el ? (el as any).offsetHeight : doc.documentElement.offsetHeight;
+  });
+  const heightMm = Math.ceil(heightPx * 0.264583) + 4; // convert to mm + 4mm buffer
+
   const pdf = await page.pdf({
     width: `${widthMm}mm`,
-    height: '297mm',
+    height: `${heightMm}mm`,
     printBackground: true,
-    margin: { top: '2mm', bottom: '2mm', left: '2mm', right: '2mm' },
+    margin: { top: 0, bottom: 0, left: 0, right: 0 },
   });
   await browser.close();
   return Buffer.from(pdf);

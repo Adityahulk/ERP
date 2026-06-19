@@ -175,6 +175,7 @@ type TransactionSettingsState = {
   showProfitWhileMakingSaleInvoice: boolean;
   enableTermsAndConditions: boolean;
   billingType: 'LITE_SALE' | 'FULL_SALE';
+  defaultUpiId?: string | null;
 };
 
 type TransactionPrefixesState = {
@@ -414,6 +415,7 @@ const DEFAULT_TRANSACTION_SETTINGS: TransactionSettingsState = {
   showProfitWhileMakingSaleInvoice: false,
   enableTermsAndConditions: true,
   billingType: 'FULL_SALE',
+  defaultUpiId: '',
 };
 
 const DEFAULT_PREFIXES: TransactionPrefixesState = {
@@ -749,6 +751,9 @@ export default function Settings() {
   const [editingTaxGroup, setEditingTaxGroup] = useState<TaxGroupRow | null>(null);
   const [editingCustomTaxRate, setEditingCustomTaxRate] = useState<CustomTaxRateRow | null>(null);
   const [transactionSettings, setTransactionSettings] = useState<TransactionSettingsState>(DEFAULT_TRANSACTION_SETTINGS);
+  const [customUpiQr, setCustomUpiQr] = useState<string>(() => {
+    return localStorage.getItem('bizflow_custom_upi_qr') || '';
+  });
   const [transactionPrefixes, setTransactionPrefixes] = useState<TransactionPrefixesState>(DEFAULT_PREFIXES);
   const [termsGrouped, setTermsGrouped] = useState<Record<string, TermsEntry[]>>({});
   const [additionalFields, setAdditionalFields] = useState<AdditionalFieldsState>(DEFAULT_ADDITIONAL_FIELDS);
@@ -2804,6 +2809,73 @@ export default function Settings() {
                                     {label}
                                  </label>
                               ))}
+                           </div>
+                           <div className="space-y-3">
+                              <h3 className="border-b pb-3 font-semibold">UPI Settings</h3>
+                              <div className="rounded-md border bg-white px-3 py-3 space-y-4">
+                                 <label className="text-xs font-medium text-slate-600 block">Default UPI ID
+                                    <Input
+                                       className="mt-1"
+                                       value={transactionSettings.defaultUpiId || ''}
+                                       maxLength={50}
+                                       onChange={(e) => setTransactionSettings((p) => ({ ...p, defaultUpiId: e.target.value }))}
+                                       placeholder="yourname@bank"
+                                    />
+                                 </label>
+
+                                 <div className="border-t pt-3 flex flex-col gap-2">
+                                    <span className="text-xs font-medium text-slate-600 block">Custom QR Code Image</span>
+                                    <input 
+                                       type="file" 
+                                       accept="image/*" 
+                                       className="hidden" 
+                                       id="settings-qr-upload" 
+                                       onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (!file) return;
+                                          const reader = new FileReader();
+                                          reader.onload = (event) => {
+                                             if (event.target?.result) {
+                                                const base64Str = event.target.result as string;
+                                                setCustomUpiQr(base64Str);
+                                                localStorage.setItem('bizflow_custom_upi_qr', base64Str);
+                                                toast.success("Custom QR code image uploaded!");
+                                             }
+                                          };
+                                          reader.readAsDataURL(file);
+                                       }}
+                                    />
+                                    {customUpiQr ? (
+                                       <div className="flex flex-col items-center gap-2 border p-3 rounded-lg bg-slate-50">
+                                          <img src={customUpiQr} className="w-40 h-40 object-contain border bg-white p-2 rounded shadow-sm" />
+                                          <div className="flex gap-2 w-full mt-1">
+                                             <label htmlFor="settings-qr-upload" className="cursor-pointer flex-1 inline-flex items-center justify-center gap-1 text-[11px] border h-8 rounded bg-background hover:bg-muted font-semibold text-slate-700 dark:text-slate-300">
+                                                Change Image
+                                             </label>
+                                             <Button 
+                                                variant="destructive" 
+                                                size="sm" 
+                                                className="flex-1 h-8 text-[11px] rounded" 
+                                                onClick={() => {
+                                                   setCustomUpiQr('');
+                                                   localStorage.removeItem('bizflow_custom_upi_qr');
+                                                   toast.success("Custom QR image removed.");
+                                                }}
+                                             >
+                                                Remove Image
+                                             </Button>
+                                          </div>
+                                       </div>
+                                    ) : (
+                                       <div className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-4 bg-slate-50 hover:bg-slate-100/50 transition-colors">
+                                          <label htmlFor="settings-qr-upload" className="cursor-pointer flex flex-col items-center gap-1.5 text-xs text-slate-500 font-medium">
+                                             <Upload className="h-5 w-5 text-slate-400" />
+                                             <span>Click to upload QR Screenshot/Image</span>
+                                          </label>
+                                       </div>
+                                    )}
+                                 </div>
+                              </div>
                            </div>
                         </section>
                      </div>

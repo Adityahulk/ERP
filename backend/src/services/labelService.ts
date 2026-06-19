@@ -4,13 +4,16 @@ const bwipjs = require('bwip-js');
 
 async function getBarcodeDataUri(barcodeText: string): Promise<string> {
   try {
-    const png = await bwipjs.toBuffer({
+    const options: any = {
       bcid: 'code128',
       text: barcodeText || 'N/A',
       scale: 2,
       height: 12,
       includetext: false,
-    });
+    };
+    // Barcode is ALWAYS generated horizontally — never rotated.
+    // Vertical label mode only changes the text layout, not the barcode.
+    const png = await bwipjs.toBuffer(options);
     return `data:image/png;base64,${png.toString('base64')}`;
   } catch {
     return '';
@@ -129,13 +132,21 @@ function renderFieldBackend(
   };
 }
 
+const PRINTER_PROFILES = {
+  THERMAL_58: { width: 58, height: 40 },
+  THERMAL_80: { width: 80, height: 50 },
+  LABEL_100x50: { width: 100, height: 50 },
+  LABEL_116x40: { width: 116, height: 40 },
+  LABEL_100x100: { width: 100, height: 100 }
+};
+
 function getPriceFontSize(priceText: string): string {
   const len = (priceText || '').length;
-  if (len <= 8) return '14px';
-  if (len <= 10) return '13px';
-  if (len <= 12) return '12px';
-  if (len <= 14) return '11px';
-  return '10px';
+  if (len <= 8) return '4.5mm';
+  if (len <= 10) return '4mm';
+  if (len <= 12) return '3.5mm';
+  if (len <= 14) return '3mm';
+  return '2.5mm';
 }
 
 /** Render a single label. `density` controls how aggressively we shrink/hide content for tight grids. */
@@ -143,12 +154,15 @@ function labelCard(
   i: LabelItem,
   widthPx: string,
   heightPx: string,
-  density: 'roomy' | 'compact' | 'tight' = 'roomy'
+  density: 'roomy' | 'compact' | 'tight' = 'roomy',
+  orientation?: 'horizontal' | 'vertical'
 ) {
   const showCompany = density !== 'tight';
   const currency = i.currency || 'INR';
 
-  const brandLine = i.label_brand || i.company_name || '';
+  // Use label_brand when explicitly provided (even empty string overrides DB company name).
+  // Fall back to company_name only when label_brand is null/undefined.
+  const brandLine = (i.label_brand != null ? i.label_brand : i.company_name) || '';
   const barcodeValue = i.sku || 'N/A';
 
   const r1 = renderFieldBackend(i.label_line1 ?? i.name, currency);
@@ -207,14 +221,14 @@ function labelCard(
     </div>` : '';
 
   const brandHtml = !isBarcodeOnly && showCompany && brandLine ? `
-    <div style="width: 100%; font-size: 9px; font-weight: bold; color: #555; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;">
+    <div style="width: 100%; font-size: 2.8mm; font-weight: bold; color: #555; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.6mm;">
       ${esc(brandLine)}
     </div>` : '';
 
   const barcodeHtml = showBc ? `
     <div class="barcode-wrapper">
-      ${i.barcodeUri ? `<img src="${i.barcodeUri}" style="display: block; width: 80%; max-width: 150px; height: 32px; object-fit: contain;" />` : ''}
-      ${i.showBarcodeText !== false ? `<div style="font-size: 8px; color: #555; margin-top: 1px; text-align: center;">${esc(barcodeValue)}</div>` : ''}
+      ${i.barcodeUri ? `<img src="${i.barcodeUri}" style="display: block; width: 100%; max-width: 100%; height: 8mm; margin: 0 auto; object-fit: contain;" />` : ''}
+      ${i.showBarcodeText !== false ? `<div style="font-size: 2.5mm; color: #555; margin-top: 0.3mm; text-align: center;">${esc(barcodeValue)}</div>` : ''}
     </div>` : '';
 
   const topSectionHtml = `<div class="top-section">${brandHtml}${gridHtml}</div>`;
@@ -241,12 +255,14 @@ function renderDynamicTemplateCard(
   item: any,
   barcodeUri: string,
   widthPx: string,
-  heightPx: string
+  heightPx: string,
+  orientation?: 'horizontal' | 'vertical'
 ): string {
   const currency = item.currency || 'INR';
 
   const data = {
-    brandName: item.label_brand ?? item.company_name ?? '',
+    // Use label_brand when explicitly provided; fall back to company_name only when null/undefined.
+    brandName: (item.label_brand != null ? item.label_brand : item.company_name) ?? '',
     line1: item.label_line1 ?? item.name ?? '',
     line2: item.label_line2 ?? '',
     line3: item.label_line3 ?? '',
@@ -313,14 +329,14 @@ function renderDynamicTemplateCard(
     </div>` : '';
 
   const brandHtml = !isBarcodeOnly && data.brandName ? `
-    <div style="width: 100%; font-size: 9px; font-weight: bold; color: #555; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;">
+    <div style="width: 100%; font-size: 2.8mm; font-weight: bold; color: #555; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.6mm;">
       ${esc(data.brandName)}
     </div>` : '';
 
   const barcodeHtml = showBc ? `
     <div class="barcode-wrapper">
-      ${barcodeUri ? `<img src="${barcodeUri}" style="display: block; width: 80%; max-width: 150px; height: 32px; object-fit: contain;" />` : ''}
-      ${item.showBarcodeText !== false ? `<div style="font-size: 8px; color: #555; margin-top: 1px; text-align: center;">${esc(data.barcodeValue || 'N/A')}</div>` : ''}
+      ${barcodeUri ? `<img src="${barcodeUri}" style="display: block; width: 100%; max-width: 100%; height: 8mm; margin: 0 auto; object-fit: contain;" />` : ''}
+      ${item.showBarcodeText !== false ? `<div style="font-size: 2.5mm; color: #555; margin-top: 0.3mm; text-align: center;">${esc(data.barcodeValue || 'N/A')}</div>` : ''}
     </div>` : '';
 
   const topSectionHtml = `<div class="top-section">${brandHtml}${gridHtml}</div>`;
@@ -338,24 +354,19 @@ function renderDynamicTemplateCard(
 
 const generateHtml = (
   items: Array<LabelItem>,
-  type: '58x40' | '100x50' | 'a4',
+  type: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | 'a4',
   labelsPerPage?: number,
   mode: 'general_printer' | 'label_printer' = 'general_printer',
   templateObj?: any,
+  orientation?: 'horizontal' | 'vertical',
 ) => {
   let body = '';
 
-  // Resolve dimensions
+  // Resolve dimensions (only needed for A4 grid cells where explicit sizing is needed)
   let widthPx = '200px';
   let heightPx = '120px';
 
-  if (type === '58x40') {
-    widthPx = '210px';
-    heightPx = '142px';
-  } else if (type === '100x50') {
-    widthPx = '368px';
-    heightPx = '180px';
-  } else if (type === 'a4') {
+  if (type === 'a4') {
     const requested = Number(labelsPerPage || 24);
     if (requested === 24) {
       widthPx = '175px';
@@ -370,34 +381,64 @@ const generateHtml = (
       widthPx = '175px';
       heightPx = '168px';
     }
-  } else if (templateObj) {
-    widthPx = `${templateObj.width}px`;
-    heightPx = `${templateObj.height}px`;
   }
 
-  // For roll (thermal) pages, card fills its container (100% w/h via CSS)
-  // widthPx/heightPx are used only for A4 grid cells where explicit sizing is needed
-  const renderCard = (i: LabelItem, density: 'roomy' | 'compact' | 'tight' = 'roomy') => {
+  const renderCard = (i: LabelItem, w: string, h: string, density: 'roomy' | 'compact' | 'tight' = 'roomy') => {
     if (templateObj) {
-      return renderDynamicTemplateCard(templateObj, i, i.barcodeUri, widthPx, heightPx);
+      return renderDynamicTemplateCard(templateObj, i, i.barcodeUri, w, h, orientation);
     }
-    return labelCard(i, widthPx, heightPx, density);
+    return labelCard(i, w, h, density, orientation);
   };
 
   if (type === '58x40') {
-    // 1-up 58×40: card fills page exactly via 100% dims — avoids Puppeteer mm-rounding page breaks
     body = items.map(i =>
-      `<div class="roll-page single-58">${templateObj
-        ? renderDynamicTemplateCard(templateObj, i, i.barcodeUri, '100%', '100%')
-        : labelCard(i, '100%', '100%', 'roomy')}</div>`
+      `<div class="roll-page single-58">${renderCard(i, '100%', '100%', 'roomy')}</div>`
+    ).join('');
+  } else if (type === '80x50') {
+    body = items.map(i =>
+      `<div class="roll-page single-80">${renderCard(i, '100%', '100%', 'roomy')}</div>`
     ).join('');
   } else if (type === '100x50') {
-    // 1-up 100×50: card fills page exactly via 100% dims
     body = items.map(i =>
-      `<div class="roll-page single-100">${templateObj
-        ? renderDynamicTemplateCard(templateObj, i, i.barcodeUri, '100%', '100%')
-        : labelCard(i, '100%', '100%', 'roomy')}</div>`
+      `<div class="roll-page single-100">${renderCard(i, '100%', '100%', 'roomy')}</div>`
     ).join('');
+  } else if (type === '116x40') {
+    const pages: string[] = [];
+    for (let idx = 0; idx < items.length; idx += 2) {
+      const pair = items.slice(idx, idx + 2);
+      const firstCard = renderCard(pair[0], '100%', '100%', 'roomy');
+      const secondCard = pair[1]
+        ? renderCard(pair[1], '100%', '100%', 'roomy')
+        : '<div style="width: 100%; height: 100%;"></div>';
+      pages.push(`
+        <div class="roll-page double-116">
+          <div class="two-up">
+            ${firstCard}
+            ${secondCard}
+          </div>
+        </div>
+      `);
+    }
+    body = pages.join('');
+  } else if (type === '100x100') {
+    // 2-up stacked: two 100×50 labels on a 100×100mm page
+    const pages: string[] = [];
+    for (let idx = 0; idx < items.length; idx += 2) {
+      const pair = items.slice(idx, idx + 2);
+      const firstCard = renderCard(pair[0], '100%', '100%', 'roomy');
+      const secondCard = pair[1]
+        ? renderCard(pair[1], '100%', '100%', 'roomy')
+        : '<div style="width: 100%; height: 100%;"></div>';
+      pages.push(`
+        <div class="roll-page double-100">
+          <div class="two-up-stacked">
+            ${firstCard}
+            ${secondCard}
+          </div>
+        </div>
+      `);
+    }
+    body = pages.join('');
   } else if (type === 'a4') {
     const requested = Math.min(100, Math.max(1, Math.floor(Number(labelsPerPage || 24))));
     const preset = requested;
@@ -410,7 +451,7 @@ const generateHtml = (
     for (let idx = 0; idx < items.length; idx += preset) {
       pages.push(`
         <div class="a4-grid ${a4Class}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);">
-          ${items.slice(idx, idx + preset).map(i => renderCard(i, density)).join('')}
+          ${items.slice(idx, idx + preset).map(i => renderCard(i, widthPx, heightPx, density)).join('')}
         </div>
       `);
     }
@@ -419,22 +460,36 @@ const generateHtml = (
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-  @page { margin: 0; }
-  body,html{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;-webkit-print-color-adjust:exact;}
-  .label-card{
+  * {
+    box-sizing: border-box;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    -webkit-print-color-adjust: exact;
+  }
+  @page {
+    margin: 0;
+  }
+  div {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .label-card {
+    width: 100%;
+    height: 100%;
+    overflow: hidden; /* CRITICAL */
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     box-sizing: border-box;
-    overflow: hidden;
     background: #fff;
-    border: 1px dashed #bbb;
-    padding: 4px;
-    gap: 0px;
+    border: 1px dashed red; /* Debug border mode */
+    padding: 2mm;
+    gap: 1mm;
     page-break-inside: avoid;
     break-inside: avoid;
-    /* width/height set via inline style from labelCard() — explicit mm for thermal */
     flex-shrink: 0;
   }
   .top-section {
@@ -451,7 +506,7 @@ const generateHtml = (
     display: flex;
     justify-content: center;
     align-items: center;
-    margin: 1px 0;
+    margin: 0.3mm 0;
     flex-shrink: 0;
   }
   .bottom-section {
@@ -463,10 +518,14 @@ const generateHtml = (
   .label-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
+    gap: 0.3mm;
     width: 100%;
     overflow: hidden;
     box-sizing: border-box;
+  }
+  /* Vertical (portrait) mode: stack lines in a single column */
+  .vertical-layout .label-grid {
+    grid-template-columns: 1fr;
   }
   .label-grid-cell {
     display: -webkit-box;
@@ -474,10 +533,9 @@ const generateHtml = (
     -webkit-box-orient: vertical;
     overflow: hidden;
     width: 100%;
-    font-size: 9px;
+    font-size: 3mm;
     line-height: 1.1;
     min-width: 0;
-    /* text-align is set via inline style from renderFieldBackend — user align wins */
   }
   .label-price {
     font-weight: bold;
@@ -485,42 +543,65 @@ const generateHtml = (
   }
   .barcode-wrapper {
     background: #fff;
-    padding: 2px;
-    width: 90%;
+    padding: 0.6mm;
+    width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     box-sizing: border-box;
     flex-shrink: 0;
+  }
+  
+  /* Roll labels for thermal printer */
+  .roll-page {
+    box-sizing: border-box;
+    page-break-after: always;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
   }
   .roll-page:last-child {
     page-break-after: avoid;
   }
+  .single-58 { width: 58mm; height: 40mm; display: flex; align-items: center; justify-content: center; }
+  .single-80 { width: 80mm; height: 50mm; display: flex; align-items: center; justify-content: center; }
+  .single-100 { width: 100mm; height: 50mm; display: flex; align-items: center; justify-content: center; }
+  .double-116 { width: 116mm; height: 40mm; }
+  .double-100 { width: 100mm; height: 100mm; }
+
+  .two-up {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: 100%;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .two-up-stacked {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    height: 100%;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* A4 grid pages — gap shrinks as density rises */
+  .a4-grid {
+    width: 210mm;
+    height: 295mm;
+    box-sizing: border-box;
+    padding: 8mm;
+    display: grid;
+    page-break-after: always;
+  }
   .a4-grid:last-child {
     page-break-after: avoid;
   }
-
-  /* Roll labels for thermal printer */
-  .roll-page{box-sizing:border-box;page-break-after:always;overflow:hidden;}
-  /* single-58/100: flex container so card fills the page without mm rounding gaps */
-  .single-58{width:58mm;height:40mm;overflow:hidden;display:flex;align-items:center;justify-content:center;}
-  .single-100{width:100mm;height:50mm;overflow:hidden;display:flex;align-items:center;justify-content:center;}
-
-  /* A4 grid pages — gap shrinks as density rises */
-  .a4-grid{width:210mm;height:295mm;box-sizing:border-box;padding:8mm;display:grid;page-break-after:always;}
-  .a4-24{gap:3mm;}
-  .a4-40{gap:1.5mm;padding:6mm;}
-  .a4-60{gap:1mm;padding:5mm;}
-
-  .page {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-    align-items: start;
-  }
+  .a4-24 { gap: 3mm; }
+  .a4-40 { gap: 1.5mm; padding: 6mm; }
+  .a4-60 { gap: 1mm; padding: 5mm; }
 </style></head>
-<body>${body}</body></html>`;
+<body class="${orientation === 'vertical' ? 'vertical-layout' : ''}">${body}</body></html>`;
 };
 
 function formatRupees(value: string | number): string {
@@ -530,9 +611,9 @@ function formatRupees(value: string | number): string {
 }
 
 export async function generateLabelsPDF(
-  template: '58x40' | '100x50' | 'a4',
+  template: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | 'a4',
   itemsData: any[],
-  opts?: { mode?: 'general_printer' | 'label_printer'; labelsPerPage?: number; templateId?: string },
+  opts?: { mode?: 'general_printer' | 'label_printer'; labelsPerPage?: number; templateId?: string; orientation?: 'horizontal' | 'vertical' },
 ) {
   // Determine barcode source per item:
   // If item has a pre-encoded smart_barcode_str (set by the labels route), use it.
@@ -551,16 +632,21 @@ export async function generateLabelsPDF(
 
   let width: string | undefined;
   let height: string | undefined;
-  if (template === '58x40') { width = '58mm'; height = '40mm'; }
-  else if (template === '100x50') { width = '100mm'; height = '50mm'; }
-
-  if (templateObj) {
-    // Template mode: use template dimensions for label_printer
-    if (opts?.mode === 'label_printer') {
-      width = `${templateObj.width}px`;
-      height = `${templateObj.height}px`;
-    }
-    // For general_printer, A4 page size stays as-is; template affects card content only
+  if (template === '58x40') {
+    width = `${PRINTER_PROFILES.THERMAL_58.width}mm`;
+    height = `${PRINTER_PROFILES.THERMAL_58.height}mm`;
+  } else if (template === '80x50') {
+    width = `${PRINTER_PROFILES.THERMAL_80.width}mm`;
+    height = `${PRINTER_PROFILES.THERMAL_80.height}mm`;
+  } else if (template === '100x50') {
+    width = `${PRINTER_PROFILES.LABEL_100x50.width}mm`;
+    height = `${PRINTER_PROFILES.LABEL_100x50.height}mm`;
+  } else if (template === '116x40') {
+    width = `${PRINTER_PROFILES.LABEL_116x40.width}mm`;
+    height = `${PRINTER_PROFILES.LABEL_116x40.height}mm`;
+  } else if (template === '100x100') {
+    width = `${PRINTER_PROFILES.LABEL_100x100.width}mm`;
+    height = `${PRINTER_PROFILES.LABEL_100x100.height}mm`;
   }
 
   const browser = await puppeteer.launch({
@@ -570,11 +656,15 @@ export async function generateLabelsPDF(
 
   try {
     const page = await browser.newPage();
-    await page.setContent(generateHtml(itemsWithBarcodes, template, opts?.labelsPerPage, opts?.mode, templateObj), { waitUntil: 'domcontentloaded' });
+    // Disable cache so the latest CSS/layout is always applied (no stale landscape styles)
+    await page.setCacheEnabled(false);
+    await page.setContent(generateHtml(itemsWithBarcodes, template, opts?.labelsPerPage, opts?.mode, templateObj, opts?.orientation), { waitUntil: 'domcontentloaded' });
 
     const pdfBuffer = await page.pdf({
-      width,
-      height,
+      // Explicitly force portrait (landscape: false) so Puppeteer never guesses orientation.
+      landscape: false,
+      width: template !== 'a4' ? width : undefined,
+      height: template !== 'a4' ? height : undefined,
       format: template === 'a4' ? 'A4' : undefined,
       printBackground: true,
       margin: { top: 0, bottom: 0, left: 0, right: 0 },

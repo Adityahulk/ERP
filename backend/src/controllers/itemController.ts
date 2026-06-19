@@ -438,7 +438,7 @@ export async function createItem(req: Request, res: Response) {
           const seqRes = await client.query("SELECT nextval('barcode_num_seq')");
           const nextVal = seqRes.rows[0].nextval;
           barcode = String(nextVal).padStart(10, '0');
-          
+
           const dupRes = await client.query(
             `SELECT 1 FROM items WHERE barcode = $1 AND is_deleted = false
              UNION
@@ -720,13 +720,13 @@ export async function updateItem(req: Request, res: Response) {
 
     const result = await withTransaction(async (client) => {
       const fields = [
-        'name','description','sku','barcode','hsn_code','category_id','brand','unit_id',
-        'secondary_unit_id','unit_conversion_factor',
-        'item_type','track_inventory','is_serialized',
-        'purchase_price','selling_price','price_currency_code',
-        'tax_preference','gst_rate','cgst_rate','sgst_rate','igst_rate','cess_rate',
-        'opening_stock','opening_stock_value','opening_stock_date',
-        'reorder_point','max_stock_level','image_url','is_active','custom_fields',
+        'name', 'description', 'sku', 'barcode', 'hsn_code', 'category_id', 'brand', 'unit_id',
+        'secondary_unit_id', 'unit_conversion_factor',
+        'item_type', 'track_inventory', 'is_serialized',
+        'purchase_price', 'selling_price', 'price_currency_code',
+        'tax_preference', 'gst_rate', 'cgst_rate', 'sgst_rate', 'igst_rate', 'cess_rate',
+        'opening_stock', 'opening_stock_value', 'opening_stock_date',
+        'reorder_point', 'max_stock_level', 'image_url', 'is_active', 'custom_fields',
         'selling_price_includes_tax', 'purchase_price_includes_tax'
       ];
       const updates: string[] = []; const values: any[] = []; let idx = 1;
@@ -894,7 +894,7 @@ export async function bulkImport(req: Request, res: Response) {
     }
 
     // Clean up temp file
-    try { fs.unlinkSync(req.file.path); } catch {}
+    try { fs.unlinkSync(req.file.path); } catch { }
 
     // If action=confirm, insert the valid rows
     if (req.query.action === 'confirm') {
@@ -1076,6 +1076,55 @@ export async function scanBarcode(req: Request, res: Response) {
     res.json(success(result.rows[0]));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── GET /api/items/barcode/:code ──────────────────────────────
+export async function getItemByBarcode(req: Request, res: Response) {
+  try {
+    const { code } = req.params;
+    const companyId = req.user!.company_id;
+
+    let result;
+
+    if (isSmartBarcode(code)) {
+      const decoded = decodeSmartBarcode(code);
+      if (!decoded) {
+        return res.status(400).json(error('Invalid smart barcode format'));
+      }
+      if (decoded.companyId !== companyId) {
+        return res.status(404).json(error('No item found for this barcode'));
+      }
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [decoded.itemId, companyId]
+      );
+    } else {
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE (i.barcode = $1 OR i.sku = $1 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $1 LIMIT 1)) AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [code, companyId]
+      );
+    }
+
+    if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) {
+    console.error('getItemByBarcode error:', err.message);
     res.status(500).json(error(err.message));
   }
 }

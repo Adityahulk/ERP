@@ -462,16 +462,16 @@ export async function searchItems(req: Request, res: Response) {
 
     let godownJoin = '';
     let godownSelect = ', 0 as available_stock';
-    const params: any[] = [companyId, `%${q}%`];
+    const params: any[] = [companyId, `%${q}%`, q];
 
     if (godown_id) {
       godownSelect = ', COALESCE(s.quantity, 0) as available_stock';
-      godownJoin = `LEFT JOIN item_stock s ON i.id = s.item_id AND s.godown_id = $3`;
+      godownJoin = `LEFT JOIN item_stock s ON i.id = s.item_id AND s.godown_id = $4`;
       params.push(godown_id);
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate, i.cess_rate,
               i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
               i.item_type, i.track_inventory,
@@ -482,6 +482,15 @@ export async function searchItems(req: Request, res: Response) {
        ${godownJoin}
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.is_active = true
        AND (i.name ILIKE $2 OR i.sku ILIKE $2 OR i.barcode ILIKE $2)
+       ORDER BY
+         CASE
+           WHEN i.barcode = $3 OR i.sku = $3 THEN 1
+           WHEN i.name = $3 THEN 2
+           WHEN i.barcode ILIKE $2 OR i.sku ILIKE $2 THEN 3
+           WHEN i.name ILIKE $3 || '%' THEN 4
+           ELSE 5
+         END ASC,
+         i.name ASC
        LIMIT 20`,
       params
     );
@@ -512,7 +521,7 @@ export async function scanBarcode(req: Request, res: Response) {
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate,
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate, i.cess_rate,
               i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
               i.item_type, i.track_inventory,
@@ -683,6 +692,15 @@ export async function createInvoice(req: Request, res: Response) {
       const placeOfSupply = gstContext.placeOfSupply;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
+      if (!bankSnap.upi_id_snapshot) {
+        const txnSettingsRes = await client.query(
+          `SELECT default_upi_id FROM transaction_settings WHERE firm_id = $1`,
+          [companyId]
+        );
+        if (txnSettingsRes.rows[0]?.default_upi_id) {
+          bankSnap.upi_id_snapshot = txnSettingsRes.rows[0].default_upi_id;
+        }
+      }
 
       const invRes = await client.query(
         `INSERT INTO invoices (

@@ -180,6 +180,16 @@ export default function VyaparLineItems({
     return up || sp || pp;
   };
 
+  const displayPriceFromItem = (item: any) => {
+    const basePrice = lineUnitPriceFromItem(item);
+    const gstRate = Number(item.gst_rate ?? 18);
+    const cessRate = Number(item.cess_rate ?? 0);
+    const itemIncludesTax = defaultRateFrom === 'purchase'
+      ? item.purchase_price_includes_tax === true
+      : item.selling_price_includes_tax === true;
+    return itemIncludesTax ? Math.round(basePrice * (1 + (gstRate + cessRate) / 100)) : basePrice;
+  };
+
   const runSearch = (q: string) => {
     setQuery(q);
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -209,6 +219,9 @@ export default function VyaparLineItems({
     const itemIncludesTax = defaultRateFrom === 'purchase'
       ? item.purchase_price_includes_tax === true
       : item.selling_price_includes_tax === true;
+    const finalUnitPrice = itemIncludesTax
+      ? Math.round(basePrice * (1 + (gstRate + cessRate) / 100))
+      : basePrice;
 
     return {
       item_id: item.id,
@@ -219,7 +232,7 @@ export default function VyaparLineItems({
       track_inventory: item.track_inventory,
       unit: item.unit || item.unit_name || 'PCS',
       quantity: 1,
-      unit_price: basePrice,
+      unit_price: finalUnitPrice,
       discount_amount: 0,
       gst_rate: gstRate,
       tax_option_id: undefined,
@@ -436,7 +449,7 @@ export default function VyaparLineItems({
                   {it.sku && <span className="text-muted-foreground ml-2 text-xs">{it.sku}</span>}
                 </div>
                 <div className="text-right flex-shrink-0 text-muted-foreground text-xs">
-                  {formatMoney(Number(it.unit_price ?? it.selling_price ?? 0), currencyCode)}
+                  {formatMoney(displayPriceFromItem(it), currencyCode)}
                   {it.item_type !== 'service' && typeof it.available_stock === 'number' && (
                     <span className="ml-2">· {it.available_stock} in stock</span>
                   )}
@@ -572,7 +585,7 @@ export default function VyaparLineItems({
                                   }}
                                 >
                                   <span className="min-w-0 truncate font-medium">{it.name}</span>
-                                  <span className="shrink-0 text-muted-foreground">{formatMoney(Number(it.unit_price ?? it.selling_price ?? 0), currencyCode)}</span>
+                                  <span className="shrink-0 text-muted-foreground">{formatMoney(displayPriceFromItem(it), currencyCode)}</span>
                                 </button>
                               ))}
                             </div>

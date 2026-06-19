@@ -6,11 +6,13 @@ import { generateLabelsPDF } from '../services/labelService';
 const router = Router();
 router.use(verifyToken);
 
-const VALID_TEMPLATES = new Set(['58x40', '100x50', 'a4']);
+const VALID_TEMPLATES = new Set(['58x40', '80x50', '100x50', '116x40', '100x100', 'a4']);
 
 router.post('/bulk', async (req: Request, res: Response) => {
    try {
-     const { items, size, mode, labels_per_page, templateId } = req.body; // items: [{item_id, quantity, ...label_line1-6}]
+     const { items, size, mode, labels_per_page, templateId, orientation: bodyOrientation, customCompanyName } = req.body;
+     // Accept orientation from query string OR request body (frontend may use either)
+     const orientation = (req.query.orientation || bodyOrientation) as 'horizontal' | 'vertical' | undefined;
      const companyId = req.user!.company_id;
 
      if (!Array.isArray(items) || !items.length) {
@@ -29,10 +31,6 @@ router.post('/bulk', async (req: Request, res: Response) => {
      }
      if (mode === 'label_printer' && labelsPerPageNum && ![1, 2].includes(labelsPerPageNum)) {
        return res.status(400).json({ success: false, error: 'Label printer supports only 1 or 2 labels per page' });
-     }
-     const uniqueItemIds = new Set(items.map((i: any) => i.item_id || i.sku).filter(Boolean));
-     if (mode === 'label_printer' && uniqueItemIds.size > 1) {
-       return res.status(400).json({ success: false, error: 'Label printer supports one item at a time' });
      }
 
      const printQueue = [];
@@ -84,7 +82,10 @@ router.post('/bulk', async (req: Request, res: Response) => {
              // Internal field: passes barcode string to labelService
              _smart_barcode_str: finalBarcode,
              // Label Editor overrides — all optional free text, no calculations
-             label_brand: reqItem.label_brand  ?? undefined,
+             // Priority: per-item label_brand > top-level customCompanyName > DB company name
+             label_brand: reqItem.label_brand != null
+               ? reqItem.label_brand
+               : (customCompanyName != null ? customCompanyName : undefined),
              label_line1: reqItem.label_line1  ?? undefined,
              label_line2: reqItem.label_line2  ?? undefined,
              label_line3: reqItem.label_line3  ?? undefined,
@@ -104,10 +105,11 @@ router.post('/bulk', async (req: Request, res: Response) => {
 
      if (!printQueue.length) return res.status(404).json({ success: false, error: 'No valid items found' });
 
-     const pdfBuffer = await generateLabelsPDF(template as '58x40' | '100x50' | 'a4', printQueue, {
+     const pdfBuffer = await generateLabelsPDF(template as '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | 'a4', printQueue, {
        mode: mode === 'label_printer' ? 'label_printer' : 'general_printer',
        labelsPerPage: labelsPerPageNum || undefined,
        templateId: templateId || undefined,
+       orientation: orientation,
      });
 
      res.setHeader('Content-Type', 'application/pdf');

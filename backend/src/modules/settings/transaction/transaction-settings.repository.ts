@@ -15,7 +15,7 @@ const MAIN_COLUMNS = [
   'do_not_show_invoice_preview', 'enable_passcode_for_edit_delete',
   'enable_discount_during_payments', 'link_payments_to_invoices',
   'enable_due_dates_and_payment_terms', 'show_profit_while_making_sale_invoice',
-  'enable_terms_and_conditions', 'billing_type',
+  'enable_terms_and_conditions', 'billing_type', 'default_upi_id',
 ] as const;
 
 const PREFIX_COLUMNS = ['sale', 'credit_note', 'sale_order', 'purchase_order', 'estimate', 'proforma_invoice', 'delivery_challan', 'payment_in'] as const;

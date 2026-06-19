@@ -541,14 +541,45 @@ export function calculateInvoiceTotals(
     subtotal += subtotal_row;
     totalDiscountLineLevel += lineDiscount_row;
 
+    return {
+      subtotal_row,
+      lineDiscount_row,
+      gstRate,
+      cessRate,
+      totalRate
+    };
+  });
+
+  const taxableBeforeInvoiceDiscount = Math.max(0, subtotal - totalDiscountLineLevel);
+  let globalDiscountAmount = 0;
+  if (invoiceDiscountType === 'percent') {
+    globalDiscountAmount = (taxableBeforeInvoiceDiscount * (Number(invoiceDiscountValue) || 0)) / 100;
+  } else if (invoiceDiscountType === 'flat') {
+    globalDiscountAmount = Math.min(Number(invoiceDiscountValue) || 0, taxableBeforeInvoiceDiscount);
+  }
+  globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, taxableBeforeInvoiceDiscount));
+
+  const taxableAfterDiscount = taxableBeforeInvoiceDiscount - globalDiscountAmount;
+
+  let totalCgst = 0;
+  let totalSgst = 0;
+  let totalIgst = 0;
+  let totalCess = 0;
+
+  for (const item of processedItems) {
+    const invoiceDiscount_row = taxableBeforeInvoiceDiscount > 0
+      ? globalDiscountAmount * (item.subtotal_row - item.lineDiscount_row) / taxableBeforeInvoiceDiscount
+      : 0;
+    const taxableAfterDiscount_row = Math.max(0, item.subtotal_row - item.lineDiscount_row - invoiceDiscount_row);
+
     let baseTax_row = 0;
     if (pricingMode === 'inclusive') {
-      baseTax_row = subtotal_row - subtotal_row / (1 + totalRate / 100);
+      baseTax_row = taxableAfterDiscount_row - taxableAfterDiscount_row / (1 + item.totalRate / 100);
     } else {
-      baseTax_row = subtotal_row * (totalRate / 100);
+      baseTax_row = taxableAfterDiscount_row * (item.totalRate / 100);
     }
 
-    const cess_share = totalRate > 0 ? cessRate / totalRate : 0;
+    const cess_share = item.totalRate > 0 ? item.cessRate / item.totalRate : 0;
     const baseCess_row = baseTax_row * cess_share;
     const baseGst_row = baseTax_row - baseCess_row;
 
@@ -563,44 +594,10 @@ export function calculateInvoiceTotals(
       baseSgst_row = baseGst_row - baseCgst_row;
     }
 
-    return {
-      subtotal_row,
-      lineDiscount_row,
-      baseCgst_row,
-      baseSgst_row,
-      baseIgst_row,
-      baseCess_row
-    };
-  });
-
-  const taxableBeforeInvoiceDiscount = Math.max(0, subtotal - totalDiscountLineLevel);
-  let globalDiscountAmount = 0;
-  if (invoiceDiscountType === 'percent') {
-    globalDiscountAmount = (taxableBeforeInvoiceDiscount * (Number(invoiceDiscountValue) || 0)) / 100;
-  } else if (invoiceDiscountType === 'flat') {
-    globalDiscountAmount = Math.min(Number(invoiceDiscountValue) || 0, taxableBeforeInvoiceDiscount);
-  }
-  globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, taxableBeforeInvoiceDiscount));
-
-  const taxableAfterDiscount = taxableBeforeInvoiceDiscount - globalDiscountAmount;
-  const scale = subtotal > 0 ? taxableAfterDiscount / subtotal : 1;
-
-  let totalCgst = 0;
-  let totalSgst = 0;
-  let totalIgst = 0;
-  let totalCess = 0;
-
-  for (const item of processedItems) {
-    const invoiceDiscount_row = taxableBeforeInvoiceDiscount > 0
-      ? globalDiscountAmount * (item.subtotal_row - item.lineDiscount_row) / taxableBeforeInvoiceDiscount
-      : 0;
-    const taxableAfterDiscount_row = Math.max(0, item.subtotal_row - item.lineDiscount_row - invoiceDiscount_row);
-    const scale_row = item.subtotal_row > 0 ? taxableAfterDiscount_row / item.subtotal_row : 1;
-
-    totalCgst += item.baseCgst_row * scale_row;
-    totalSgst += item.baseSgst_row * scale_row;
-    totalIgst += item.baseIgst_row * scale_row;
-    totalCess += item.baseCess_row * scale_row;
+    totalCgst += baseCgst_row;
+    totalSgst += baseSgst_row;
+    totalIgst += baseIgst_row;
+    totalCess += baseCess_row;
   }
 
   let finalTaxable = 0;

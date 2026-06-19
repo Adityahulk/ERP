@@ -32,8 +32,10 @@ export interface LabelConfig {
   barcodeValue: string;
   /** Number of label copies to print (1–100). */
   copies: number;
-  /** Target label format / size. */
-  printMode: 'a4_24' | 'a4_40' | 'a4_65' | 'thermal_single' | 'thermal_double';
+  /** Target label format / size.
+   *  2 single-label formats + 2 double-label formats + 3 A4 formats */
+  printMode: 'a4_24' | 'a4_40' | 'a4_65' | 'thermal_100' | 'thermal_58_double';
+  barcodeOrientation: 'horizontal' | 'vertical';
 }
 
 /** Returns a blank LabelConfig with sensible defaults. */
@@ -52,11 +54,11 @@ export function defaultLabelConfig(companyName = ''): LabelConfig {
   });
   return {
     brandName: companyName,
-    line1: createDefaultField('', 'Line 1', 'left'),
-    line2: createDefaultField('', 'Line 2', 'left'),
-    line3: createDefaultField('', 'Line 3', 'left'),
-    line4: createDefaultField('', 'Line 4', 'left'),
-    line5: createDefaultField('', 'Line 5', 'left'),
+    line1: createDefaultField('', 'Line 1', 'center'),
+    line2: createDefaultField('', 'Line 2', 'center'),
+    line3: createDefaultField('', 'Line 3', 'center'),
+    line4: createDefaultField('', 'Line 4', 'center'),
+    line5: createDefaultField('', 'Line 5', 'center'),
     line6: createDefaultField('', 'Line 6', 'center'),
     price: {
       value: '',
@@ -77,7 +79,8 @@ export function defaultLabelConfig(companyName = ''): LabelConfig {
     customBarcodeValue: '',
     barcodeValue: '',
     copies: 1,
-    printMode: 'thermal_single',
+    printMode: 'thermal_100',
+    barcodeOrientation: 'vertical',
   };
 }
 
@@ -85,7 +88,7 @@ export function defaultLabelConfig(companyName = ''): LabelConfig {
 
 /** Maps printMode to the API size/mode/labels_per_page values. */
 export function printModeToApiParams(mode: LabelConfig['printMode']): {
-  size: '58x40' | '100x50' | 'a4';
+  size: '100x50' | '116x40' | 'a4';
   apiMode: 'general_printer' | 'label_printer';
   labelsPerPage: number | undefined;
 } {
@@ -93,8 +96,8 @@ export function printModeToApiParams(mode: LabelConfig['printMode']): {
     case 'a4_24': return { size: 'a4', apiMode: 'general_printer', labelsPerPage: 24 };
     case 'a4_40': return { size: 'a4', apiMode: 'general_printer', labelsPerPage: 40 };
     case 'a4_65': return { size: 'a4', apiMode: 'general_printer', labelsPerPage: 65 };
-    case 'thermal_single': return { size: '100x50', apiMode: 'label_printer', labelsPerPage: 1 };
-    case 'thermal_double': return { size: '58x40', apiMode: 'label_printer', labelsPerPage: 1 };
+    case 'thermal_100': return { size: '100x50', apiMode: 'label_printer', labelsPerPage: 1 };
+    case 'thermal_58_double': return { size: '116x40', apiMode: 'label_printer', labelsPerPage: 2 };
   }
 }
 
@@ -103,6 +106,6 @@ export const PRINT_MODE_LABELS: Record<LabelConfig['printMode'], string> = {
   a4_24: 'A4 — 24 labels',
   a4_40: 'A4 — 40 labels',
   a4_65: 'A4 — 65 labels',
-  thermal_single: 'Thermal — 1 up (100×50 mm)',
-  thermal_double: 'Thermal — 1 up (58×40 mm)',
+  thermal_100: 'Thermal — Single (100×50 mm)',
+  thermal_58_double: 'Thermal — 2-up (58×40 mm × 2)',
 };
