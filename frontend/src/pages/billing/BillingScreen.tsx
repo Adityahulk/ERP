@@ -6,7 +6,7 @@ import { BarcodeScanner } from '@/components/shared/BarcodeScanner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus } from 'lucide-react';
+import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus, X, Check } from 'lucide-react';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import { formatMoney } from '@/lib/formatters';
@@ -54,6 +54,61 @@ export default function BillingScreen() {
   const [customUpiQr, setCustomUpiQr] = useState<string>(() => {
     return localStorage.getItem('bizflow_custom_upi_qr') || '';
   });
+
+  const [isEditingCustomer, setIsEditingCustomer] = useState(false);
+  const [editCustomerInfo, setEditCustomerInfo] = useState<{ id?: string; name: string; phone?: string }>({ name: '' });
+  const [partySearchQuery, setPartySearchQuery] = useState('');
+  const [partySearchResults, setPartySearchResults] = useState<any[]>([]);
+  const [partySearchLoading, setPartySearchLoading] = useState(false);
+
+  const searchParties = async (q: string) => {
+    setPartySearchQuery(q);
+    setEditCustomerInfo(prev => ({ ...prev, name: q }));
+    if (q.length < 2) {
+      setPartySearchResults([]);
+      return;
+    }
+    setPartySearchLoading(true);
+    try {
+      const res = await api.get('/parties/search', { params: { q } });
+      setPartySearchResults(res.data?.data || res.data || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPartySearchLoading(false);
+    }
+  };
+
+  const selectParty = (p: any) => {
+    setEditCustomerInfo({
+      id: p.id,
+      name: p.name,
+      phone: p.phone || '',
+    });
+    setPartySearchResults([]);
+    setPartySearchQuery(p.name);
+  };
+
+  const startEditingCustomer = () => {
+    setEditCustomerInfo({
+      id: customerInfo.id,
+      name: customerInfo.name === 'Walk-in Customer' ? '' : customerInfo.name,
+      phone: customerInfo.phone || '',
+    });
+    setPartySearchQuery(customerInfo.name === 'Walk-in Customer' ? '' : customerInfo.name);
+    setPartySearchResults([]);
+    setIsEditingCustomer(true);
+  };
+
+  const saveCustomerEdit = () => {
+    const finalName = editCustomerInfo.name.trim() || 'Walk-in Customer';
+    setCustomerInfo({
+      id: editCustomerInfo.id,
+      name: finalName,
+      phone: editCustomerInfo.phone?.trim() || undefined,
+    });
+    setIsEditingCustomer(false);
+  };
 
   const { data: companyData } = useCompany();
 
@@ -337,6 +392,8 @@ export default function BillingScreen() {
         ],
         amount_paid: tenderPaise,
         payment_mode: paymentMode,
+        party_name: customerInfo.name,
+        party_phone: customerInfo.phone || undefined,
       };
       if (customerInfo.id) payload.party_id = customerInfo.id;
       if (companyBankAccountId) payload.company_bank_account_id = companyBankAccountId;
@@ -517,12 +574,94 @@ export default function BillingScreen() {
       <div className="w-full lg:w-[380px] flex flex-col gap-3 min-h-0 overflow-y-auto pr-1">
         
         {/* Customer Block */}
-        <Card className="p-3 shadow-sm border-2 border-transparent focus-within:border-primary/50 transition-colors shrink-0">
+        <Card className="p-3 shadow-sm border-2 border-transparent focus-within:border-primary/50 transition-colors shrink-0 relative">
           <div className="flex items-start justify-between mb-1.5">
-            <h3 className="font-semibold text-sm flex items-center gap-1.5 text-muted-foreground"><User className="h-4 w-4" /> Customer Details</h3>
-            <Button variant="link" className="h-auto p-0 border-b leading-tight text-xs">Change</Button>
+            <h3 className="font-semibold text-sm flex items-center gap-1.5 text-muted-foreground">
+              <User className="h-4 w-4" /> Customer Details
+            </h3>
+            {!isEditingCustomer && (
+              <Button
+                variant="link"
+                className="h-auto p-0 border-b leading-tight text-xs"
+                onClick={startEditingCustomer}
+              >
+                Change
+              </Button>
+            )}
           </div>
-          <div className="text-xl font-bold">{customerInfo.name}</div>
+          
+          {isEditingCustomer ? (
+            <div className="space-y-3 mt-1">
+              <div className="relative">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase">Name</label>
+                <div className="relative">
+                  <Input
+                    placeholder="Search or enter customer name"
+                    value={partySearchQuery}
+                    onChange={(e) => searchParties(e.target.value)}
+                    className="h-9 mt-0.5 animate-in fade-in-50 duration-100"
+                  />
+                  {partySearchLoading && (
+                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+
+                {partySearchResults.length > 0 && (
+                  <div className="absolute left-0 right-0 z-50 mt-1 max-h-40 overflow-y-auto rounded-lg border bg-popover shadow-xl border-slate-200 dark:border-slate-800">
+                    {partySearchResults.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="w-full px-3 py-1.5 text-left text-xs hover:bg-muted border-b last:border-0 flex flex-col"
+                        onClick={() => selectParty(p)}
+                      >
+                        <span className="font-semibold text-foreground">{p.name}</span>
+                        {p.phone && <span className="text-[10px] text-muted-foreground">Ph: {p.phone}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-muted-foreground uppercase">Phone</label>
+                <Input
+                  placeholder="Enter phone number"
+                  value={editCustomerInfo.phone || ''}
+                  onChange={(e) => setEditCustomerInfo(prev => ({ ...prev, phone: e.target.value }))}
+                  className="h-9 mt-0.5"
+                  type="tel"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2.5 text-xs gap-1"
+                  onClick={() => setIsEditingCustomer(false)}
+                >
+                  <X className="h-3.5 w-3.5" /> Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 px-2.5 text-xs gap-1 bg-primary text-primary-foreground"
+                  onClick={saveCustomerEdit}
+                >
+                  <Check className="h-3.5 w-3.5" /> Save
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="text-xl font-bold text-foreground">{customerInfo.name}</div>
+              {customerInfo.phone && (
+                <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                  Ph: {customerInfo.phone}
+                </div>
+              )}
+            </div>
+          )}
         </Card>
 
         {/* Calculation Board */}
