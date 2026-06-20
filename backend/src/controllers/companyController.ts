@@ -182,6 +182,9 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
     const header = record.header && typeof record.header === 'object' && !Array.isArray(record.header)
       ? record.header as Record<string, unknown>
       : {};
+    const thermal = record.thermal && typeof record.thermal === 'object' && !Array.isArray(record.thermal)
+      ? record.thermal as Record<string, unknown>
+      : {};
     const layoutColors = record.layout_colors && typeof record.layout_colors === 'object' && !Array.isArray(record.layout_colors)
       ? record.layout_colors as Record<string, unknown>
       : {};
@@ -262,6 +265,27 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
         credit_note: String(transactionNames.credit_note || 'Credit Note').trim().slice(0, 80) || 'Credit Note',
         debit_note: String(transactionNames.debit_note || 'Debit Note').trim().slice(0, 80) || 'Debit Note',
         non_tax_bill: transactionNames.non_tax_bill === true,
+      },
+      thermal: {
+        show_seller_name: thermal.show_seller_name !== false,
+        seller_name: String(thermal.seller_name ?? '').trim().slice(0, 100),
+        show_seller_phone: thermal.show_seller_phone !== false,
+        seller_phone: String(thermal.seller_phone ?? '').trim().slice(0, 30),
+        show_seller_address: thermal.show_seller_address !== false,
+        seller_address: String(thermal.seller_address ?? '').trim().slice(0, 500),
+        show_date_time: thermal.show_date_time !== false,
+        show_bill_no: thermal.show_bill_no !== false,
+        show_logo: thermal.show_logo !== false,
+        show_tax_columns: thermal.show_tax_columns === true,
+        show_payment_details: thermal.show_payment_details !== false,
+        card_auth_code_override: String(thermal.card_auth_code_override ?? '').trim().slice(0, 20),
+        card_last_four_override: String(thermal.card_last_four_override ?? '').trim().slice(0, 4),
+        barcode_or_qr: ['none', 'barcode', 'qr'].includes(String(thermal.barcode_or_qr)) ? String(thermal.barcode_or_qr) : 'barcode',
+        return_policy: String(thermal.return_policy ?? '').trim().slice(0, 1000),
+        show_footer_thank_you: thermal.show_footer_thank_you !== false,
+        enable_refund_layout: thermal.enable_refund_layout !== false,
+        enable_deposit_layout: thermal.enable_deposit_layout === true,
+        deposit_account_details: String(thermal.deposit_account_details ?? '').trim().slice(0, 500),
       },
     };
     return JSON.stringify(normalized);

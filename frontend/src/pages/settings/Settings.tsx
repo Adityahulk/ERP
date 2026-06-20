@@ -126,6 +126,27 @@ type PrintSettingsState = {
     declaration: string;
     terms: string;
   };
+  thermal: {
+    show_seller_name: boolean;
+    seller_name: string;
+    show_seller_phone: boolean;
+    seller_phone: string;
+    show_seller_address: boolean;
+    seller_address: string;
+    show_date_time: boolean;
+    show_bill_no: boolean;
+    show_logo: boolean;
+    show_tax_columns: boolean;
+    show_payment_details: boolean;
+    card_auth_code_override: string;
+    card_last_four_override: string;
+    barcode_or_qr: 'none' | 'barcode' | 'qr';
+    return_policy: string;
+    show_footer_thank_you: boolean;
+    enable_refund_layout: boolean;
+    enable_deposit_layout: boolean;
+    deposit_account_details: string;
+  };
 };
 
 type TaxRateRow = { id: string; label: string; type: 'IGST' | 'CGST' | 'SGST' | 'CESS'; rate: number; active: boolean };
@@ -352,6 +373,27 @@ const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
     declaration: '',
     terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
   },
+  thermal: {
+    show_seller_name: true,
+    seller_name: '',
+    show_seller_phone: true,
+    seller_phone: '',
+    show_seller_address: true,
+    seller_address: '',
+    show_date_time: true,
+    show_bill_no: true,
+    show_logo: true,
+    show_tax_columns: false,
+    show_payment_details: true,
+    card_auth_code_override: '',
+    card_last_four_override: '',
+    barcode_or_qr: 'barcode',
+    return_policy: 'Items can be returned within 7 days in original condition.',
+    show_footer_thank_you: true,
+    enable_refund_layout: true,
+    enable_deposit_layout: false,
+    deposit_account_details: '',
+  },
 };
 
 const STANDARD_GST_SLABS = [0, 0.1, 0.25, 0.5, 1, 1.5, 3, 5, 6, 7.5, 9, 12, 14, 18, 28, 40];
@@ -577,6 +619,7 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
   const totals = (raw.totals || {}) as Partial<PrintSettingsState['totals']>;
   const footer = (raw.footer || {}) as Partial<PrintSettingsState['footer']>;
   const referenceInvoice = (raw.reference_invoice || {}) as Partial<PrintSettingsState['reference_invoice']>;
+  const thermal = (raw.thermal || {}) as Partial<PrintSettingsState['thermal']>;
   const layoutColors = raw.layout_colors && typeof raw.layout_colors === 'object' && !Array.isArray(raw.layout_colors)
     ? raw.layout_colors as Record<string, unknown>
     : {};
@@ -628,6 +671,27 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
       terms: String(referenceInvoice.terms ?? DEFAULT_PRINT_SETTINGS.reference_invoice.terms),
       show_item_custom_fields: referenceInvoice.show_item_custom_fields !== false,
       include_eway_appendix: referenceInvoice.include_eway_appendix !== false,
+    },
+    thermal: {
+      show_seller_name: thermal.show_seller_name !== false,
+      seller_name: String(thermal.seller_name ?? '').trim().slice(0, 100),
+      show_seller_phone: thermal.show_seller_phone !== false,
+      seller_phone: String(thermal.seller_phone ?? '').trim().slice(0, 30),
+      show_seller_address: thermal.show_seller_address !== false,
+      seller_address: String(thermal.seller_address ?? '').trim().slice(0, 500),
+      show_date_time: thermal.show_date_time !== false,
+      show_bill_no: thermal.show_bill_no !== false,
+      show_logo: thermal.show_logo !== false,
+      show_tax_columns: thermal.show_tax_columns === true,
+      show_payment_details: thermal.show_payment_details !== false,
+      card_auth_code_override: String(thermal.card_auth_code_override ?? '').trim().slice(0, 20),
+      card_last_four_override: String(thermal.card_last_four_override ?? '').trim().slice(0, 4),
+      barcode_or_qr: ['none', 'barcode', 'qr'].includes(String(thermal.barcode_or_qr)) ? (thermal.barcode_or_qr as any) : 'barcode',
+      return_policy: String(thermal.return_policy ?? '').trim().slice(0, 1000),
+      show_footer_thank_you: thermal.show_footer_thank_you !== false,
+      enable_refund_layout: thermal.enable_refund_layout !== false,
+      enable_deposit_layout: thermal.enable_deposit_layout === true,
+      deposit_account_details: String(thermal.deposit_account_details ?? '').trim().slice(0, 500),
     },
   };
 }
@@ -743,6 +807,7 @@ export default function Settings() {
   const [itemCustomModalOpen, setItemCustomModalOpen] = useState(false);
   const [printSettings, setPrintSettings] = useState<PrintSettingsState>(DEFAULT_PRINT_SETTINGS);
   const [printSection, setPrintSection] = useState<'layout' | 'colors'>('layout');
+  const [activePrintTab, setActivePrintTab] = useState<'regular' | 'thermal'>('regular');
   const [transactionNamesOpen, setTransactionNamesOpen] = useState(false);
   const [itemTablePrintOpen, setItemTablePrintOpen] = useState(false);
   const [taxSettings, setTaxSettings] = useState<TaxSettingsState>(DEFAULT_TAX_SETTINGS);
@@ -2296,301 +2361,698 @@ export default function Settings() {
                         <div className="flex flex-wrap items-end justify-between gap-3">
                            <div>
                               <h2 className="text-xl font-bold">Print Settings</h2>
-                              <p className="mt-1 text-sm text-slate-500">Configure regular printer invoice layout and PDF content. The sample invoice updates immediately; saved invoices and PDFs use these settings after you save.</p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                {activePrintTab === 'regular'
+                                  ? 'Configure regular printer invoice layout and PDF content. The sample invoice updates immediately; saved invoices and PDFs use these settings after you save.'
+                                  : 'Configure thermal receipt layout, seller info visibility, and overrides. POS receipts will reflect these options.'}
+                              </p>
                            </div>
                            <Button onClick={savePrintSettings} loading={updateCompany.isPending}>Save Print Settings</Button>
                         </div>
                         <div className="mt-5 flex gap-2">
-                           <button type="button" className="border-b-2 border-indigo-600 px-5 py-3 text-sm font-bold text-indigo-700">REGULAR PRINTER</button>
-                           <button type="button" disabled className="px-5 py-3 text-sm font-bold text-slate-400">THERMAL PRINTER</button>
+                           <button
+                              type="button"
+                              onClick={() => setActivePrintTab('regular')}
+                              className={`px-5 py-3 text-sm font-bold border-b-2 transition-colors ${activePrintTab === 'regular' ? 'border-indigo-600 text-indigo-700 font-extrabold' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                           >
+                              REGULAR PRINTER
+                           </button>
+                           <button
+                              type="button"
+                              onClick={() => setActivePrintTab('thermal')}
+                              className={`px-5 py-3 text-sm font-bold border-b-2 transition-colors ${activePrintTab === 'thermal' ? 'border-indigo-600 text-indigo-700 font-extrabold' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                           >
+                              THERMAL PRINTER
+                           </button>
                         </div>
                      </div>
+                      {activePrintTab === 'regular' ? (
+                         <div className="grid gap-0 xl:grid-cols-[360px_minmax(0,1fr)]">
+                            <div className="max-h-[calc(100vh-220px)] overflow-auto border-r bg-white p-5">
+                               <div className="mb-5 flex border-b">
+                                  <button
+                                     type="button"
+                                     onClick={() => setPrintSection('layout')}
+                                     className={`px-5 py-3 text-sm font-bold ${printSection === 'layout' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-600'}`}
+                                  >
+                                     CHANGE LAYOUT
+                                  </button>
+                                  <button
+                                     type="button"
+                                     onClick={() => setPrintSection('colors')}
+                                     className={`px-5 py-3 text-sm font-bold ${printSection === 'colors' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-400'}`}
+                                  >
+                                     CHANGE COLORS
+                                  </button>
+                               </div>
 
-                     <div className="grid gap-0 xl:grid-cols-[360px_minmax(0,1fr)]">
-                        <div className="max-h-[calc(100vh-220px)] overflow-auto border-r bg-white p-5">
-                           <div className="mb-5 flex border-b">
-                              <button
-                                 type="button"
-                                 onClick={() => setPrintSection('layout')}
-                                 className={`px-5 py-3 text-sm font-bold ${printSection === 'layout' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-600'}`}
-                              >
-                                 CHANGE LAYOUT
-                              </button>
-                              <button
-                                 type="button"
-                                 onClick={() => setPrintSection('colors')}
-                                 className={`px-5 py-3 text-sm font-bold ${printSection === 'colors' ? 'border-b-2 border-rose-500 text-blue-600' : 'text-slate-400'}`}
-                              >
-                                 CHANGE COLORS
-                              </button>
-                           </div>
+                               {printSection === 'colors' ? (
+                                  <div className="space-y-4">
+                                     <div className="rounded-lg border bg-slate-50 p-4">
+                                        <p className="text-xs font-semibold uppercase text-slate-500">Active Layout</p>
+                                        <div className="mt-2 flex items-center gap-3">
+                                           <span className="h-4 w-4 rounded-full border" style={{ backgroundColor: selectedLayoutColor }} />
+                                           <div className="min-w-0">
+                                              <p className="truncate text-sm font-bold text-slate-900">{selectedPrintLayout.label}</p>
+                                              <p className="text-xs text-slate-500">{selectedLayoutColorName}</p>
+                                           </div>
+                                        </div>
+                                     </div>
+                                     <div className="grid grid-cols-5 gap-3">
+                                        {PRINT_COLOR_PALETTE.map((color) => {
+                                          const checked = selectedLayoutColor.toLowerCase() === color.value.toLowerCase();
+                                          return (
+                                            <button
+                                              key={color.value}
+                                              type="button"
+                                              onClick={() => updatePrintLayoutColor(selectedPrintLayout.id, color.value)}
+                                              className="group flex flex-col items-center gap-2 rounded-lg p-2 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
+                                              title={color.name}
+                                            >
+                                              <span
+                                                className={`flex h-10 w-10 items-center justify-center rounded-full border text-white shadow-sm transition ${checked ? 'ring-2 ring-indigo-500 ring-offset-2' : 'ring-0'}`}
+                                                style={{ backgroundColor: color.value }}
+                                              >
+                                                {checked ? '✓' : ''}
+                                              </span>
+                                              <span className="max-w-full truncate">{color.name}</span>
+                                            </button>
+                                          );
+                                        })}
+                                     </div>
+                                  </div>
+                               ) : (
+                                  <div className="space-y-7">
+                                     <PrintLayoutPicker
+                                        value={selectedPrintLayoutId}
+                                        onChange={(layoutId) => updatePrintSetting('regular', 'layout', layoutId)}
+                                     />
 
-                           {printSection === 'colors' ? (
-                              <div className="space-y-4">
-                                 <div className="rounded-lg border bg-slate-50 p-4">
-                                    <p className="text-xs font-semibold uppercase text-slate-500">Active Layout</p>
-                                    <div className="mt-2 flex items-center gap-3">
-                                       <span className="h-4 w-4 rounded-full border" style={{ backgroundColor: selectedLayoutColor }} />
-                                       <div className="min-w-0">
-                                          <p className="truncate text-sm font-bold text-slate-900">{selectedPrintLayout.label}</p>
-                                          <p className="text-xs text-slate-500">{selectedLayoutColorName}</p>
-                                       </div>
-                                    </div>
-                                 </div>
-                                 <div className="grid grid-cols-5 gap-3">
-                                    {PRINT_COLOR_PALETTE.map((color) => {
-                                      const checked = selectedLayoutColor.toLowerCase() === color.value.toLowerCase();
-                                      return (
-                                        <button
-                                          key={color.value}
-                                          type="button"
-                                          onClick={() => updatePrintLayoutColor(selectedPrintLayout.id, color.value)}
-                                          className="group flex flex-col items-center gap-2 rounded-lg p-2 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50"
-                                          title={color.name}
-                                        >
-                                          <span
-                                            className={`flex h-10 w-10 items-center justify-center rounded-full border text-white shadow-sm transition ${checked ? 'ring-2 ring-indigo-500 ring-offset-2' : 'ring-0'}`}
-                                            style={{ backgroundColor: color.value }}
-                                          >
-                                            {checked ? '✓' : ''}
-                                          </span>
-                                          <span className="max-w-full truncate">{color.name}</span>
-                                        </button>
-                                      );
-                                    })}
-                                 </div>
-                              </div>
-	                           ) : (
-	                              <div className="space-y-7">
-	                                 <PrintLayoutPicker
-	                                    value={selectedPrintLayoutId}
-	                                    onChange={(layoutId) => updatePrintSetting('regular', 'layout', layoutId)}
-	                                 />
-
-	                                 <section className="space-y-4">
-                                    <h3 className="border-b pb-3 text-lg font-bold">Print Company Info / Header</h3>
-                                    {[
-                                      ['default', 'Make Regular Printer Default'],
-                                      ['repeat_header', 'Print repeat header in all pages'],
-                                      ['print_original_duplicate', 'Print Original/Duplicate'],
-                                    ].map(([key, label]) => (
-                                      <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
-                                         <Switch checked={Boolean(printSettings.regular[key as keyof PrintSettingsState['regular']])} onCheckedChange={(v) => updatePrintSetting('regular', key as keyof PrintSettingsState['regular'], v as never)} />
-                                         {label}
-                                      </label>
-                                    ))}
-                                    <div className="grid gap-3">
-                                       {[
-                                         ['company_name', 'Company Name', savedCompanyName],
-                                         ['company_logo', 'Company Logo', 'Logo from company profile'],
-                                         ['address', 'Address', savedCompanyAddress],
-                                         ['email', 'Email', savedCompanyEmail],
-                                         ['phone', 'Phone Number', savedCompanyPhone],
-                                         ['gstin', 'GSTIN on Sale', savedCompanyGstin],
-                                       ].map(([key, label, sample]) => (
-                                          <div key={key} className="flex items-center gap-3">
-                                             <Switch checked={Boolean(printSettings.header[key as keyof PrintSettingsState['header']])} onCheckedChange={(v) => updatePrintSetting('header', key as keyof PrintSettingsState['header'], v as never)} />
-                                             <div className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2">
-                                                <p className="text-[11px] text-slate-500">{label}</p>
-                                                <p className="truncate text-sm font-medium text-slate-800">{sample}</p>
-                                             </div>
-                                          </div>
-                                       ))}
-                                    </div>
-                                 </section>
-
-                                 <section className="grid gap-4 border-t pt-5">
-                                    <label className="text-sm font-medium text-slate-700">Paper Size
-                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.paper_size} onChange={(e) => updatePrintSetting('regular', 'paper_size', e.target.value as 'A4' | 'Letter')}>
-                                          <option value="A4">A4</option>
-                                          <option value="Letter">Letter</option>
-                                       </select>
-                                    </label>
-                                    <label className="text-sm font-medium text-slate-700">Orientation
-                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.orientation} onChange={(e) => updatePrintSetting('regular', 'orientation', e.target.value as 'portrait' | 'landscape')}>
-                                          <option value="portrait">Portrait</option>
-                                          <option value="landscape">Landscape</option>
-                                       </select>
-                                    </label>
-                                    <label className="text-sm font-medium text-slate-700">Company Name Text Size
-                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.company_name_text_size} onChange={(e) => updatePrintSetting('regular', 'company_name_text_size', e.target.value as 'small' | 'medium' | 'large')}>
-                                          <option value="small">Small</option>
-                                          <option value="medium">Medium</option>
-                                          <option value="large">Large</option>
-                                       </select>
-                                    </label>
-                                    <label className="text-sm font-medium text-slate-700">Invoice Text Size
-                                       <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.invoice_text_size} onChange={(e) => updatePrintSetting('regular', 'invoice_text_size', e.target.value as 'small' | 'medium' | 'large')}>
-                                          <option value="small">Small</option>
-                                          <option value="medium">Medium</option>
-                                          <option value="large">Large</option>
-                                       </select>
-                                    </label>
-                                    <label className="text-sm font-medium text-slate-700">Extra space on Top of PDF
-                                       <Input type="number" min={0} max={80} className="mt-1" value={printSettings.regular.extra_top_space} onChange={(e) => updatePrintSetting('regular', 'extra_top_space', Number(e.target.value) as never)} />
-                                    </label>
-                                    <label className="text-sm font-medium text-slate-700">Min No. of Rows in Item Table
-                                       <Input type="number" min={0} max={30} className="mt-1" value={printSettings.regular.min_item_rows} onChange={(e) => updatePrintSetting('regular', 'min_item_rows', Number(e.target.value) as never)} />
-                                    </label>
-                                 </section>
-
-                                 <section className="space-y-4 border-t pt-5">
-                                    <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setTransactionNamesOpen(true)}>Change Transaction Names &gt;</button>
-                                    <div>
-                                       <h3 className="mb-3 text-lg font-bold">Item Table</h3>
-                                       <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setItemTablePrintOpen(true)}>Item Table Customization &gt;</button>
-                                    </div>
-                                 </section>
-
-                                 <section className="space-y-4 border-t pt-5">
-                                    <h3 className="text-lg font-bold">Totals & Taxes</h3>
-                                    <div className="grid gap-3">
-                                       {[
-                                         ['total_item_quantity', 'Total Item Quantity'],
-                                         ['amount_with_decimal', 'Amount with Decimal'],
-                                         ['received_amount', 'Received Amount'],
-                                         ['balance_amount', 'Balance Amount'],
-                                         ['current_balance_of_party', 'Current Balance of Party'],
-                                         ['tax_details', 'Tax Details'],
-                                         ['you_saved', 'You Saved'],
-                                         ['print_amount_with_grouping', 'Print Amount with Grouping'],
-                                       ].map(([key, label]) => (
+                                     <section className="space-y-4">
+                                        <h3 className="border-b pb-3 text-lg font-bold">Print Company Info / Header</h3>
+                                        {[
+                                          ['default', 'Make Regular Printer Default'],
+                                          ['repeat_header', 'Print repeat header in all pages'],
+                                          ['print_original_duplicate', 'Print Original/Duplicate'],
+                                        ].map(([key, label]) => (
                                           <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={Boolean(printSettings.totals[key as keyof PrintSettingsState['totals']])} onCheckedChange={(v) => updatePrintSetting('totals', key as keyof PrintSettingsState['totals'], v as never)} />
+                                             <Switch checked={Boolean(printSettings.regular[key as keyof PrintSettingsState['regular']])} onCheckedChange={(v) => updatePrintSetting('regular', key as keyof PrintSettingsState['regular'], v as never)} />
                                              {label}
                                           </label>
-                                       ))}
-                                       <label className="text-sm font-medium text-slate-700">Amount in Words
-                                          <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.totals.amount_in_words} onChange={(e) => updatePrintSetting('totals', 'amount_in_words', e.target.value as 'indian' | 'international')}>
-                                             <option value="indian">Indian</option>
-                                             <option value="international">International</option>
-                                          </select>
-                                       </label>
-                                    </div>
-                                 </section>
+                                        ))}
+                                        <div className="grid gap-3">
+                                           {[
+                                             ['company_name', 'Company Name', savedCompanyName],
+                                             ['company_logo', 'Company Logo', 'Logo from company profile'],
+                                             ['address', 'Address', savedCompanyAddress],
+                                             ['email', 'Email', savedCompanyEmail],
+                                             ['phone', 'Phone Number', savedCompanyPhone],
+                                             ['gstin', 'GSTIN on Sale', savedCompanyGstin],
+                                           ].map(([key, label, sample]) => (
+                                              <div key={key} className="flex items-center gap-3">
+                                                 <Switch checked={Boolean(printSettings.header[key as keyof PrintSettingsState['header']])} onCheckedChange={(v) => updatePrintSetting('header', key as keyof PrintSettingsState['header'], v as never)} />
+                                                 <div className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2">
+                                                    <p className="text-[11px] text-slate-500">{label}</p>
+                                                    <p className="truncate text-sm font-medium text-slate-800">{sample}</p>
+                                                 </div>
+                                              </div>
+                                           ))}
+                                        </div>
+                                     </section>
 
-                                 <section className="space-y-4 border-t pt-5">
-                                    <h3 className="text-base font-bold text-slate-900">Footer</h3>
-                                    <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-                                       <div className="space-y-4">
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.print_description} onCheckedChange={(v) => updatePrintSetting('footer', 'print_description', v)} />
-                                             <span className="min-w-0 pt-0.5">Print Description</span>
-                                          </label>
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.print_received_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_received_by', v)} />
-                                             <span className="min-w-0 pt-0.5">Print Received by details</span>
-                                          </label>
-                                          <div>
-                                             <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                                <Switch checked={printSettings.footer.signature_enabled} onCheckedChange={(v) => updatePrintSetting('footer', 'signature_enabled', v)} />
-                                                <span className="min-w-0 pt-0.5">Print Signature Text</span>
-                                             </label>
-                                             {printSettings.footer.signature_enabled && (
-                                                <div className="mt-2 pl-8">
-                                                   <label className="block text-xs font-semibold text-slate-500">Signature Text</label>
-                                                   <select
-                                                      className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm"
-                                                      value={['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) ? 'authorized' : 'custom'}
-                                                      onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value === 'authorized' ? 'Authorized Sign' : 'Custom Text')}
-                                                   >
-                                                      <option value="authorized">Authorized Sign</option>
-                                                      <option value="custom">Custom Text</option>
-                                                   </select>
-                                                   {!['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) && (
-                                                      <Input className="mt-2" value={printSettings.footer.signature_text} onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value)} />
-                                                   )}
-                                                </div>
-                                             )}
-                                          </div>
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.acknowledgement} onCheckedChange={(v) => updatePrintSetting('footer', 'acknowledgement', v)} />
-                                             <span className="min-w-0 pt-0.5">Print Acknowledgement</span>
-                                          </label>
-                                       </div>
-                                       <div className="space-y-4">
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.print_terms} onCheckedChange={(v) => updatePrintSetting('footer', 'print_terms', v)} />
-                                             <span className="min-w-0 pt-0.5">Print Terms and Conditions</span>
-                                          </label>
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.print_delivered_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_delivered_by', v)} />
-                                             <span className="min-w-0 pt-0.5">Print Delivered by details</span>
-                                          </label>
-                                          <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                             <Switch checked={printSettings.footer.payment_mode} onCheckedChange={(v) => updatePrintSetting('footer', 'payment_mode', v)} />
-                                             <span className="min-w-0 pt-0.5">Payment Mode</span>
-                                          </label>
-                                       </div>
-                                    </div>
-                                 </section>
+                                     <section className="grid gap-4 border-t pt-5">
+                                        <label className="text-sm font-medium text-slate-700">Paper Size
+                                           <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.paper_size} onChange={(e) => updatePrintSetting('regular', 'paper_size', e.target.value as 'A4' | 'Letter')}>
+                                              <option value="A4">A4</option>
+                                              <option value="Letter">Letter</option>
+                                           </select>
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Orientation
+                                           <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.orientation} onChange={(e) => updatePrintSetting('regular', 'orientation', e.target.value as 'portrait' | 'landscape')}>
+                                              <option value="portrait">Portrait</option>
+                                              <option value="landscape">Landscape</option>
+                                           </select>
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Company Name Text Size
+                                           <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.company_name_text_size} onChange={(e) => updatePrintSetting('regular', 'company_name_text_size', e.target.value as 'small' | 'medium' | 'large')}>
+                                              <option value="small">Small</option>
+                                              <option value="medium">Medium</option>
+                                              <option value="large">Large</option>
+                                           </select>
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Invoice Text Size
+                                           <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.regular.invoice_text_size} onChange={(e) => updatePrintSetting('regular', 'invoice_text_size', e.target.value as 'small' | 'medium' | 'large')}>
+                                              <option value="small">Small</option>
+                                              <option value="medium">Medium</option>
+                                              <option value="large">Large</option>
+                                           </select>
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Extra space on Top of PDF
+                                           <Input type="number" min={0} max={80} className="mt-1" value={printSettings.regular.extra_top_space} onChange={(e) => updatePrintSetting('regular', 'extra_top_space', Number(e.target.value) as never)} />
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Min No. of Rows in Item Table
+                                           <Input type="number" min={0} max={30} className="mt-1" value={printSettings.regular.min_item_rows} onChange={(e) => updatePrintSetting('regular', 'min_item_rows', Number(e.target.value) as never)} />
+                                        </label>
+                                     </section>
 
-                              </div>
-                           )}
-                        </div>
+                                     <section className="space-y-4 border-t pt-5">
+                                        <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setTransactionNamesOpen(true)}>Change Transaction Names &gt;</button>
+                                        <div>
+                                           <h3 className="mb-3 text-lg font-bold">Item Table</h3>
+                                           <button type="button" className="text-sm font-semibold text-blue-600" onClick={() => setItemTablePrintOpen(true)}>Item Table Customization &gt;</button>
+                                        </div>
+                                     </section>
 
-                        <aside className="border-t bg-slate-100/70 p-5 xl:border-l xl:border-t-0">
-                           <div className="xl:sticky xl:top-4">
-                              <div className="mb-3 flex items-center justify-between gap-3">
-                                 <div>
-                                    <p className="text-xs font-semibold uppercase text-slate-500">Live Sample</p>
-                                    <h3 className="font-bold text-slate-900">{selectedPrintLayout.label}</h3>
-                                 </div>
-                                 <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                    {printSettings.regular.paper_size} · {printSettings.regular.orientation}
-                                 </span>
-                              </div>
-                              <PrintInvoiceLayoutPreview
-                                 layoutId={selectedPrintLayoutId}
-                                 accentColor={selectedLayoutColor}
-                                 columns={previewColumns}
-                                 getCellValue={previewValueForColumn}
-                                 data={{
-                                   firm: {
-                                     name: printSettings.header.company_name ? savedCompanyName : 'Firm Name',
-                                     address: printSettings.header.address ? savedCompanyAddress : '',
-                                     phone: printSettings.header.phone ? savedCompanyPhone : '',
-                                     email: printSettings.header.email ? savedCompanyEmail : '',
-                                     gstin: printSettings.header.gstin ? savedCompanyGstin : '',
-                                     state: company?.state || 'Gujarat',
-                                     logo: printSettings.header.company_logo ? logoSrc || undefined : undefined,
-                                     signature: printSettings.footer.signature_enabled ? signatureSrc || undefined : undefined,
-                                   },
-                                   invoice: {
-                                     number: 'INV-101',
-                                     date: '27-05-2026',
-                                     time: '12:30 PM',
-                                     dueDate: '03-06-2026',
-                                     type: previewTitle,
-                                   },
-                                   billTo: { name: 'Classic enterprises', address: 'Plot No. 1, Surat, Gujarat', contact: 'Contact No.: 8888888888' },
-                                   shipTo: { name: 'Mehta Textiles', address: 'Bengaluru, Karnataka, 560034' },
-                                   footer: {
-                                     description: 'Sale Description',
-                                     termsAndConditions: company?.terms_and_conditions || 'Thanks for doing business with us!',
-                                     bankName: savedBankName,
-                                     bankAccount: savedBankAccount,
-                                     bankIfsc: savedBankIfsc,
-                                     authorizedSignature: printSettings.footer.signature_text || 'Authorized Sign',
-                                     showQR: true,
-                                   },
-                                 }}
-                                 amountInWords={printSettings.totals.amount_in_words === 'indian' ? 'Rupees One Thousand Three Hundred Eighty Six and Fifty Paise only' : 'One Thousand Three Hundred Eighty Six and Fifty Cents only'}
-                                 showDescription={printSettings.footer.print_description}
-                                 showTerms={printSettings.footer.print_terms}
-                                 showReceived={printSettings.totals.received_amount}
-                                 showBalance={printSettings.totals.balance_amount}
-                                 showYouSaved={printSettings.totals.you_saved}
-                                 showTaxDetails={printSettings.totals.tax_details}
-                                 showPaymentMode={printSettings.footer.payment_mode}
-                                 showAcknowledgement={printSettings.footer.acknowledgement}
-                                 showReceivedBy={printSettings.footer.print_received_by}
-                                 showDeliveredBy={printSettings.footer.print_delivered_by}
-                                 showSignature={printSettings.footer.signature_enabled}
-                              />
-                           </div>
-                        </aside>
-                     </div>
+                                     <section className="space-y-4 border-t pt-5">
+                                        <h3 className="text-lg font-bold">Totals & Taxes</h3>
+                                        <div className="grid gap-3">
+                                           {[
+                                             ['total_item_quantity', 'Total Item Quantity'],
+                                             ['amount_with_decimal', 'Amount with Decimal'],
+                                             ['received_amount', 'Received Amount'],
+                                             ['balance_amount', 'Balance Amount'],
+                                             ['current_balance_of_party', 'Current Balance of Party'],
+                                             ['tax_details', 'Tax Details'],
+                                             ['you_saved', 'You Saved'],
+                                             ['print_amount_with_grouping', 'Print Amount with Grouping'],
+                                           ].map(([key, label]) => (
+                                              <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={Boolean(printSettings.totals[key as keyof PrintSettingsState['totals']])} onCheckedChange={(v) => updatePrintSetting('totals', key as keyof PrintSettingsState['totals'], v as never)} />
+                                                 {label}
+                                              </label>
+                                           ))}
+                                           <label className="text-sm font-medium text-slate-700">Amount in Words
+                                              <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.totals.amount_in_words} onChange={(e) => updatePrintSetting('totals', 'amount_in_words', e.target.value as 'indian' | 'international')}>
+                                                 <option value="indian">Indian</option>
+                                                 <option value="international">International</option>
+                                              </select>
+                                           </label>
+                                        </div>
+                                     </section>
+
+                                     <section className="space-y-4 border-t pt-5">
+                                        <h3 className="text-base font-bold text-slate-900">Footer</h3>
+                                        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                                           <div className="space-y-4">
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.print_description} onCheckedChange={(v) => updatePrintSetting('footer', 'print_description', v)} />
+                                                 <span className="min-w-0 pt-0.5">Print Description</span>
+                                              </label>
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.print_received_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_received_by', v)} />
+                                                 <span className="min-w-0 pt-0.5">Print Received by details</span>
+                                              </label>
+                                              <div>
+                                                 <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                    <Switch checked={printSettings.footer.signature_enabled} onCheckedChange={(v) => updatePrintSetting('footer', 'signature_enabled', v)} />
+                                                    <span className="min-w-0 pt-0.5">Print Signature Text</span>
+                                                 </label>
+                                                 {printSettings.footer.signature_enabled && (
+                                                    <div className="mt-2 pl-8">
+                                                       <label className="block text-xs font-semibold text-slate-500">Signature Text</label>
+                                                       <select
+                                                          className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm"
+                                                          value={['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) ? 'authorized' : 'custom'}
+                                                          onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value === 'authorized' ? 'Authorized Sign' : 'Custom Text')}
+                                                       >
+                                                          <option value="authorized">Authorized Sign</option>
+                                                          <option value="custom">Custom Text</option>
+                                                       </select>
+                                                       {!['Authorized Sign', 'Authorized Signatory'].includes(printSettings.footer.signature_text) && (
+                                                          <Input className="mt-2" value={printSettings.footer.signature_text} onChange={(e) => updatePrintSetting('footer', 'signature_text', e.target.value)} />
+                                                       )}
+                                                    </div>
+                                                 )}
+                                              </div>
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.acknowledgement} onCheckedChange={(v) => updatePrintSetting('footer', 'acknowledgement', v)} />
+                                                 <span className="min-w-0 pt-0.5">Print Acknowledgement</span>
+                                              </label>
+                                           </div>
+                                           <div className="space-y-4">
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.print_terms} onCheckedChange={(v) => updatePrintSetting('footer', 'print_terms', v)} />
+                                                 <span className="min-w-0 pt-0.5">Print Terms and Conditions</span>
+                                              </label>
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.print_delivered_by} onCheckedChange={(v) => updatePrintSetting('footer', 'print_delivered_by', v)} />
+                                                 <span className="min-w-0 pt-0.5">Print Delivered by details</span>
+                                              </label>
+                                              <label className="flex items-start gap-3 text-sm font-medium text-slate-700">
+                                                 <Switch checked={printSettings.footer.payment_mode} onCheckedChange={(v) => updatePrintSetting('footer', 'payment_mode', v)} />
+                                                 <span className="min-w-0 pt-0.5">Payment Mode</span>
+                                              </label>
+                                           </div>
+                                        </div>
+                                     </section>
+                                  </div>
+                               )}
+                            </div>
+
+                            <aside className="border-t bg-slate-100/70 p-5 xl:border-l xl:border-t-0">
+                               <div className="xl:sticky xl:top-4">
+                                  <div className="mb-3 flex items-center justify-between gap-3">
+                                     <div>
+                                        <p className="text-xs font-semibold uppercase text-slate-500">Live Sample</p>
+                                        <h3 className="font-bold text-slate-900">{selectedPrintLayout.label}</h3>
+                                     </div>
+                                     <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                        {printSettings.regular.paper_size} · {printSettings.regular.orientation}
+                                     </span>
+                                  </div>
+                                  <PrintInvoiceLayoutPreview
+                                     layoutId={selectedPrintLayoutId}
+                                     accentColor={selectedLayoutColor}
+                                     columns={previewColumns}
+                                     getCellValue={previewValueForColumn}
+                                     data={{
+                                       firm: {
+                                         name: printSettings.header.company_name ? savedCompanyName : 'Firm Name',
+                                         address: printSettings.header.address ? savedCompanyAddress : '',
+                                         phone: printSettings.header.phone ? savedCompanyPhone : '',
+                                         email: printSettings.header.email ? savedCompanyEmail : '',
+                                         gstin: printSettings.header.gstin ? savedCompanyGstin : '',
+                                         state: company?.state || 'Gujarat',
+                                         logo: printSettings.header.company_logo ? logoSrc || undefined : undefined,
+                                         signature: printSettings.footer.signature_enabled ? signatureSrc || undefined : undefined,
+                                       },
+                                       invoice: {
+                                         number: 'INV-101',
+                                         date: '27-05-2026',
+                                         time: '12:30 PM',
+                                         dueDate: '03-06-2026',
+                                         type: previewTitle,
+                                       },
+                                       billTo: { name: 'Classic enterprises', address: 'Plot No. 1, Surat, Gujarat', contact: 'Contact No.: 8888888888' },
+                                       shipTo: { name: 'Mehta Textiles', address: 'Bengaluru, Karnataka, 560034' },
+                                       footer: {
+                                         description: 'Sale Description',
+                                         termsAndConditions: company?.terms_and_conditions || 'Thanks for doing business with us!',
+                                         bankName: savedBankName,
+                                         bankAccount: savedBankAccount,
+                                         bankIfsc: savedBankIfsc,
+                                         authorizedSignature: printSettings.footer.signature_text || 'Authorized Sign',
+                                         showQR: true,
+                                       },
+                                     }}
+                                     amountInWords={printSettings.totals.amount_in_words === 'indian' ? 'Rupees One Thousand Three Hundred Eighty Six and Fifty Paise only' : 'One Thousand Three Hundred Eighty Six and Fifty Cents only'}
+                                     showDescription={printSettings.footer.print_description}
+                                     showTerms={printSettings.footer.print_terms}
+                                     showReceived={printSettings.totals.received_amount}
+                                     showBalance={printSettings.totals.balance_amount}
+                                     showYouSaved={printSettings.totals.you_saved}
+                                     showTaxDetails={printSettings.totals.tax_details}
+                                     showPaymentMode={printSettings.footer.payment_mode}
+                                     showAcknowledgement={printSettings.footer.acknowledgement}
+                                     showReceivedBy={printSettings.footer.print_received_by}
+                                     showDeliveredBy={printSettings.footer.print_delivered_by}
+                                     showSignature={printSettings.footer.signature_enabled}
+                                  />
+                               </div>
+                            </aside>
+                         </div>
+                      ) : (
+                         <div className="grid gap-0 xl:grid-cols-[360px_minmax(0,1fr)]">
+                            <div className="max-h-[calc(100vh-220px)] overflow-auto border-r bg-white p-5 space-y-6">
+                               <section className="space-y-4">
+                                  <h3 className="border-b pb-3 text-lg font-bold">Store / Seller Details</h3>
+                                  
+                                  <div className="space-y-3">
+                                     <div className="flex items-center gap-3">
+                                        <Switch
+                                           checked={Boolean(printSettings.thermal?.show_seller_name)}
+                                           onCheckedChange={(v) => updatePrintSetting('thermal', 'show_seller_name', v)}
+                                        />
+                                        <span className="text-sm font-medium text-slate-700">Show Store Name</span>
+                                     </div>
+                                     {printSettings.thermal?.show_seller_name && (
+                                        <div className="pl-11 space-y-1">
+                                           <label className="block text-xs font-semibold text-slate-500">Name Override</label>
+                                           <Input
+                                              placeholder={savedCompanyName}
+                                              value={printSettings.thermal?.seller_name || ''}
+                                              onChange={(e) => updatePrintSetting('thermal', 'seller_name', e.target.value)}
+                                           />
+                                        </div>
+                                     )}
+                                  </div>
+
+                                  <div className="space-y-3 border-t pt-4">
+                                     <div className="flex items-center gap-3">
+                                        <Switch
+                                           checked={Boolean(printSettings.thermal?.show_seller_phone)}
+                                           onCheckedChange={(v) => updatePrintSetting('thermal', 'show_seller_phone', v)}
+                                        />
+                                        <span className="text-sm font-medium text-slate-700">Show Phone Number</span>
+                                     </div>
+                                     {printSettings.thermal?.show_seller_phone && (
+                                        <div className="pl-11 space-y-1">
+                                           <label className="block text-xs font-semibold text-slate-500">Phone Override</label>
+                                           <Input
+                                              placeholder={savedCompanyPhone}
+                                              value={printSettings.thermal?.seller_phone || ''}
+                                              onChange={(e) => updatePrintSetting('thermal', 'seller_phone', e.target.value)}
+                                           />
+                                        </div>
+                                     )}
+                                  </div>
+
+                                  <div className="space-y-3 border-t pt-4">
+                                     <div className="flex items-center gap-3">
+                                        <Switch
+                                           checked={Boolean(printSettings.thermal?.show_seller_address)}
+                                           onCheckedChange={(v) => updatePrintSetting('thermal', 'show_seller_address', v)}
+                                        />
+                                        <span className="text-sm font-medium text-slate-700">Show Seller Address</span>
+                                     </div>
+                                     {printSettings.thermal?.show_seller_address && (
+                                        <div className="pl-11 space-y-1">
+                                           <label className="block text-xs font-semibold text-slate-500">Address Override</label>
+                                           <textarea
+                                              className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                              placeholder={savedCompanyAddress}
+                                              value={printSettings.thermal?.seller_address || ''}
+                                              onChange={(e) => updatePrintSetting('thermal', 'seller_address', e.target.value)}
+                                           />
+                                        </div>
+                                     )}
+                                  </div>
+
+                                  <div className="flex items-center gap-3 border-t pt-4">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.show_logo)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'show_logo', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Show Business Logo</span>
+                                  </div>
+
+                                  <h3 className="border-b pb-3 pt-6 text-lg font-bold">Transaction / Body Options</h3>
+                                  
+                                  <div className="flex items-center gap-3">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.show_date_time)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'show_date_time', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Show Date & Time</span>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 border-t pt-4">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.show_bill_no)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'show_bill_no', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Show Bill / Invoice Number</span>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 border-t pt-4">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.show_tax_columns)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'show_tax_columns', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Show Tax (HSN/GST) Sub-lines</span>
+                                  </div>
+
+                                  <div className="space-y-3 border-t pt-4">
+                                     <div className="flex items-center gap-3">
+                                        <Switch
+                                           checked={Boolean(printSettings.thermal?.show_payment_details)}
+                                           onCheckedChange={(v) => updatePrintSetting('thermal', 'show_payment_details', v)}
+                                        />
+                                        <span className="text-sm font-medium text-slate-700">Show Payment Method Details</span>
+                                     </div>
+                                     {printSettings.thermal?.show_payment_details && (
+                                        <div className="pl-11 space-y-3">
+                                           <div className="space-y-1">
+                                              <label className="block text-xs font-semibold text-slate-500">Card Last 4 Digits Override</label>
+                                              <Input
+                                                 placeholder="4321"
+                                                 maxLength={4}
+                                                 value={printSettings.thermal?.card_last_four_override || ''}
+                                                 onChange={(e) => updatePrintSetting('thermal', 'card_last_four_override', e.target.value)}
+                                              />
+                                           </div>
+                                           <div className="space-y-1">
+                                              <label className="block text-xs font-semibold text-slate-500">Card Auth Code Override</label>
+                                              <Input
+                                                 placeholder="AUTH-099"
+                                                 value={printSettings.thermal?.card_auth_code_override || ''}
+                                                 onChange={(e) => updatePrintSetting('thermal', 'card_auth_code_override', e.target.value)}
+                                              />
+                                           </div>
+                                        </div>
+                                     )}
+                                  </div>
+
+                                  <h3 className="border-b pb-3 pt-6 text-lg font-bold">Layout Types</h3>
+
+                                  <div className="flex items-center gap-3">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.enable_refund_layout)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'enable_refund_layout', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Enable Refund Layout for Returns</span>
+                                  </div>
+
+                                  <div className="space-y-3 border-t pt-4">
+                                     <div className="flex items-center gap-3">
+                                        <Switch
+                                           checked={Boolean(printSettings.thermal?.enable_deposit_layout)}
+                                           onCheckedChange={(v) => updatePrintSetting('thermal', 'enable_deposit_layout', v)}
+                                        />
+                                        <span className="text-sm font-medium text-slate-700">Enable Deposit Layout</span>
+                                     </div>
+                                     {printSettings.thermal?.enable_deposit_layout && (
+                                        <div className="pl-11 space-y-1">
+                                           <label className="block text-xs font-semibold text-slate-500">Deposit Account Details</label>
+                                           <textarea
+                                              className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                              placeholder="e.g. HDFC Bank A/c No. XXXXXX"
+                                              value={printSettings.thermal?.deposit_account_details || ''}
+                                              onChange={(e) => updatePrintSetting('thermal', 'deposit_account_details', e.target.value)}
+                                           />
+                                        </div>
+                                     )}
+                                  </div>
+
+                                  <h3 className="border-b pb-3 pt-6 text-lg font-bold">Receipt Footer</h3>
+
+                                  <div className="space-y-1">
+                                     <label className="block text-xs font-semibold text-slate-500">Digital Lookup Code</label>
+                                     <select
+                                        className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                                        value={printSettings.thermal?.barcode_or_qr || 'barcode'}
+                                        onChange={(e) => updatePrintSetting('thermal', 'barcode_or_qr', e.target.value as any)}
+                                     >
+                                        <option value="none">None</option>
+                                        <option value="barcode">Barcode (Invoice Number)</option>
+                                        <option value="qr">QR Code (Digital Link)</option>
+                                     </select>
+                                  </div>
+
+                                  <div className="space-y-1 border-t pt-4">
+                                     <label className="block text-xs font-semibold text-slate-500">Return Policy Summary</label>
+                                     <textarea
+                                        className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                        placeholder="Items can be returned within 7 days..."
+                                        value={printSettings.thermal?.return_policy || ''}
+                                        onChange={(e) => updatePrintSetting('thermal', 'return_policy', e.target.value)}
+                                     />
+                                  </div>
+
+                                  <div className="flex items-center gap-3 border-t pt-4">
+                                     <Switch
+                                        checked={Boolean(printSettings.thermal?.show_footer_thank_you)}
+                                        onCheckedChange={(v) => updatePrintSetting('thermal', 'show_footer_thank_you', v)}
+                                     />
+                                     <span className="text-sm font-medium text-slate-700">Show Thank You Message</span>
+                                  </div>
+                               </section>
+                            </div>
+
+                            <aside className="border-t bg-slate-100/70 p-5 xl:border-l xl:border-t-0 flex justify-center items-start">
+                               <div className="xl:sticky xl:top-4 w-full max-w-[280px]">
+                                  <div className="mb-3 flex items-center justify-between gap-3">
+                                     <div>
+                                        <p className="text-xs font-semibold uppercase text-slate-500">Live Sample</p>
+                                        <h3 className="font-bold text-slate-900">Thermal Receipt</h3>
+                                     </div>
+                                     <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                        80mm Preview
+                                     </span>
+                                  </div>
+                                  
+                                  <div className="bg-white text-black p-4 shadow-md border border-slate-200 font-mono text-[10px] leading-relaxed w-full min-h-[250px] select-none">
+                                     <div className="text-center space-y-0.5">
+                                        {printSettings.thermal?.show_logo && logoSrc && (
+                                           <div className="flex justify-center mb-2">
+                                              <img src={logoSrc} alt="logo" className="h-8 max-h-8 object-contain filter grayscale contrast-200" />
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.enable_refund_layout && (
+                                           <div className="text-center font-bold border border-black p-1 my-1 text-[9px] uppercase">
+                                              *** REFUND RECEIPT ***
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.show_seller_name && (
+                                           <div className="text-xs font-bold uppercase">
+                                              {printSettings.thermal?.seller_name ? printSettings.thermal?.seller_name : savedCompanyName}
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.show_seller_address && (
+                                           <div className="text-[9px] whitespace-pre-line text-slate-700 leading-normal">
+                                              {printSettings.thermal?.seller_address ? printSettings.thermal?.seller_address : savedCompanyAddress}
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.show_seller_phone && (
+                                           <div className="text-[9px] text-slate-700">
+                                              Ph: {printSettings.thermal?.seller_phone ? printSettings.thermal?.seller_phone : savedCompanyPhone}
+                                           </div>
+                                        )}
+                                        {company?.gstin && <div className="text-[9px] font-semibold mt-0.5">GSTIN: {company.gstin}</div>}
+                                     </div>
+
+                                     <div className="border-t border-dashed border-black my-2"></div>
+
+                                     <div className="space-y-0.5">
+                                        {printSettings.thermal?.enable_refund_layout && (
+                                           <div className="flex justify-between">
+                                              <span>Orig. Invoice:</span>
+                                              <span>INV-100</span>
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.show_bill_no && (
+                                           <div className="flex justify-between">
+                                              <span>INVOICE:</span>
+                                              <span className="font-semibold">INV-101</span>
+                                           </div>
+                                        )}
+                                        {printSettings.thermal?.show_date_time && (
+                                           <>
+                                              <div className="flex justify-between">
+                                                 <span>Date:</span>
+                                                 <span>27-05-2026</span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                 <span>Time:</span>
+                                                 <span>12:30 PM</span>
+                                              </div>
+                                           </>
+                                        )}
+                                        <div className="flex justify-between">
+                                           <span>Party:</span>
+                                           <span className="truncate max-w-[100px]">Walk-in Customer</span>
+                                        </div>
+                                     </div>
+
+                                     {printSettings.thermal?.enable_deposit_layout ? (
+                                        <>
+                                           <div className="border-t border-dashed border-black my-2"></div>
+                                           <div className="border border-black p-2 my-2 bg-slate-50 space-y-1">
+                                              <div className="flex justify-between font-bold">
+                                                 <span>Deposit Amount:</span>
+                                                 <span>₹2,000.00</span>
+                                              </div>
+                                              {printSettings.thermal?.deposit_account_details && (
+                                                 <div className="text-[8px] text-slate-700">
+                                                    Account: {printSettings.thermal?.deposit_account_details}
+                                                 </div>
+                                              )}
+                                              <div className="flex justify-between text-[8px] border-t pt-1">
+                                                 <span>Running Balance:</span>
+                                                 <span>₹5,400.00</span>
+                                              </div>
+                                           </div>
+                                        </>
+                                     ) : (
+                                        <>
+                                           <div className="border-t border-dashed border-black my-2"></div>
+                                           <div className="flex font-semibold">
+                                              <span className="w-[50%] text-left">Item</span>
+                                              <span className="w-[20%] text-center">Qty</span>
+                                              <span className="w-[30%] text-right">Price</span>
+                                           </div>
+                                           <div className="border-t border-dashed border-black my-1"></div>
+                                           <div className="space-y-1">
+                                              <div className="flex">
+                                                 <span className="w-[50%] text-left truncate">Mock Item 1</span>
+                                                 <span className="w-[20%] text-center">2</span>
+                                                 <span className="w-[30%] text-right font-sans">₹200.00</span>
+                                              </div>
+                                              {printSettings.thermal?.show_tax_columns && (
+                                                 <div className="text-[8px] text-slate-500 pl-2 mb-1">
+                                                    [HSN: 9984 | GST: 18%]
+                                                 </div>
+                                              )}
+                                           </div>
+                                           
+                                           <div className="border-t border-dashed border-black my-2"></div>
+
+                                           <div className="flex justify-between font-bold">
+                                              <span>TOTAL:</span>
+                                              <span className="font-sans">₹200.00</span>
+                                           </div>
+                                        </>
+                                     )}
+
+                                     {printSettings.thermal?.show_payment_details && (
+                                        <>
+                                           <div className="border-t border-dashed border-black my-2"></div>
+                                           <div className="space-y-0.5">
+                                              <div className="flex justify-between">
+                                                 <span>Payment:</span>
+                                                 <span>Card</span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                 <span>Card No:</span>
+                                                 <span>**** **** **** {printSettings.thermal?.card_last_four_override || '4321'}</span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                 <span>Auth Code:</span>
+                                                 <span>{printSettings.thermal?.card_auth_code_override || 'AUTH-099'}</span>
+                                              </div>
+                                           </div>
+                                        </>
+                                     )}
+
+                                     {printSettings.thermal?.return_policy && (
+                                        <>
+                                           <div className="border-t border-dashed border-black my-2"></div>
+                                           <div className="text-center text-[8px] text-slate-600 leading-tight">
+                                              {printSettings.thermal?.return_policy}
+                                           </div>
+                                        </>
+                                     )}
+
+                                     {printSettings.thermal?.show_footer_thank_you && (
+                                        <div className="text-center text-[9px] font-bold mt-2">
+                                           Thank you for your business!
+                                        </div>
+                                     )}
+
+                                     {printSettings.thermal?.barcode_or_qr === 'barcode' && (
+                                        <div className="flex flex-col items-center mt-3">
+                                           <div className="flex h-6 items-end justify-center select-none" aria-hidden="true">
+                                              {Array.from({ length: 20 }).map((_, i) => (
+                                                 <div key={i} className={`h-4 ${i % 2 === 0 ? 'w-[1px]' : 'w-[2px]'} ${i % 3 === 0 ? 'bg-transparent' : 'bg-black'}`} />
+                                              ))}
+                                           </div>
+                                           <span className="text-[7px] tracking-widest mt-1">INV-101</span>
+                                        </div>
+                                     )}
+
+                                     {printSettings.thermal?.barcode_or_qr === 'qr' && (
+                                        <div className="flex flex-col items-center mt-3 gap-1">
+                                           <div className="w-12 h-12 border border-black p-0.5 bg-white flex items-center justify-center font-bold text-[6px]">
+                                              QR Look
+                                           </div>
+                                           <span className="text-[7px] text-slate-500">Scan for digital lookup</span>
+                                        </div>
+                                     )}
+                                  </div>
+                               </div>
+                            </aside>
+                         </div>
+                      )}
 
                      {transactionNamesOpen && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

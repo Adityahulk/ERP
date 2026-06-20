@@ -508,6 +508,27 @@ const DEFAULT_PRINT_SETTINGS = {
     declaration: '',
     terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
   },
+  thermal: {
+    show_seller_name: true,
+    seller_name: '',
+    show_seller_phone: true,
+    seller_phone: '',
+    show_seller_address: true,
+    seller_address: '',
+    show_date_time: true,
+    show_bill_no: true,
+    show_logo: true,
+    show_tax_columns: false,
+    show_payment_details: true,
+    card_auth_code_override: '',
+    card_last_four_override: '',
+    barcode_or_qr: 'barcode',
+    return_policy: 'Items can be returned within 7 days in original condition.',
+    show_footer_thank_you: true,
+    enable_refund_layout: true,
+    enable_deposit_layout: false,
+    deposit_account_details: '',
+  },
 };
 
 type PrintSettings = typeof DEFAULT_PRINT_SETTINGS;
@@ -550,6 +571,10 @@ function resolvePrintSettings(company: any): PrintSettings {
         ...DEFAULT_PRINT_SETTINGS.reference_invoice.fields,
         ...parseObject(parseObject(raw.reference_invoice).fields),
       },
+    },
+    thermal: {
+      ...DEFAULT_PRINT_SETTINGS.thermal,
+      ...parseObject(raw.thermal),
     },
   };
 }
@@ -1501,75 +1526,247 @@ export async function generateThermalReceipt(
 ): Promise<Buffer> {
   const paperW = widthMm === 58 ? '58mm' : '80mm';
   let tpl = readTpl('thermal/receipt_80mm.html');
-  const rows = items
-    .map((it) => {
-      const name = escapeHtml(String(it.item_name || '').slice(0, 24));
-      return `<div class="row">
-        <span class="col-item">${name}</span>
-        <span class="col-qty">${it.quantity}</span>
-        <span class="col-price">₹${fmtPaise(it.total_amount)}</span>
-      </div>`;
-    })
-    .join('');
 
-  const cgst = invoice.cgst_amount || 0;
-  const sgst = invoice.sgst_amount || 0;
-  const igst = invoice.igst_amount || 0;
-  const rateGuess = items[0]?.gst_rate || 0;
+  // Resolve thermal print settings
+  const settings = resolvePrintSettings(company);
+  const thermal = {
+    show_seller_name: settings.thermal?.show_seller_name !== false,
+    seller_name: settings.thermal?.seller_name || '',
+    show_seller_phone: settings.thermal?.show_seller_phone !== false,
+    seller_phone: settings.thermal?.seller_phone || '',
+    show_seller_address: settings.thermal?.show_seller_address !== false,
+    seller_address: settings.thermal?.seller_address || '',
+    show_date_time: settings.thermal?.show_date_time !== false,
+    show_bill_no: settings.thermal?.show_bill_no !== false,
+    show_logo: settings.thermal?.show_logo !== false,
+    show_tax_columns: settings.thermal?.show_tax_columns === true,
+    show_payment_details: settings.thermal?.show_payment_details !== false,
+    card_auth_code_override: settings.thermal?.card_auth_code_override || '',
+    card_last_four_override: settings.thermal?.card_last_four_override || '',
+    barcode_or_qr: settings.thermal?.barcode_or_qr || 'barcode',
+    return_policy: settings.thermal?.return_policy ?? 'Items can be returned within 7 days in original condition.',
+    show_footer_thank_you: settings.thermal?.show_footer_thank_you !== false,
+    enable_refund_layout: settings.thermal?.enable_refund_layout !== false,
+    enable_deposit_layout: settings.thermal?.enable_deposit_layout === true,
+    deposit_account_details: settings.thermal?.deposit_account_details || '',
+  };
 
-  let barcodePng = '';
-  try {
-    const png = await bwipjs.toBuffer({
-      bcid: 'code128',
-      text: invoice.invoice_number,
-      scale: 2,
-      height: 8,
-      includetext: false,
-    });
-    barcodePng = `data:image/png;base64,${png.toString('base64')}`;
-  } catch {
-    barcodePng = '';
+  const isRefund = (invoice.invoice_type === 'credit_note' || invoice.total_amount < 0) && thermal.enable_refund_layout;
+  const isDeposit = thermal.enable_deposit_layout;
+
+  // 1. Logo Block
+  const logoSrc = company.logo_url ? (inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url)) : '';
+  const logoBlock = (thermal.show_logo && logoSrc)
+    ? `<div class="center logo"><img src="${logoSrc}" class="logo-img" alt="logo"/></div>`
+    : '';
+
+  // 2. Refund Header & Ref Txn
+  const refundHeader = isRefund ? `<div class="center refund-header">*** REFUND RECEIPT ***</div>` : '';
+  const refundOriginalTxnLine = isRefund && invoice.reference_number
+    ? `<div class="row"><span>Orig. Invoice:</span><span>${escapeHtml(invoice.reference_number)}</span></div>`
+    : '';
+
+  // 3. Store details
+  const showSellerName = thermal.show_seller_name !== false;
+  const sellerNameStr = showSellerName
+    ? (thermal.seller_name ? thermal.seller_name : companyLegalDisplayName(company))
+    : '';
+
+  const showSellerAddress = thermal.show_seller_address !== false;
+  const sellerAddressStr = showSellerAddress
+    ? (thermal.seller_address ? thermal.seller_address : (company.registered_address || ''))
+    : '';
+  const cityStatePinStr = showSellerAddress
+    ? (thermal.seller_address ? '' : [company.city, company.state, company.pincode].filter(Boolean).join(', '))
+    : '';
+
+  const showSellerPhone = thermal.show_seller_phone !== false;
+  const phoneStr = showSellerPhone
+    ? (thermal.seller_phone ? thermal.seller_phone : (company.phone || ''))
+    : '';
+
+  const showDateTime = thermal.show_date_time !== false;
+  const showBillNo = thermal.show_bill_no !== false;
+
+  const companyNameLine = showSellerName && sellerNameStr ? `<div class="center title">${escapeHtml(sellerNameStr)}</div>` : '';
+  const companyAddressLine = showSellerAddress && sellerAddressStr ? `<div class="center small">${escapeHtml(sellerAddressStr)}</div>` : '';
+  const cityStatePinLine = showSellerAddress && cityStatePinStr ? `<div class="center small">${escapeHtml(cityStatePinStr)}</div>` : '';
+  const gstinLine = company.gstin ? `<div class="center small">GSTIN: ${escapeHtml(company.gstin)}</div>` : '';
+  const phoneLine = showSellerPhone && phoneStr ? `<div class="center small">Ph: ${escapeHtml(phoneStr)}</div>` : '';
+
+  const invoiceNumberLine = showBillNo ? `<div class="row"><span>INVOICE:</span><span>${escapeHtml(invoice.invoice_number)}</span></div>` : '';
+  const dateLine = showDateTime ? `<div class="row"><span>Date:</span><span>${escapeHtml(String(invoice.invoice_date))}</span></div>` : '';
+  const timeLine = showDateTime ? `<div class="row"><span>Time:</span><span>${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}</span></div>` : '';
+  const partyNameLine = invoice.party_name_snapshot || invoice.customer_name ? `<div class="row"><span>Party:</span><span>${escapeHtml(invoice.party_name_snapshot || invoice.customer_name || 'Walk-in Customer')}</span></div>` : '';
+
+  // 4. Body Section (Itemized list vs Deposit Account details)
+  let bodySection = '';
+  if (isDeposit) {
+    bodySection = `
+      <div class="divider"></div>
+      <div class="deposit-block">
+        <div class="row" style="font-weight: bold;"><span>Deposit Amount:</span><span>₹${fmtPaise(invoice.total_amount)}</span></div>
+        ${thermal.deposit_account_details ? `<div class="row" style="margin-top: 1.5mm;"><span>Deposit Account:</span><span>${escapeHtml(thermal.deposit_account_details)}</span></div>` : ''}
+        ${invoice.running_balance !== undefined ? `<div class="row" style="margin-top: 1.5mm;"><span>Running Balance:</span><span>₹${fmtPaise(invoice.running_balance)}</span></div>` : ''}
+      </div>
+    `;
+  } else {
+    // Standard Itemized
+    const itemRowsHtml = items
+      .map((it) => {
+        const name = escapeHtml(String(it.item_name || it.name || '').slice(0, 24));
+        const hsn = it.hsn_code ? `HSN: ${it.hsn_code}` : '';
+        const gst = it.gst_rate !== undefined ? `GST: ${it.gst_rate}%` : '';
+        const sublineInfo = [hsn, gst].filter(Boolean).join(' | ');
+        const taxSubline = (thermal.show_tax_columns && sublineInfo) ? `<div class="tax-subline">[${sublineInfo}]</div>` : '';
+        return `<div class="item-row">
+          <div class="row">
+            <span class="col-item">${name}</span>
+            <span class="col-qty">${it.quantity}</span>
+            <span class="col-price">₹${fmtPaise(it.total_amount ?? (it.unit_price * it.quantity))}</span>
+          </div>
+          ${taxSubline}
+        </div>`;
+      })
+      .join('');
+
+    const cgst = invoice.cgst_amount || 0;
+    const sgst = invoice.sgst_amount || 0;
+    const igst = invoice.igst_amount || 0;
+    const rateGuess = items[0]?.gst_rate || 0;
+
+    bodySection = `
+      <div class="divider"></div>
+      <div class="row" style="font-weight: bold;">
+        <span class="col-item">Item</span>
+        <span class="col-qty">Qty</span>
+        <span class="col-price">Price</span>
+      </div>
+      <div class="divider"></div>
+      ${itemRowsHtml}
+      <div class="divider"></div>
+      <div class="row"><span>Subtotal:</span><span>₹${fmtPaise(invoice.subtotal)}</span></div>
+      <div class="row"><span>Discount:</span><span>-₹${fmtPaise(invoice.discount_amount || 0)}</span></div>
+      ${cgst > 0 ? `<div class="row"><span>CGST @ ${rateGuess}%</span><span>₹${fmtPaise(cgst)}</span></div>` : ''}
+      ${sgst > 0 ? `<div class="row"><span>SGST @ ${rateGuess}%</span><span>₹${fmtPaise(sgst)}</span></div>` : ''}
+      ${igst > 0 ? `<div class="row"><span>IGST</span><span>₹${fmtPaise(igst)}</span></div>` : ''}
+      <div class="divider"></div>
+      <div class="row total"><span>TOTAL:</span><span>₹${fmtPaise(invoice.total_amount)}</span></div>
+    `;
   }
 
+  // 5. Payment details block (Cash vs Card)
+  let paymentDetailsSection = '';
+  if (thermal.show_payment_details) {
+    const paid = invoice.paid_amount || invoice.total_amount || 0;
+    const change = paid > invoice.total_amount ? paid - invoice.total_amount : 0;
+    const paymentMode = String(invoice.payment_mode || 'cash').trim().toLowerCase();
+
+    let detailsHtml = '';
+    if (paymentMode === 'card') {
+      const cardLastFour = thermal.card_last_four_override || '4321';
+      const cardAuthCode = invoice.reference_number || thermal.card_auth_code_override || 'AUTH-099';
+      detailsHtml = `
+        <div class="row"><span>Payment:</span><span>Card</span></div>
+        <div class="row"><span>Card No:</span><span>**** **** **** ${escapeHtml(cardLastFour)}</span></div>
+        <div class="row"><span>Auth Code:</span><span>${escapeHtml(cardAuthCode)}</span></div>
+        <div class="row"><span>Paid:</span><span>₹${fmtPaise(paid)}</span></div>
+      `;
+    } else if (paymentMode === 'cash') {
+      detailsHtml = `
+        <div class="row"><span>Payment:</span><span>Cash</span></div>
+        <div class="row"><span>Paid:</span><span>₹${fmtPaise(paid)}</span></div>
+        <div class="row"><span>Tendered:</span><span>₹${fmtPaise(paid)}</span></div>
+        <div class="row"><span>Change:</span><span>₹${fmtPaise(change)}</span></div>
+      `;
+    } else {
+      detailsHtml = `
+        <div class="row"><span>Payment:</span><span>${escapeHtml(paymentMode)}</span></div>
+        <div class="row"><span>Paid:</span><span>₹${fmtPaise(paid)}</span></div>
+        ${change > 0 ? `<div class="row"><span>Change:</span><span>₹${fmtPaise(change)}</span></div>` : ''}
+      `;
+    }
+
+    paymentDetailsSection = `
+      <div class="divider"></div>
+      ${detailsHtml}
+    `;
+  }
+
+  // 6. UPI QR Code
   let upiQr = '';
   if (company.upi_id && invoice.payment_mode === 'upi') {
     const upiPayload = `upi://pay?pa=${encodeURIComponent(company.upi_id)}&pn=${encodeURIComponent(companyLegalDisplayName(company))}&cu=INR`;
     upiQr = await QRCode.toDataURL(upiPayload, { width: 160, margin: 0 });
   }
+  const upiQrBlock = upiQr
+    ? `<div class="qr"><img src="${upiQr}" alt="UPI QR"/></div>`
+    : '';
 
-  const paid = invoice.paid_amount || 0;
-  const change = paid > invoice.total_amount ? paid - invoice.total_amount : 0;
+  // 7. Return Policy Summary
+  const returnPolicySection = (thermal.return_policy && thermal.return_policy.trim())
+    ? `<div class="divider"></div><div class="center small" style="margin-top: 1mm; font-size: 2.8mm; line-height: 1.3;">${escapeHtml(thermal.return_policy)}</div>`
+    : '';
+
+  // 8. Thank You Footer
+  const thankYouSection = thermal.show_footer_thank_you
+    ? `<div class="center small" style="margin-top: 2mm; font-weight: bold;">Thank you for your business!</div>`
+    : '';
+
+  // 9. Barcode / QR Digital Lookup
+  let barcodePng = '';
+  if (thermal.barcode_or_qr === 'barcode' && invoice.invoice_number) {
+    try {
+      const png = await bwipjs.toBuffer({
+        bcid: 'code128',
+        text: invoice.invoice_number,
+        scale: 2,
+        height: 8,
+        includetext: false,
+      });
+      barcodePng = `data:image/png;base64,${png.toString('base64')}`;
+    } catch {
+      barcodePng = '';
+    }
+  }
+
+  let lookupQr = '';
+  if (thermal.barcode_or_qr === 'qr' && invoice.invoice_number) {
+    try {
+      const lookupPayload = `https://verify.invoice/${invoice.invoice_number}`;
+      lookupQr = await QRCode.toDataURL(lookupPayload, { width: 140, margin: 0 });
+    } catch {
+      lookupQr = '';
+    }
+  }
+
+  let digitalLookupSection = '';
+  if (thermal.barcode_or_qr === 'barcode' && barcodePng) {
+    digitalLookupSection = `<div class="bc" style="margin-top: 3mm;"><img src="${barcodePng}" alt="barcode"/></div>`;
+  } else if (thermal.barcode_or_qr === 'qr' && lookupQr) {
+    digitalLookupSection = `<div class="qr" style="margin-top: 3mm;"><img src="${lookupQr}" alt="lookup qr" style="width: 25mm; height: 25mm;"/><span class="small center block" style="font-size: 2.3mm; margin-top: 1mm;">Scan for Digital Lookup</span></div>`;
+  }
 
   const vars: Record<string, string> = {
     PAPER_WIDTH: paperW,
-    COMPANY_NAME: escapeHtml(companyLegalDisplayName(company)),
-    COMPANY_ADDRESS: escapeHtml(company.registered_address || ''),
-    CITY_STATE_PIN: escapeHtml([company.city, company.state, company.pincode].filter(Boolean).join(', ')),
-    GSTIN: escapeHtml(company.gstin || '—'),
-    PHONE: escapeHtml(company.phone || '—'),
-    INVOICE_NUMBER: escapeHtml(invoice.invoice_number),
-    DATE: escapeHtml(String(invoice.invoice_date)),
-    TIME: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }),
-    PARTY_NAME: escapeHtml(invoice.party_name_snapshot || 'Walk-in Customer'),
-    ITEM_LINES: rows,
-    SUBTOTAL: fmtPaise(invoice.subtotal),
-    DISCOUNT: fmtPaise(invoice.discount_amount || 0),
-    CGST_LINE:
-      cgst > 0 ? `<div class="row"><span>CGST @ ${rateGuess}%</span><span>₹${fmtPaise(cgst)}</span></div>` : '',
-    SGST_LINE:
-      sgst > 0 ? `<div class="row"><span>SGST @ ${rateGuess}%</span><span>₹${fmtPaise(sgst)}</span></div>` : '',
-    IGST_LINE:
-      igst > 0 ? `<div class="row"><span>IGST</span><span>₹${fmtPaise(igst)}</span></div>` : '',
-    TOTAL: fmtPaise(invoice.total_amount),
-    PAYMENT_MODE: escapeHtml(invoice.payment_mode || 'cash'),
-    PAID: fmtPaise(paid),
-    CHANGE_LINE:
-      change > 0 ? `<div class="row"><span>Change</span><span>₹${fmtPaise(change)}</span></div>` : '',
-    UPI_QR_BLOCK: upiQr
-      ? `<div class="qr"><img src="${upiQr}" alt="UPI"/></div>`
-      : '',
-    FOOTER_MSG: escapeHtml(company.receipt_footer_message || 'Thank you for your business!'),
-    BARCODE_IMG: barcodePng ? `<div class="bc"><img src="${barcodePng}" alt="barcode"/></div>` : '',
+    LOGO_BLOCK: logoBlock,
+    REFUND_HEADER: refundHeader,
+    COMPANY_NAME_LINE: companyNameLine,
+    COMPANY_ADDRESS_LINE: companyAddressLine,
+    CITY_STATE_PIN_LINE: cityStatePinLine,
+    GSTIN_LINE: gstinLine,
+    PHONE_LINE: phoneLine,
+    REFUND_ORIGINAL_TXN_LINE: refundOriginalTxnLine,
+    INVOICE_NUMBER_LINE: invoiceNumberLine,
+    DATE_LINE: dateLine,
+    TIME_LINE: timeLine,
+    PARTY_NAME_LINE: partyNameLine,
+    BODY_SECTION: bodySection,
+    PAYMENT_DETAILS_SECTION: paymentDetailsSection,
+    UPI_QR_BLOCK: upiQrBlock,
+    RETURN_POLICY_SECTION: returnPolicySection,
+    THANK_YOU_SECTION: thankYouSection,
+    DIGITAL_LOOKUP_SECTION: digitalLookupSection,
   };
 
   tpl = replaceAll(tpl, vars);

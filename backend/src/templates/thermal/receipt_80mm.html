@@ -80,44 +80,68 @@
       display: block;
       margin: 0 auto;
     }
+    .logo-img {
+      max-width: 40mm;
+      max-height: 15mm;
+      object-fit: contain;
+      filter: grayscale(1) contrast(3);
+      margin: 0 auto 2mm auto;
+      display: block;
+    }
+    .refund-header {
+      font-size: 3.5mm;
+      font-weight: bold;
+      margin: 2mm 0;
+      color: #000;
+      border: 1px solid #000;
+      padding: 1mm;
+    }
+    .tax-subline {
+      font-size: 2.5mm;
+      color: #555;
+      text-align: left;
+      margin-top: 0.5mm;
+      margin-bottom: 1.5mm;
+      padding-left: 2mm;
+    }
+    .item-row {
+      margin-bottom: 2mm;
+    }
+    .deposit-block {
+      border: 1px solid #000;
+      padding: 2mm;
+      margin: 2mm 0;
+      background: #fdfdfd;
+    }
+    .block {
+      display: block;
+    }
   </style>
 </head>
 <body>
   <div class="receipt">
-    <div class="center title">{{COMPANY_NAME}}</div>
-    <div class="center small">{{COMPANY_ADDRESS}}</div>
-    <div class="center small">{{CITY_STATE_PIN}}</div>
-    <div class="center small">GSTIN: {{GSTIN}}</div>
-    <div class="center small">Ph: {{PHONE}}</div>
+    {{LOGO_BLOCK}}
+    {{REFUND_HEADER}}
+    {{COMPANY_NAME_LINE}}
+    {{COMPANY_ADDRESS_LINE}}
+    {{CITY_STATE_PIN_LINE}}
+    {{GSTIN_LINE}}
+    {{PHONE_LINE}}
     <div class="divider"></div>
-    <div class="row"><span>INVOICE:</span><span>{{INVOICE_NUMBER}}</span></div>
-    <div class="row"><span>Date:</span><span>{{DATE}}</span></div>
-    <div class="row"><span>Time:</span><span>{{TIME}}</span></div>
-    <div class="row"><span>Party:</span><span>{{PARTY_NAME}}</span></div>
-    <div class="divider"></div>
-    <div class="row" style="font-weight: bold;">
-      <span class="col-item">Item</span>
-      <span class="col-qty">Qty</span>
-      <span class="col-price">Price</span>
-    </div>
-    <div class="divider"></div>
-    {{ITEM_LINES}}
-    <div class="divider"></div>
-    <div class="row"><span>Subtotal:</span><span>₹{{SUBTOTAL}}</span></div>
-    <div class="row"><span>Discount:</span><span>-₹{{DISCOUNT}}</span></div>
-    {{CGST_LINE}}
-    {{SGST_LINE}}
-    {{IGST_LINE}}
-    <div class="divider"></div>
-    <div class="row total"><span>TOTAL:</span><span>₹{{TOTAL}}</span></div>
-    <div class="divider"></div>
-    <div class="row"><span>Payment:</span><span>{{PAYMENT_MODE}}</span></div>
-    <div class="row"><span>Paid:</span><span>₹{{PAID}}</span></div>
-    {{CHANGE_LINE}}
-    <div class="divider"></div>
+    {{REFUND_ORIGINAL_TXN_LINE}}
+    {{INVOICE_NUMBER_LINE}}
+    {{DATE_LINE}}
+    {{TIME_LINE}}
+    {{PARTY_NAME_LINE}}
+    
+    {{BODY_SECTION}}
+    
+    {{PAYMENT_DETAILS_SECTION}}
+    
     {{UPI_QR_BLOCK}}
-    <div class="center small" style="margin-top: 2mm;">{{FOOTER_MSG}}</div>
-    {{BARCODE_IMG}}
+    {{RETURN_POLICY_SECTION}}
+    {{THANK_YOU_SECTION}}
+    {{DIGITAL_LOOKUP_SECTION}}
   </div>
 </body>
 </html>

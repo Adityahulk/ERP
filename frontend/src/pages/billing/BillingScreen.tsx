@@ -404,8 +404,22 @@ export default function BillingScreen() {
       const inv = res.data?.data ?? res.data;
       const id = inv?.id;
       
+      // Snapshot billItems NOW before clearing — the API response does not
+      // include line items, so we embed the cart items into completedInvoice
+      // so ThermalReceipt can display them correctly.
+      const itemsSnapshot = billItems.map((b) => ({
+        item_name: b.name,
+        name: b.name,
+        quantity: b.quantity,
+        unit_price: b.unit_price,
+        total_amount: b.total,
+        total: b.total,
+        gst_rate: b.gst_rate,
+        hsn_code: b.hsn_code,
+      }));
+
       setLastCreatedInvoiceId(id);
-      setCompletedInvoice(inv);
+      setCompletedInvoice({ ...inv, items: itemsSnapshot });
       
       setBillItems([]);
       setSearchQuery('');
