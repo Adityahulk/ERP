@@ -3,14 +3,17 @@ import { env } from './env';
 import { logger } from './logger';
 
 export const redis = new Redis(env.REDIS_URL, {
-  maxRetriesPerRequest: null, // Required by BullMQ
+  // API requests must fail fast when Redis is unavailable. BullMQ uses the
+  // dedicated connection below, where unlimited retries are required.
+  maxRetriesPerRequest: 1,
   enableReadyCheck: false,
+  enableOfflineQueue: false,
+  connectTimeout: 3000,
   retryStrategy: (times: number) => {
-    if (times > 10) {
-      logger.error('Redis: max retries reached, giving up');
-      return null;
-    }
     return Math.min(times * 200, 5000);
+  },
+  reconnectOnError: (err: Error) => {
+    return err.message.includes('READONLY') ? 2 : false;
   },
 });
 

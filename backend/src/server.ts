@@ -27,9 +27,16 @@ async function start(): Promise<void> {
     const dbResult = await pool.query('SELECT NOW() as time');
     logger.info(`✅ PostgreSQL connected — Server time: ${dbResult.rows[0].time}`);
 
-    // Test Redis connection
-    const pong = await redis.ping();
-    logger.info(`✅ Redis connected — ${pong}`);
+    // Redis accelerates caches and background jobs, but authentication and the
+    // API remain available when it is temporarily unavailable or read-only.
+    try {
+      const probeKey = `health:write:${process.pid}`;
+      await redis.set(probeKey, '1', 'EX', 10);
+      await redis.del(probeKey);
+      logger.info('✅ Redis connected and writable');
+    } catch (redisError: any) {
+      logger.warn(`⚠️ Redis unavailable or read-only; continuing without cache: ${redisError.message}`);
+    }
 
     // Start server
     app.listen(PORT, () => {

@@ -7,7 +7,6 @@ import { logAction } from '../lib/auditLog';
 import {
   generateAccessToken, generateRefreshToken, verifyRefreshTokenJWT,
   storeRefreshToken, validateRefreshToken, removeRefreshToken,
-  cacheSessionVersion,
   JwtPayload,
 } from '../middleware/auth';
 
@@ -54,8 +53,6 @@ export async function createAuthSessionForUser(
     [user.id]
   );
   const newSessionVersion = versionResult.rows[0].session_version;
-
-  await cacheSessionVersion(user.id, newSessionVersion);
 
   const tokenPayload: JwtPayload = {
     id: user.id,
@@ -236,9 +233,6 @@ export async function refresh(req: Request, res: Response) {
     const newRefreshToken = generateRefreshToken(payload);
     await storeRefreshToken(decoded.id, newRefreshToken);
 
-    // Refresh the Redis session version cache TTL
-    await cacheSessionVersion(decoded.id, user.session_version);
-
     res.json(success({ accessToken: newAccessToken, refreshToken: newRefreshToken }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
@@ -249,6 +243,12 @@ export async function refresh(req: Request, res: Response) {
 export async function logout(req: Request, res: Response) {
   try {
     if (req.user) {
+      await query(
+        `UPDATE users
+         SET session_version = session_version + 1
+         WHERE id = $1 AND is_deleted = false`,
+        [req.user.id]
+      );
       await removeRefreshToken(req.user.id);
       await logAction(req.user.id, req.user.company_id ? req.user.company_id : null, 'logout', 'user', req.user.id);
     }

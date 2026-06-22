@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { query } from '../config/db';
 import { redis } from '../config/redis';
+import { logger } from '../config/logger';
 
 /**
  * Which feature_key each module requires.
@@ -28,10 +29,19 @@ const MODULE_FEATURE_MAP: Record<string, string> = {
  */
 async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>> {
   const cacheKey = `tier_features:v2:${companyId}`;
-  const cached = await redis.get(cacheKey);
+  let cached: string | null = null;
+  try {
+    cached = await redis.get(cacheKey);
+  } catch (err: any) {
+    logger.warn(`Redis license-feature cache read skipped: ${err.message}`);
+  }
 
   if (cached) {
-    return new Set(JSON.parse(cached));
+    try {
+      return new Set(JSON.parse(cached));
+    } catch {
+      // Ignore malformed or stale cache data and rebuild it from PostgreSQL.
+    }
   }
 
   const result = await query(
@@ -50,7 +60,11 @@ async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>
   const features = result.rows.map((r: any) => r.feature_key);
 
   // Cache for 5 minutes
-  await redis.setex(cacheKey, 5 * 60, JSON.stringify(features));
+  try {
+    await redis.setex(cacheKey, 5 * 60, JSON.stringify(features));
+  } catch (err: any) {
+    logger.warn(`Redis license-feature cache write skipped: ${err.message}`);
+  }
 
   return new Set(features);
 }
@@ -59,8 +73,12 @@ async function getCompanyAllowedFeatures(companyId: string): Promise<Set<string>
  * Clear cached tier features for a company (call on license activation/revoke).
  */
 export async function clearTierFeaturesCache(companyId: string): Promise<void> {
-  await redis.del(`tier_features:${companyId}`);
-  await redis.del(`tier_features:v2:${companyId}`);
+  try {
+    await redis.del(`tier_features:${companyId}`);
+    await redis.del(`tier_features:v2:${companyId}`);
+  } catch (err: any) {
+    logger.warn(`Redis license-feature cache cleanup skipped: ${err.message}`);
+  }
 }
 
 /**
