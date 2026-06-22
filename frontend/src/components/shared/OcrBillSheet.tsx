@@ -6,7 +6,8 @@
  *  3. Shows a structured preview of the extracted fields
  *  4. Calls onConfirm(data) so the parent form can apply the values
  */
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,9 +86,11 @@ interface Props {
 
 export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 'Bill' }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OcrResult | null>(null);
+  const [selectedItems, setSelectedItems] = useState<OcrItemCandidate[]>([]);
   const [fields, setFields] = useState<FieldState>({
     invoice_number: '',
     bill_date: '',
@@ -97,9 +100,25 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
   });
   const [previewFile, setPreviewFile] = useState<{ name: string; isImage: boolean } | null>(null);
 
+  const DOCUMENT_TYPE_ROUTES: Record<string, string> = {
+    purchase_bill: '/purchase-expense/bills',
+    sales_invoice: '/sales/new',
+    delivery_challan: '/job-work/new',
+    quotation: '/purchase-expense/orders',
+  };
+
+  useEffect(() => {
+    if (result?.items) {
+      setSelectedItems(result.items);
+    } else {
+      setSelectedItems([]);
+    }
+  }, [result]);
+
   const resetState = () => {
     setResult(null);
     setPreviewFile(null);
+    setSelectedItems([]);
     setFields({ invoice_number: '', bill_date: '', party_name: '', supplier_gstin: '', total_amount_rupees: '' });
   };
 
@@ -158,15 +177,35 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
       ? rupeesToPaise(fields.total_amount_rupees)
       : result.total_amount_paise;
 
-    onConfirm({
+    const finalResult = {
       ...result,
       invoice_number: fields.invoice_number || result.invoice_number,
       bill_date: fields.bill_date || result.bill_date,
       party_name: fields.party_name || result.party_name,
       supplier_gstin: fields.supplier_gstin || result.supplier_gstin,
       total_amount_paise: totalPaise,
+      items: selectedItems,
       overrides: fields,
-    });
+    };
+
+    const targetRoute = result.document_type ? DOCUMENT_TYPE_ROUTES[result.document_type] : null;
+    const currentPath = window.location.pathname;
+
+    const isCurrentMatch = (target: string, current: string) => {
+      if (target === '/sales/new' && (current.startsWith('/sales/') || current === '/sales/new')) return true;
+      if (target === '/job-work/new' && (current.startsWith('/job-work/') || current === '/job-work/new')) return true;
+      if (target === '/purchase-expense/bills' && current.startsWith('/purchase-expense')) return true;
+      if (target === '/purchase-expense/orders' && current.startsWith('/purchase-expense')) return true;
+      return false;
+    };
+
+    if (targetRoute && !isCurrentMatch(targetRoute, currentPath)) {
+      toast.success(`Redirecting to the correct form for ${result.document_type?.replace(/_/g, ' ') || 'document'}...`);
+      navigate(targetRoute, { state: { ocrData: finalResult } });
+    } else {
+      onConfirm(finalResult);
+    }
+
     onOpenChange(false);
     resetState();
   };
@@ -311,21 +350,58 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
               </div>
             </div>
             {result.items && result.items.length > 0 && (
-              <details className="rounded-lg border">
-                <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 flex items-center gap-2 select-none">
-                  <FileText className="w-4 h-4" /> Possible item rows ({result.items.length})
-                </summary>
-                <div className="max-h-56 overflow-y-auto divide-y">
-                  {result.items.slice(0, 12).map((item, idx) => (
-                    <div key={idx} className="px-4 py-2 text-xs">
-                      <div className="font-medium text-slate-700">{item.description}</div>
-                      <div className="text-muted-foreground">
-                        {item.hsn_code ? `HSN/SAC ${item.hsn_code}` : 'No HSN'} · Qty {item.quantity ?? '-'} {item.unit || ''} · Amount {item.amount_paise ? `₹${paiseToRupees(item.amount_paise).toFixed(2)}` : '-'} · {confidenceLabel(item.confidence)}
-                      </div>
-                    </div>
-                  ))}
+              <div className="space-y-2.5 rounded-lg border p-3 bg-muted/10">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Detected Items ({result.items.length})
+                  </span>
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-primary hover:underline"
+                    onClick={() => {
+                      if (selectedItems.length === result.items?.length) {
+                        setSelectedItems([]);
+                      } else {
+                        setSelectedItems(result.items || []);
+                      }
+                    }}
+                  >
+                    {selectedItems.length === result.items?.length ? 'Deselect All' : 'Select All'}
+                  </button>
                 </div>
-              </details>
+                <div className="max-h-48 overflow-y-auto rounded-md border divide-y bg-background">
+                  {result.items.map((item, idx) => {
+                    const checked = selectedItems.includes(item);
+                    const rate = item.rate_paise != null
+                      ? item.rate_paise / 100
+                      : (item.amount_paise != null && item.quantity ? (item.amount_paise / item.quantity) / 100 : 0);
+                    const amount = item.amount_paise != null ? item.amount_paise / 100 : rate * (item.quantity || 1);
+                    return (
+                      <label key={idx} className="flex items-start gap-3 p-2.5 text-xs hover:bg-muted/30 cursor-pointer select-none transition-colors">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary cursor-pointer"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedItems((prev) =>
+                              prev.includes(item) ? prev.filter((i) => i !== item) : [...prev, item]
+                            );
+                          }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-800 break-all">{item.description}</div>
+                          <div className="text-muted-foreground mt-0.5">
+                            Qty {item.quantity || 1} {item.unit || 'PCS'} · Rate ₹{rate.toFixed(2)} · Amount ₹{amount.toFixed(2)}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="text-[11px] text-muted-foreground font-medium">
+                  {selectedItems.length} of {result.items.length} items will be imported to the form.
+                </div>
+              </div>
             )}
 
             {/* Raw lines preview (collapsed) */}

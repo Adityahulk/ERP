@@ -3,60 +3,145 @@
 <head>
   <meta charset="utf-8"/>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0 auto;
-      padding: 4px 2px;
-      max-width: {{PAPER_WIDTH}};
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 11px;
-      color: #000;
-      background: #fff;
+    * {
+      box-sizing: border-box;
     }
-    .center { text-align: center; }
-    .title { font-size: 16px; font-weight: 700; margin: 4px 0; }
-    .small { font-size: 10px; }
-    hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-    .row { display: flex; justify-content: space-between; margin: 2px 0; }
-    .line { margin: 4px 0; font-size: 10px; white-space: pre-wrap; }
-    .line .left { display: inline-block; max-width: 70%; vertical-align: top; }
-    .line .right { float: right; font-weight: 600; }
-    .total { font-size: 15px; font-weight: 800; margin-top: 6px; }
-    .qr { text-align: center; margin: 8px 0; }
-    .bc { text-align: center; margin: 8px 0; }
-    .bc img { max-width: 100%; height: auto; }
-    .clearfix::after { content: ""; display: table; clear: both; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: monospace;
+      background: #fff;
+      color: #000;
+    }
+    .receipt {
+      width: {{PAPER_WIDTH}};
+      padding: 2mm;
+      overflow: hidden;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 3mm;
+      width: 100%;
+    }
+    .center {
+      text-align: center;
+    }
+    .divider {
+      border-top: 1px dashed black;
+      margin: 2mm 0;
+    }
+    .title {
+      font-size: 4mm;
+      font-weight: bold;
+      margin-bottom: 1mm;
+    }
+    .small {
+      font-size: 2.8mm;
+    }
+    .col-item {
+      width: 50%;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .col-qty {
+      width: 20%;
+      text-align: center;
+    }
+    .col-price {
+      width: 30%;
+      text-align: right;
+    }
+    .total {
+      font-size: 4mm;
+      font-weight: bold;
+    }
+    .qr {
+      text-align: center;
+      margin: 3mm 0;
+    }
+    .qr img {
+      width: 35mm;
+      height: 35mm;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+    }
+    .bc {
+      text-align: center;
+      margin: 3mm 0;
+    }
+    .bc img {
+      width: 100%;
+      height: 10mm;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+    }
+    .logo-img {
+      max-width: 40mm;
+      max-height: 15mm;
+      object-fit: contain;
+      filter: grayscale(1) contrast(3);
+      margin: 0 auto 2mm auto;
+      display: block;
+    }
+    .refund-header {
+      font-size: 3.5mm;
+      font-weight: bold;
+      margin: 2mm 0;
+      color: #000;
+      border: 1px solid #000;
+      padding: 1mm;
+    }
+    .tax-subline {
+      font-size: 2.5mm;
+      color: #555;
+      text-align: left;
+      margin-top: 0.5mm;
+      margin-bottom: 1.5mm;
+      padding-left: 2mm;
+    }
+    .item-row {
+      margin-bottom: 2mm;
+    }
+    .deposit-block {
+      border: 1px solid #000;
+      padding: 2mm;
+      margin: 2mm 0;
+      background: #fdfdfd;
+    }
+    .block {
+      display: block;
+    }
   </style>
 </head>
 <body>
-  <div class="center title">{{COMPANY_NAME}}</div>
-  <div class="center small">{{COMPANY_ADDRESS}}</div>
-  <div class="center small">{{CITY_STATE_PIN}}</div>
-  <div class="center small">GSTIN: {{GSTIN}} &nbsp; Ph: {{PHONE}}</div>
-  <hr/>
-  <div class="row"><span>INVOICE</span><span>{{INVOICE_NUMBER}}</span></div>
-  <div class="row"><span>Date</span><span>{{DATE}}</span></div>
-  <div class="row"><span>Time</span><span>{{TIME}}</span></div>
-  <div class="row"><span>Party</span><span style="max-width:65%;text-align:right">{{PARTY_NAME}}</span></div>
-  <hr/>
-  <div class="small" style="margin-bottom:4px">ITEMS</div>
-  <div class="clearfix">{{ITEM_LINES}}</div>
-  <hr/>
-  <div class="row"><span>Subtotal</span><span>₹{{SUBTOTAL}}</span></div>
-  <div class="row"><span>Discount</span><span>-₹{{DISCOUNT}}</span></div>
-  {{CGST_LINE}}
-  {{SGST_LINE}}
-  {{IGST_LINE}}
-  <hr/>
-  <div class="row total"><span>TOTAL</span><span>₹{{TOTAL}}</span></div>
-  <hr/>
-  <div class="row"><span>Payment</span><span>{{PAYMENT_MODE}}</span></div>
-  <div class="row"><span>Paid</span><span>₹{{PAID}}</span></div>
-  {{CHANGE_LINE}}
-  <hr/>
-  {{UPI_QR_BLOCK}}
-  <div class="center small" style="margin-top:8px">{{FOOTER_MSG}}</div>
-  {{BARCODE_IMG}}
-  <hr/>
+  <div class="receipt">
+    {{LOGO_BLOCK}}
+    {{REFUND_HEADER}}
+    {{COMPANY_NAME_LINE}}
+    {{COMPANY_ADDRESS_LINE}}
+    {{CITY_STATE_PIN_LINE}}
+    {{GSTIN_LINE}}
+    {{PHONE_LINE}}
+    <div class="divider"></div>
+    {{REFUND_ORIGINAL_TXN_LINE}}
+    {{INVOICE_NUMBER_LINE}}
+    {{DATE_LINE}}
+    {{TIME_LINE}}
+    {{PARTY_NAME_LINE}}
+    
+    {{BODY_SECTION}}
+    
+    {{PAYMENT_DETAILS_SECTION}}
+    
+    {{UPI_QR_BLOCK}}
+    {{RETURN_POLICY_SECTION}}
+    {{THANK_YOU_SECTION}}
+    {{DIGITAL_LOOKUP_SECTION}}
+  </div>
 </body>
 </html>

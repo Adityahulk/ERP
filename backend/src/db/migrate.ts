@@ -1,12 +1,10 @@
 import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { env } from '../config/env';
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://bizflow:bizflow_dev@localhost:5432/bizflow',
+  connectionString: env.DATABASE_URL,
 });
 
 const LEGACY_MIGRATION_ALIASES: Record<string, string[]> = {

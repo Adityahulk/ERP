@@ -12,7 +12,12 @@ const envSchema = z.object({
   FRONTEND_DIST_DIR: z.string().default('./public'),
 
   // Database
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_URL: z.string().optional(),
+  DB_HOST: z.string().default('localhost'),
+  DB_PORT: z.coerce.number().default(5432),
+  DB_NAME: z.string().default('bizflow'),
+  DB_USER: z.string().default('bizflow'),
+  DB_PASSWORD: z.string().default('bizflow_dev'),
 
   // Redis
   REDIS_URL: z.string().default('redis://localhost:6379'),
@@ -96,6 +101,11 @@ const envSchema = z.object({
   CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
 });
 
+import fs from 'fs';
+
+const isDocker = fs.existsSync('/.dockerenv') || 
+                 (fs.existsSync('/proc/1/cgroup') && fs.readFileSync('/proc/1/cgroup', 'utf-8').includes('docker'));
+
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
@@ -104,4 +114,22 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+const data = parsed.data;
+if (!data.DATABASE_URL) {
+  data.DATABASE_URL = `postgresql://${data.DB_USER}:${data.DB_PASSWORD}@${data.DB_HOST}:${data.DB_PORT}/${data.DB_NAME}`;
+}
+
+// Enforce rules: use localhost when running locally, postgres/redis when in Docker
+if (!isDocker) {
+  if (data.DATABASE_URL.includes('@postgres:')) {
+    data.DATABASE_URL = data.DATABASE_URL.replace('@postgres:', '@localhost:');
+  }
+  if (data.DATABASE_URL.includes('@postgres/')) {
+    data.DATABASE_URL = data.DATABASE_URL.replace('@postgres/', '@localhost/');
+  }
+  if (data.REDIS_URL.includes('redis://redis:')) {
+    data.REDIS_URL = data.REDIS_URL.replace('redis://redis:', 'redis://localhost:');
+  }
+}
+
+export const env = data;

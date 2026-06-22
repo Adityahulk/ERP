@@ -62,6 +62,7 @@ export interface LabelData {
   showBarcodeText: boolean;
   barcodeSource: 'system' | 'custom';
   customBarcodeValue: string;
+  barcodeOrientation?: 'horizontal' | 'vertical';
 }
 
 

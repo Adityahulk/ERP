@@ -77,14 +77,23 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
 
   useEffect(() => {
     if (item) {
+      const gstRate = itemSettings.item_wise_tax ? item.gst_rate : Number((company as any)?.default_gst_rate ?? item.gst_rate ?? 18);
+      const spBase = (item.selling_price || 0) / 100;
+      const ppBase = (item.purchase_price || 0) / 100;
+      const spFlag = (item as any).selling_price_includes_tax === true;
+      const ppFlag = (item as any).purchase_price_includes_tax === true;
+
       setForm({
         name: item.name, description: item.description, sku: item.sku, barcode: item.barcode,
         hsn_code: item.hsn_code, category_id: item.category_id, brand: item.brand,
         unit_id: item.unit_id, item_type: item.item_type || defaultItemType,
         track_inventory: item.track_inventory, is_serialized: item.is_serialized,
-        purchase_price: (item.purchase_price || 0) / 100, selling_price: (item.selling_price || 0) / 100,
+        purchase_price: ppFlag ? Number((ppBase * (1 + gstRate / 100)).toFixed(2)) : ppBase,
+        selling_price: spFlag ? Number((spBase * (1 + gstRate / 100)).toFixed(2)) : spBase,
+        purchase_price_includes_tax: ppFlag,
+        selling_price_includes_tax: spFlag,
         price_currency_code: normalizeCurrencyCode((item as any).price_currency_code || (company as any)?.default_currency || (company as any)?.currency || 'INR'),
-        gst_rate: itemSettings.item_wise_tax ? item.gst_rate : Number((company as any)?.default_gst_rate ?? item.gst_rate ?? 18),
+        gst_rate: gstRate,
         tax_preference: itemSettings.item_wise_tax ? item.tax_preference : 'taxable',
         opening_stock: item.opening_stock || 0,
         opening_stock_value: item.opening_stock_value ? paiseToRupees(item.opening_stock_value).toFixed(2) : '',
@@ -106,6 +115,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
         is_serialized: false,
         purchase_price: 0,
         selling_price: 0,
+        purchase_price_includes_tax: false,
+        selling_price_includes_tax: false,
         price_currency_code: normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'),
         opening_stock: 0,
         opening_stock_value: '',
@@ -138,8 +149,15 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
     return { ...f, [field]: value };
   });
 
-  const margin = (form.selling_price || 0) - (form.purchase_price || 0);
-  const marginPct = form.purchase_price > 0 ? ((margin / form.purchase_price) * 100).toFixed(1) : '—';
+  const getBasePrice = (price: number, inclTax: boolean) => {
+    if (!price) return 0;
+    if (!inclTax) return price;
+    return price / (1 + (form.gst_rate || 0) / 100);
+  };
+  const purchaseBase = getBasePrice(form.purchase_price, form.purchase_price_includes_tax);
+  const sellingBase = getBasePrice(form.selling_price, form.selling_price_includes_tax);
+  const margin = sellingBase - purchaseBase;
+  const marginPct = purchaseBase > 0 ? ((margin / purchaseBase) * 100).toFixed(1) : '—';
 
   const handleSubmit = async () => {
     if (!form.name?.trim()) { toast.error('Product name is required'); return; }
@@ -152,6 +170,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       opening_stock: isService ? 0 : form.opening_stock,
       purchase_price: Math.round((form.purchase_price || 0) * 100),
       selling_price: Math.round((form.selling_price || 0) * 100),
+      purchase_price_includes_tax: form.purchase_price_includes_tax === true,
+      selling_price_includes_tax: form.selling_price_includes_tax === true,
       price_currency_code: normalizeCurrencyCode(form.price_currency_code),
       opening_stock_value: isService || form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
     };
@@ -411,8 +431,157 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
               </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div><Label>Purchase Price ({currencySymbol(form.price_currency_code)})</Label><Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.purchase_price || ''} onChange={e => update('purchase_price', parseFloat(e.target.value) || 0)} /></div>
-              <div><Label>Selling Price ({currencySymbol(form.price_currency_code)})</Label><Input type="number" className="mt-1 tabular-nums font-medium" min={0} step={0.01} value={form.selling_price || ''} onChange={e => update('selling_price', parseFloat(e.target.value) || 0)} /></div>
+              {/* Purchase Price Section */}
+              <div className="flex flex-col space-y-3 p-4 rounded-xl border bg-card shadow-sm hover:border-primary/30 transition-all duration-200">
+                <div className="space-y-1">
+                  <Label htmlFor="purchase_price" className="font-semibold text-sm text-foreground">
+                    Purchase Price
+                  </Label>
+                  <div className="relative mt-1">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-muted-foreground font-medium text-sm">
+                      {currencySymbol(form.price_currency_code)}
+                    </span>
+                    <Input
+                      id="purchase_price"
+                      type="number"
+                      className="pl-7 tabular-nums text-base font-medium h-10 w-full"
+                      min={0}
+                      step={0.01}
+                      placeholder="0.00"
+                      value={form.purchase_price || ''}
+                      onChange={e => update('purchase_price', parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tax Mode</p>
+                  <div className="space-y-2">
+                    <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                      form.purchase_price_includes_tax
+                        ? 'bg-primary/5 border-primary text-primary shadow-sm'
+                        : 'bg-background hover:bg-muted/50 border-input'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="purchase_tax_mode"
+                        className="text-primary focus:ring-primary h-3.5 w-3.5 accent-primary cursor-pointer"
+                        checked={form.purchase_price_includes_tax === true}
+                        onChange={() => update('purchase_price_includes_tax', true)}
+                      />
+                      <span>With Tax (Incl. GST)</span>
+                    </label>
+
+                    <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                      !form.purchase_price_includes_tax
+                        ? 'bg-primary/5 border-primary text-primary shadow-sm'
+                        : 'bg-background hover:bg-muted/50 border-input'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="purchase_tax_mode"
+                        className="text-primary focus:ring-primary h-3.5 w-3.5 accent-primary cursor-pointer"
+                        checked={form.purchase_price_includes_tax === false}
+                        onChange={() => update('purchase_price_includes_tax', false)}
+                      />
+                      <span>Without Tax (Excl. GST)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-dashed min-h-[64px]">
+                  <p className="text-xs font-medium text-foreground mb-1">
+                    {form.purchase_price_includes_tax ? 'Includes GST (MRP)' : 'GST added later'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {form.purchase_price > 0 ? (
+                      form.purchase_price_includes_tax ? (
+                        <>Base Price (Excl. GST): <span className="font-semibold text-foreground">{currencySymbol(form.price_currency_code)}{(form.purchase_price / (1 + (form.gst_rate || 0) / 100)).toFixed(2)}</span></>
+                      ) : (
+                        <>MRP (Incl. GST): <span className="font-semibold text-foreground">{currencySymbol(form.price_currency_code)}{(form.purchase_price * (1 + (form.gst_rate || 0) / 100)).toFixed(2)}</span></>
+                      )
+                    ) : (
+                      form.purchase_price_includes_tax ? 'If "With Tax" → price includes GST (MRP)' : 'If "Without Tax" → GST will be added later'
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Selling Price Section */}
+              <div className="flex flex-col space-y-3 p-4 rounded-xl border bg-card shadow-sm hover:border-primary/30 transition-all duration-200">
+                <div className="space-y-1">
+                  <Label htmlFor="selling_price" className="font-semibold text-sm text-foreground">
+                    Selling Price
+                  </Label>
+                  <div className="relative mt-1">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-muted-foreground font-medium text-sm">
+                      {currencySymbol(form.price_currency_code)}
+                    </span>
+                    <Input
+                      id="selling_price"
+                      type="number"
+                      className="pl-7 tabular-nums text-base font-medium h-10 w-full"
+                      min={0}
+                      step={0.01}
+                      placeholder="0.00"
+                      value={form.selling_price || ''}
+                      onChange={e => update('selling_price', parseFloat(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tax Mode</p>
+                  <div className="space-y-2">
+                    <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                      form.selling_price_includes_tax
+                        ? 'bg-primary/5 border-primary text-primary shadow-sm'
+                        : 'bg-background hover:bg-muted/50 border-input'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="selling_tax_mode"
+                        className="text-primary focus:ring-primary h-3.5 w-3.5 accent-primary cursor-pointer"
+                        checked={form.selling_price_includes_tax === true}
+                        onChange={() => update('selling_price_includes_tax', true)}
+                      />
+                      <span>With Tax (Incl. GST)</span>
+                    </label>
+
+                    <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                      !form.selling_price_includes_tax
+                        ? 'bg-primary/5 border-primary text-primary shadow-sm'
+                        : 'bg-background hover:bg-muted/50 border-input'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="selling_tax_mode"
+                        className="text-primary focus:ring-primary h-3.5 w-3.5 accent-primary cursor-pointer"
+                        checked={form.selling_price_includes_tax === false}
+                        onChange={() => update('selling_price_includes_tax', false)}
+                      />
+                      <span>Without Tax (Excl. GST)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-dashed min-h-[64px]">
+                  <p className="text-xs font-medium text-foreground mb-1">
+                    {form.selling_price_includes_tax ? 'Includes GST (MRP)' : 'GST applied on calculation'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {form.selling_price > 0 ? (
+                      form.selling_price_includes_tax ? (
+                        <>Base Price (Excl. GST): <span className="font-semibold text-foreground">{currencySymbol(form.price_currency_code)}{(form.selling_price / (1 + (form.gst_rate || 0) / 100)).toFixed(2)}</span></>
+                      ) : (
+                        <>MRP (Incl. GST): <span className="font-semibold text-foreground">{currencySymbol(form.price_currency_code)}{(form.selling_price * (1 + (form.gst_rate || 0) / 100)).toFixed(2)}</span></>
+                      )
+                    ) : (
+                      'GST will be applied during invoice calculation'
+                    )}
+                  </p>
+                </div>
+              </div>
             </div>
             {form.selling_price > 0 && (
               <div className={`p-3 rounded-lg text-sm font-medium ${margin >= 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>

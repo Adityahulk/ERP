@@ -98,6 +98,8 @@ export interface Item {
   purchase_price: number;
   selling_price: number;
   price_currency_code?: 'INR' | 'USD';
+  selling_price_includes_tax?: boolean;
+  purchase_price_includes_tax?: boolean;
   gst_rate: number;
   tax_preference: string;
   reorder_point: number;

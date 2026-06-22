@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 
 export default function PurchaseOrderForm() {
   const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
   const { data: godownRes } = useGodowns();
   const godowns = (godownRes as any)?.data ?? [];
@@ -76,6 +77,30 @@ export default function PurchaseOrderForm() {
 
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.bill_date) setExpectedDate(data.bill_date);
+    if (data.items && data.items.length > 0) {
+      const mapped = data.items.map((item) => {
+        const rate = item.rate_paise != null
+          ? Number(item.rate_paise)
+          : (item.amount_paise != null && item.quantity ? Math.round(Number(item.amount_paise) / Number(item.quantity)) : Number(item.amount_paise || 0));
+        return {
+          name: String(item.description || ''),
+          description: String(item.description || ''),
+          hsn_code: item.hsn_code ? String(item.hsn_code) : '',
+          unit: String(item.unit || 'PCS'),
+          quantity: Number(item.quantity) || 1,
+          unit_price: rate,
+          discount_amount: 0,
+          gst_rate: 18,
+          cess_rate: 0,
+          custom_fields: {},
+        };
+      });
+      setItems((prev) => {
+        const isEmpty = prev.length === 0 || (prev.length === 1 && !prev[0].name && !prev[0].unit_price);
+        return isEmpty ? mapped : [...prev, ...mapped];
+      });
+      toast.success(`Imported ${data.items.length} item(s) from scan`);
+    }
     if (data.matched_party_id && data.matched_party) {
       selectSupplier(data.matched_party);
       toast.success('Matched supplier from OCR and applied it');
@@ -87,6 +112,13 @@ export default function PurchaseOrderForm() {
       toast('Party name applied — search & select or add new', { icon: 'ℹ️' });
     }
   };
+
+  useEffect(() => {
+    if (location.state?.ocrData) {
+      handleOcrConfirm(location.state.ocrData);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     'bizflow:draft:purchase-order',

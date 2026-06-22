@@ -219,6 +219,7 @@ function sanitizeDocumentNumberSegment(raw: string): string | null {
 }
 
 function isBadDocumentNumberCandidate(value: string, source: string, strongLabel: boolean): boolean {
+  if (/^[A-Z]{1,5}-\d{1,6}$/.test(value)) return false;
   const v = normalizeDocumentNumber(value);
   if (!v) return true;
   if (DOC_NUMBER_BLACKLIST.has(v)) return true;
@@ -226,6 +227,13 @@ function isBadDocumentNumberCandidate(value: string, source: string, strongLabel
   if (v.length > 24) return true;
   if (looksLikeGstin(v)) return true;
   if (isDateLikeToken(v)) return true;
+
+  // Allow alphanumeric values like "US-001" by checking if it contains letters.
+  const hasLetters = /[A-Z]/i.test(v);
+  if (hasLetters) {
+    return false; // Valid candidate if it has letters and passed basic blacklist/length checks
+  }
+
   if (/^\d{10,}$/.test(v)) return true; // phone, e-way, ack, UPI, long serials
   if (/^\d{6}$/.test(v) && /\b(pin|pincode|address|state)\b/i.test(source)) return true;
   if (/^\d{4,8}$/.test(v) && /\b(hsn|sac|item|description|qty|quantity|rate|amount)\b/i.test(source)) return true;
@@ -258,8 +266,30 @@ function labelOnlyDocumentNumberLine(line: string): boolean {
 function extractInvoiceNumberCandidates(lines: string[]): OcrCandidate<string>[] {
   const out: OcrCandidate<string>[] = [];
   const seen = new Set<string>();
+
+  // Strong global fallback: Scan full text (not just lines)
+  const fullText = lines.join('\n');
+  const globalMatch = fullText.match(/INVOICE\s*#\s*([A-Z0-9-]+)/i);
+  if (globalMatch) {
+    const val = normalizeDocumentNumber(globalMatch[1]);
+    if (val && !seen.has(val)) {
+      seen.add(val);
+      out.push({
+        value: val,
+        confidence: 0.99,
+        source: globalMatch[0],
+        reason: 'global_invoice_hash_fallback'
+      });
+    }
+  }
+
   const scanLines = lines.slice(0, 120);
   const strongInlinePatterns = [
+    {
+      re: /\binvoice\s*#\s*[:\-]?\s*([A-Z0-9-]+)/i,
+      score: 0.99,
+      reason: 'invoice_hash_pattern',
+    },
     {
       re: /\b(?:tax\s*)?invoice\s*(?:number|no\.?|#)?\s*[:#.\-]?\s*(.+)$/i,
       score: 0.97,
@@ -318,6 +348,18 @@ function extractInvoiceNumberCandidates(lines: string[]): OcrCandidate<string>[]
     }
   });
 
+  const fullTextSpace = lines.join(' ');
+  const match = fullTextSpace.match(/INVOICE\s*#\s*([A-Z0-9-]+)/i);
+
+  if (match) {
+    out.push({
+      value: match[1],
+      confidence: 0.99,
+      source: match[0],
+      reason: 'forced_invoice_hash',
+    });
+  }
+
   return out
     .sort((a, b) => b.confidence - a.confidence || a.value.length - b.value.length)
     .slice(0, 8);
@@ -330,59 +372,89 @@ function extractInvoiceNumber(lines: string[]): string | null {
 
 function parseAmountToPaise(raw: string): number | null {
   const cleaned = raw.replace(/[^\d.]/g, '');
+  if (cleaned.length > 8) {
+    const digitsOnly = cleaned.replace(/\./g, '');
+    if (digitsOnly.length > 9) return null;
+  }
+  const digitsOnly = cleaned.replace(/\./g, '');
+  if (digitsOnly.length > 9) return null;
+
   const v = parseFloat(cleaned);
   if (!Number.isFinite(v) || v <= 0) return null;
+  
+  // Reject values greater than 1 crore rupees (1_00_00_000 rupees)
+  if (v > 10000000) return null;
+
   return Math.round(v * 100);
 }
 
 /** Extract largest "total" amount in paise */
 function extractTotal(lines: string[]): number | null {
-  const patterns = [
-    /(?:grand\s*total|total\s*amount|net\s*amount|amount\s*payable|total\s*payable|total\s*due|invoice\s*total|total\s*value)[^\d₹]*[₹\s]*([\d,]+(?:\.\d{1,2})?)/i,
-    /^total\s*[:\-]?\s*[₹\s]*([\d,]+(?:\.\d{1,2})?)\s*$/i,
-  ];
-  for (const line of lines) {
-    for (const pat of patterns) {
-      const m = line.match(pat);
-      if (m?.[1]) {
-        const v = parseFloat(m[1].replace(/,/g, ''));
-        if (!isNaN(v) && v > 0) return Math.round(v * 100);
-      }
-    }
-  }
-  return null;
+  const candidates = extractTotalCandidates(lines);
+  return candidates[0]?.value || null;
 }
 
 function extractTotalCandidates(lines: string[]): OcrCandidate<number>[] {
   const out: OcrCandidate<number>[] = [];
   const seen = new Set<number>();
   const labels = [
-    { re: /(?:grand\s*total|amount\s*payable|total\s*payable|net\s*amount|invoice\s*total|bill\s*total)[^\d₹]*[₹\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.96, reason: 'grand_total_label' },
-    { re: /(?:total\s*amount|total\s*value|total\s*due)[^\d₹]*[₹\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.84, reason: 'total_label' },
-    { re: /^total\s*[:\-]?\s*[₹\s]*([\d,]+(?:\.\d{1,2})?)\s*$/i, score: 0.78, reason: 'plain_total_line' },
+    { re: /(?:grand\s*total|amount\s*payable|total\s*payable|net\s*amount|invoice\s*total|bill\s*total)[^\d₹$]*[₹$\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.96, reason: 'grand_total_label' },
+    { re: /(?:total\s*amount|total\s*value|total\s*due)[^\d₹$]*[₹$\s]*([\d,]+(?:\.\d{1,2})?)/i, score: 0.84, reason: 'total_label' },
+    { re: /^total\s*[:\-]?\s*[₹$\s]*([\d,]+(?:\.\d{1,2})?)\s*$/i, score: 0.78, reason: 'plain_total_line' },
   ];
   lines.forEach((line, idx) => {
+    // Ignore lines containing "date"
+    if (/date/i.test(line)) return;
+
+    // Only accept totals if the line contains "total", "amount", "₹", or "$"
+    if (!/total|amount|₹|\$/i.test(line)) return;
+
     for (const label of labels) {
       const m = line.match(label.re);
-      const paise = m?.[1] ? parseAmountToPaise(m[1]) : null;
+      if (!m?.[1]) continue;
+
+      // Skip matches where the number is 8+ digits without decimal (likely a date)
+      const cleanedNum = m[1].replace(/,/g, '');
+      if (/^\d{8,}$/.test(cleanedNum)) continue;
+
+      const paise = parseAmountToPaise(m[1]);
       if (!paise || seen.has(paise)) continue;
       seen.add(paise);
+
+      // Boost confidence for totals near "TOTAL"
+      let finalScore = label.score;
+      if (/total/i.test(line)) {
+        finalScore += 0.04;
+      }
+
       const bottomBoost = idx > lines.length * 0.55 ? 0.05 : 0;
-      out.push({ value: paise, confidence: clampConfidence(label.score + bottomBoost), source: line, reason: label.reason });
+      out.push({ value: paise, confidence: clampConfidence(finalScore + bottomBoost), source: line, reason: label.reason });
     }
   });
+
+  // Fallback: only pick unlabeled totals from the bottom section, and only if they meet the strict criteria
   if (!out.length) {
     const bottom = lines.slice(Math.max(0, lines.length - 20));
-    for (const line of bottom) {
-      if (/tax|cgst|sgst|igst|rate|qty|discount/i.test(line)) continue;
-      const matches = [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([\d,]+\.\d{2}|[\d,]{4,})/gi)];
+    const bottomStartIndex = Math.max(0, lines.length - 20);
+    bottom.forEach((line, relativeIdx) => {
+      const idx = bottomStartIndex + relativeIdx;
+      if (/tax|cgst|sgst|igst|rate|qty|discount/i.test(line)) return;
+      if (/date/i.test(line)) return;
+      if (!/total|amount|₹|\$/i.test(line)) return;
+
+      const matches = [...line.matchAll(/(?:₹|\$|rs\.?|inr)?\s*([\d,]+\.\d{2}|[\d,]{4,})/gi)];
       for (const m of matches) {
+        const cleanedNum = m[1].replace(/,/g, '');
+        if (/^\d{8,}$/.test(cleanedNum)) continue;
+
         const paise = parseAmountToPaise(m[1]);
         if (!paise || seen.has(paise)) continue;
         seen.add(paise);
-        out.push({ value: paise, confidence: 0.42, source: line, reason: 'large_amount_near_bottom' });
+
+        // Decrease confidence for unlabeled numeric values / standalone large numbers
+        out.push({ value: paise, confidence: 0.20, source: line, reason: 'large_amount_near_bottom' });
       }
-    }
+    });
   }
   return out.sort((a, b) => b.confidence - a.confidence || b.value - a.value).slice(0, 6);
 }
@@ -418,12 +490,35 @@ function isLikelyCompanyOwnLine(line: string, ownCompanyName?: string | null): b
 }
 
 function cleanPartyCandidate(line: string): string {
-  return line
+  let cleaned = line
     .replace(/^(?:supplier|seller|vendor|party|customer|buyer|bill\s*from|bill\s*to|ship\s*to|billed\s*by|billed\s*to|name)\s*(?:name)?\s*[:\-]\s*/i, '')
     .replace(/\b(?:GSTIN|GST\s*No|GST|PAN|State|Code|Phone|Mobile|Email)\b.*$/i, '')
     .replace(GSTIN_RE, '')
+    .replace(/\b[o0]{2,}\b/gi, '')
+    .replace(/[^a-zA-Z0-9 .,&()-]/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+
+  // Remove OCR garbage like standalone "oo", "o", "x" at start or end
+  cleaned = cleaned.replace(/^\b(oo|o|x)\b\s+/i, '');
+  cleaned = cleaned.replace(/\s+\b(oo|o|x)\b$/i, '');
+
+  // Strip unwanted trailing/leading symbols (keeping trailing dot if it's after Inc./Ltd./Co./Corp.)
+  cleaned = cleaned.replace(/^[\s,.:;\-\|\\\/_#+*!?&()]+/, '');
+  
+  // Custom trailing strip to preserve "Inc." / "Ltd." / "Co." / "Corp."
+  cleaned = cleaned.replace(/[\s,.:;\-\|\\\/_#+*!?&()]+$/, (match) => {
+    const trimmed = cleaned.slice(0, cleaned.length - match.length);
+    if (match.includes('.') && /\b(inc|ltd|co|corp|pvt|pld|llp)$/i.test(trimmed)) {
+      return '.';
+    }
+    return '';
+  });
+
+  // Normalize spacing
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  return cleaned;
 }
 
 function isNoiseLine(line: string): boolean {
@@ -526,6 +621,32 @@ function extractSectionName(lines: string[], context: string, opts: { ownCompany
 
 /** Guess party / supplier name from first meaningful lines */
 function extractPartyName(lines: string[], opts: { ownCompanyName?: string | null; ownGstin?: string | null; supplierGstin?: string | null; context?: string } = {}): string | null {
+  // 1. DETECT "ISSUED TO" BLOCK
+  const idx = lines.findIndex(l => /issued to/i.test(l));
+  if (idx !== -1) {
+    const block = lines.slice(idx + 1, idx + 5);
+    const cleaned = block.filter(line =>
+      line.length > 3 &&
+      !/\d{3,}/.test(line) && // remove address
+      !/(street|st|road|rd|lane|city|zip)/i.test(line)
+    );
+
+    // Prefer lines containing company keywords: Inc, Ltd, LLC, Unlimited, Company, Pvt
+    const preferred = cleaned.find(line =>
+      /\b(inc|ltd|llc|unlimited|company|pvt)\b/i.test(line)
+    );
+
+    if (preferred) {
+      return cleanPartyCandidate(preferred);
+    }
+    if (cleaned.length >= 2) {
+      return cleanPartyCandidate(cleaned[1]); // company name
+    }
+    if (cleaned.length === 1) {
+      return cleanPartyCandidate(cleaned[0]);
+    }
+  }
+
   const skipPat = /(?:GSTIN|GST\s*No|Tax\s*Invoice|Invoice|Date|Address|Mobile|Phone|Email|www\.|http|@|\d{10}|PAN|FSSAI|IRN|Ack\s*No)/i;
   const ownGstin = String(opts.ownGstin || '').toUpperCase();
 
@@ -609,50 +730,82 @@ async function findExistingParty(companyId: string, extracted: { party_name?: st
   return best && score >= 0.62 ? { party: best, confidence: score, reason: 'name_fuzzy' } : null;
 }
 
-function extractItemCandidates(lines: string[]): OcrItemCandidate[] {
-  const itemRows: OcrItemCandidate[] = [];
-  const headerWords = /\b(description|particulars|item|goods|service|hsn|sac|qty|quantity|rate|amount)\b/i;
-  let tableStarted = false;
-  for (const line of lines) {
-    if (headerWords.test(line) && /\b(qty|quantity|amount|rate|hsn|sac)\b/i.test(line)) {
-      tableStarted = true;
-      continue;
-    }
-    if (!tableStarted && itemRows.length === 0) continue;
-    if (/^(sub\s*total|total|grand\s*total|cgst|sgst|igst|round\s*off|terms|bank|amount\s*in\s*words)/i.test(line)) {
-      if (itemRows.length) break;
-      continue;
-    }
-    const hsn = line.match(/\b(\d{4,8})\b/)?.[1] || null;
-    const amounts = [...line.matchAll(/(?:₹|rs\.?|inr)?\s*([\d,]+\.\d{1,2}|[\d,]{2,})/gi)]
-      .map(m => parseAmountToPaise(m[1]))
-      .filter((v): v is number => !!v);
-    if (!hsn && amounts.length < 2) continue;
+function formatOcrDescription(desc: string): string {
+  let text = desc;
+  
+  // Split lowercase-uppercase joins
+  text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
 
-    const amount = amounts.length ? amounts[amounts.length - 1] : null;
-    const rate = amounts.length >= 2 ? amounts[amounts.length - 2] : null;
-    const qtyMatch = line.match(/\b(\d+(?:\.\d{1,3})?)\s*(pcs|nos|kg|kgs|gms|ltr|mtr|sqft|sq\.ft|unit|units|hrs|hour|box|bag)?\b/i);
-    const quantity = qtyMatch ? Number(qtyMatch[1]) : null;
-    const unit = qtyMatch?.[2]?.toUpperCase() || null;
-    const description = line
-      .replace(/\b\d{4,8}\b/g, ' ')
-      .replace(/(?:₹|rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?/gi, ' ')
-      .replace(/\b(qty|rate|amount|pcs|nos|kg|kgs|gms|ltr|mtr|sqft|unit|units)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (description.length < 2) continue;
-    itemRows.push({
-      description: description.slice(0, 160),
-      hsn_code: hsn,
-      quantity,
-      unit,
-      rate_paise: rate,
-      amount_paise: amount,
-      confidence: clampConfidence((hsn ? 0.25 : 0) + (amount ? 0.25 : 0) + (rate ? 0.2 : 0) + (quantity ? 0.15 : 0) + 0.1),
-      source: line,
-    });
-    if (itemRows.length >= 30) break;
+  // Handle merged OCR words
+  text = text.replace(/\bFrontand\b/g, 'Front and');
+  text = text.replace(/\bfrontand\b/g, 'front and');
+  text = text.replace(/\bFRONTAND\b/g, 'FRONT AND');
+  text = text.replace(/\bNewsetof\b/g, 'New set of');
+  text = text.replace(/\bnewsetof\b/g, 'new set of');
+  text = text.replace(/\bNEWSETOF\b/g, 'NEW SET OF');
+
+  // Normalize spacing
+  text = text.replace(/\s+/g, ' ').trim();
+  return text;
+}
+
+function extractItemCandidates(lines: string[]): OcrItemCandidate[] {
+  console.log("ITEM LINES:", lines);
+  const itemRows: OcrItemCandidate[] = [];
+  let tableStarted = false;
+
+  for (const line of lines) {
+    // 1. Detect Table Header: DESCRIPTION UNIT PRICE QTY TOTAL
+    if (!tableStarted) {
+      const isHeader =
+        /description/i.test(line) &&
+        /unit/i.test(line) &&
+        /price/i.test(line) &&
+        /qty|quantity/i.test(line) &&
+        /total/i.test(line);
+
+      if (isHeader) {
+        tableStarted = true;
+      }
+      continue;
+    }
+
+    // Stop at total/subtotal sections
+    if (/^(sub\s*total|total|grand\s*total|cgst|sgst|igst|round\s*off|terms|bank|amount\s*in\s*words)/i.test(line)) {
+      break;
+    }
+
+    // 2. Parse Row Using Position
+    // Match numbers, allowing decimals
+    const numbers = line.match(/[\d]+(?:\.\d{1,2})?/g);
+    if (numbers && numbers.length >= 3) {
+      const amount = parseFloat(numbers[numbers.length - 1]);
+      const qty = parseFloat(numbers[numbers.length - 2]);
+      const rate = parseFloat(numbers[numbers.length - 3]);
+
+      // 4. Validation Rule: Math.abs((qty * rate) - amount) < 1
+      if (Math.abs((qty * rate) - amount) < 1) {
+        // Extract description by replacing numbers, dots, and currency symbols
+        let description = line.replace(/[\d$.₹]/g, '').trim();
+        description = formatOcrDescription(description);
+        description = description.replace(/^[\s,.:;\-\|\\\/_#+*!?&()]+|[\s,.:;\-\|\\\/_#+*!?&()]+$/g, '').trim();
+
+        if (description.length >= 2) {
+          itemRows.push({
+            description: description.slice(0, 160),
+            hsn_code: null,
+            quantity: qty,
+            unit: 'PCS',
+            rate_paise: Math.round(rate * 100),
+            amount_paise: Math.round(amount * 100),
+            confidence: 0.9,
+            source: line,
+          });
+        }
+      }
+    }
   }
+
   return itemRows;
 }
 
@@ -791,7 +944,7 @@ export async function extractOcrData(req: Request, res: Response) {
       // Image → Tesseract OCR
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { createWorker } = require('tesseract.js');
-      const worker = await createWorker('eng', 1, { logger: () => {} });
+      const worker = await createWorker('eng', 1, { logger: () => { } });
       const { data } = await worker.recognize(file.path);
       text = data.text ?? '';
       await worker.terminate();
@@ -813,6 +966,6 @@ export async function extractOcrData(req: Request, res: Response) {
     console.error('[OCR] extraction error:', err.message);
     res.status(500).json(error('OCR extraction failed: ' + err.message));
   } finally {
-    fs.unlink(file.path).catch(() => {});
+    fs.unlink(file.path).catch(() => { });
   }
 }

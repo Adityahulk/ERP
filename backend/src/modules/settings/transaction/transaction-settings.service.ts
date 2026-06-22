@@ -70,6 +70,7 @@ export async function updateSettings(firmId: string, body: Record<string, unknow
     showProfitWhileMakingSaleInvoice: bool(body.showProfitWhileMakingSaleInvoice),
     enableTermsAndConditions: bool(body.enableTermsAndConditions, true),
     billingType,
+    defaultUpiId: body.defaultUpiId !== undefined ? (body.defaultUpiId ? str(body.defaultUpiId, 50) : null) : undefined,
   });
 }
 

@@ -124,7 +124,7 @@ export default function InvoiceDetail() {
               <th className="p-3 text-left font-medium">Item</th>
               <th className="p-3 text-left font-medium hidden md:table-cell">HSN/SAC</th>
               <th className="p-3 text-right font-medium">Qty</th>
-              <th className="p-3 text-right font-medium">Price</th>
+              <th className="p-3 text-right font-medium">Rate</th>
               <th className="p-3 text-right font-medium hidden md:table-cell">Taxable</th>
               <th className="p-3 text-right font-medium hidden lg:table-cell">GST</th>
               <th className="p-3 text-right font-medium">Total</th>
@@ -136,7 +136,16 @@ export default function InvoiceDetail() {
                   <td className="p-3"><div className="font-medium">{item.item_name || item.description || '—'}</div>{item.item_sku && <div className="text-xs text-muted-foreground">{item.item_sku}</div>}</td>
                   <td className="p-3 hidden md:table-cell text-muted-foreground font-mono text-xs">{item.hsn_code || '—'}</td>
                   <td className="p-3 text-right tabular-nums">{item.quantity} {item.unit || item.unit_abbr || ''}</td>
-                  <td className="p-3 text-right tabular-nums">{formatMoney(item.unit_price)}</td>
+                  <td className="p-3 text-right tabular-nums">
+                    <div>
+                      {formatMoney(item.unit_price)}
+                      {item.gst_rate > 0 && (
+                        <span className="text-[10px] text-muted-foreground ml-1 font-medium">
+                          {item.price_includes_tax === true ? '(Incl. GST)' : '(Excl. GST)'}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-3 text-right tabular-nums hidden md:table-cell">{formatMoney(item.taxable_amount)}</td>
                   <td className="p-3 text-right tabular-nums hidden lg:table-cell"><span className="text-muted-foreground text-xs">{item.gst_rate}%</span> {formatMoney((item.cgst_amount || 0) + (item.sgst_amount || 0) + (item.igst_amount || 0))}</td>
                   <td className="p-3 text-right tabular-nums font-semibold">{formatMoney(item.total_amount)}</td>

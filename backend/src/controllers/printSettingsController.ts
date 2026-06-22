@@ -74,6 +74,27 @@ const DEFAULT_PRINT_SETTINGS = {
     declaration: '',
     terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
   },
+  thermal: {
+    show_seller_name: true,
+    seller_name: '',
+    show_seller_phone: true,
+    seller_phone: '',
+    show_seller_address: true,
+    seller_address: '',
+    show_date_time: true,
+    show_bill_no: true,
+    show_logo: true,
+    show_tax_columns: false,
+    show_payment_details: true,
+    card_auth_code_override: '',
+    card_last_four_override: '',
+    barcode_or_qr: 'barcode',
+    return_policy: 'Items can be returned within 7 days in original condition.',
+    show_footer_thank_you: true,
+    enable_refund_layout: true,
+    enable_deposit_layout: false,
+    deposit_account_details: '',
+  },
 };
 
 function parseObject(value: unknown): Record<string, any> {
@@ -93,6 +114,7 @@ function normalizeSettings(rawValue: unknown) {
   const raw = parseObject(rawValue);
   const regular = { ...DEFAULT_PRINT_SETTINGS.regular, ...parseObject(raw.regular) };
   const invoiceTheme = normalizeInvoicePrintTheme(raw.invoiceTheme || raw.invoice_theme || regular.layout);
+  const thermal = { ...DEFAULT_PRINT_SETTINGS.thermal, ...parseObject(raw.thermal) };
   return {
     ...DEFAULT_PRINT_SETTINGS,
     ...raw,
@@ -113,6 +135,27 @@ function normalizeSettings(rawValue: unknown) {
         ...DEFAULT_PRINT_SETTINGS.reference_invoice.fields,
         ...parseObject(parseObject(raw.reference_invoice).fields),
       },
+    },
+    thermal: {
+      show_seller_name: thermal.show_seller_name !== false,
+      seller_name: String(thermal.seller_name ?? '').trim().slice(0, 100),
+      show_seller_phone: thermal.show_seller_phone !== false,
+      seller_phone: String(thermal.seller_phone ?? '').trim().slice(0, 30),
+      show_seller_address: thermal.show_seller_address !== false,
+      seller_address: String(thermal.seller_address ?? '').trim().slice(0, 500),
+      show_date_time: thermal.show_date_time !== false,
+      show_bill_no: thermal.show_bill_no !== false,
+      show_logo: thermal.show_logo !== false,
+      show_tax_columns: thermal.show_tax_columns === true,
+      show_payment_details: thermal.show_payment_details !== false,
+      card_auth_code_override: String(thermal.card_auth_code_override ?? '').trim().slice(0, 20),
+      card_last_four_override: String(thermal.card_last_four_override ?? '').trim().slice(0, 4),
+      barcode_or_qr: ['none', 'barcode', 'qr'].includes(String(thermal.barcode_or_qr)) ? (thermal.barcode_or_qr as any) : 'barcode',
+      return_policy: String(thermal.return_policy ?? '').trim().slice(0, 1000),
+      show_footer_thank_you: thermal.show_footer_thank_you !== false,
+      enable_refund_layout: thermal.enable_refund_layout !== false,
+      enable_deposit_layout: thermal.enable_deposit_layout === true,
+      deposit_account_details: String(thermal.deposit_account_details ?? '').trim().slice(0, 500),
     },
     invoiceTheme,
   };

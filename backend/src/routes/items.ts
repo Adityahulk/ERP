@@ -19,13 +19,13 @@ const createSchema = z.object({
   unit_id: z.string().uuid().nullable().optional(),
   secondary_unit_id: z.string().uuid().nullable().optional(),
   unit_conversion_factor: z.coerce.number().positive().optional(),
-  item_type: z.enum(['product','service','raw_material','finished_good','consumable']).default('product'),
+  item_type: z.enum(['product', 'service', 'raw_material', 'finished_good', 'consumable']).default('product'),
   track_inventory: z.boolean().default(true),
   is_serialized: z.boolean().default(false),
   purchase_price: z.number().int().min(0).optional(),
   selling_price: z.number().int().min(0).optional(),
   gst_rate: z.coerce.number().min(0).max(100).default(18),
-  tax_preference: z.enum(['taxable','exempt','nil_rated','non_gst']).default('taxable'),
+  tax_preference: z.enum(['taxable', 'exempt', 'nil_rated', 'non_gst']).default('taxable'),
   cess_rate: z.coerce.number().min(0).optional(),
   opening_stock: z.coerce.number().min(0).optional(),
   opening_stock_value: z.number().int().min(0).optional(),
@@ -45,6 +45,7 @@ const scanSchema = z.object({
 router.get('/import-template', ctrl.importTemplate);
 router.post('/bulk-import', uploadImportFile, ctrl.bulkImport);
 router.post('/scan', validateBody(scanSchema), ctrl.scanBarcode);
+router.get('/barcode/:code', ctrl.getItemByBarcode);
 
 // CRUD
 router.post('/', validateBody(createSchema), ctrl.createItem);

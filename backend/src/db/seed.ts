@@ -1,10 +1,8 @@
 import { Pool } from 'pg';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { env } from '../config/env';
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://bizflow:bizflow_dev@localhost:5432/bizflow',
+  connectionString: env.DATABASE_URL,
 });
 
 /**

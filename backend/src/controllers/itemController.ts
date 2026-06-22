@@ -380,6 +380,11 @@ async function getItemActivity(companyId: string, itemId: string) {
   };
 }
 
+function normalizePrice(price: number, gstRate: number, includesTax: boolean) {
+  if (!includesTax) return price;
+  return Math.round(price / (1 + gstRate / 100));
+}
+
 // ── POST /api/items ───────────────────────────────────────────
 export async function createItem(req: Request, res: Response) {
   try {
@@ -409,6 +414,20 @@ export async function createItem(req: Request, res: Response) {
     const gstRate = data.gst_rate ?? 18;
     const halfRate = gstRate / 2;
 
+    const sellingPriceIncludesTax = data.selling_price_includes_tax === true;
+    const purchasePriceIncludesTax = data.purchase_price_includes_tax === true;
+
+    const normalizedSellingPrice = normalizePrice(
+      data.selling_price || 0,
+      gstRate,
+      sellingPriceIncludesTax
+    );
+    const normalizedPurchasePrice = normalizePrice(
+      data.purchase_price || 0,
+      gstRate,
+      purchasePriceIncludesTax
+    );
+
     const result = await withTransaction(async (client) => {
       let barcode = data.barcode || null;
       if (!barcode && itemType !== 'service') {
@@ -419,7 +438,7 @@ export async function createItem(req: Request, res: Response) {
           const seqRes = await client.query("SELECT nextval('barcode_num_seq')");
           const nextVal = seqRes.rows[0].nextval;
           barcode = String(nextVal).padStart(10, '0');
-          
+
           const dupRes = await client.query(
             `SELECT 1 FROM items WHERE barcode = $1 AND is_deleted = false
              UNION
@@ -443,9 +462,10 @@ export async function createItem(req: Request, res: Response) {
           purchase_price, selling_price, price_currency_code,
           tax_preference, gst_rate, cgst_rate, sgst_rate, igst_rate, cess_rate,
           opening_stock, opening_stock_value, opening_stock_date,
-          reorder_point, max_stock_level, image_url, custom_fields
+          reorder_point, max_stock_level, image_url, custom_fields,
+          selling_price_includes_tax, purchase_price_includes_tax
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
         ) RETURNING *`,
         [
           companyId, data.name, data.description, data.sku, barcode, data.hsn_code,
@@ -454,7 +474,7 @@ export async function createItem(req: Request, res: Response) {
           itemType,
           trackInventory,
           isService ? false : data.is_serialized || false,
-          data.purchase_price || 0, data.selling_price || 0,
+          normalizedPurchasePrice, normalizedSellingPrice,
           String(data.price_currency_code || 'INR').toUpperCase() === 'USD' ? 'USD' : 'INR',
           data.tax_preference || 'taxable', gstRate, halfRate, halfRate, gstRate,
           data.cess_rate || 0,
@@ -462,6 +482,7 @@ export async function createItem(req: Request, res: Response) {
           trackInventory ? data.opening_stock_date || null : null,
           data.reorder_point || 0, data.max_stock_level || 0,
           data.image_url, data.custom_fields ? JSON.stringify(data.custom_fields) : '{}',
+          sellingPriceIncludesTax, purchasePriceIncludesTax
         ]
       );
 
@@ -686,15 +707,27 @@ export async function updateItem(req: Request, res: Response) {
       data.opening_stock_date = null;
     }
 
+    const sellingIncludes = data.selling_price_includes_tax !== undefined ? data.selling_price_includes_tax : old.selling_price_includes_tax;
+    const purchaseIncludes = data.purchase_price_includes_tax !== undefined ? data.purchase_price_includes_tax : old.purchase_price_includes_tax;
+    const nextGst = data.gst_rate !== undefined ? Number(data.gst_rate) : Number(old.gst_rate);
+
+    if (data.selling_price !== undefined) {
+      data.selling_price = normalizePrice(data.selling_price, nextGst, sellingIncludes);
+    }
+    if (data.purchase_price !== undefined) {
+      data.purchase_price = normalizePrice(data.purchase_price, nextGst, purchaseIncludes);
+    }
+
     const result = await withTransaction(async (client) => {
       const fields = [
-        'name','description','sku','barcode','hsn_code','category_id','brand','unit_id',
-        'secondary_unit_id','unit_conversion_factor',
-        'item_type','track_inventory','is_serialized',
-        'purchase_price','selling_price','price_currency_code',
-        'tax_preference','gst_rate','cgst_rate','sgst_rate','igst_rate','cess_rate',
-        'opening_stock','opening_stock_value','opening_stock_date',
-        'reorder_point','max_stock_level','image_url','is_active','custom_fields',
+        'name', 'description', 'sku', 'barcode', 'hsn_code', 'category_id', 'brand', 'unit_id',
+        'secondary_unit_id', 'unit_conversion_factor',
+        'item_type', 'track_inventory', 'is_serialized',
+        'purchase_price', 'selling_price', 'price_currency_code',
+        'tax_preference', 'gst_rate', 'cgst_rate', 'sgst_rate', 'igst_rate', 'cess_rate',
+        'opening_stock', 'opening_stock_value', 'opening_stock_date',
+        'reorder_point', 'max_stock_level', 'image_url', 'is_active', 'custom_fields',
+        'selling_price_includes_tax', 'purchase_price_includes_tax'
       ];
       const updates: string[] = []; const values: any[] = []; let idx = 1;
       for (const f of fields) {
@@ -861,7 +894,7 @@ export async function bulkImport(req: Request, res: Response) {
     }
 
     // Clean up temp file
-    try { fs.unlinkSync(req.file.path); } catch {}
+    try { fs.unlinkSync(req.file.path); } catch { }
 
     // If action=confirm, insert the valid rows
     if (req.query.action === 'confirm') {
@@ -1043,6 +1076,55 @@ export async function scanBarcode(req: Request, res: Response) {
     res.json(success(result.rows[0]));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message));
+  }
+}
+
+// ── GET /api/items/barcode/:code ──────────────────────────────
+export async function getItemByBarcode(req: Request, res: Response) {
+  try {
+    const { code } = req.params;
+    const companyId = req.user!.company_id;
+
+    let result;
+
+    if (isSmartBarcode(code)) {
+      const decoded = decodeSmartBarcode(code);
+      if (!decoded) {
+        return res.status(400).json(error('Invalid smart barcode format'));
+      }
+      if (decoded.companyId !== companyId) {
+        return res.status(404).json(error('No item found for this barcode'));
+      }
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [decoded.itemId, companyId]
+      );
+    } else {
+      result = await query(
+        `SELECT i.*, c.name as category_name, u.name as unit_name,
+                COALESCE(ts.total_stock, 0) as total_stock
+         FROM items i
+         LEFT JOIN item_categories c ON i.category_id = c.id
+         LEFT JOIN item_units u ON i.unit_id = u.id
+         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
+         WHERE (i.barcode = $1 OR i.sku = $1 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $1 LIMIT 1)) AND i.company_id = $2 AND i.is_deleted = false
+         LIMIT 1`,
+        [code, companyId]
+      );
+    }
+
+    if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) {
+    console.error('getItemByBarcode error:', err.message);
     res.status(500).json(error(err.message));
   }
 }

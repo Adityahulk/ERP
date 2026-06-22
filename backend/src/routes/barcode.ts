@@ -12,14 +12,18 @@ router.get('/', async (req: Request, res: Response) => {
   const includeText = req.query.includetext !== 'false';
 
   try {
-    const png = await bwipjs.toBuffer({
+    const options: any = {
       bcid: 'code128',
       text,
       scale: 3,
       height: 10,
       includetext: includeText,
       textxalign: 'center',
-    });
+    };
+    // Barcode is ALWAYS horizontal — never rotated. Vertical label mode
+    // only changes the text layout CSS, not the barcode image itself.
+
+    const png = await bwipjs.toBuffer(options);
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');

@@ -401,9 +401,19 @@ export function calculateLineItemTax(
   discountValue: number,
   gstRate: number,
   gstType: 'intra' | 'inter',
-  cessRate: number = 0
+  cessRate: number = 0,
+  pricingModeOrInclusive: 'inclusive' | 'exclusive' | boolean = 'exclusive'
 ) {
-  const baseAmount = Math.round(unitPrice * quantity);
+  let baseAmount = 0;
+  const isInclusive = pricingModeOrInclusive === 'inclusive' || pricingModeOrInclusive === true;
+  if (isInclusive) {
+    const divisor = 1 + (gstRate + cessRate) / 100;
+    const taxableUnitPrice = unitPrice / divisor;
+    baseAmount = Math.round(taxableUnitPrice * quantity);
+  } else {
+    baseAmount = Math.round(unitPrice * quantity);
+  }
+
   let discountAmount = 0;
 
   if (discountType === 'percent') {
@@ -442,6 +452,39 @@ export function calculateLineItemTax(
   };
 }
 
+export function convertPrice(
+  price: number,
+  gstRate: number,
+  itemIncludesTax: boolean,
+  invoiceMode: 'inclusive' | 'exclusive',
+  cessRate: number = 0
+): number {
+  const rate = (gstRate + cessRate) / 100;
+
+  if (invoiceMode === 'inclusive') {
+    return itemIncludesTax ? price : price * (1 + rate);
+  }
+
+  if (invoiceMode === 'exclusive') {
+    return itemIncludesTax ? price / (1 + rate) : price;
+  }
+  return price;
+}
+
+export function getConvertedPrice(
+  price: number,
+  itemIncludesTax: boolean,
+  invoicePricingMode: 'inclusive' | 'exclusive',
+  gstRate: number,
+  cessRate: number = 0
+): number {
+  const converted = convertPrice(price, gstRate, itemIncludesTax, invoicePricingMode, cessRate);
+  if (invoicePricingMode === 'inclusive') {
+    return Number.isFinite(converted) ? Math.round(converted / 100) * 100 : Math.round(price / 100) * 100;
+  }
+  return Number.isFinite(converted) ? Math.round(converted) : Math.round(price);
+}
+
 export function calculateInvoiceTotals(
   items: Array<{
     unit_price: number;
@@ -450,92 +493,146 @@ export function calculateInvoiceTotals(
     discount_value?: number;
     gst_rate: number;
     cess_rate?: number;
+    price_includes_tax?: boolean;
   }>,
   gstType: 'intra' | 'inter',
   invoiceDiscountType: 'percent' | 'flat' | 'none' = 'none',
   invoiceDiscountValue: number = 0,
   tcsRate: number = 0,
-  roundOffEnabled: boolean = true
+  roundOffEnabled: boolean = true,
+  pricingMode: 'inclusive' | 'exclusive' = 'exclusive'
 ) {
   let subtotal = 0;
   let totalDiscountLineLevel = 0;
-  let totalTaxable = 0;
+
+  const processedItems = items.map((item) => {
+    const gstRate = Number(item.gst_rate) || 0;
+    const cessRate = Number(item.cess_rate) || 0;
+    const totalRate = gstRate + cessRate;
+    const qty = Number(item.quantity) || 0;
+
+    const convertedPrice = convertPrice(
+      Number(item.unit_price) || 0,
+      gstRate,
+      item.price_includes_tax === true,
+      pricingMode,
+      cessRate
+    );
+
+    let rawDiscount = 0;
+    if (item.discount_type === 'percent') {
+      const storedBase = item.price_includes_tax === true ? (item.unit_price / (1 + totalRate / 100)) : item.unit_price;
+      rawDiscount = ((storedBase * qty) * (item.discount_value || 0)) / 100;
+    } else if (item.discount_type === 'flat') {
+      rawDiscount = item.discount_value || 0;
+    }
+
+    const convertedDiscount = convertPrice(
+      rawDiscount,
+      gstRate,
+      item.price_includes_tax === true,
+      pricingMode,
+      cessRate
+    );
+
+    const subtotal_row = convertedPrice * qty;
+    const lineDiscount_row = convertedDiscount;
+
+    subtotal += subtotal_row;
+    totalDiscountLineLevel += lineDiscount_row;
+
+    return {
+      subtotal_row,
+      lineDiscount_row,
+      gstRate,
+      cessRate,
+      totalRate
+    };
+  });
+
+  const taxableBeforeInvoiceDiscount = Math.max(0, subtotal - totalDiscountLineLevel);
+  let globalDiscountAmount = 0;
+  if (invoiceDiscountType === 'percent') {
+    globalDiscountAmount = (taxableBeforeInvoiceDiscount * (Number(invoiceDiscountValue) || 0)) / 100;
+  } else if (invoiceDiscountType === 'flat') {
+    globalDiscountAmount = Math.min(Number(invoiceDiscountValue) || 0, taxableBeforeInvoiceDiscount);
+  }
+  globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, taxableBeforeInvoiceDiscount));
+
+  const taxableAfterDiscount = taxableBeforeInvoiceDiscount - globalDiscountAmount;
+
   let totalCgst = 0;
   let totalSgst = 0;
   let totalIgst = 0;
   let totalCess = 0;
 
-  for (const item of items) {
-    const taxInfo = calculateLineItemTax(
-      item.unit_price,
-      item.quantity,
-      item.discount_type || 'none',
-      item.discount_value || 0,
-      item.gst_rate,
-      gstType,
-      item.cess_rate || 0
-    );
+  for (const item of processedItems) {
+    const invoiceDiscount_row = taxableBeforeInvoiceDiscount > 0
+      ? globalDiscountAmount * (item.subtotal_row - item.lineDiscount_row) / taxableBeforeInvoiceDiscount
+      : 0;
+    const taxableAfterDiscount_row = Math.max(0, item.subtotal_row - item.lineDiscount_row - invoiceDiscount_row);
 
-    subtotal += taxInfo.baseAmount;
-    totalDiscountLineLevel += taxInfo.discountAmount;
-    totalTaxable += taxInfo.taxableAmount;
-    totalCgst += taxInfo.cgst;
-    totalSgst += taxInfo.sgst;
-    totalIgst += taxInfo.igst;
-    totalCess += taxInfo.cessAmount;
+    let baseTax_row = 0;
+    if (pricingMode === 'inclusive') {
+      baseTax_row = taxableAfterDiscount_row - taxableAfterDiscount_row / (1 + item.totalRate / 100);
+    } else {
+      baseTax_row = taxableAfterDiscount_row * (item.totalRate / 100);
+    }
+
+    const cess_share = item.totalRate > 0 ? item.cessRate / item.totalRate : 0;
+    const baseCess_row = baseTax_row * cess_share;
+    const baseGst_row = baseTax_row - baseCess_row;
+
+    let baseCgst_row = 0;
+    let baseSgst_row = 0;
+    let baseIgst_row = 0;
+
+    if (gstType === 'inter') {
+      baseIgst_row = baseGst_row;
+    } else {
+      baseCgst_row = baseGst_row / 2;
+      baseSgst_row = baseGst_row - baseCgst_row;
+    }
+
+    totalCgst += baseCgst_row;
+    totalSgst += baseSgst_row;
+    totalIgst += baseIgst_row;
+    totalCess += baseCess_row;
   }
 
-  // Invoice-level discount must reduce taxable base first, then tax.
-  let globalDiscountAmount = 0;
-  if (invoiceDiscountType === 'flat') {
-    globalDiscountAmount = Math.max(0, Math.min(invoiceDiscountValue, totalTaxable));
-  } else if (invoiceDiscountType === 'percent') {
-    globalDiscountAmount = Math.round((totalTaxable * invoiceDiscountValue) / 100);
-  }
-  globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, totalTaxable));
+  let finalTaxable = 0;
+  let finalTotal = 0;
 
-  let taxableAfterDiscount = totalTaxable - globalDiscountAmount;
-  const scale = totalTaxable > 0 ? taxableAfterDiscount / totalTaxable : 1;
-  let adjCgst = Math.round(totalCgst * scale);
-  let adjSgst = Math.round(totalSgst * scale);
-  let adjIgst = Math.round(totalIgst * scale);
-  let adjCess = Math.round(totalCess * scale);
-
-  // preserve total tax after rounding
-  const originalTaxAfter = Math.round((totalCgst + totalSgst + totalIgst + totalCess) * scale);
-  const drift = originalTaxAfter - (adjCgst + adjSgst + adjIgst + adjCess);
-  if (drift !== 0) {
-    if (gstType === 'inter') adjIgst += drift;
-    else adjSgst += drift;
+  if (pricingMode === 'inclusive') {
+    finalTotal = taxableAfterDiscount;
+    finalTaxable = taxableAfterDiscount - (totalCgst + totalSgst + totalIgst + totalCess);
+  } else {
+    finalTaxable = taxableAfterDiscount;
+    finalTotal = taxableAfterDiscount + totalCgst + totalSgst + totalIgst + totalCess;
   }
 
-  const finalTotalBeforeTcs = Math.max(
-    0,
-    taxableAfterDiscount + adjCgst + adjSgst + adjIgst + adjCess
-  );
+  const tcsAmount = (finalTotal * (Number(tcsRate) || 0)) / 100;
+  const finalTotalWithTcs = finalTotal + tcsAmount;
 
-  const tcsAmount = Math.round((finalTotalBeforeTcs * tcsRate) / 100);
-  
-  const finalTotalWithTcs = finalTotalBeforeTcs + tcsAmount;
-  
-  // Calculate Rounding to nearest integer (in paise, 1 rupee = 100 paise. So nearest 100 paise)
-  // Since we calculate in paise, round-off usually means nearest Re 1, so nearest 100 paise.
   const roundedAmountPaise = roundOffEnabled ? Math.round(finalTotalWithTcs / 100) * 100 : finalTotalWithTcs;
   const roundOff = roundOffEnabled ? roundedAmountPaise - finalTotalWithTcs : 0;
 
+  const safeVal = (v: number) => (Number.isFinite(v) && !Number.isNaN(v) ? Math.round(v) : 0);
+
   return {
-    subtotal,
-    totalDiscountLineLevel,
-    globalDiscountAmount,
-    totalDiscount: totalDiscountLineLevel + globalDiscountAmount,
-    totalTaxable: taxableAfterDiscount,
-    totalCgst: adjCgst,
-    totalSgst: adjSgst,
-    totalIgst: adjIgst,
-    totalCess: adjCess,
-    totalTax: adjCgst + adjSgst + adjIgst + adjCess,
-    tcsAmount,
-    roundOff,
-    totalAmount: roundedAmountPaise,
+    subtotal: safeVal(subtotal),
+    totalDiscountLineLevel: safeVal(totalDiscountLineLevel),
+    globalDiscountAmount: safeVal(globalDiscountAmount),
+    totalDiscount: safeVal(totalDiscountLineLevel + globalDiscountAmount),
+    totalTaxable: safeVal(finalTaxable),
+    totalCgst: safeVal(totalCgst),
+    totalSgst: safeVal(totalSgst),
+    totalIgst: safeVal(totalIgst),
+    totalCess: safeVal(totalCess),
+    totalTax: safeVal(totalCgst + totalSgst + totalIgst + totalCess),
+    tcsAmount: safeVal(tcsAmount),
+    roundOff: safeVal(roundOff),
+    totalAmount: safeVal(roundedAmountPaise),
   };
 }
+

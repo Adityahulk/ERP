@@ -81,13 +81,20 @@ export function renderField(
   };
 }
 
+const PRINTER_PROFILES = {
+  THERMAL_58: { width: 58, height: 40 },
+  THERMAL_80: { width: 80, height: 50 },
+  LABEL_100x50: { width: 100, height: 50 },
+  LABEL_116x40: { width: 116, height: 40 }
+};
+
 export function getPriceFontSize(priceText: string): string {
   const len = (priceText || '').length;
-  if (len <= 8) return '14px';
-  if (len <= 10) return '13px';
-  if (len <= 12) return '12px';
-  if (len <= 14) return '11px';
-  return '10px';
+  if (len <= 8) return '4.5mm';
+  if (len <= 10) return '4mm';
+  if (len <= 12) return '3.5mm';
+  if (len <= 14) return '3mm';
+  return '2.5mm';
 }
 
 export function LabelRenderer({
@@ -127,31 +134,30 @@ export function LabelRenderer({
 
   // Resolve sizing: printMode (from LabelConfig) overrides template for PDF print.
   // When used in TemplatePicker or live preview without a printMode, use the template dims.
-  let width = '220px';
-  let height = '140px';
+  let width = 100;
+  let height = 50;
 
   const printMode = (data as any).printMode;
-  if (printMode === 'thermal_double') {
-    width = '210px';
-    height = '142px';
-  } else if (printMode === 'thermal_single') {
-    width = '368px';
-    height = '180px';
+  if (printMode === 'thermal_100') {
+    width = PRINTER_PROFILES.LABEL_100x50.width;
+    height = PRINTER_PROFILES.LABEL_100x50.height;
+  } else if (printMode === 'thermal_58_double') {
+    // 2-up side-by-side: preview shows a single 58×40 cell
+    width = PRINTER_PROFILES.THERMAL_58.width;
+    height = PRINTER_PROFILES.THERMAL_58.height;
   } else if (printMode === 'a4_24') {
-    width = '175px';
-    height = '168px';
+    width = 46.3;
+    height = 44.4;
   } else if (printMode === 'a4_40') {
-    width = '145px';
-    height = '130px';
+    width = 38.3;
+    height = 34.4;
   } else if (printMode === 'a4_65') {
-    width = '148px';
-    height = '80px';
+    width = 39.1;
+    height = 21.1;
   } else if (_template) {
-    // No printMode override — use the selected template's dimensions
-    width = `${_template.width}px`;
-    height = `${_template.height}px`;
+    width = Math.round(_template.width * 0.264583);
+    height = Math.round(_template.height * 0.264583);
   }
-
 
   const density = printMode === 'a4_65' ? 'tight' : printMode === 'a4_40' ? 'compact' : 'roomy';
   const showCompany = density !== 'tight';
@@ -161,9 +167,9 @@ export function LabelRenderer({
       className="label"
       style={{
         position: 'relative',
-        width: width,
-        height: height,
-        border: '1px solid #ccc',
+        width: `${width}mm`,
+        height: `${height}mm`,
+        border: '1px dashed red', // Debug border mode
         background: '#fff',
         overflow: 'hidden',
         boxSizing: 'border-box',
@@ -172,10 +178,9 @@ export function LabelRenderer({
         breakInside: 'avoid',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '4px',
-        gap: '0px'
+        justifyContent: 'space-between',
+        padding: '2mm',
+        gap: '1mm'
       }}
     >
       {/* 1. TOP SECTION (GRID CONTROL) */}
@@ -198,14 +203,14 @@ export function LabelRenderer({
             <div
               style={{
                 width: '100%',
-                fontSize: '9px',
+                fontSize: '2.8mm',
                 fontWeight: 'bold',
                 color: '#555',
                 textAlign: 'center',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                marginBottom: '2px'
+                marginBottom: '0.6mm'
               }}
             >
               {data.brandName}
@@ -217,10 +222,10 @@ export function LabelRenderer({
             className="grid"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '1px',
+              gridTemplateColumns: (data as any).barcodeOrientation === 'vertical' ? '1fr' : 'repeat(3, 1fr)',
+              gap: '0.3mm',
               width: '100%',
-              fontSize: '9px',
+              fontSize: '3mm',
               lineHeight: '1.1'
             }}
           >
@@ -241,7 +246,7 @@ export function LabelRenderer({
                 WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
                 width: '100%',
-                fontSize: '9px',
+                fontSize: '3mm',
                 lineHeight: '1.1',
                 minWidth: 0,
                 // Do NOT set textAlign here — let rendered.style (user align) win
@@ -267,7 +272,7 @@ export function LabelRenderer({
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
-            margin: '1px 0',
+            margin: '0.3mm 0',
             flexShrink: 0
           }}
         >
@@ -300,12 +305,12 @@ export function LabelRenderer({
             className="barcode-wrapper"
             style={{
               background: '#fff',
-              padding: '2px',
-              width: '90%',
+              padding: '0.6mm',
+              width: '100%',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: 'space-between',
               boxSizing: 'border-box'
             }}
           >
@@ -316,16 +321,17 @@ export function LabelRenderer({
                 style={{
                   display: 'block',
                   width: '100%',
-                  maxWidth: '150px',
-                  height: '32px',
+                  maxWidth: '100%',
+                  height: '8mm',
+                  margin: '0 auto',
                   objectFit: 'contain'
                 }}
               />
             ) : (
               <div
                 style={{
-                  width: '150px',
-                  height: '40px',
+                  width: '100%',
+                  height: '8mm',
                   background: 'repeating-linear-gradient(90deg,#333 0,#333 2px,#fff 2px,#fff 5px)',
                   opacity: 0.4
                 }}
@@ -333,7 +339,7 @@ export function LabelRenderer({
             )}
             {/* Barcode text (rendered manually with toggle) */}
             {data.showBarcodeText && (
-              <div style={{ fontSize: '9px', color: '#555', marginTop: '2px', textAlign: 'center' }}>
+              <div style={{ fontSize: '2.5mm', color: '#555', marginTop: '0.3mm', textAlign: 'center' }}>
                 {barcodeValue || 'N/A'}
               </div>
             )}
