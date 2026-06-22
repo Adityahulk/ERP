@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
+import ThermalReceipt from '@/components/shared/ThermalReceipt';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeRole } from '@/lib/roles';
@@ -36,6 +37,7 @@ export default function InvoiceDetail() {
   const [params, setSearchParams] = useSearchParams();
   const { user } = useAuthStore();
   const { data: company } = useCompany();
+  const [showThermalModal, setShowThermalModal] = useState(false);
   const genEinv = useGenerateEinvoice();
   const cancelEinv = useCancelEinvoice();
   const genEwb = useGenerateEwayBill();
@@ -46,7 +48,6 @@ export default function InvoiceDetail() {
   const [waPickerOpen, setWaPickerOpen] = useState(false);
   const [waSending, setWaSending] = useState(false);
   const [sharePhone, setSharePhone] = useState('');
-  const [printLoading, setPrintLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
   const [invoiceCancelLoading, setInvoiceCancelLoading] = useState(false);
@@ -244,20 +245,67 @@ export default function InvoiceDetail() {
   const uploadsBase = getApiBaseURL().replace(/\/api$/, '');
   const attachmentUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase}${url || ''}`);
 
-  const printReceipt = async () => {
+  const handlePrintReceipt = async (id: string) => {
+    const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
+    let pdfUrl = '';
+    try {
+      const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
+      const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
+      pdfUrl = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
+
+      if (pdfUrl) {
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.style.visibility = 'hidden';
+        iframe.src = pdfUrl;
+
+        iframe.onload = () => {
+          iframe.focus();
+          try {
+            iframe.contentWindow?.print();
+          } catch (e) {
+            console.error("Direct printing failed, opening in new tab:", e);
+            window.open(pdfUrl, '_blank');
+          }
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            window.URL.revokeObjectURL(pdfUrl);
+          }, 60000);
+        };
+
+        document.body.appendChild(iframe);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Receipt/Invoice PDF could not be generated');
+    }
+  };
+
+  const openReceiptPdf = async () => {
     const w = localStorage.getItem('bizflow_printer_type');
     const width = w === 'thermal58' ? '58' : '80';
-    setPrintLoading(true);
-    const t = toast.loading('Opening receipt…');
+    const t = toast.loading('Preparing receipt PDF…');
     try {
       const res = await api.get(`/print/receipt/${id}`, { params: { width }, responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-      window.open(url, '_blank');
-      toast.success('Receipt opened in a new tab', { id: t });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      // Open in a new tab so the user can save, share, or print from the browser
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success('Receipt PDF ready', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Print failed', { id: t });
-    } finally {
-      setPrintLoading(false);
+      toast.error(e.response?.data?.error || 'Failed to open receipt', { id: t });
     }
   };
 
@@ -423,8 +471,17 @@ Thank you.
           <Button variant="default" size="sm" className="gap-1.5 bg-indigo-600 hover:bg-indigo-700" onClick={() => setPreviewOpen(true)}>
             <Eye className="h-4 w-4" /> Preview &amp; share
           </Button>
-          <Button variant="outline" size="sm" onClick={printReceipt} loading={printLoading}>
-            Print Receipt
+          <Button variant="outline" size="sm" onClick={() => setShowThermalModal(true)} className="gap-1.5">
+            <Printer className="h-4 w-4" /> Print Receipt
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={openReceiptPdf}
+            title="Open thermal receipt PDF in a new browser tab (save / share / print from there)"
+            className="gap-1 text-slate-500 hover:text-indigo-600 border border-slate-200 hover:border-indigo-300"
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> Direct PDF
           </Button>
           <Button variant="outline" size="sm" onClick={downloadInvoicePdf} loading={pdfLoading}>
             <Download className="h-4 w-4 mr-2" /> Download PDF
@@ -963,6 +1020,17 @@ Thank you.
         partyPhone={inv.party_phone}
         companyName={company?.name}
       />
+
+      {showThermalModal && inv && (
+        <ThermalReceipt
+          invoice={inv}
+          company={company || { name: 'My Company' }}
+          items={inv.items || []}
+          widthMm={localStorage.getItem('bizflow_printer_type') === 'thermal58' ? 58 : 80}
+          onClose={() => setShowThermalModal(false)}
+          onPrint={() => handlePrintReceipt(inv.id)}
+        />
+      )}
     </div>
   );
 }

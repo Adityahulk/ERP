@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { ArrowLeft, ScanLine, UserPlus, Paperclip } from 'lucide-react';
+import { ArrowLeft, ScanLine, UserPlus, Paperclip, Printer } from 'lucide-react';
 import {
   InvoicePreviewWorkspace,
   normalizeInvoiceThemeId,
   readSkipInvoicePreview,
 } from '@/components/invoices/InvoicePreviewWorkspace';
+import ThermalReceipt from '@/components/shared/ThermalReceipt';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
@@ -163,6 +164,7 @@ export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { id: routeParamId } = useParams();
   const location = useLocation();
+  const [completedInvoice, setCompletedInvoice] = useState<any>(null);
   const { pathname, search: locationSearch } = location;
   const editInvoiceId = pathname.endsWith('/edit') && routeParamId ? routeParamId : undefined;
   const duplicateInvoiceId = !editInvoiceId ? new URLSearchParams(locationSearch).get('duplicate_from') || undefined : undefined;
@@ -684,8 +686,52 @@ export default function InvoiceCreate() {
     return true;
   };
 
-  const handleSubmit = async () => {
+  const handlePrintReceipt = async (id: string) => {
+    const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
+    let pdfUrl = '';
+    try {
+      const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
+      const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
+      pdfUrl = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
+
+      if (pdfUrl) {
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.style.visibility = 'hidden';
+        iframe.src = pdfUrl;
+
+        iframe.onload = () => {
+          iframe.focus();
+          try {
+            iframe.contentWindow?.print();
+          } catch (e) {
+            console.error("Direct printing failed, opening in new tab:", e);
+            window.open(pdfUrl, '_blank');
+          }
+          setTimeout(() => {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            window.URL.revokeObjectURL(pdfUrl);
+          }, 60000);
+        };
+
+        document.body.appendChild(iframe);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Receipt/Invoice PDF could not be generated');
+    }
+  };
+
+  const handleSubmit = async (shouldPrintReceipt: boolean | unknown = false) => {
     if (!validate()) return;
+    const printRequested = shouldPrintReceipt === true;
     const normalizedInvoiceNumber = invoiceNumber.trim();
     const commonPayload = {
       invoice_type: isGstInvoice ? 'sale' : 'non_gst',
@@ -716,9 +762,38 @@ export default function InvoiceCreate() {
 
     if (editInvoiceId) {
       try {
-        await updateMutation.mutateAsync({ id: editInvoiceId, data: commonPayload });
+        const res = await updateMutation.mutateAsync({ id: editInvoiceId, data: commonPayload });
+        const inv = (res as any)?.data ?? res;
         toast.success('Invoice updated');
-        navigate(`/sales/${editInvoiceId}`);
+        if (printRequested) {
+          const itemsSnapshot = items.map((i) => ({
+            item_name: i.name,
+            name: i.name,
+            quantity: i.quantity,
+            unit_price: i.unit_price,
+            total_amount: i.unit_price * i.quantity,
+            total: i.unit_price * i.quantity,
+            gst_rate: i.gst_rate,
+            hsn_code: i.hsn_code,
+          }));
+          setCompletedInvoice({
+            ...inv,
+            id: editInvoiceId,
+            invoice_number: inv.invoice_number || normalizedInvoiceNumber,
+            invoice_date: invoiceDate,
+            subtotal: totals.taxable,
+            total_amount: totals.total,
+            paid_amount: amountPaid,
+            payment_mode: paymentRows[0]?.payment_mode || 'cash',
+            party_name_snapshot: effectivePartyName,
+            items: itemsSnapshot,
+            cgst_amount: cgstDisplay,
+            sgst_amount: sgstDisplay,
+            igst_amount: igstDisplay,
+          });
+        } else {
+          navigate(`/sales/${editInvoiceId}`);
+        }
       } catch (e: any) {
         toast.error(e.response?.data?.error || 'Failed to update invoice');
       }
@@ -751,9 +826,37 @@ export default function InvoiceCreate() {
       }
       toast.success(`Invoice created: ${inv?.invoice_number || ''}`);
       clearDraft();
-      const skipPreview = readSkipInvoicePreview();
-      if (newId) navigate(skipPreview ? `/sales/${newId}` : `/sales/${newId}?preview=1`);
-      else navigate('/sales');
+      if (printRequested) {
+        const itemsSnapshot = items.map((i) => ({
+          item_name: i.name,
+          name: i.name,
+          quantity: i.quantity,
+          unit_price: i.unit_price,
+          total_amount: i.unit_price * i.quantity,
+          total: i.unit_price * i.quantity,
+          gst_rate: i.gst_rate,
+          hsn_code: i.hsn_code,
+        }));
+        setCompletedInvoice({
+          ...inv,
+          id: newId,
+          invoice_number: inv.invoice_number || normalizedInvoiceNumber,
+          invoice_date: invoiceDate,
+          subtotal: totals.taxable,
+          total_amount: totals.total,
+          paid_amount: amountPaid,
+          payment_mode: paymentRows[0]?.payment_mode || 'cash',
+          party_name_snapshot: effectivePartyName,
+          items: itemsSnapshot,
+          cgst_amount: cgstDisplay,
+          sgst_amount: sgstDisplay,
+          igst_amount: igstDisplay,
+        });
+      } else {
+        const skipPreview = readSkipInvoicePreview();
+        if (newId) navigate(skipPreview ? `/sales/${newId}` : `/sales/${newId}?preview=1`);
+        else navigate('/sales');
+      }
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to create invoice');
     }
@@ -891,6 +994,18 @@ export default function InvoiceCreate() {
             canSave={canSave}
             saving={saving}
             saveLabel={editInvoiceId ? 'Save changes' : 'Create Invoice'}
+            extra={
+              <Button
+                type="button"
+                variant="outline"
+                className="border-indigo-600 text-indigo-600 hover:bg-indigo-50 gap-1.5"
+                disabled={!canSave || saving}
+                onClick={() => handleSubmit(true)}
+              >
+                <Printer className="h-4 w-4" />
+                {editInvoiceId ? 'Save & Print Receipt' : 'Create & Print Receipt'}
+              </Button>
+            }
           />
         </div>
       </div>
@@ -1218,6 +1333,18 @@ export default function InvoiceCreate() {
             canSave={canSave}
             saving={saving}
             saveLabel={editInvoiceId ? 'Save changes' : 'Create Invoice'}
+            extra={
+              <Button
+                type="button"
+                variant="outline"
+                className="border-indigo-600 text-indigo-600 hover:bg-indigo-50 gap-1.5"
+                disabled={!canSave || saving}
+                onClick={() => handleSubmit(true)}
+              >
+                <Printer className="h-4 w-4" />
+                {editInvoiceId ? 'Save & Print Receipt' : 'Create & Print Receipt'}
+              </Button>
+            }
           />
         </MobileActionBar>
       </TransactionGrid>
@@ -1239,6 +1366,23 @@ export default function InvoiceCreate() {
 
       <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName={quickAddDefaultName} onCreated={(row) => selectParty(row)} />
       <OcrBillSheet open={ocrOpen} onOpenChange={setOcrOpen} context="Customer Invoice / Purchase Order" onConfirm={handleOcrConfirm} />
+
+      {completedInvoice && (
+        <ThermalReceipt
+          invoice={completedInvoice}
+          company={company || { name: 'My Company' }}
+          items={completedInvoice.items}
+          widthMm={localStorage.getItem('bizflow_printer_type') === 'thermal58' ? 58 : 80}
+          onClose={() => {
+            const nextId = completedInvoice.id;
+            setCompletedInvoice(null);
+            const skipPreview = readSkipInvoicePreview();
+            if (nextId) navigate(skipPreview ? `/sales/${nextId}` : `/sales/${nextId}?preview=1`);
+            else navigate('/sales');
+          }}
+          onPrint={() => handlePrintReceipt(completedInvoice.id)}
+        />
+      )}
     </TransactionPageShell>
   );
 }

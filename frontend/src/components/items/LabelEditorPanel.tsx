@@ -467,14 +467,25 @@ export function LabelEditorPanel() {
               </button>
             </div>
           ) : (
-            <button
-              onClick={handleConnectQz}
-              disabled={qzLoading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 transition-colors disabled:opacity-60"
-            >
-              <Printer className="w-3 h-3" />
-              {qzLoading ? 'Connecting…' : 'Connect Printer'}
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                onClick={handleConnectQz}
+                disabled={qzLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 transition-colors disabled:opacity-60"
+              >
+                <Printer className="w-3 h-3" />
+                {qzLoading ? 'Connecting…' : 'Connect Printer'}
+              </button>
+              <a
+                href="https://qz.io/download/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-indigo-500 hover:text-indigo-700 underline underline-offset-2 leading-tight"
+                title="QZ Tray is a free local service needed for direct USB/network thermal &amp; barcode printing"
+              >
+                🖨 Download QZ Tray driver (required for direct print)
+              </a>
+            </div>
           )}
         </div>
       </div>
@@ -662,7 +673,30 @@ export function LabelEditorPanel() {
                 <select
                   className="w-full h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   value={config.printMode}
-                  onChange={(e) => setConfig((p) => ({ ...p, printMode: e.target.value as LabelConfig['printMode'] }))}
+                  onChange={(e) => {
+                    const mode = e.target.value as LabelConfig['printMode'];
+                    const isMini = mode === 'thermal_50x25';
+                    const wasMini = config.printMode === 'thermal_50x25';
+                    setConfig((p) => ({
+                      ...p,
+                      printMode: mode,
+                      // Auto-hide lines 2-6 when switching TO mini 50×25 (too small for multiple lines)
+                      // Restore them when switching AWAY from mini
+                      ...(isMini && !wasMini ? {
+                        line2: { ...p.line2, style: 'empty' as const },
+                        line3: { ...p.line3, style: 'empty' as const },
+                        line4: { ...p.line4, style: 'empty' as const },
+                        line5: { ...p.line5, style: 'empty' as const },
+                        line6: { ...p.line6, style: 'empty' as const },
+                      } : !isMini && wasMini ? {
+                        line2: { ...p.line2, style: 'normal' as const },
+                        line3: { ...p.line3, style: 'normal' as const },
+                        line4: { ...p.line4, style: 'normal' as const },
+                        line5: { ...p.line5, style: 'normal' as const },
+                        line6: { ...p.line6, style: 'normal' as const },
+                      } : {}),
+                    }));
+                  }}
                 >
                   {(Object.keys(PRINT_MODE_LABELS) as Array<LabelConfig['printMode']>).map((k) => (
                     <option key={k} value={k}>{PRINT_MODE_LABELS[k]}</option>

@@ -137,7 +137,8 @@ const PRINTER_PROFILES = {
   THERMAL_80: { width: 80, height: 50 },
   LABEL_100x50: { width: 100, height: 50 },
   LABEL_116x40: { width: 116, height: 40 },
-  LABEL_100x100: { width: 100, height: 100 }
+  LABEL_100x100: { width: 100, height: 100 },
+  LABEL_50x25: { width: 50, height: 25 },
 };
 
 function getPriceFontSize(priceText: string): string {
@@ -354,7 +355,7 @@ function renderDynamicTemplateCard(
 
 const generateHtml = (
   items: Array<LabelItem>,
-  type: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | 'a4',
+  type: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | '50x25' | 'a4',
   labelsPerPage?: number,
   mode: 'general_printer' | 'label_printer' = 'general_printer',
   templateObj?: any,
@@ -401,6 +402,10 @@ const generateHtml = (
   } else if (type === '100x50') {
     body = items.map(i =>
       `<div class="roll-page single-100">${renderCard(i, '100%', '100%', 'roomy')}</div>`
+    ).join('');
+  } else if (type === '50x25') {
+    body = items.map(i =>
+      `<div class="roll-page single-50x25">${renderCard(i, '100%', '100%', 'compact')}</div>`
     ).join('');
   } else if (type === '116x40') {
     const pages: string[] = [];
@@ -567,6 +572,7 @@ const generateHtml = (
   .single-58 { width: 58mm; height: 40mm; display: flex; align-items: center; justify-content: center; }
   .single-80 { width: 80mm; height: 50mm; display: flex; align-items: center; justify-content: center; }
   .single-100 { width: 100mm; height: 50mm; display: flex; align-items: center; justify-content: center; }
+  .single-50x25 { width: 50mm; height: 25mm; display: flex; align-items: center; justify-content: center; }
   .double-116 { width: 116mm; height: 40mm; }
   .double-100 { width: 100mm; height: 100mm; }
 
@@ -611,7 +617,7 @@ function formatRupees(value: string | number): string {
 }
 
 export async function generateLabelsPDF(
-  template: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | 'a4',
+  template: '58x40' | '80x50' | '100x50' | '116x40' | '100x100' | '50x25' | 'a4',
   itemsData: any[],
   opts?: { mode?: 'general_printer' | 'label_printer'; labelsPerPage?: number; templateId?: string; orientation?: 'horizontal' | 'vertical' },
 ) {
@@ -647,6 +653,9 @@ export async function generateLabelsPDF(
   } else if (template === '100x100') {
     width = `${PRINTER_PROFILES.LABEL_100x100.width}mm`;
     height = `${PRINTER_PROFILES.LABEL_100x100.height}mm`;
+  } else if (template === '50x25') {
+    width = `${PRINTER_PROFILES.LABEL_50x25.width}mm`;
+    height = `${PRINTER_PROFILES.LABEL_50x25.height}mm`;
   }
 
   const browser = await puppeteer.launch({

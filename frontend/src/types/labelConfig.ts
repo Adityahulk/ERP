@@ -34,7 +34,7 @@ export interface LabelConfig {
   copies: number;
   /** Target label format / size.
    *  2 single-label formats + 2 double-label formats + 3 A4 formats */
-  printMode: 'a4_24' | 'a4_40' | 'a4_65' | 'thermal_100' | 'thermal_58_double';
+  printMode: 'a4_24' | 'a4_40' | 'a4_65' | 'thermal_100' | 'thermal_58_double' | 'thermal_50x25';
   barcodeOrientation: 'horizontal' | 'vertical';
 }
 
@@ -88,7 +88,7 @@ export function defaultLabelConfig(companyName = ''): LabelConfig {
 
 /** Maps printMode to the API size/mode/labels_per_page values. */
 export function printModeToApiParams(mode: LabelConfig['printMode']): {
-  size: '100x50' | '116x40' | 'a4';
+  size: '100x50' | '116x40' | '50x25' | 'a4';
   apiMode: 'general_printer' | 'label_printer';
   labelsPerPage: number | undefined;
 } {
@@ -98,6 +98,7 @@ export function printModeToApiParams(mode: LabelConfig['printMode']): {
     case 'a4_65': return { size: 'a4', apiMode: 'general_printer', labelsPerPage: 65 };
     case 'thermal_100': return { size: '100x50', apiMode: 'label_printer', labelsPerPage: 1 };
     case 'thermal_58_double': return { size: '116x40', apiMode: 'label_printer', labelsPerPage: 2 };
+    case 'thermal_50x25': return { size: '50x25', apiMode: 'label_printer', labelsPerPage: 1 };
   }
 }
 
@@ -108,4 +109,5 @@ export const PRINT_MODE_LABELS: Record<LabelConfig['printMode'], string> = {
   a4_65: 'A4 — 65 labels',
   thermal_100: 'Thermal — Single (100×50 mm)',
   thermal_58_double: 'Thermal — 2-up (58×40 mm × 2)',
+  thermal_50x25: 'Thermal — Mini (50×25 mm)',
 };

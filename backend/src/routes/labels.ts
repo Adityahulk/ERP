@@ -6,7 +6,7 @@ import { generateLabelsPDF } from '../services/labelService';
 const router = Router();
 router.use(verifyToken);
 
-const VALID_TEMPLATES = new Set(['58x40', '80x50', '100x50', '116x40', '100x100', 'a4']);
+const VALID_TEMPLATES = new Set(['58x40', '80x50', '100x50', '116x40', '100x100', '50x25', 'a4']);
 
 router.post('/bulk', async (req: Request, res: Response) => {
    try {
