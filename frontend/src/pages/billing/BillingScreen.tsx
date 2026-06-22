@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, CSSProperties } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import api, { getApiBaseURL } from '@/lib/api';
 import toast from 'react-hot-toast';
 import { BarcodeScanner } from '@/components/shared/BarcodeScanner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus, X, Check } from 'lucide-react';
+import { Search, Loader2, Camera, Smartphone, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus, X, Check } from 'lucide-react';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import { formatMoney } from '@/lib/formatters';
@@ -56,6 +56,27 @@ export default function BillingScreen() {
   });
 
   const [isEditingCustomer, setIsEditingCustomer] = useState(false);
+  const [mobileSessionId] = useState(() => 'pos-sess-' + Math.random().toString(36).substring(2, 15));
+  const [isMobileConnected, setIsMobileConnected] = useState(false);
+  const [showMobileConnectModal, setShowMobileConnectModal] = useState(false);
+  const [serverIps, setServerIps] = useState<string[]>([]);
+  const [selectedIp, setSelectedIp] = useState<string>('');
+  
+  const getQrUrl = () => {
+    const hostname = window.location.hostname;
+    // If not localhost or local IP, use origin as-is (e.g. cloud / dns production environment)
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
+    if (!isLocal) {
+      return `${window.location.origin}/pos-scan?session=${mobileSessionId}`;
+    }
+    
+    // Otherwise construct local IP url
+    const ip = selectedIp || hostname;
+    const portStr = window.location.port ? `:${window.location.port}` : '';
+    const protocol = window.location.protocol;
+    return `${protocol}//${ip}${portStr}/pos-scan?session=${mobileSessionId}`;
+  };
+
   const [editCustomerInfo, setEditCustomerInfo] = useState<{ id?: string; name: string; phone?: string }>({ name: '' });
   const [partySearchQuery, setPartySearchQuery] = useState('');
   const [partySearchResults, setPartySearchResults] = useState<any[]>([]);
@@ -277,6 +298,135 @@ export default function BillingScreen() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [billItems, customerInfo, paymentMode, discountTotal, amountTendered, lastCreatedInvoiceId, showQrModal, completedInvoice]);
 
+  // Ref to always access the latest addItem function in event listeners
+  const addItemRef = useRef<any>(null);
+  useEffect(() => {
+    addItemRef.current = addItem;
+  }, [addItem]);
+
+  // USB Barcode Scanner global keyboard intercept
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleGlobalKeyDown = async (e: KeyboardEvent) => {
+      // Ignore modifier keys
+      if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta') {
+        return;
+      }
+
+      const currentTime = Date.now();
+      const timeDiff = currentTime - lastKeyTime;
+      lastKeyTime = currentTime;
+
+      // Handle Enter (end of barcode scan)
+      if (e.key === 'Enter') {
+        if (buffer.length >= 3 && timeDiff < 40) {
+          e.preventDefault();
+          e.stopPropagation();
+          const code = buffer.trim();
+          buffer = '';
+
+          try {
+            const res = await api.get(`/items/barcode/${encodeURIComponent(code)}`);
+            const item = res.data?.data || res.data;
+            if (item) {
+              addItemRef.current(item);
+              toast.success(`Scanned: ${item.name}`);
+              
+              // Clear search input if focused
+              setSearchQuery('');
+              
+              // Clean up active input field if the barcode was typed in it
+              const activeEl = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+              if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+                const val = activeEl.value;
+                if (val.endsWith(code)) {
+                  activeEl.value = val.slice(0, -code.length);
+                  const event = new Event('input', { bubbles: true });
+                  activeEl.dispatchEvent(event);
+                }
+              }
+            }
+          } catch (err: any) {
+            toast.error(err.response?.data?.error || `Barcode not found: ${code}`);
+          }
+        }
+        buffer = '';
+        return;
+      }
+
+      // If time delta is too high, it's manual human typing
+      if (timeDiff > 40) {
+        buffer = '';
+      }
+
+      if (e.key.length === 1) {
+        buffer += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, []);
+
+  // SSE Mobile Scanner Connection Listener
+  useEffect(() => {
+    const apiBase = getApiBaseURL();
+    const absoluteApiBase = apiBase.startsWith('http') ? apiBase : `${window.location.origin}${apiBase}`;
+    const registerUrl = `${absoluteApiBase}/pos-scanner/register/${mobileSessionId}`;
+    
+    const eventSource = new EventSource(registerUrl);
+    
+    eventSource.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === 'connected') {
+          setIsMobileConnected(true);
+        } else if (data.barcode) {
+          const code = data.barcode;
+          try {
+            const res = await api.get(`/items/barcode/${encodeURIComponent(code)}`);
+            const item = res.data?.data || res.data;
+            if (item) {
+              addItemRef.current(item);
+              toast.success(`Mobile Scanned: ${item.name}`);
+            }
+          } catch (err: any) {
+            toast.error(err.response?.data?.error || `Mobile barcode not found: ${code}`);
+          }
+        }
+      } catch (err) {
+        console.error('Error processing mobile scan event:', err);
+      }
+    };
+    
+    eventSource.onerror = () => {
+      setIsMobileConnected(false);
+    };
+    
+    return () => {
+      eventSource.close();
+    };
+  }, [mobileSessionId]);
+
+  // Fetch local IPs when the mobile connect modal is opened
+  useEffect(() => {
+    if (showMobileConnectModal) {
+      api.get('/pos-scanner/ips')
+        .then(res => {
+          const ips = res.data?.data || res.data || [];
+          setServerIps(ips);
+          if (ips.length > 0 && !selectedIp) {
+            setSelectedIp(ips[0]);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to get server IPs:', err);
+        });
+    }
+  }, [showMobileConnectModal, selectedIp]);
+
   // Handle hardware barcode scan / lookup via GET /api/items/barcode/:code
   const handleSearchKeyPress = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
@@ -313,7 +463,7 @@ export default function BillingScreen() {
     }
   };
 
-  const addItem = (item: any) => {
+  function addItem(item: any) {
     setBillItems(prev => {
       const existing = prev.find(i => i.item_id === item.id);
       if (existing) {
@@ -505,6 +655,21 @@ export default function BillingScreen() {
             </Button>
             <Button size="lg" variant="secondary" className="h-12 w-12 px-0 shrink-0" onClick={() => setScannerOpen(true)}>
               <Camera className="h-5 w-5" />
+            </Button>
+            <Button 
+              size="lg" 
+              variant="secondary" 
+              className={`h-12 w-12 px-0 shrink-0 relative ${isMobileConnected ? 'border-2 border-emerald-500 bg-emerald-50/10' : ''}`}
+              onClick={() => setShowMobileConnectModal(true)}
+              title="Connect Phone as Wireless Barcode Scanner"
+            >
+              <Smartphone className={`h-5.5 w-5.5 ${isMobileConnected ? 'text-emerald-500' : 'text-muted-foreground'}`} />
+              {isMobileConnected && (
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+              )}
             </Button>
           </div>
 
@@ -905,6 +1070,73 @@ export default function BillingScreen() {
           onClose={() => setCompletedInvoice(null)}
           onPrint={() => handlePrintReceipt(completedInvoice.id)}
         />
+      )}
+
+      {/* Wireless Mobile Scanner Modal */}
+      {showMobileConnectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-sm bg-popover text-popover-foreground border shadow-2xl rounded-2xl p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="font-extrabold text-base flex items-center gap-2 text-foreground">
+                <Smartphone className="h-5 w-5 text-primary" /> Wireless Phone Scanner
+              </h3>
+              <Button variant="ghost" size="icon" onClick={() => setShowMobileConnectModal(false)} className="rounded-full h-8 w-8 p-0">
+                <X className="h-4.5 w-4.5" />
+              </Button>
+            </div>
+
+            {/* Connection Status Banner */}
+            <div className={`p-2.5 rounded-xl border flex items-center justify-between ${
+              isMobileConnected 
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold' 
+                : 'bg-muted/50 border-muted text-muted-foreground font-medium'
+            }`}>
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`h-2.5 w-2.5 rounded-full ${isMobileConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                {isMobileConnected ? 'Phone Connected & Active' : 'Waiting for phone...'}
+              </div>
+              <span className="text-[9px] font-bold uppercase tracking-wider">SSE Sync</span>
+            </div>
+
+            <div className="text-center py-1">
+              <div className="inline-block border p-3 rounded-2xl bg-white shadow-md mb-2">
+                <QRCodeSVG value={getQrUrl()} size={170} />
+              </div>
+              <p className="text-[11px] text-muted-foreground max-w-xs mx-auto leading-normal">
+                Scan this QR code with your phone camera to open the wireless mobile scanner.
+              </p>
+            </div>
+
+            {/* IP configuration selector if multiple IPs exist */}
+            {serverIps.length > 1 && (
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-muted-foreground uppercase">Local IP Interface</label>
+                <select
+                  value={selectedIp}
+                  onChange={(e) => setSelectedIp(e.target.value)}
+                  className="w-full text-xs font-semibold h-9 rounded-lg border bg-background px-3 outline-none"
+                >
+                  {serverIps.map(ip => (
+                    <option key={ip} value={ip}>{ip}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Instruction Warning for Local Dev */}
+            <div className="text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 rounded-xl p-3 leading-relaxed">
+              <b>Wi-Fi Connection Tips:</b>
+              <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                <li>Your phone and PC must be on the same Wi-Fi.</li>
+                <li>Camera permission requires a secure origin. On plain HTTP IP, search "Chrome flags unsafely-treat-insecure-origin-as-secure" to allow camera.</li>
+              </ul>
+            </div>
+
+            <Button onClick={() => setShowMobileConnectModal(false)} className="w-full h-10 font-bold bg-primary text-primary-foreground text-xs">
+              Close Settings
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

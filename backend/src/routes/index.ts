@@ -39,6 +39,7 @@ import printSettingsRoutes from './printSettings';
 
 import { verifyToken } from '../middleware/auth';
 import barcodeRoutes from './barcode';
+import posScannerRoutes from './posScanner';
 import { moduleGuard } from '../middleware/moduleGuard';
 import { getDashboard } from '../controllers/reportController';
 
@@ -74,6 +75,7 @@ router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
 router.use('/barcode', barcodeRoutes);
+router.use('/pos-scanner', posScannerRoutes);
 
 // Dashboard is always accessible — no module guard (it's the home screen)
 router.get('/reports/dashboard', verifyToken, getDashboard);

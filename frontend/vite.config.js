@@ -9,6 +9,7 @@ export default defineConfig({
         },
     },
     server: {
+        host: true,
         port: 3000,
         // Vite runs hostCheck *before* the proxy. Non-localhost Host (tunnels, *.local,
         // host.docker.internal, preview URLs) gets 403 and the API is never reached.

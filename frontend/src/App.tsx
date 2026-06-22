@@ -30,6 +30,7 @@ import ProfilePage from '@/pages/hr/ProfilePage';
 import Dashboard from '@/pages/dashboard/Dashboard';
 import Onboarding from '@/pages/onboarding/Onboarding';
 import BillingScreen from '@/pages/billing/BillingScreen';
+import MobileScannerScreen from '@/pages/billing/MobileScannerScreen';
 import ReportsHome from '@/pages/reports/ReportsHome';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import CashBankPage from '@/pages/accounting/CashBankPage';
@@ -328,6 +329,8 @@ export default function App() {
         path="/register/licenses/:id"
         element={<RegistrantRoute><LicenseDetailPage /></RegistrantRoute>}
       />
+
+      <Route path="/pos-scan" element={<MobileScannerScreen />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
