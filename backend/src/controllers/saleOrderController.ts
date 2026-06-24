@@ -30,7 +30,9 @@ export async function listSaleOrders(req: Request, res: Response) {
     const where = conditions.join(' AND ');
     const [rows, countRes] = await Promise.all([
       query(
-        `SELECT o.*, p.name AS party_name, p.phone AS party_phone
+        `SELECT o.*, p.name AS party_name, p.phone AS party_phone,
+                COALESCE((SELECT COUNT(*) FROM sale_order_items soi WHERE soi.order_id = o.id), 0) AS item_count,
+                COALESCE((SELECT SUM(soi.quantity_ordered) FROM sale_order_items soi WHERE soi.order_id = o.id), 0) AS total_quantity
          FROM sale_orders o LEFT JOIN parties p ON p.id = o.party_id
          WHERE ${where} ORDER BY o.so_date DESC, o.created_at DESC
          LIMIT $${idx} OFFSET $${idx + 1}`,

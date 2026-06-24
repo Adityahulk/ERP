@@ -9,6 +9,8 @@ import {
   postPaymentAccounting,
   postPurchaseInvoiceAccounting,
   postSalesInvoiceAccounting,
+  postLoanAccounting,
+  postBankTransferAccounting,
   type Queryable,
 } from '../services/accountingService';
 
@@ -167,6 +169,7 @@ export async function createJournalEntry(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body;
+    const requestedStatus = d.status === 'draft' ? 'draft' : 'posted';
     const result = await withTransaction(async (client) => postJournalEntry(client, {
       companyId,
       entryDate: d.entry_date || new Date().toISOString().split('T')[0],
@@ -176,6 +179,7 @@ export async function createJournalEntry(req: Request, res: Response) {
       voucherType: d.voucher_type || 'journal',
       voucherNumber: d.voucher_number || d.entry_number || null,
       createdBy: req.user!.id,
+      status: requestedStatus,
       lines: (Array.isArray(d.lines) ? d.lines : []).map((line: any) => ({
         accountId: line.account_id,
         debit: line.debit || 0,
@@ -190,6 +194,55 @@ export async function createJournalEntry(req: Request, res: Response) {
 
     res.status(201).json(success(result));
   } catch (err: any) { res.status(/debits|empty|account/i.test(err.message) ? 400 : 500).json(error(err.message)); }
+}
+
+// ── POST /api/accounting/journal-entries/:id/submit ───────────────
+// Moves a draft manual entry into the approval queue.
+export async function submitJournalEntryForApproval(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `UPDATE journal_entries SET status = 'pending_approval', submitted_by = $1, submitted_at = now()
+       WHERE id = $2 AND company_id = $3 AND is_deleted = false AND status = 'draft' AND entry_type = 'manual'
+       RETURNING *`,
+      [req.user!.id, req.params.id, companyId],
+    );
+    if (!result.rows.length) return res.status(400).json(error('Only draft manual entries can be submitted for approval'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── POST /api/accounting/journal-entries/:id/approve ───────────────
+export async function approveJournalEntry(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `UPDATE journal_entries SET status = 'posted', approved_by = $1, approved_at = now()
+       WHERE id = $2 AND company_id = $3 AND is_deleted = false AND status = 'pending_approval'
+       RETURNING *`,
+      [req.user!.id, req.params.id, companyId],
+    );
+    if (!result.rows.length) return res.status(400).json(error('Only entries pending approval can be approved'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── POST /api/accounting/journal-entries/:id/reject ────────────────
+export async function rejectJournalEntry(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json(error('A rejection reason is required'));
+    const result = await query(
+      `UPDATE journal_entries SET status = 'draft', rejected_by = $1, rejected_at = now(), rejection_reason = $2,
+              submitted_by = NULL, submitted_at = NULL
+       WHERE id = $3 AND company_id = $4 AND is_deleted = false AND status = 'pending_approval'
+       RETURNING *`,
+      [req.user!.id, reason, req.params.id, companyId],
+    );
+    if (!result.rows.length) return res.status(400).json(error('Only entries pending approval can be rejected'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
 }
 
 export async function listJournalEntries(req: Request, res: Response) {
@@ -550,15 +603,54 @@ export async function getBalanceSheet(req: Request, res: Response) {
 
 export async function getCashFlow(req: Request, res: Response) {
   try {
+    const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
-    res.json(
-      success({
-        implemented: false,
-        period: { from, to },
-        message:
-          'Cash flow is not computed from journals in this build. Review bank/cash ledgers (asset accounts) and the trial balance for liquidity.',
-      }),
+
+    // Direct-method cash flow: real cash/bank movements in the period,
+    // grouped by the activity they relate to via reference_type on the
+    // underlying invoice/payment, not a derived/estimated figure.
+    const movements = await query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN p.payment_type IN ('incoming','receipt','payment_in') THEN p.amount ELSE 0 END), 0)::bigint AS from_customers,
+         COALESCE(SUM(CASE WHEN p.payment_type IN ('outgoing','payment_out') THEN p.amount ELSE 0 END), 0)::bigint AS to_suppliers_and_expenses,
+         COALESCE(SUM(CASE WHEN p.payment_type = 'bank_deposit' THEN p.amount ELSE 0 END), 0)::bigint AS cash_deposited,
+         COALESCE(SUM(CASE WHEN p.payment_type = 'bank_withdrawal' THEN p.amount ELSE 0 END), 0)::bigint AS cash_withdrawn
+       FROM payments p
+       WHERE p.company_id = $1 AND p.is_deleted = false AND COALESCE(p.status, 'posted') != 'cancelled'
+         AND p.payment_date >= $2 AND p.payment_date <= $3`,
+      [companyId, from, to],
     );
+
+    const loanMovements = await query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN transaction_type = 'disbursement' THEN amount ELSE 0 END), 0)::bigint AS loan_received,
+         COALESCE(SUM(CASE WHEN transaction_type IN ('repayment', 'interest') THEN amount ELSE 0 END), 0)::bigint AS loan_repaid
+       FROM loan_transactions WHERE company_id = $1 AND transaction_date >= $2 AND transaction_date <= $3`,
+      [companyId, from, to],
+    );
+
+    // Opening balance: every cash/bank-affecting payment strictly before "from".
+    const opening = await query(
+      `SELECT COALESCE(SUM(${signedPaymentSql('p')}), 0)::bigint AS bank, COALESCE(SUM(${signedCashSql('p')}), 0)::bigint AS cash
+       FROM payments p WHERE p.company_id = $1 AND p.is_deleted = false AND COALESCE(p.status,'posted') != 'cancelled' AND p.payment_date < $2`,
+      [companyId, from],
+    );
+
+    const m = movements.rows[0];
+    const lm = loanMovements.rows[0];
+    const operatingNet = Number(m.from_customers) - Number(m.to_suppliers_and_expenses);
+    const financingNet = Number(lm.loan_received) - Number(lm.loan_repaid);
+    const netChange = operatingNet + financingNet;
+    const openingTotal = Number(opening.rows[0].bank) + Number(opening.rows[0].cash);
+
+    res.json(success({
+      period: { from, to },
+      opening_balance_paise: openingTotal,
+      operating_activities: { from_customers_paise: Number(m.from_customers), to_suppliers_and_expenses_paise: -Number(m.to_suppliers_and_expenses), net_paise: operatingNet },
+      financing_activities: { loan_received_paise: Number(lm.loan_received), loan_repaid_paise: -Number(lm.loan_repaid), net_paise: financingNet },
+      net_change_paise: netChange,
+      closing_balance_paise: openingTotal + netChange,
+    }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }
@@ -787,8 +879,9 @@ export async function createLoanAccount(req: Request, res: Response) {
       const loan = await client.query(
         `INSERT INTO loan_accounts (
            company_id, account_name, lender_name, principal_amount, current_balance,
-           interest_rate, notes, created_by
-         ) VALUES ($1,$2,$3,$4,$4,$5,$6,$7)
+           interest_rate, notes, created_by, loan_type, emi_amount, term_months,
+           processing_fee, received_in, company_bank_account_id
+         ) VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING *`,
         [
           companyId,
@@ -798,14 +891,21 @@ export async function createLoanAccount(req: Request, res: Response) {
           Number(d.interest_rate) || 0,
           String(d.notes || '').trim() || null,
           req.user!.id,
+          String(d.loan_type || '').trim() || null,
+          d.emi_amount != null ? Math.round(Number(d.emi_amount) || 0) : null,
+          d.term_months != null ? Math.round(Number(d.term_months) || 0) : null,
+          Math.round(Number(d.processing_fee) || 0),
+          String(d.received_in || 'bank').trim(),
+          d.company_bank_account_id || null,
         ],
       );
       if (principal > 0) {
-        await client.query(
+        const tx = await client.query(
           `INSERT INTO loan_transactions (
              company_id, loan_account_id, transaction_type, amount,
-             transaction_date, reference_number, notes, created_by
-           ) VALUES ($1,$2,'disbursement',$3,$4,$5,$6,$7)`,
+             transaction_date, reference_number, notes, created_by, company_bank_account_id
+           ) VALUES ($1,$2,'disbursement',$3,$4,$5,$6,$7,$8)
+           RETURNING *`,
           [
             companyId,
             loan.rows[0].id,
@@ -814,8 +914,10 @@ export async function createLoanAccount(req: Request, res: Response) {
             String(d.reference_number || '').trim() || null,
             'Opening loan balance',
             req.user!.id,
+            d.company_bank_account_id || null,
           ],
         );
+        await postLoanAccounting(client, companyId, loan.rows[0], tx.rows[0], req.user!.id);
       }
       return loan.rows[0];
     });
@@ -850,8 +952,8 @@ export async function recordLoanTransaction(req: Request, res: Response) {
       const tx = await client.query(
         `INSERT INTO loan_transactions (
            company_id, loan_account_id, transaction_type, amount,
-           transaction_date, reference_number, notes, created_by
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           transaction_date, reference_number, notes, created_by, company_bank_account_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING *`,
         [
           companyId,
@@ -862,6 +964,7 @@ export async function recordLoanTransaction(req: Request, res: Response) {
           String(d.reference_number || '').trim() || null,
           String(d.notes || '').trim() || null,
           req.user!.id,
+          d.company_bank_account_id || loan.rows[0].company_bank_account_id || null,
         ],
       );
       await client.query(
@@ -870,6 +973,7 @@ export async function recordLoanTransaction(req: Request, res: Response) {
          WHERE id = $3 AND company_id = $4`,
         [nextBalance, nextBalance > 0, id, companyId],
       );
+      await postLoanAccounting(client, companyId, loan.rows[0], tx.rows[0], req.user!.id);
       return tx.rows[0];
     });
     res.status(201).json(success(result));
@@ -940,4 +1044,404 @@ export async function rebuildLedger(req: Request, res: Response) {
   } catch (err: any) {
     res.status(500).json(error(err.message || 'Failed to rebuild accounting ledger'));
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CHEQUE LIFECYCLE — operates on payments rows with payment_mode='cheque'.
+// clearance_status: pending -> deposited -> cleared | bounced | cancelled
+// ═══════════════════════════════════════════════════════════════
+
+export async function listCheques(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { status } = req.query;
+    const where: string[] = [`p.company_id = $1`, `p.is_deleted = false`, `p.payment_mode = 'cheque'`];
+    const params: any[] = [companyId];
+    if (status) { where.push(`p.clearance_status = $${params.length + 1}`); params.push(status); }
+    const rows = await query(
+      `SELECT p.*, pt.name AS party_name, ba.account_label, ba.bank_name
+       FROM payments p
+       LEFT JOIN parties pt ON pt.id = p.party_id
+       LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY COALESCE(p.instrument_date, p.payment_date) DESC`,
+      params,
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+async function transitionCheque(req: Request, res: Response, from: string[], to: string, extraSql: string, extraParams: any[]) {
+  try {
+    const companyId = req.user!.company_id;
+    const { id } = req.params;
+    const result = await query(
+      `UPDATE payments SET clearance_status = $1, ${extraSql} updated_at = now()
+       WHERE id = $2 AND company_id = $3 AND payment_mode = 'cheque' AND clearance_status = ANY($4::text[])
+       RETURNING *`,
+      [to, id, companyId, from, ...extraParams],
+    );
+    if (!result.rows.length) return res.status(400).json(error(`Cheque not found or not in a state that can move to "${to}"`));
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function depositCheque(req: Request, res: Response) {
+  const depositDate = req.body?.deposit_date || new Date().toISOString().split('T')[0];
+  return transitionCheque(req, res, ['pending'], 'deposited', `cheque_deposit_date = $5,`, [depositDate]);
+}
+
+export async function clearCheque(req: Request, res: Response) {
+  const clearanceDate = req.body?.clearance_date || new Date().toISOString().split('T')[0];
+  return transitionCheque(req, res, ['deposited'], 'cleared', `cheque_clearance_date = $5,`, [clearanceDate]);
+}
+
+export async function bounceCheque(req: Request, res: Response) {
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json(error('A bounce reason is required'));
+  return transitionCheque(req, res, ['deposited'], 'bounced', `cheque_bounce_reason = $5,`, [reason]);
+}
+
+export async function cancelCheque(req: Request, res: Response) {
+  return transitionCheque(req, res, ['pending', 'deposited'], 'cancelled', ``, []);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BANK TRANSFERS
+// ═══════════════════════════════════════════════════════════════
+
+export async function listBankTransfers(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT t.*, fa.account_label AS from_account_label, fa.bank_name AS from_bank_name,
+              ta.account_label AS to_account_label, ta.bank_name AS to_bank_name
+       FROM bank_transfers t
+       LEFT JOIN company_bank_accounts fa ON fa.id = t.from_account_id
+       LEFT JOIN company_bank_accounts ta ON ta.id = t.to_account_id
+       WHERE t.company_id = $1 AND t.is_deleted = false
+       ORDER BY t.transfer_date DESC, t.created_at DESC LIMIT 100`,
+      [companyId],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function createBankTransfer(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    const amount = Math.round(Number(d.amount) || 0);
+    if (amount <= 0) return res.status(400).json(error('Enter a valid amount'));
+    if (!d.from_account_id && !d.to_account_id) return res.status(400).json(error('At least one side of the transfer must be a bank account (leave the other blank for cash)'));
+    if (d.from_account_id && d.to_account_id && d.from_account_id === d.to_account_id) {
+      return res.status(400).json(error('From and To accounts must be different'));
+    }
+
+    const result = await withTransaction(async (client) => {
+      const transferDate = d.transfer_date || new Date().toISOString().split('T')[0];
+      const ref = d.reference_number || `TRF-${Date.now()}`;
+
+      let fromPaymentId = null;
+      if (d.from_account_id) {
+        const p = await client.query(
+          `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, amount, payment_mode, reference_number, company_bank_account_id, notes, created_by)
+           VALUES ($1,'outgoing',$2,$3,$4,'bank_transfer',$5,$6,$7,$8) RETURNING id`,
+          [companyId, `${ref}-OUT`, transferDate, amount, ref, d.from_account_id, d.notes || 'Fund transfer out', req.user!.id],
+        );
+        fromPaymentId = p.rows[0].id;
+      }
+      let toPaymentId = null;
+      if (d.to_account_id) {
+        const p = await client.query(
+          `INSERT INTO payments (company_id, payment_type, payment_number, payment_date, amount, payment_mode, reference_number, company_bank_account_id, notes, created_by)
+           VALUES ($1,'incoming',$2,$3,$4,'bank_transfer',$5,$6,$7,$8) RETURNING id`,
+          [companyId, `${ref}-IN`, transferDate, amount, ref, d.to_account_id, d.notes || 'Fund transfer in', req.user!.id],
+        );
+        toPaymentId = p.rows[0].id;
+      }
+      // Cash<->bank legs reuse the existing bank_deposit/bank_withdrawal
+      // payment_type so they keep feeding signedCashSql correctly too.
+      if (!d.from_account_id && d.to_account_id) {
+        await client.query(`UPDATE payments SET payment_type = 'bank_deposit' WHERE id = $1`, [toPaymentId]);
+      }
+      if (d.from_account_id && !d.to_account_id) {
+        await client.query(`UPDATE payments SET payment_type = 'bank_withdrawal' WHERE id = $1`, [fromPaymentId]);
+      }
+
+      const transfer = await client.query(
+        `INSERT INTO bank_transfers (company_id, from_account_id, to_account_id, amount, transfer_date, reference_number, notes, from_payment_id, to_payment_id, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [companyId, d.from_account_id || null, d.to_account_id || null, amount, transferDate, ref, d.notes || null, fromPaymentId, toPaymentId, req.user!.id],
+      );
+
+      await postBankTransferAccounting(client, companyId, transfer.rows[0], req.user!.id);
+      return transfer.rows[0];
+    });
+
+    res.status(201).json(success(result));
+  } catch (err: any) { res.status(400).json(error(err.message)); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BANK RECONCILIATION
+// ═══════════════════════════════════════════════════════════════
+
+export async function listReconciliations(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT r.*, ba.account_label, ba.bank_name,
+              (SELECT COUNT(*) FROM bank_reconciliation_lines l WHERE l.reconciliation_id = r.id) AS total_lines,
+              (SELECT COUNT(*) FROM bank_reconciliation_lines l WHERE l.reconciliation_id = r.id AND l.status = 'matched') AS matched_lines
+       FROM bank_reconciliations r
+       JOIN company_bank_accounts ba ON ba.id = r.company_bank_account_id
+       WHERE r.company_id = $1 ORDER BY r.created_at DESC`,
+      [companyId],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// Creates a reconciliation session and loads statement lines parsed
+// client-side from the uploaded CSV/Excel (date, description, amount).
+// No fake data: a reconciliation with zero lines uploaded just sits
+// "in_progress" with nothing to match, same as Vyapar/Tally behave.
+export async function createReconciliation(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    if (!d.company_bank_account_id) return res.status(400).json(error('Select a bank account'));
+    const lines = Array.isArray(d.lines) ? d.lines : [];
+
+    const result = await withTransaction(async (client) => {
+      const recon = await client.query(
+        `INSERT INTO bank_reconciliations (company_id, company_bank_account_id, statement_from_date, statement_to_date, opening_balance, closing_balance, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [companyId, d.company_bank_account_id, d.statement_from_date, d.statement_to_date, Math.round(Number(d.opening_balance) || 0), Math.round(Number(d.closing_balance) || 0), req.user!.id],
+      );
+      for (const line of lines) {
+        await client.query(
+          `INSERT INTO bank_reconciliation_lines (reconciliation_id, statement_date, description, amount)
+           VALUES ($1,$2,$3,$4)`,
+          [recon.rows[0].id, line.date, line.description || null, Math.round(Number(line.amount) || 0)],
+        );
+      }
+      return recon.rows[0];
+    });
+    res.status(201).json(success(result));
+  } catch (err: any) { res.status(400).json(error(err.message)); }
+}
+
+export async function getReconciliation(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const recon = await query(`SELECT * FROM bank_reconciliations WHERE id = $1 AND company_id = $2`, [req.params.id, companyId]);
+    if (!recon.rows.length) return res.status(404).json(error('Reconciliation not found'));
+    const lines = await query(`SELECT * FROM bank_reconciliation_lines WHERE reconciliation_id = $1 ORDER BY statement_date`, [req.params.id]);
+
+    // Real auto-match suggestion: same amount + within 3 days of an
+    // unreconciled payment on this bank account. Suggestion only —
+    // matching itself still requires the explicit /match call below.
+    const candidates = await query(
+      `SELECT id, payment_date, amount, payment_mode, reference_number, party_id FROM payments
+       WHERE company_id = $1 AND company_bank_account_id = $2 AND is_deleted = false
+         AND id NOT IN (SELECT matched_payment_id FROM bank_reconciliation_lines WHERE matched_payment_id IS NOT NULL)`,
+      [companyId, recon.rows[0].company_bank_account_id],
+    );
+
+    const linesWithSuggestions = lines.rows.map((line: any) => {
+      if (line.status !== 'unmatched') return line;
+      const suggestion = candidates.rows.find((c: any) =>
+        Math.abs(Number(c.amount)) === Math.abs(Number(line.amount)) &&
+        Math.abs(new Date(c.payment_date).getTime() - new Date(line.statement_date).getTime()) <= 3 * 86400000,
+      );
+      return { ...line, suggestedPaymentId: suggestion?.id || null };
+    });
+
+    res.json(success({ ...recon.rows[0], lines: linesWithSuggestions }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function matchReconciliationLine(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { lineId } = req.params;
+    const { payment_id } = req.body;
+    const line = await query(
+      `UPDATE bank_reconciliation_lines l SET matched_payment_id = $1, status = 'matched'
+       FROM bank_reconciliations r
+       WHERE l.id = $2 AND l.reconciliation_id = r.id AND r.company_id = $3
+       RETURNING l.*`,
+      [payment_id || null, lineId, companyId],
+    );
+    if (!line.rows.length) return res.status(404).json(error('Reconciliation line not found'));
+    res.json(success(line.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function completeReconciliation(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `UPDATE bank_reconciliations SET status = 'completed', completed_at = now()
+       WHERE id = $1 AND company_id = $2 RETURNING *`,
+      [req.params.id, companyId],
+    );
+    if (!result.rows.length) return res.status(404).json(error('Reconciliation not found'));
+    res.json(success(result.rows[0]));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT LOGS — the audit_logs table + logAction() writer already
+// existed (17 call sites across the codebase write real entries),
+// but there was no read endpoint at all. This exposes it.
+// ═══════════════════════════════════════════════════════════════
+export async function listAuditLogs(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { page, limit, offset } = parsePagination(req.query);
+    const where: string[] = ['al.company_id = $1'];
+    const params: any[] = [companyId];
+    let idx = 2;
+    if (req.query.entity) { where.push(`al.entity = $${idx++}`); params.push(req.query.entity); }
+    if (req.query.action) { where.push(`al.action = $${idx++}`); params.push(req.query.action); }
+    if (req.query.user_id) { where.push(`al.user_id = $${idx++}`); params.push(req.query.user_id); }
+    if (req.query.from_date) { where.push(`al.created_at >= $${idx++}::date`); params.push(req.query.from_date); }
+    if (req.query.to_date) { where.push(`al.created_at <= $${idx++}::date + interval '1 day'`); params.push(req.query.to_date); }
+
+    const rows = await query(
+      `SELECT al.*, u.name AS user_name, u.email AS user_email
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.user_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY al.created_at DESC LIMIT $${idx++} OFFSET $${idx}`,
+      [...params, limit, offset],
+    );
+    const countRes = await query(`SELECT COUNT(*) FROM audit_logs al WHERE ${where.join(' AND ')}`, params);
+    res.json(success(buildPaginatedResponse(rows.rows, parseInt(countRes.rows[0].count), page, limit)));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GST LEDGER — Input/Output CGST/SGST/IGST account balances + their
+// journal lines. Reuses the exact account names postSalesInvoiceAccounting
+// / postPurchaseInvoiceAccounting already create via getOrCreateDefaultAccount,
+// so this is a real view over real postings, not a separate GST engine.
+// ═══════════════════════════════════════════════════════════════
+const GST_ACCOUNT_NAMES = ['Output CGST', 'Output SGST', 'Output IGST', 'Input CGST', 'Input SGST', 'Input IGST'];
+
+export async function getGstLedger(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { from, to } = parseAccountingRange(req);
+
+    const accounts = await query(
+      `SELECT id, name, account_type FROM accounts WHERE company_id = $1 AND name = ANY($2::text[]) AND is_deleted = false`,
+      [companyId, GST_ACCOUNT_NAMES],
+    );
+
+    const summary = await Promise.all(accounts.rows.map(async (acc: any) => {
+      const movement = await query(
+        `SELECT COALESCE(SUM(l.debit),0)::bigint AS debit, COALESCE(SUM(l.credit),0)::bigint AS credit
+         FROM journal_entry_lines l
+         JOIN journal_entries je ON je.id = l.entry_id
+         WHERE l.account_id = $1 AND je.company_id = $2 AND je.is_deleted = false
+           AND je.status NOT IN ('draft', 'cancelled') AND je.entry_date >= $3 AND je.entry_date <= $4`,
+        [acc.id, companyId, from, to],
+      );
+      return { account_id: acc.id, account_name: acc.name, account_type: acc.account_type, debit: Number(movement.rows[0].debit), credit: Number(movement.rows[0].credit) };
+    }));
+
+    const outputTotal = summary.filter((s) => s.account_name.startsWith('Output')).reduce((s, r) => s + r.credit - r.debit, 0);
+    const inputTotal = summary.filter((s) => s.account_name.startsWith('Input')).reduce((s, r) => s + r.debit - r.credit, 0);
+
+    res.json(success(summary, {
+      period: { from, to },
+      total_output_gst_paise: outputTotal,
+      total_input_gst_paise: inputTotal,
+      net_gst_payable_paise: Math.max(0, outputTotal - inputTotal),
+    }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+function parseAccountingRange(req: Request): { from: string; to: string } {
+  const to = String(req.query.to_date || new Date().toISOString().split('T')[0]);
+  const d = new Date();
+  const from = String(req.query.from_date || new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0]);
+  return { from, to };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// JOURNAL TEMPLATES — recurring journal entry blueprints
+// ═══════════════════════════════════════════════════════════════
+export async function listJournalTemplates(req: Request, res: Response) {
+  try {
+    const rows = await query(
+      `SELECT * FROM journal_templates WHERE company_id = $1 AND is_deleted = false ORDER BY name`,
+      [req.user!.company_id],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+export async function createJournalTemplate(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const d = req.body || {};
+    if (!d.name?.trim()) return res.status(400).json(error('Template name is required'));
+    if (!Array.isArray(d.lines) || d.lines.length < 2) return res.status(400).json(error('A template needs at least 2 lines'));
+    const result = await query(
+      `INSERT INTO journal_templates (company_id, name, description, voucher_type, lines, is_recurring, recurrence, created_by)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8) RETURNING *`,
+      [companyId, d.name.trim(), d.description || null, d.voucher_type || 'journal', JSON.stringify(d.lines), !!d.is_recurring, d.recurrence || null, req.user!.id],
+    );
+    res.status(201).json(success(result.rows[0]));
+  } catch (err: any) { res.status(400).json(error(err.message)); }
+}
+
+export async function deleteJournalTemplate(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `UPDATE journal_templates SET is_deleted = true WHERE id = $1 AND company_id = $2 RETURNING id`,
+      [req.params.id, req.user!.company_id],
+    );
+    if (!result.rows.length) return res.status(404).json(error('Template not found'));
+    res.json(success({ deleted: true }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── POST /api/accounting/journal-templates/:id/apply ───────────────
+// Creates a real draft journal entry pre-filled from the template —
+// amounts must still be confirmed/edited and explicitly posted, never
+// auto-posted from a template directly.
+export async function applyJournalTemplate(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const tmpl = await query(
+      `SELECT * FROM journal_templates WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [req.params.id, companyId],
+    );
+    if (!tmpl.rows.length) return res.status(404).json(error('Template not found'));
+    const t = tmpl.rows[0];
+
+    const result = await withTransaction(async (client) => postJournalEntry(client, {
+      companyId,
+      entryDate: req.body?.entry_date || new Date().toISOString().split('T')[0],
+      description: req.body?.description || t.name,
+      voucherType: t.voucher_type || 'journal',
+      createdBy: req.user!.id,
+      status: 'draft',
+      lines: (t.lines as any[]).map((line: any) => ({
+        accountId: line.account_id,
+        debit: line.debit || 0,
+        credit: line.credit || 0,
+        description: line.description || null,
+        costCenter: line.cost_center || null,
+      })),
+    }));
+
+    res.status(201).json(success(result));
+  } catch (err: any) { res.status(400).json(error(err.message)); }
 }

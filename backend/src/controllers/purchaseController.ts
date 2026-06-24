@@ -169,7 +169,13 @@ export async function listPurchaseOrders(req: Request, res: Response) {
     if (status) { where += ` AND status = $${idx++}`; params.push(status); }
 
     const countRes = await query(`SELECT COUNT(*) FROM purchase_orders WHERE ${where}`, params);
-    const result = await query(`SELECT * FROM purchase_orders WHERE ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx+1}`, [...params, limit, offset]);
+    const result = await query(
+      `SELECT po.*,
+              COALESCE((SELECT COUNT(*) FROM purchase_order_items poi WHERE poi.po_id = po.id), 0) AS item_count,
+              COALESCE((SELECT SUM(poi.quantity_ordered) FROM purchase_order_items poi WHERE poi.po_id = po.id), 0) AS total_quantity
+       FROM purchase_orders po WHERE ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx+1}`,
+      [...params, limit, offset]
+    );
 
     res.json(success(buildPaginatedResponse(result.rows, parseInt(countRes.rows[0].count), page, limit)));
   } catch (err: any) {
@@ -627,7 +633,9 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
 
     const countRes = await query(`SELECT COUNT(*) FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id WHERE ${where}`, params);
     const result = await query(
-      `SELECT pi.*, p.name as party_name, p.phone as party_phone
+      `SELECT pi.*, p.name as party_name, p.phone as party_phone,
+              COALESCE((SELECT COUNT(*) FROM purchase_invoice_items pii WHERE pii.purchase_invoice_id = pi.id), 0) AS item_count,
+              COALESCE((SELECT SUM(pii.quantity) FROM purchase_invoice_items pii WHERE pii.purchase_invoice_id = pi.id), 0) AS total_quantity
        FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id
        WHERE ${where} ORDER BY pi.bill_date DESC LIMIT $${idx} OFFSET $${idx+1}`,
       [...params, limit, offset],

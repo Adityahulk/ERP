@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Search, Loader2, Camera, Plus, Minus, Trash2, User, FileText, QrCode, PackagePlus, X, Check } from 'lucide-react';
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import { formatMoney } from '@/lib/formatters';
 import { useCompany } from '@/hooks/useBusiness';
@@ -40,7 +41,12 @@ export default function BillingScreen() {
   const [isScannerOpen, setScannerOpen] = useState(false);
   const [billItems, setBillItems] = useState<BillItem[]>([]);
   const [customerInfo, setCustomerInfo] = useState<{ id?: string, name: string, phone?: string }>({ name: 'Walk-in Customer' });
-  const [discountTotal] = useState(0);
+  const [discountTotal, setDiscountTotal] = useState(0);
+  const discountInputRef = useRef<HTMLInputElement>(null);
+  const paymentModeRef = useRef<HTMLDivElement>(null);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitPayments, setSplitPayments] = useState<{ mode: string; amount: number | '' }[]>([{ mode: 'cash', amount: '' }, { mode: 'upi', amount: '' }]);
+  const [heldBillsOpen, setHeldBillsOpen] = useState(false);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [amountTendered, setAmountTendered] = useState<number | ''>('');
   const [quickAddItemOpen, setQuickAddItemOpen] = useState(false);
@@ -224,10 +230,29 @@ export default function BillingScreen() {
   // Hotkeys & Scan Interception
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // F2 to focus search
-      if (e.key === 'F2') {
+      // F1 or F2 to focus search/scan (F1 per the standard POS shortcut convention; F2 kept for backward compatibility)
+      if (e.key === 'F1' || e.key === 'F2') {
         e.preventDefault();
         searchInputRef.current?.focus();
+      }
+
+      // F3 to focus the bill-level discount field
+      if (e.key === 'F3') {
+        e.preventDefault();
+        discountInputRef.current?.focus();
+        discountInputRef.current?.select();
+      }
+
+      // F4 to jump to the payment section
+      if (e.key === 'F4') {
+        e.preventDefault();
+        paymentModeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      // F5 to complete the sale (F10/Ctrl+Enter kept working too)
+      if (e.key === 'F5') {
+        e.preventDefault();
+        handleCheckout();
       }
       
       // Enter to simulate success when QR Modal is open
@@ -362,6 +387,53 @@ export default function BillingScreen() {
   const roundOff = grandTotal - rawTotal;
 
   // Submit Pipeline
+  const { data: heldBills = [] } = useQuery({
+    queryKey: ['pos', 'held-bills'],
+    queryFn: async () => (await api.get('/pos/held-bills')).data?.data ?? [],
+    refetchInterval: 30000,
+  });
+
+  const holdBillMut = useMutation({
+    mutationFn: async (label: string) => api.post('/pos/held-bills', {
+      label: label || null,
+      party_id: customerInfo.id || null,
+      party_name: customerInfo.name !== 'Walk-in Customer' ? customerInfo.name : null,
+      cart: billItems,
+    }),
+    onSuccess: () => {
+      toast.success('Bill held');
+      setBillItems([]);
+      setCustomerInfo({ name: 'Walk-in Customer' });
+      setDiscountTotal(0);
+      qc.invalidateQueries({ queryKey: ['pos', 'held-bills'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not hold bill'),
+  });
+
+  const resumeBillMut = useMutation({
+    mutationFn: async (bill: any) => {
+      await api.post(`/pos/held-bills/${bill.id}/resume`);
+      return bill;
+    },
+    onSuccess: (bill: any) => {
+      if (billItems.length > 0) {
+        const confirmReplace = window.confirm('This will replace your current cart with the held bill. Continue?');
+        if (!confirmReplace) return;
+      }
+      setBillItems(bill.cart_json || []);
+      if (bill.party_name) setCustomerInfo({ id: bill.party_id, name: bill.party_name });
+      setHeldBillsOpen(false);
+      toast.success('Bill resumed');
+      qc.invalidateQueries({ queryKey: ['pos', 'held-bills'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not resume bill'),
+  });
+
+  const voidHeldBillMut = useMutation({
+    mutationFn: async (id: string) => api.delete(`/pos/held-bills/${id}`),
+    onSuccess: () => { toast.success('Held bill removed'); qc.invalidateQueries({ queryKey: ['pos', 'held-bills'] }); },
+  });
+
   const createInvoiceMut = useMutation({
     mutationFn: async () => {
       const itemsPayload = billItems.map((b) => ({
@@ -379,19 +451,33 @@ export default function BillingScreen() {
           : amountTendered === ''
             ? grandTotal
             : Math.round(Number(amountTendered) * 100);
+
+      const splitPaymentRows = splitMode
+        ? splitPayments
+            .filter((p) => Number(p.amount) > 0)
+            .map((p) => ({ amount: Math.round(Number(p.amount) * 100), payment_mode: p.mode }))
+        : [];
+      if (splitMode && splitPaymentRows.length < 2) {
+        throw new Error('Enter at least two payment amounts for a split payment');
+      }
+      const splitTotal = splitPaymentRows.reduce((s, p) => s + p.amount, 0);
+      if (splitMode && splitTotal !== grandTotal) {
+        throw new Error(`Split payments (${formatMoney(splitTotal)}) must add up to the grand total (${formatMoney(grandTotal)})`);
+      }
+
       const payload: Record<string, unknown> = {
         invoice_type: 'tax_invoice',
         is_interstate: false,
         items: itemsPayload,
         discount_amount: discountTotal,
-        payments: [
+        payments: splitMode ? splitPaymentRows : [
           {
             amount: tenderPaise,
             payment_mode: paymentMode,
           }
         ],
-        amount_paid: tenderPaise,
-        payment_mode: paymentMode,
+        amount_paid: splitMode ? splitTotal : tenderPaise,
+        payment_mode: splitMode ? 'split' : paymentMode,
         party_name: customerInfo.name,
         party_phone: customerInfo.phone || undefined,
       };
@@ -505,6 +591,23 @@ export default function BillingScreen() {
             </Button>
             <Button size="lg" variant="secondary" className="h-12 w-12 px-0 shrink-0" onClick={() => setScannerOpen(true)}>
               <Camera className="h-5 w-5" />
+            </Button>
+            <Button
+              size="lg" variant="outline" className="h-12 px-3 shrink-0 gap-1.5"
+              disabled={billItems.length === 0 || holdBillMut.isPending}
+              onClick={() => {
+                const label = window.prompt('Label this held bill (e.g. customer name, table number):', customerInfo.name !== 'Walk-in Customer' ? customerInfo.name : '');
+                if (label === null) return;
+                holdBillMut.mutate(label);
+              }}
+            >
+              <PackagePlus className="h-5 w-5" /> <span className="hidden sm:inline text-sm font-medium">Hold</span>
+            </Button>
+            <Button size="lg" variant="outline" className="h-12 px-3 shrink-0 gap-1.5 relative" onClick={() => setHeldBillsOpen(true)}>
+              <FileText className="h-5 w-5" /> <span className="hidden sm:inline text-sm font-medium">Held</span>
+              {(heldBills?.length || 0) > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">{heldBills.length}</span>
+              )}
             </Button>
           </div>
 
@@ -693,6 +796,18 @@ export default function BillingScreen() {
                 <span className="tabular-nums font-medium">-{formatMoney(itemDiscounts)}</span>
               </div>
             )}
+            <div className="flex justify-between items-center text-muted-foreground">
+              <span>Bill Discount (₹) <kbd className="text-[10px] border rounded px-1 py-0.5 ml-1">F3</kbd></span>
+              <Input
+                ref={discountInputRef}
+                type="number"
+                min={0}
+                className="h-7 w-24 text-right tabular-nums"
+                value={discountTotal ? discountTotal / 100 : ''}
+                placeholder="0"
+                onChange={(e) => setDiscountTotal(Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 100)))}
+              />
+            </div>
             <div className="flex justify-between text-muted-foreground">
               <span>Taxable Value</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(taxable)}</span>
@@ -726,32 +841,76 @@ export default function BillingScreen() {
         </Card>
 
         {/* Payment & Checkout Action */}
-        <Card className="p-3 shadow-sm border-2 border-emerald-500/20 bg-emerald-50/30 dark:bg-emerald-950/20 shrink-0">
+        <Card ref={paymentModeRef} className="p-3 shadow-sm border-2 border-emerald-500/20 bg-emerald-50/30 dark:bg-emerald-950/20 shrink-0">
           <div className="mb-3">
-             <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">Payment Mode</label>
-             <div className="flex gap-1.5 mb-3">
-                {['cash', 'upi', 'card', 'credit'].map(mode => (
-                  <button 
-                    key={mode}
-                    onClick={() => setPaymentMode(mode)}
-                    className={`flex-1 capitalize py-1.5 rounded-lg font-bold text-xs transition-all border
-                      ${paymentMode === mode ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-background hover:bg-muted text-muted-foreground'}`}
-                  >
-                    {mode}
-                  </button>
-                ))}
+             <div className="flex items-center justify-between mb-1.5">
+               <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground block">Payment Mode <kbd className="text-[10px] border rounded px-1 py-0.5 ml-1">F4</kbd></label>
+               <button
+                 type="button"
+                 onClick={() => setSplitMode((v) => !v)}
+                 className={`text-[10px] font-bold px-2 py-1 rounded-md border ${splitMode ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground'}`}
+               >
+                 Split Payment
+               </button>
              </div>
-             
-             {paymentMode !== 'credit' && (
-               <div className="flex gap-1.5 items-center mb-1">
-                 <Input 
-                   type="number"
-                   placeholder="Amount Tendered" 
-                   className="h-10 text-base font-bold"
-                   value={amountTendered}
-                   onChange={e => setAmountTendered(e.target.value ? Number(e.target.value) : '')}
-                 />
-                 <Button variant="outline" className="h-10 text-xs whitespace-nowrap" onClick={() => setAmountTendered(grandTotal / 100)}>EXACT</Button>
+
+             {!splitMode ? (
+               <>
+                 <div className="flex gap-1.5 mb-3">
+                    {['cash', 'upi', 'card', 'credit'].map(mode => (
+                      <button 
+                        key={mode}
+                        onClick={() => setPaymentMode(mode)}
+                        className={`flex-1 capitalize py-1.5 rounded-lg font-bold text-xs transition-all border
+                          ${paymentMode === mode ? 'bg-primary border-primary text-primary-foreground shadow-sm' : 'bg-background hover:bg-muted text-muted-foreground'}`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                 </div>
+                 
+                 {paymentMode !== 'credit' && (
+                   <div className="flex gap-1.5 items-center mb-1">
+                     <Input 
+                       type="number"
+                       placeholder="Amount Tendered" 
+                       className="h-10 text-base font-bold"
+                       value={amountTendered}
+                       onChange={e => setAmountTendered(e.target.value ? Number(e.target.value) : '')}
+                     />
+                     <Button variant="outline" className="h-10 text-xs whitespace-nowrap" onClick={() => setAmountTendered(grandTotal / 100)}>EXACT</Button>
+                   </div>
+                 )}
+               </>
+             ) : (
+               <div className="space-y-2">
+                 {splitPayments.map((p, idx) => (
+                   <div key={idx} className="flex gap-1.5 items-center">
+                     <select
+                       className="h-9 rounded-md border bg-background px-2 text-xs font-semibold capitalize w-24"
+                       value={p.mode}
+                       onChange={(e) => setSplitPayments((rows) => rows.map((r, i) => i === idx ? { ...r, mode: e.target.value } : r))}
+                     >
+                       {['cash', 'upi', 'card', 'wallet'].map((m) => <option key={m} value={m}>{m}</option>)}
+                     </select>
+                     <Input
+                       type="number"
+                       placeholder="Amount"
+                       className="h-9 text-sm"
+                       value={p.amount}
+                       onChange={(e) => setSplitPayments((rows) => rows.map((r, i) => i === idx ? { ...r, amount: e.target.value ? Number(e.target.value) : '' } : r))}
+                     />
+                     {splitPayments.length > 2 && (
+                       <button onClick={() => setSplitPayments((rows) => rows.filter((_, i) => i !== idx))} className="text-muted-foreground hover:text-destructive text-xs px-1">✕</button>
+                     )}
+                   </div>
+                 ))}
+                 <div className="flex items-center justify-between">
+                   <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setSplitPayments((rows) => [...rows, { mode: 'cash', amount: '' }])}>+ Add payment line</button>
+                   <span className={`text-xs font-semibold tabular-nums ${splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) * 100 === grandTotal ? 'text-emerald-600' : 'text-amber-600'}`}>
+                     {formatMoney(splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) * 100)} / {formatMoney(grandTotal)}
+                   </span>
+                 </div>
                </div>
              )}
           </div>
@@ -777,6 +936,31 @@ export default function BillingScreen() {
            setTimeout(() => handleSearchKeyPress({ key: 'Enter' } as any), 50);
         }} 
       />
+
+      <Sheet open={heldBillsOpen} onOpenChange={setHeldBillsOpen}>
+        <SheetContent className="w-full max-w-md overflow-y-auto">
+          <SheetHeader><SheetTitle>Held Bills</SheetTitle></SheetHeader>
+          <div className="mt-4 space-y-2">
+            {heldBills.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">No bills on hold.</p>}
+            {heldBills.map((bill: any) => {
+              const itemCount = (bill.cart_json || []).length;
+              const billTotal = (bill.cart_json || []).reduce((s: number, i: any) => s + (i.unit_price * i.quantity), 0);
+              return (
+                <div key={bill.id} className="border rounded-lg p-3 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-sm">{bill.label || bill.party_name || 'Held Bill'}</p>
+                    <p className="text-xs text-muted-foreground">{itemCount} item{itemCount === 1 ? '' : 's'} · {formatMoney(billTotal)} · {new Date(bill.created_at).toLocaleTimeString('en-IN')}</p>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <Button size="sm" onClick={() => resumeBillMut.mutate(bill)} loading={resumeBillMut.isPending}>Resume</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => voidHeldBillMut.mutate(bill.id)}>✕</Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <QuickAddItemSheet
         open={quickAddItemOpen}

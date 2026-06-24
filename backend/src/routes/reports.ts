@@ -29,4 +29,28 @@ router.get('/trial-balance', ctrl.trialBalance);
 router.get('/tally-export', ctrl.tallyExport);
 router.post('/tally-import', uploadImportFile, ctrl.tallyImport);
 
+router.get('/category-wise-sales', ctrl.categoryWiseSales);
+router.get('/item-wise-purchase', ctrl.itemWisePurchase);
+router.get('/sale-returns', ctrl.saleReturnsReport);
+router.get('/purchase-returns', ctrl.purchaseReturnsReport);
+router.get('/batch-wise-stock', ctrl.batchWiseStock);
+router.get('/expiry', ctrl.expiryReport);
+router.get('/dead-stock', ctrl.deadStock);
+router.get('/party-profitability', ctrl.partyProfitability);
+router.get('/all-transactions', ctrl.allTransactions);
+router.get('/bill-wise-profit', ctrl.billWiseProfit);
+router.get('/category-wise-purchase', ctrl.categoryWisePurchase);
+router.get('/item-category-profit-loss', ctrl.itemCategoryProfitLoss);
+router.get('/stock-summary-by-category', ctrl.stockSummaryByCategory);
+router.get('/discount-report', ctrl.discountReport);
+router.get('/sale-order-items', ctrl.saleOrderItemsReport);
+router.get('/party-statement-summary', ctrl.partyStatementSummary);
+router.get('/party-report-by-item', ctrl.partyReportByItem);
+router.get('/sale-purchase-by-party', ctrl.salePurchaseByParty);
+router.get('/sale-purchase-by-party-group', ctrl.salePurchaseByPartyGroup);
+router.get('/stock-detail', ctrl.stockDetailReport);
+router.get('/item-detail/:itemId', ctrl.itemDetailReport);
+router.get('/sale-purchase-by-item-category', ctrl.salePurchaseByItemCategory);
+router.get('/expense-category-trend', ctrl.expenseCategoryTrend);
+
 export default router;

@@ -16,7 +16,7 @@ import {
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
-import VyaparLineItems, { computeTotals, type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { computeTotals, type LineItem } from '@/components/shared/LineItemsEditor';
 import {
   CollapsibleTransactionSection,
   MobileActionBar,
@@ -204,7 +204,7 @@ export default function InvoiceCreate() {
   const [invoiceDiscountType, setInvoiceDiscountType] = useState<'percent' | 'flat' | 'none'>('none');
   const [invoiceDiscountValue, setInvoiceDiscountValue] = useState(0);
 
-  const handleItemsChange = (newItems: VyaparLineItem[]) => {
+  const handleItemsChange = (newItems: LineItem[]) => {
     // pricingMode is user-controlled via the dropdown;
     // price_includes_tax is stored per-item and drives per-line conversion.
     setItems(newItems);
@@ -215,7 +215,7 @@ export default function InvoiceCreate() {
   const [customFields, setCustomFields] = useState<Record<string, any>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentEditorRow[]>([newPaymentEditorRow()]);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -1040,7 +1040,7 @@ export default function InvoiceCreate() {
 
 
         <TransactionSection title="Items" description="Search catalog items, add services, and expand a row only when extra details are needed." compact>
-          <VyaparLineItems
+          <LineItemsEditor
             items={items}
             onChange={handleItemsChange}
             isGst={isGstInvoice}

@@ -1,4 +1,5 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,42 +7,95 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Download, Filter, FileText, ChevronDown } from 'lucide-react';
+import { Download, Filter, FileText, ChevronDown, ChevronRight, Printer, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import { downloadCsv, downloadXlsx, keyValueRows } from '@/lib/reportExport';
 import toast from 'react-hot-toast';
 
 type ReportName =
+  | 'Dashboard Reports'
   | 'GSTR-1 Data'
   | 'GSTR-3B Summary'
+  | 'GSTR-2A Reconciliation'
+  | 'GSTR2'
   | 'HSN Summary'
+  | 'SAC Summary'
+  | 'GST Rate Report'
+  | 'Form 27EQ'
+  | 'TDS Payable'
   | 'Input Tax Credit'
   | 'GST Out/In summary'
-  | 'Sales Register'
+  | 'Sale Invoices'
+  | 'Sale Report'
   | 'Item-wise Sales'
+  | 'Category-wise Sales'
   | 'Party-wise Sales'
+  | 'Sales Return'
   | 'Outstanding Receivables'
-  | 'Purchase Register'
+  | 'Bill Wise Profit'
+  | 'Sale Order Items'
+  | 'Discount Report'
+  | 'Purchase Bills'
+  | 'Purchase Report'
+  | 'Item-wise Purchase'
+  | 'Category-wise Purchase'
   | 'Party-wise Purchase'
+  | 'Purchase Return'
   | 'Outstanding Payables'
   | 'Stock Summary'
   | 'Stock Movement'
   | 'Low Stock Alert'
+  | 'Dead Stock'
+  | 'Batch-wise Stock'
+  | 'Expiry Report'
+  | 'Barcode Scan History'
+  | 'Item Category P&L'
+  | 'Stock by Category'
+  | 'Stock Detail'
+  | 'Sale Purchase By Item Category'
+  | 'Day Book'
+  | 'Cash Flow'
+  | 'All Transactions'
   | 'Profit & Loss'
   | 'Balance Sheet'
   | 'Trial Balance'
-  | 'Day Book'
+  | 'Journal Register'
+  | 'Party Profitability'
+  | 'Party Statement'
+  | 'Party Report By Item'
+  | 'Sale Purchase By Party'
+  | 'Sale Purchase By Party Group'
+  | 'All Parties'
+  | 'Bank Statement'
+  | 'Cash Statement'
+  | 'Cheque Register'
+  | 'Loan Statement'
   | 'Expense Summary'
+  | 'Expense Category Trend'
   | 'Payment Collection'
   | 'TCS / TDS';
 
 const reportCategories = [
-  { id: 'gst', title: 'GST Reports', reports: ['GSTR-1 Data', 'GSTR-3B Summary', 'HSN Summary', 'Input Tax Credit', 'GST Out/In summary'] as const },
-  { id: 'sales', title: 'Sales Reports', reports: ['Sales Register', 'Item-wise Sales', 'Party-wise Sales', 'Outstanding Receivables'] as const },
-  { id: 'purchase', title: 'Purchase Reports', reports: ['Purchase Register', 'Party-wise Purchase', 'Outstanding Payables'] as const },
-  { id: 'inventory', title: 'Inventory Reports', reports: ['Stock Summary', 'Stock Movement', 'Low Stock Alert'] as const },
-  { id: 'financial', title: 'Financial Reports', reports: ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Day Book', 'Expense Summary', 'Payment Collection', 'TCS / TDS'] as const },
+  { id: 'dashboard', title: 'Dashboard Reports', reports: ['Dashboard Reports'] as const },
+  { id: 'transaction', title: 'Transaction Reports', reports: ['Sale Report', 'Purchase Report', 'Day Book', 'All Transactions', 'Profit & Loss', 'Bill Wise Profit', 'Cash Flow', 'Trial Balance', 'Balance Sheet'] as const },
+  { id: 'sales', title: 'Sales Reports', reports: ['Sale Invoices', 'Item-wise Sales', 'Category-wise Sales', 'Party-wise Sales', 'Sale Order Items', 'Discount Report', 'Sales Return', 'Outstanding Receivables'] as const },
+  { id: 'purchase', title: 'Purchase Reports', reports: ['Purchase Bills', 'Item-wise Purchase', 'Category-wise Purchase', 'Party-wise Purchase', 'Purchase Return', 'Outstanding Payables'] as const },
+  { id: 'inventory', title: 'Inventory Reports', reports: ['Stock Summary', 'Stock Movement', 'Stock Detail', 'Low Stock Alert', 'Dead Stock', 'Batch-wise Stock', 'Expiry Report', 'Barcode Scan History', 'Item Category P&L', 'Stock by Category', 'Sale Purchase By Item Category'] as const },
+  { id: 'accounting', title: 'Accounting Reports', reports: ['Journal Register'] as const },
+  { id: 'gst', title: 'GST Reports', reports: ['GST Out/In summary', 'GSTR-1 Data', 'GSTR-2A Reconciliation', 'GSTR2', 'GSTR-3B Summary', 'HSN Summary', 'SAC Summary', 'Input Tax Credit'] as const },
+  { id: 'tax', title: 'Tax Reports', reports: ['GST Rate Report', 'Form 27EQ', 'TDS Payable'] as const },
+  { id: 'party', title: 'Party Reports', reports: ['Party Statement', 'Party Profitability', 'Party Report By Item', 'Sale Purchase By Party', 'Sale Purchase By Party Group', 'All Parties'] as const },
+  { id: 'banking', title: 'Banking Reports', reports: ['Bank Statement', 'Cash Statement', 'Cheque Register', 'Loan Statement'] as const },
+  { id: 'expense', title: 'Expense Reports', reports: ['Expense Summary', 'Expense Category Trend', 'Payment Collection', 'TCS / TDS'] as const },
 ];
+
+/** Items that are better served by an existing, dedicated page than by being squeezed into this generic table shell. Selecting one navigates there instead of fetching. */
+const externalLinks: Record<string, string> = {
+  'Sale Invoices': '/sales-hub/invoices',
+  'Purchase Bills': '/purchase-expense/bills',
+  'All Parties': '/parties',
+  'Dashboard Reports': '/dashboard',
+};
 
 function monthYearFromDate(isoDate: string): { month: string; year: string } {
   const d = new Date(isoDate + 'T12:00:00');
@@ -59,14 +113,46 @@ function unwrap<T>(res: { data?: { data?: T; success?: boolean } }): T {
   const d = res.data as { data?: T } | undefined;
   return (d?.data ?? res.data) as T;
 }
-
 export default function ReportsHome() {
+  const navigate = useNavigate();
   const { from: defaultFrom, to: defaultTo } = defaultDates();
   const [fromDate, setFromDate] = useState(defaultFrom);
   const [toDate, setToDate] = useState(defaultTo);
   const [appliedFrom, setAppliedFrom] = useState(defaultFrom);
   const [appliedTo, setAppliedTo] = useState(defaultTo);
-  const [activeReport, setActiveReport] = useState<ReportName>('Sales Register');
+  const [activeReport, setActiveReport] = useState<ReportName>('Sale Report');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const selectReport = useCallback((r: ReportName) => {
+    if (externalLinks[r]) { navigate(externalLinks[r]); return; }
+    setActiveReport(r);
+  }, [navigate]);
+
+  // Deep-link support — e.g. the Accounting → GST Returns tab links
+  // here with ?report=<name> and expects that exact report to actually
+  // be open and loaded, not just the Reports page in its default state.
+  useEffect(() => {
+    const requested = searchParams.get('report');
+    if (requested) {
+      const allKnown = reportCategories.flatMap((c) => c.reports as readonly string[]);
+      if (allKnown.includes(requested)) {
+        selectReport(requested as ReportName);
+      }
+      const next = new URLSearchParams(searchParams);
+      next.delete('report');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [selectedPartyId, setSelectedPartyId] = useState('');
+  const [selectedPartyName, setSelectedPartyName] = useState('');
+  const [partySearchTerm, setPartySearchTerm] = useState('');
+  const { data: partySearchResults } = useQuery({
+    queryKey: ['report-party-search', partySearchTerm],
+    enabled: activeReport === 'Party Statement' && partySearchTerm.length >= 2,
+    queryFn: () => api.get('/parties/search', { params: { q: partySearchTerm } }).then((r) => r.data?.data ?? r.data),
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -85,16 +171,45 @@ export default function ReportsHome() {
     toast.success('Filters applied');
   };
 
+  const applyQuickRange = (range: 'today' | 'this_week' | 'this_month' | 'last_month' | 'quarter' | 'fy') => {
+    const now = new Date();
+    const iso = (d: Date) => d.toISOString().split('T')[0];
+    let from: Date, to: Date = now;
+    switch (range) {
+      case 'today': from = now; break;
+      case 'this_week': { from = new Date(now); from.setDate(now.getDate() - now.getDay()); break; }
+      case 'this_month': from = new Date(now.getFullYear(), now.getMonth(), 1); break;
+      case 'last_month': {
+        from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        to = new Date(now.getFullYear(), now.getMonth(), 0);
+        break;
+      }
+      case 'quarter': from = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1); break;
+      case 'fy': {
+        // Indian financial year: Apr 1 – Mar 31
+        const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+        from = new Date(fyStartYear, 3, 1);
+        break;
+      }
+    }
+    setFromDate(iso(from));
+    setToDate(iso(to));
+    setAppliedFrom(iso(from));
+    setAppliedTo(iso(to));
+    setFiltersOpen(false);
+    toast.success('Date range updated');
+  };
+
   const { month, year } = monthYearFromDate(appliedFrom);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['business-report', activeReport, appliedFrom, appliedTo, month, year],
+    queryKey: ['business-report', activeReport, appliedFrom, appliedTo, month, year, selectedPartyId],
     queryFn: async () => {
       const params = { from_date: appliedFrom, to_date: appliedTo };
       switch (activeReport) {
-        case 'Sales Register':
+        case 'Sale Report':
           return unwrap(await api.get('/reports/sales-register', { params }));
-        case 'Purchase Register':
+        case 'Purchase Report':
           return unwrap(await api.get('/reports/purchase-register', { params }));
         case 'Stock Summary':
           return unwrap(await api.get('/reports/stock-summary'));
@@ -108,6 +223,80 @@ export default function ReportsHome() {
           return unwrap(await api.get('/reports/outstanding-payables'));
         case 'Item-wise Sales':
           return unwrap(await api.get('/reports/item-wise-profit', { params }));
+        case 'Category-wise Sales':
+          return unwrap(await api.get('/reports/category-wise-sales', { params }));
+        case 'Bill Wise Profit':
+          return unwrap(await api.get('/reports/bill-wise-profit', { params }));
+        case 'Sale Order Items':
+          return unwrap(await api.get('/reports/sale-order-items', { params }));
+        case 'Discount Report':
+          return unwrap(await api.get('/reports/discount-report', { params }));
+        case 'Category-wise Purchase':
+          return unwrap(await api.get('/reports/category-wise-purchase', { params }));
+        case 'Item Category P&L':
+          return unwrap(await api.get('/reports/item-category-profit-loss', { params }));
+        case 'Stock by Category':
+          return unwrap(await api.get('/reports/stock-summary-by-category'));
+        case 'All Transactions':
+          return unwrap(await api.get('/reports/all-transactions', { params }));
+        case 'Item-wise Purchase':
+          return unwrap(await api.get('/reports/item-wise-purchase', { params }));
+        case 'Sales Return':
+          return unwrap(await api.get('/reports/sale-returns', { params }));
+        case 'Purchase Return':
+          return unwrap(await api.get('/reports/purchase-returns', { params }));
+        case 'Dead Stock':
+          return unwrap(await api.get('/reports/dead-stock'));
+        case 'Batch-wise Stock':
+          return unwrap(await api.get('/reports/batch-wise-stock'));
+        case 'Expiry Report':
+          return unwrap(await api.get('/reports/expiry'));
+        case 'Barcode Scan History':
+          return unwrap(await api.get('/barcode/scan/history'));
+        case 'Cash Flow':
+          return unwrap(await api.get('/accounting/cash-flow', { params }));
+        case 'Journal Register': {
+          const res = await api.get('/accounting/journal-entries', { params: { ...params, limit: 200 } });
+          return (res.data?.data?.data ?? []) as unknown;
+        }
+        case 'Party Profitability':
+          return unwrap(await api.get('/reports/party-profitability', { params }));
+        case 'Party Statement': {
+          if (!selectedPartyId) return [];
+          const res = await api.get('/reports/party-statement-summary', { params: { party_id: selectedPartyId } });
+          return (res.data?.data ?? []) as unknown;
+        }
+        case 'Party Report By Item':
+          return unwrap(await api.get('/reports/party-report-by-item', { params }));
+        case 'Sale Purchase By Party':
+          return unwrap(await api.get('/reports/sale-purchase-by-party', { params }));
+        case 'Sale Purchase By Party Group':
+          return unwrap(await api.get('/reports/sale-purchase-by-party-group', { params }));
+        case 'Stock Detail':
+          return unwrap(await api.get('/reports/stock-detail', { params }));
+        case 'Sale Purchase By Item Category':
+          return unwrap(await api.get('/reports/sale-purchase-by-item-category', { params }));
+        case 'Expense Category Trend':
+          return unwrap(await api.get('/reports/expense-category-trend', { params }));
+        case 'GSTR2': {
+          const res = await api.get('/gst/gstr2', { params: { month, year } });
+          return (res.data?.data?.invoiceDetail ?? []) as unknown;
+        }
+        case 'GST Rate Report':
+          return unwrap(await api.get('/gst/rate-report', { params: { month, year } }));
+        case 'Form 27EQ':
+          return unwrap(await api.get('/gst/form-27eq', { params: { month, year } }));
+        case 'TDS Payable':
+          return unwrap(await api.get('/gst/tds-payable', { params: { month, year } }));
+        case 'Bank Statement':
+        case 'Cash Statement': {
+          const res = await api.get('/accounting/cash-bank/transactions', { params: { ...params, limit: 200 } });
+          return (res.data?.data?.data ?? []) as unknown;
+        }
+        case 'Cheque Register':
+          return unwrap(await api.get('/accounting/cash-bank/cheques'));
+        case 'Loan Statement':
+          return unwrap(await api.get('/accounting/cash-bank/loans'));
         case 'Party-wise Sales':
           return unwrap(await api.get('/reports/party-wise-sales', { params }));
         case 'Party-wise Purchase':
@@ -118,8 +307,12 @@ export default function ReportsHome() {
           return unwrap(await api.get('/gst/gstr1', { params: { month, year } }));
         case 'GSTR-3B Summary':
           return unwrap(await api.get('/gst/gstr3b', { params: { month, year } }));
+        case 'GSTR-2A Reconciliation':
+          return unwrap(await api.get('/gst/gstr2a-reconciliation', { params: { month, year } }));
         case 'HSN Summary':
           return unwrap(await api.get('/gst/hsn-summary', { params: { month, year } }));
+        case 'SAC Summary':
+          return unwrap(await api.get('/gst/hsn-summary', { params: { month, year, type: 'service' } }));
         case 'Input Tax Credit':
           return unwrap(await api.get('/gst/input-credit', { params }));
         case 'GST Out/In summary':
@@ -153,6 +346,12 @@ export default function ReportsHome() {
     }
     if (activeReport === 'Trial Balance' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
       return (data as { rows: Record<string, unknown>[] }).rows;
+    }
+    if (data && typeof data === 'object') {
+      // Generic fallback for any structured (non-array) report response,
+      // e.g. Cash Flow's opening/operating/financing/closing breakdown —
+      // flattened into field/value rows rather than shown as a blank table.
+      return keyValueRows(data as Record<string, unknown>).map((r) => ({ field: r.key, value: r.value }));
     }
     return [];
   }, [data, activeReport]);
@@ -244,6 +443,44 @@ export default function ReportsHome() {
     'unit_cost',
     'purchase_price_paise',
     'total_value_paise',
+    'purchase_taxable_paise',
+    'purchase_total_paise',
+    'revenue_paise',
+    'refund_given',
+    'refund_received',
+    'amount',
+    'current_balance',
+    'principal_amount',
+    'emi_amount',
+    'opening_balance_paise',
+    'closing_balance_paise',
+    'period_debit_paise',
+    'period_credit_paise',
+    'net_change_paise',
+    'cost_amount_paise',
+    'profit_paise',
+    'discount_given_paise',
+    'net_sale_paise',
+    'sale_paise',
+    'cost_paise',
+    'stock_value_paise',
+    'received',
+    'balance',
+    'debit',
+    'credit',
+    'running_balance',
+    'sale_amount_paise',
+    'purchase_amount_paise',
+    'total_sale_paise',
+    'total_purchase_paise',
+    'sale_paise',
+    'purchase_paise',
+    'tcs_paise',
+    'tds_amount',
+    'taxable_paise',
+    'tax_paise',
+    'stock_value_paise',
+    'total_paise',
     'balance_due',
     'outward_taxable',
     'cess_payable',
@@ -261,6 +498,83 @@ export default function ReportsHome() {
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return formatDate(value);
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  };
+
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [sidebarSearch, setSidebarSearch] = useState('');
+  const toggleAccount = (id: string) => setExpandedAccounts((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const renderTrialBalanceRow = (acc: any, depth: number) => {
+    const hasChildren = acc.children && acc.children.length > 0;
+    const isExpanded = expandedAccounts.has(acc.id);
+    return (
+      <>
+        <tr key={acc.id} className={`border-t ${hasChildren ? 'bg-muted/30 font-semibold' : ''}`}>
+          <td className="px-3 py-2" style={{ paddingLeft: `${12 + depth * 20}px` }}>
+            <div className="flex items-center gap-1.5">
+              {hasChildren ? (
+                <button onClick={() => toggleAccount(acc.id)} className="text-muted-foreground">
+                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                </button>
+              ) : <span className="w-3.5" />}
+              {hasChildren ? (
+                <span>{acc.name}</span>
+              ) : (
+                <button className="text-indigo-700 hover:underline text-left" onClick={() => navigate(`/accounting?account=${acc.id}`)}>
+                  {acc.name}
+                </button>
+              )}
+            </div>
+          </td>
+          <td className="px-3 py-2 text-xs text-muted-foreground capitalize">{acc.account_type}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(acc.opening_balance_paise) || 0)}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(acc.period_debit_paise) || 0)}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(acc.period_credit_paise) || 0)}</td>
+          <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatMoney(Number(acc.closing_balance_paise) || 0)}</td>
+        </tr>
+        {hasChildren && isExpanded && acc.children.map((child: any) => renderTrialBalanceRow(child, depth + 1))}
+      </>
+    );
+  };
+
+  const renderTrialBalance = (tb: any) => {
+    const tree = tb.tree || [];
+    const balanced = tb.isBalanced;
+    return (
+      <div className="space-y-4">
+        <div className={`rounded-md p-3 text-sm flex items-center gap-2 ${balanced ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+          {balanced ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+          {balanced ? (
+            <span>Debit and Credit totals match — books are balanced for this period.</span>
+          ) : (
+            <span>
+              Imbalance detected: Total Debit {formatMoney(tb.totalDebit)} ≠ Total Credit {formatMoney(tb.totalCredit)}.
+              {tb.unbalancedEntries?.length > 0 && ` ${tb.unbalancedEntries.length} journal entr${tb.unbalancedEntries.length === 1 ? 'y' : 'ies'} found with mismatched debit/credit — check Accounting → Journal Entries.`}
+            </span>
+          )}
+        </div>
+        <div className="overflow-auto border rounded-md">
+          <table className="w-full text-sm min-w-[760px]">
+            <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500">
+              <tr><th className="px-3 py-2">Account</th><th className="px-3 py-2">Type</th><th className="px-3 py-2 text-right">Opening</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2 text-right">Closing</th></tr>
+            </thead>
+            <tbody>{tree.map((acc: any) => renderTrialBalanceRow(acc, 0))}</tbody>
+            <tfoot>
+              <tr className="border-t-2 font-bold bg-slate-50">
+                <td className="px-3 py-2" colSpan={3}>Total</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatMoney(tb.totalDebit)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatMoney(tb.totalCredit)}</td>
+                <td className="px-3 py-2"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
   };
 
   const renderProfitLoss = (pl: Record<string, unknown>) => {
@@ -436,6 +750,9 @@ export default function ReportsHome() {
   );
 
   const renderDataTable = () => {
+    if (activeReport === 'Trial Balance' && data && typeof data === 'object' && !Array.isArray(data)) {
+      return renderTrialBalance(data as any);
+    }
     if (activeReport === 'Profit & Loss' && data && typeof data === 'object' && !Array.isArray(data)) {
       return renderProfitLoss(data as Record<string, unknown>);
     }
@@ -491,7 +808,13 @@ export default function ReportsHome() {
 
   return (
     <div className="flex flex-col md:flex-row min-h-[calc(100vh-theme(spacing.16))] bg-slate-50/50 animate-in slide-in-from-bottom-4 duration-500">
-      <div className="md:hidden border-b bg-white p-3 flex items-center gap-2">
+      <style>{`
+        @media print {
+          .reports-no-print { display: none !important; }
+          .reports-print-area { padding: 0 !important; }
+        }
+      `}</style>
+      <div className="md:hidden border-b bg-white p-3 flex items-center gap-2 reports-no-print">
         <Button variant="outline" size="sm" className="flex-1" onClick={() => setMobileMenuOpen(true)}>
           {activeReport} <ChevronDown className="w-4 h-4 ml-1 opacity-60" />
         </Button>
@@ -509,7 +832,7 @@ export default function ReportsHome() {
                       key={r}
                       type="button"
                       onClick={() => {
-                        setActiveReport(r as ReportName);
+                        selectReport(r as ReportName);
                         setMobileMenuOpen(false);
                       }}
                       className={`w-full text-left px-3 py-2 text-sm rounded-md ${activeReport === r ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-100'}`}
@@ -524,17 +847,24 @@ export default function ReportsHome() {
         </SheetContent>
       </Sheet>
 
-      <div className="w-64 border-r bg-white p-4 overflow-y-auto hidden md:block shrink-0">
-        <h2 className="text-xl font-bold mb-6 text-slate-800 tracking-tight">Report Center</h2>
-        {reportCategories.map((cat) => (
+      <div className="w-64 border-r bg-white p-4 overflow-y-auto hidden md:block shrink-0 reports-no-print">
+        <h2 className="text-xl font-bold mb-4 text-slate-800 tracking-tight">Report Center</h2>
+        <div className="relative mb-5">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input placeholder="Search reports…" className="pl-8 h-9 text-sm" value={sidebarSearch} onChange={(e) => setSidebarSearch(e.target.value)} />
+        </div>
+        {reportCategories.map((cat) => {
+          const filtered = sidebarSearch ? cat.reports.filter((r) => r.toLowerCase().includes(sidebarSearch.toLowerCase())) : cat.reports;
+          if (!filtered.length) return null;
+          return (
           <div key={cat.id} className="mb-6">
             <h3 className="text-xs font-semibold uppercase text-slate-500 tracking-wider mb-3">{cat.title}</h3>
             <div className="space-y-1">
-              {cat.reports.map((r) => (
+              {filtered.map((r) => (
                 <button
                   key={r}
                   type="button"
-                  onClick={() => setActiveReport(r as ReportName)}
+                  onClick={() => selectReport(r as ReportName)}
                   className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${activeReport === r ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
                 >
                   {r}
@@ -542,11 +872,12 @@ export default function ReportsHome() {
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="h-auto min-h-14 border-b flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-3 bg-white shrink-0">
+        <div className="h-auto min-h-14 border-b flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-3 bg-white shrink-0 reports-no-print">
           <h1 className="text-lg sm:text-xl font-semibold flex items-center gap-2 min-w-0">
             <FileText className="w-5 h-5 text-indigo-500 shrink-0" />
             <span className="truncate">{activeReport}</span>
@@ -561,10 +892,43 @@ export default function ReportsHome() {
             <Button variant="outline" size="sm" type="button" className="bg-green-50 text-green-800 border-green-200 hover:bg-green-100" onClick={handleExportExcel}>
               <Download className="w-4 h-4 mr-2" /> Excel
             </Button>
+            <Button variant="outline" size="sm" type="button" onClick={() => window.print()}>
+              <Printer className="w-4 h-4 mr-2" /> Print
+            </Button>
           </div>
         </div>
 
-        <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
+        <div className="flex-1 p-4 sm:p-6 overflow-y-auto reports-print-area">
+          {activeReport === 'Party Statement' && (
+            <div className="mb-4 relative max-w-sm">
+              <Input
+                placeholder="Search a party to view their statement…"
+                value={selectedPartyName || partySearchTerm}
+                onChange={(e) => { setSelectedPartyName(''); setSelectedPartyId(''); setPartySearchTerm(e.target.value); }}
+              />
+              {partySearchTerm.length >= 2 && !selectedPartyId && (partySearchResults || []).length > 0 && (
+                <div className="absolute z-20 w-full mt-1 bg-card border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {(partySearchResults || []).map((p: any) => (
+                    <button key={p.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
+                      onClick={() => { setSelectedPartyId(p.id); setSelectedPartyName(p.name); setPartySearchTerm(''); }}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!selectedPartyId && <p className="text-xs text-muted-foreground mt-1">Select a party to load their statement.</p>}
+            </div>
+          )}
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <p className="text-xs text-muted-foreground">
+              Reports <ChevronRight className="inline w-3 h-3" /> {reportCategories.find((c) => (c.reports as readonly string[]).includes(activeReport))?.title || ''} <ChevronRight className="inline w-3 h-3" /> <span className="text-foreground font-medium">{activeReport}</span>
+            </p>
+            {activeReport !== 'Trial Balance' && (
+              <button onClick={() => selectReport('Trial Balance')} className="text-xs text-indigo-600 hover:underline flex items-center gap-1 reports-no-print">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Quick access: Trial Balance
+              </button>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mb-4">
             Showing <span className="font-medium text-foreground">{appliedFrom}</span> to <span className="font-medium text-foreground">{appliedTo}</span>
             {['GSTR-1 Data', 'GSTR-3B Summary', 'HSN Summary'].includes(activeReport) && (
@@ -593,8 +957,19 @@ export default function ReportsHome() {
           </SheetHeader>
           <div className="space-y-4">
             <div>
-              <Label>From date</Label>
-              <Input type="date" className="mt-1" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+              <Label className="text-xs text-muted-foreground mb-2 block">Quick ranges</Label>
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('today')}>Today</Button>
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('this_week')}>This Week</Button>
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('this_month')}>This Month</Button>
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('last_month')}>Last Month</Button>
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('quarter')}>Quarter</Button>
+                <Button variant="outline" size="sm" type="button" onClick={() => applyQuickRange('fy')}>Financial Year</Button>
+              </div>
+            </div>
+            <div className="border-t pt-4">
+            <Label>From date</Label>
+            <Input type="date" className="mt-1" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
             </div>
             <div>
               <Label>To date</Label>

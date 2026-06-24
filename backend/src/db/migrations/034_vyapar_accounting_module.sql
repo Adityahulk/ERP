@@ -1,4 +1,4 @@
--- Vyapar-style accounting module hardening.
+-- Accounting module hardening.
 
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS account_category varchar(80);
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS normal_balance varchar(10);

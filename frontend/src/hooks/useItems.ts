@@ -67,10 +67,34 @@ export function useCreateItemCategory() {
   });
 }
 
+export function useUpdateItemCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => api.patch(`/item-categories/${id}`, data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-categories'] }),
+  });
+}
+
+export function useDeleteItemCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/item-categories/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-categories'] }),
+  });
+}
+
 export function useCreateItemUnit() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: any) => api.post('/item-units', data).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['item-units'] }),
+  });
+}
+
+export function useUpdateItemUnit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => api.patch(`/item-units/${id}`, data).then(r => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['item-units'] }),
   });
 }

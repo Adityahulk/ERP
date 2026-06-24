@@ -7,6 +7,7 @@ import { calculateInvoiceTotals, determineGSTType } from '../services/gstService
 import {
   generateInvoicePDF,
   generateThermalReceipt,
+  generateThermalInvoicePDF,
   generateEinvoicePdf,
   generateBulkSalesInvoicePDF,
   generateDeliveryChallanPDF,
@@ -289,7 +290,7 @@ function stateCodeFromGstin(value: unknown): string {
   return /^[0-9]{2}[A-Z0-9]{13}$/.test(gstin) ? gstin.slice(0, 2) : '';
 }
 
-async function resolveDefaultGodownId(db: Queryable, companyId: string, requested?: unknown, userGodownId?: string | null): Promise<string | null> {
+export async function resolveDefaultGodownId(db: Queryable, companyId: string, requested?: unknown, userGodownId?: string | null): Promise<string | null> {
   const requestedId = trimOrNull(requested);
   if (requestedId) return requestedId;
   if (userGodownId) return userGodownId;
@@ -333,6 +334,19 @@ async function deductSaleStockAllowNegative(
      ON CONFLICT (item_id, godown_id) DO NOTHING`,
     [args.companyId, args.itemId, args.godownId],
   );
+
+  const companySetting = await db.query(`SELECT stop_sale_on_negative_stock FROM companies WHERE id = $1`, [args.companyId]);
+  if (companySetting.rows[0]?.stop_sale_on_negative_stock) {
+    const currentStock = await db.query(
+      `SELECT quantity FROM item_stock WHERE company_id = $1 AND item_id = $2 AND godown_id = $3`,
+      [args.companyId, args.itemId, args.godownId],
+    );
+    const available = Number(currentStock.rows[0]?.quantity || 0);
+    if (available < qty) {
+      const itemRow = await db.query(`SELECT name FROM items WHERE id = $1`, [args.itemId]);
+      throw new Error(`Insufficient stock for "${itemRow.rows[0]?.name || 'item'}" — available: ${available}, requested: ${qty}. (Negative stock is blocked in Settings → General.)`);
+    }
+  }
 
   await db.query(
     `UPDATE item_stock
@@ -583,6 +597,10 @@ export async function createInvoice(req: Request, res: Response) {
     }
     if (d.invoice_type && !['sale', 'tax_invoice', 'non_gst'].includes(d.invoice_type)) {
       return res.status(400).json(error('Use the purchase module for supplier bills. This form only creates sales invoices.'));
+    }
+    if (d.invoice_date) {
+      const { assertDateNotLocked } = await import('./utilitiesController');
+      await assertDateNotLocked(companyId, d.invoice_date);
     }
     const isGstInvoice = d.is_gst_invoice !== false && d.invoice_type !== 'non_gst';
     const pricingMode = d.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
@@ -904,7 +922,7 @@ export async function createInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('createInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to create invoice';
-    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity|Invoice number/i.test(msg) ? 400 : 500;
+    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity|Invoice number|closed financial year/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -948,7 +966,9 @@ export async function listInvoices(req: Request, res: Response) {
               COALESCE(i.party_phone_snapshot, p.phone) as party_phone,
               COALESCE(i.party_email_snapshot, p.email) as party_email,
               dc.id AS delivery_challan_id,
-              dc.challan_number AS delivery_challan_number
+              dc.challan_number AS delivery_challan_number,
+              COALESCE((SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = i.id), 0) AS item_count,
+              COALESCE((SELECT SUM(ii.quantity) FROM invoice_items ii WHERE ii.invoice_id = i.id), 0) AS total_quantity
        FROM invoices i LEFT JOIN parties p ON i.party_id = p.id
        LEFT JOIN delivery_challans dc ON dc.invoice_id = i.id AND dc.company_id = i.company_id AND dc.is_deleted = false
        WHERE ${where} ORDER BY i.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -1754,6 +1774,24 @@ export async function getInvoicePDF(req: Request, res: Response) {
       invRes.rows[0].pdf_template = templateOverride;
     }
     if (templateOverride) invRes.rows[0].document_theme = templateOverride;
+
+    // Global Thermal Printing Preference (Settings → Print Settings).
+    // Explicit ?format=a4|thermal always wins for power users; otherwise
+    // the company's saved default applies automatically — this is the
+    // one endpoint every "Print" button, the PDF download, WhatsApp
+    // Share, and Email Share for invoices all funnel through, so fixing
+    // it here covers all four without touching each call site.
+    const formatOverride = String(req.query.format || '').toLowerCase();
+    const storedDefault = (companyForPdf as any)?.print_settings?.default_invoice_print_type;
+    const useThermal = formatOverride ? formatOverride === 'thermal' : storedDefault === 'thermal';
+
+    if (useThermal) {
+      const thermalBuffer = await generateThermalInvoicePDF(invRes.rows[0], companyForPdf, itemsRes.rows);
+      const inlineThermal = String(req.query.inline || '') === '1';
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `${inlineThermal ? 'inline' : 'attachment'}; filename=${invRes.rows[0].invoice_number}-thermal.pdf`);
+      return res.send(thermalBuffer);
+    }
 
     const pdfBuffer = await generateInvoicePDF(invRes.rows[0], companyForPdf, partyRes.rows[0], itemsRes.rows, {
       ...(templateOverride ? { themeOverride: templateOverride } : {}),

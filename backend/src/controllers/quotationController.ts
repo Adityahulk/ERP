@@ -265,7 +265,9 @@ export async function listQuotations(req: Request, res: Response) {
     const total = parseInt(countRes.rows[0].c, 10);
 
     const result = await query(
-      `SELECT q.*, p.name AS party_name
+      `SELECT q.*, p.name AS party_name,
+              COALESCE((SELECT COUNT(*) FROM quotation_items qi WHERE qi.quotation_id = q.id), 0) AS item_count,
+              COALESCE((SELECT SUM(qi.quantity) FROM quotation_items qi WHERE qi.quotation_id = q.id), 0) AS total_quantity
        FROM quotations q
        LEFT JOIN parties p ON q.party_id = p.id
        WHERE q.company_id = $1 AND q.is_deleted = false

@@ -99,6 +99,24 @@ const envSchema = z.object({
   GSTIN_LOOKUP_API_KEY_HEADER: z.string().default('Authorization'),
   /** 64 hex chars (32 bytes) for AES-256-GCM storage of GSP passwords at rest */
   CREDENTIALS_ENCRYPTION_KEY: z.string().optional(),
+
+  // ── Third-party integrations (Settings → Integrations) ──────────
+  // These are Microtechnique's OWN registered developer-app credentials
+  // (one app per provider, shared across every tenant) — NOT a
+  // per-customer secret. Each company then authorizes this app against
+  // their own account; that per-tenant token is what's stored encrypted
+  // in tenant_integrations, never these. All optional: the Integrations
+  // page degrades gracefully (shows "not configured by platform admin")
+  // until a platform admin sets them.
+  INTEGRATIONS_OAUTH_CALLBACK_BASE_URL: z.string().optional(),
+
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  // WhatsApp Business Cloud API uses the same Meta app/OAuth as Meta Ads
+  // (Meta for Developers), just a different scope — no separate app ID.
 });
 
 import fs from 'fs';

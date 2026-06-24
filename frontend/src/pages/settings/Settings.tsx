@@ -75,6 +75,11 @@ type PrintColumnKey =
   | 'model_no' | 'brand' | 'material';
 
 type PrintSettingsState = {
+  /** Global Thermal Printing Preference — Settings → Print Settings.
+   * When 'thermal', every invoice Print/PDF/WhatsApp Share/Email Share
+   * automatically uses the thermal layout instead of A4, with no
+   * manual per-document selection required. */
+  default_invoice_print_type: 'a4' | 'thermal';
   regular: {
     default: boolean;
     layout: string;
@@ -305,6 +310,7 @@ const REFERENCE_INVOICE_FIELDS = [
 const DEFAULT_REFERENCE_FIELD_VISIBILITY = Object.fromEntries(REFERENCE_INVOICE_FIELDS.map(([key]) => [key, true])) as Record<string, boolean>;
 
 const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
+  default_invoice_print_type: 'a4',
   regular: {
     default: true,
     layout: 'business-theme-1',
@@ -613,6 +619,7 @@ function normalizeItemSettings(value: unknown): ItemSettingsState {
 
 function normalizePrintSettings(value: unknown): PrintSettingsState {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<PrintSettingsState> : {};
+  const defaultInvoicePrintType: PrintSettingsState['default_invoice_print_type'] = raw.default_invoice_print_type === 'thermal' ? 'thermal' : 'a4';
   const regular = (raw.regular || {}) as Partial<PrintSettingsState['regular']>;
   const header = (raw.header || {}) as Partial<PrintSettingsState['header']>;
   const itemTable = (raw.item_table || {}) as Partial<PrintSettingsState['item_table']>;
@@ -635,6 +642,7 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
     ? itemTable.columns.filter((col: PrintColumnKey): col is PrintColumnKey => PRINT_COLUMNS.some((entry) => entry.key === col))
     : DEFAULT_PRINT_SETTINGS.item_table.columns;
   return {
+    default_invoice_print_type: defaultInvoicePrintType,
     regular: {
       ...DEFAULT_PRINT_SETTINGS.regular,
       ...regular,
@@ -2369,6 +2377,27 @@ export default function Settings() {
                            </div>
                            <Button onClick={savePrintSettings} loading={updateCompany.isPending}>Save Print Settings</Button>
                         </div>
+
+                        <div className="mt-5 rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
+                          <label className="text-sm font-bold text-indigo-900 block">Default Invoice Print Type</label>
+                          <p className="text-xs text-indigo-700 mt-0.5 mb-3">
+                            Applies automatically across Sale Invoice, Purchase Invoice, and Proforma Invoice — no manual selection needed each time you print, download, or share via WhatsApp/Email.
+                          </p>
+                          <div className="flex gap-3">
+                            {(['a4', 'thermal'] as const).map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => setPrintSettings((prev) => ({ ...prev, default_invoice_print_type: opt }))}
+                                className={`flex-1 rounded-md border px-4 py-2.5 text-sm font-semibold text-left ${printSettings.default_invoice_print_type === opt ? 'border-indigo-600 bg-white text-indigo-700 ring-1 ring-indigo-600' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}
+                              >
+                                {opt === 'a4' ? 'A4 Invoice' : 'Thermal Invoice'}
+                                <span className="block text-xs font-normal text-slate-400 mt-0.5">{opt === 'a4' ? 'Standard full-page printer' : '50×24mm / 58mm / 80mm receipt printer'}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         <div className="mt-5 flex gap-2">
                            <button
                               type="button"

@@ -1,17 +1,24 @@
 import { useState, useEffect, Suspense, useRef, type Dispatch, type SetStateAction } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
 import TrialBanner from '@/components/shared/TrialBanner';
 import { useAuthStore } from '@/store/authStore';
 import {
-  LayoutDashboard, ShoppingBag, FileText, Receipt,
-  Warehouse, BarChart3, Cloud, UserCheck, Barcode,
+  Home, ShoppingBag, FileText, Receipt,
+  Warehouse, BarChart3, Cloud, UserCheck, Barcode, Camera,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
   Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight, Landmark,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageCircle,
+  FolderTree, Ruler, Megaphone, Heart, RefreshCw, Building2, Check, Link2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
+  DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Command } from 'cmdk';
 import { getInitials, cn } from '@/lib/utils';
 import axios from 'axios';
@@ -31,23 +38,81 @@ type OwnedCompanyLicense = {
   status: 'pending' | 'active' | 'trial' | 'expired' | 'revoked';
 };
 
+/**
+ * Sidebar menu hierarchy, mapped onto this app's REAL existing
+ * routes (no backend or routing changes — purely a sidebar relabel /
+ * regroup). Where a requested menu entry names a screen this app doesn't
+ * have a dedicated page for (e.g. "Sync, Share & Backup"), the item
+ * points to the closest real, working destination rather than a dead link.
+ */
 const navGroups = [
   {
-     label: 'OVERVIEW',
-     items: [ { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' } ]
+     label: 'HOME',
+     items: [ { to: '/dashboard', icon: Home, label: 'Home' } ]
   },
   {
-     label: 'INVENTORY',
+     label: 'PARTIES',
      items: [
-        { to: '/items', icon: Package, label: 'Items & Materials' },
+        { to: '/parties', icon: Users, label: 'Party Details' },
+        { to: '/parties/whatsapp-connect', icon: MessageCircle, label: 'WhatsApp Connect' },
+     ]
+  },
+  {
+     label: 'ITEMS',
+     items: [
+        { to: '/items', icon: Package, label: 'Item List' },
         { to: '/inventory', icon: Warehouse, label: 'Stock & Godowns' },
+        { to: '/items/categories', icon: FolderTree, label: 'Categories' },
+        { to: '/items/units', icon: Ruler, label: 'Units' },
+        { to: '/barcode/generate', icon: Barcode, label: 'Barcode Labels' },
+        { to: '/barcode/scan', icon: Camera, label: 'Scan & Update Stock' },
      ]
   },
   {
-     label: 'BARCODE',
+     label: 'SALE',
      items: [
-        { to: '/barcode/generate', icon: Barcode, label: 'Generate Barcode' },
+        { to: '/sales-hub/invoices',   icon: FileText,      label: 'Sale Invoice' },
+        { to: '/sales-hub/quotations', icon: ClipboardList, label: 'Estimate / Quotation' },
+        { to: '/sales-hub/orders',     icon: ShoppingBag,   label: 'Sale Order' },
+        { to: '/sales-hub/challans',   icon: Truck,         label: 'Delivery Challan' },
+        { to: '/sales-hub/payment-in', icon: ArrowUpRight,  label: 'Payment In' },
+        { to: '/sales-hub/returns',    icon: RotateCcw,     label: 'Sale Return' },
+        { to: '/billing',             icon: Receipt,        label: 'POS Billing' },
      ]
+  },
+  {
+     label: 'PURCHASE & EXPENSE',
+     items: [
+        { to: '/purchase-expense/bills', icon: FileText, label: 'Purchase Bill' },
+        { to: '/purchase-expense/orders', icon: ClipboardList, label: 'Purchase Order' },
+        { to: '/purchase-expense/payment-out', icon: ArrowDownLeft, label: 'Payment Out' },
+        { to: '/purchase-expense/returns', icon: RotateCcw, label: 'Purchase Return' },
+        { to: '/purchase-expense/expenses', icon: Receipt, label: 'Expenses' },
+     ]
+  },
+  {
+     label: 'GROW YOUR BUSINESS',
+     items: [
+        { to: '/parties/whatsapp-connect', icon: Megaphone, label: 'WhatsApp Campaigns' },
+        { to: '/parties', icon: Heart, label: 'Customer Follow-ups' },
+        { to: '/settings/integrations', icon: Link2, label: 'Integrations' },
+        { to: '/settings/sync-backup', icon: RefreshCw, label: 'Sync & Backup' },
+     ]
+  },
+  {
+     label: 'CASH & BANK',
+     items: [ { to: '/cash-bank', icon: Landmark, label: 'Cash & Bank' } ]
+  },
+  {
+     label: 'ACCOUNTING',
+     items: [
+        { to: '/accounting', icon: Receipt, label: 'Journal & Ledger' },
+        { to: '/gst-filing', icon: Cloud, label: 'GST Returns' },
+     ]
+  },
+  {
+     label: 'REPORTS',
+     items: [ { to: '/reports', icon: BarChart3, label: 'Business Reports' } ]
   },
   {
      label: 'JOB WORK',
@@ -56,53 +121,17 @@ const navGroups = [
      ]
   },
   {
-     label: 'PARTIES',
-     items: [
-        { to: '/parties', icon: Users, label: 'Parties' },
-     ]
-  },
-  {
-     label: 'SALES',
-     items: [
-        { to: '/sales-hub/invoices',   icon: FileText,      label: 'Sale Invoices' },
-        { to: '/sales-hub/quotations', icon: ClipboardList, label: 'Estimate / Quotation' },
-        { to: '/sales-hub/orders',     icon: ShoppingBag,   label: 'Sale Orders' },
-        { to: '/sales-hub/challans',   icon: Truck,         label: 'Delivery Challan' },
-        { to: '/sales-hub/payment-in', icon: ArrowUpRight,  label: 'Payment-In' },
-        { to: '/sales-hub/returns',    icon: RotateCcw,     label: 'Sale Return' },
-        { to: '/billing',             icon: Receipt,        label: 'POS Billing' },
-     ]
-  },
-  {
-     label: 'PURCHASE & EXPENSE',
-     items: [
-        { to: '/purchase-expense/bills', icon: FileText, label: 'Purchase Bills' },
-        { to: '/purchase-expense/orders', icon: ClipboardList, label: 'Purchase Orders' },
-        { to: '/purchase-expense/payment-out', icon: ArrowDownLeft, label: 'Payment-Out' },
-        { to: '/purchase-expense/expenses', icon: Receipt, label: 'Expenses' },
-        { to: '/purchase-expense/returns', icon: RotateCcw, label: 'Purchase Return' },
-     ]
-  },
-  {
-     label: 'FINANCE',
-     items: [
-        { to: '/accounting', icon: Receipt, label: 'Accounting' },
-        { to: '/cash-bank', icon: Landmark, label: 'Cash & Bank' },
-        { to: '/reports', icon: BarChart3, label: 'Business Reports' },
-     ]
-  },
-  {
-     label: 'COMPLIANCE',
-     items: [ { to: '/gst-filing', icon: Cloud, label: 'GST Returns' } ]
-  },
-  {
      label: 'PEOPLE',
      items: [
         { to: '/attendance', icon: UserCheck, label: 'Attendance & HR' },
      ]
   },
   {
-     label: 'SYSTEM',
+     label: 'SYNC, SHARE & BACKUP',
+     items: [ { to: '/reports', icon: RefreshCw, label: 'Tally Export / Import' } ]
+  },
+  {
+     label: 'UTILITIES',
      items: [ { to: '/settings', icon: Settings, label: 'Settings' } ]
   }
 ];
@@ -241,7 +270,7 @@ export default function AppLayout() {
   const visibleNavGroups = navGroups.filter((group) => {
     if (actualRole === 'super_admin') return true;
     if (actualRole === 'staff') return group.label === 'PEOPLE';
-    if (actualRole === 'manager') return group.label !== 'SYSTEM' && group.label !== 'COMPLIANCE';
+    if (actualRole === 'manager') return group.label !== 'UTILITIES';
     return true;
   });
 
@@ -257,9 +286,7 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [ownedCompanies, setOwnedCompanies] = useState<OwnedCompanyLicense[]>([]);
-  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
   const [switchingLicenseId, setSwitchingLicenseId] = useState<string | null>(null);
-  const companyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -300,17 +327,6 @@ export default function AppLayout() {
     };
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!companyMenuOpen) return;
-    const handleClickOutside = (event: MouseEvent) => {
-      if (companyMenuRef.current && !companyMenuRef.current.contains(event.target as Node)) {
-        setCompanyMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [companyMenuOpen]);
-
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
@@ -328,7 +344,6 @@ export default function AppLayout() {
   const handleCompanySwitch = async (licenseId: string) => {
     try {
       setSwitchingLicenseId(licenseId);
-      setCompanyMenuOpen(false);
       await launchRegistrantCompany(licenseId);
       window.location.assign('/dashboard');
     } catch (err: any) {
@@ -339,6 +354,16 @@ export default function AppLayout() {
   /** Sidebar nav: groups with more than NAV_GROUP_VISIBLE_COUNT links start collapsed until expanded (or active route is in overflow). */
   const [navGroupExpanded, setNavGroupExpanded] = useState<Record<string, boolean>>({});
   const [cmdOpen, setCmdOpen] = useState(false);
+
+  // Real recent activity for the header notification bell — same /notifications/logs
+  // endpoint the WhatsApp Connect page uses for its activity feed.
+  const { data: notifLogs } = useQuery({
+    queryKey: ['header-notification-logs'],
+    queryFn: () => api.get('/notifications/logs').then((r) => r.data?.data ?? []),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const recentNotifs: any[] = Array.isArray(notifLogs) ? notifLogs.slice(0, 8) : [];
   const [searchQ, setSearchQ] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHits, setSearchHits] = useState<{
@@ -515,8 +540,8 @@ export default function AppLayout() {
       <aside
         id="app-sidebar"
         className={cn(
-          'hidden md:flex flex-col flex-shrink-0 bg-[#1E1B4B] shadow-xl z-20 overflow-hidden border-r border-black/20 transition-[width] duration-200 ease-out',
-          sidebarCollapsed ? 'w-[72px]' : 'w-[248px]',
+          'hidden md:flex flex-col flex-shrink-0 bg-navy-900 shadow-xl z-20 overflow-hidden border-r border-black/30 transition-[width] duration-200 ease-out',
+          sidebarCollapsed ? 'w-[72px]' : 'w-[260px]',
         )}
       >
         <div
@@ -526,65 +551,20 @@ export default function AppLayout() {
           )}
         >
            <div className={cn('flex gap-2.5', sidebarCollapsed ? 'flex-col items-center gap-1' : 'items-start')}>
-             <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-16 h-16 shrink-0 drop-shadow" />
+             <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-12 h-12 shrink-0 drop-shadow" />
              {!sidebarCollapsed && (
                <div className="min-w-0 flex-1 leading-tight">
                  <p className="text-[12px] font-semibold text-white">
                    <span className="block">Microtechnique</span>
                    <span className="block">Accounts</span>
                  </p>
-                 <p className="text-[11px] text-violet-200/95 mt-1 truncate">
-                   {currentOwnedCompany?.company_name || user?.companyId ? 'Current company' : 'Workspace'}
-                 </p>
                  {currentOwnedCompany?.company_name && (
-                   <p className="text-[11px] text-white/85 truncate mt-0.5">{currentOwnedCompany.company_name}</p>
+                   <p className="text-[11px] text-white/70 truncate mt-1">{currentOwnedCompany.company_name}</p>
                  )}
                  {user && (
-                   <span className="mt-1.5 block text-[10px] text-white/50 tracking-wide uppercase truncate">
+                   <span className="mt-1 block text-[10px] text-white/40 tracking-wide uppercase truncate">
                      G{(user as any)?.godown_id || 1} • {user.role}
                    </span>
-                 )}
-                 {ownedCompanies.length > 1 && (
-                   <div ref={companyMenuRef} className="relative mt-2">
-                     <button
-                       type="button"
-                       onClick={() => setCompanyMenuOpen((open) => !open)}
-                       className="flex w-full items-center justify-between rounded-md border border-white/10 bg-white/5 px-2.5 py-2 text-left text-[11px] text-white/90 hover:bg-white/10 transition-colors"
-                     >
-                       <span className="truncate">
-                         {switchingLicenseId ? 'Switching company…' : `${ownedCompanies.length} companies`}
-                       </span>
-                       <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', companyMenuOpen && 'rotate-180')} />
-                     </button>
-                     {companyMenuOpen && (
-                       <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 rounded-lg border border-white/10 bg-[#24195a] p-1.5 shadow-2xl backdrop-blur-xl">
-                         {ownedCompanies.map((entry) => {
-                           const isCurrent = entry.company_id === user?.companyId;
-                           return (
-                             <button
-                               key={entry.id}
-                               type="button"
-                               onClick={() => !isCurrent && handleCompanySwitch(entry.id)}
-                               disabled={switchingLicenseId === entry.id || isCurrent}
-                               className={cn(
-                                 'flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-colors',
-                                 isCurrent ? 'bg-white/10 text-white' : 'text-white/80 hover:bg-white/10 hover:text-white',
-                                 switchingLicenseId === entry.id && 'opacity-60 cursor-not-allowed'
-                               )}
-                             >
-                               <span className="min-w-0">
-                                 <span className="block truncate text-[11px] font-medium">{entry.company_name}</span>
-                                 <span className="block truncate text-[10px] text-white/45">{entry.tier_display_name}</span>
-                               </span>
-                               <span className="shrink-0 text-[10px] uppercase tracking-wide text-violet-200/80">
-                                 {isCurrent ? 'Current' : 'Open'}
-                               </span>
-                             </button>
-                           );
-                         })}
-                       </div>
-                     )}
-                   </div>
                  )}
                </div>
              )}
@@ -696,7 +676,7 @@ export default function AppLayout() {
       {mobileOpen && (
          <div className="fixed inset-0 z-40 flex md:hidden">
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
-            <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
+            <div className="w-[260px] bg-navy-900 h-full shadow-2xl relative flex flex-col pt-4">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
                <div className="px-6 mb-4 flex items-start gap-2.5">
                  <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-16 h-16 shrink-0 drop-shadow" />
@@ -706,7 +686,7 @@ export default function AppLayout() {
                    <span className="block">Accounts</span>
                   </p>
                    {currentOwnedCompany?.company_name && (
-                     <p className="text-[11px] text-violet-200/95 mt-1 truncate">{currentOwnedCompany.company_name}</p>
+                     <p className="text-[11px] text-white/70 mt-1 truncate">{currentOwnedCompany.company_name}</p>
                    )}
                  </div>
                </div>
@@ -728,7 +708,7 @@ export default function AppLayout() {
         {/* Trial period banner — sticks above the header */}
         <TrialBanner />
 
-        <header className="h-[56px] bg-white border-b flex items-center justify-between px-4 sm:px-5 sticky top-0 z-10 shrink-0">
+        <header className="h-[60px] bg-white border-b flex items-center justify-between px-4 sm:px-5 sticky top-0 z-10 shrink-0 gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
              <Button variant="ghost" size="icon" className="md:hidden shrink-0" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
              <Button
@@ -745,26 +725,113 @@ export default function AppLayout() {
              </Button>
              <div
                 onClick={() => setCmdOpen(true)}
-                className="hidden md:flex items-center text-sm text-slate-400 bg-slate-100 hover:bg-slate-200 transition-colors w-64 min-w-0 max-w-[min(16rem,100%)] h-9 px-3 rounded-lg border border-slate-200 cursor-pointer shadow-sm"
+                className="hidden md:flex items-center text-sm text-slate-400 bg-slate-100 hover:bg-slate-200 transition-colors w-72 min-w-0 max-w-[min(18rem,100%)] h-9 px-3 rounded-lg border border-slate-200 cursor-pointer shadow-sm"
              >
-                <Search className="w-4 h-4 mr-2" /> Quick Search...
+                <Search className="w-4 h-4 mr-2" /> Search invoices, parties, items…
                 <kbd className="ml-auto flex items-center gap-1 font-mono text-[10px] bg-white px-1.5 py-0.5 rounded border">⌘ K</kbd>
              </div>
+
+             {/* Company switcher — surfaced here so it's reachable from any screen */}
+             <DropdownMenu>
+               <DropdownMenuTrigger asChild>
+                 <button
+                   type="button"
+                   className="hidden lg:flex items-center gap-2 h-9 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 transition-colors text-sm text-slate-700 max-w-[200px]"
+                   title="Switch company"
+                 >
+                   <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                   <span className="truncate font-medium">
+                     {switchingLicenseId ? 'Switching…' : currentOwnedCompany?.company_name || 'Workspace'}
+                   </span>
+                   <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                 </button>
+               </DropdownMenuTrigger>
+               <DropdownMenuContent align="start" className="w-64">
+                 <DropdownMenuLabel>Your companies</DropdownMenuLabel>
+                 <DropdownMenuSeparator />
+                 {ownedCompanies.length === 0 && (
+                   <div className="px-2 py-3 text-xs text-muted-foreground">No other companies linked to this account.</div>
+                 )}
+                 {ownedCompanies.map((entry) => {
+                   const isCurrent = entry.company_id === user?.companyId;
+                   return (
+                     <DropdownMenuItem
+                       key={entry.id}
+                       disabled={switchingLicenseId === entry.id || isCurrent}
+                       onClick={() => !isCurrent && handleCompanySwitch(entry.id)}
+                       className="flex items-center justify-between gap-2"
+                     >
+                       <span className="min-w-0">
+                         <span className="block truncate text-sm">{entry.company_name}</span>
+                         <span className="block truncate text-[11px] text-muted-foreground">{entry.tier_display_name}</span>
+                       </span>
+                       {isCurrent && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
+                     </DropdownMenuItem>
+                   );
+                 })}
+               </DropdownMenuContent>
+             </DropdownMenu>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 ml-auto">
              <NavbarQuickAdd />
-             <Button variant="ghost" size="icon" className="relative text-slate-500 shrink-0">
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
-             </Button>
-             <button
-               type="button"
-               onClick={() => navigate('/profile')}
-               className="h-9 w-9 rounded-full bg-indigo-600 text-white text-sm font-semibold overflow-hidden"
-               aria-label="Open profile"
-             >
-               {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : getInitials(user?.name || '?')}
-             </button>
+
+             {/* Notification bell — backed by the real /notifications/logs endpoint */}
+             <DropdownMenu>
+               <DropdownMenuTrigger asChild>
+                 <Button variant="ghost" size="icon" className="relative text-slate-500 shrink-0">
+                    <Bell className="w-5 h-5" />
+                    {recentNotifs.length > 0 && (
+                      <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
+                    )}
+                 </Button>
+               </DropdownMenuTrigger>
+               <DropdownMenuContent align="end" className="w-80 p-0">
+                 <div className="px-3 py-2.5 border-b">
+                   <p className="text-sm font-semibold text-slate-800">Notifications</p>
+                   <p className="text-[11px] text-muted-foreground">Recent WhatsApp, SMS &amp; system activity</p>
+                 </div>
+                 <div className="max-h-80 overflow-y-auto">
+                   {recentNotifs.length === 0 && (
+                     <div className="px-3 py-8 text-center text-sm text-muted-foreground">Nothing yet — you're all caught up.</div>
+                   )}
+                   {recentNotifs.map((n: any) => (
+                     <div key={n.id} className="px-3 py-2.5 border-b last:border-0 hover:bg-slate-50 text-sm">
+                       <div className="flex items-center justify-between gap-2">
+                         <span className="font-medium text-slate-700 capitalize">{n.channel || 'system'}</span>
+                         <span className="text-[10px] text-muted-foreground shrink-0">
+                           {n.created_at ? new Date(n.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                         </span>
+                       </div>
+                       <p className="text-xs text-muted-foreground truncate mt-0.5">{n.recipient || n.template_type || '—'}</p>
+                     </div>
+                   ))}
+                 </div>
+               </DropdownMenuContent>
+             </DropdownMenu>
+
+             <DropdownMenu>
+               <DropdownMenuTrigger asChild>
+                 <button type="button" className="shrink-0" aria-label="Open profile menu">
+                   <Avatar className="h-9 w-9 ring-2 ring-transparent hover:ring-slate-200 transition-shadow">
+                     {user?.avatarUrl && <AvatarImage src={user.avatarUrl} alt="" />}
+                     <AvatarFallback className="bg-indigo-600 text-white">{getInitials(user?.name || '?')}</AvatarFallback>
+                   </Avatar>
+                 </button>
+               </DropdownMenuTrigger>
+               <DropdownMenuContent align="end" className="w-56">
+                 <DropdownMenuLabel>
+                   <p className="text-sm font-semibold text-slate-800 truncate">{user?.name}</p>
+                   <p className="text-[11px] text-muted-foreground truncate font-normal">{user?.email}</p>
+                 </DropdownMenuLabel>
+                 <DropdownMenuSeparator />
+                 <DropdownMenuItem onClick={() => navigate('/profile')}>My profile</DropdownMenuItem>
+                 <DropdownMenuItem onClick={() => navigate('/settings')}>Settings</DropdownMenuItem>
+                 <DropdownMenuSeparator />
+                 <DropdownMenuItem onClick={logout} className="text-red-600 focus:text-red-600 focus:bg-red-50">
+                   <LogOut className="w-4 h-4 mr-2" /> Log out
+                 </DropdownMenuItem>
+               </DropdownMenuContent>
+             </DropdownMenu>
           </div>
         </header>
 

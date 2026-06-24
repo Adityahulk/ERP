@@ -65,6 +65,16 @@ export function useSearchParties(q: string) {
   });
 }
 
+/** Full ledger entries for a party — powers the Parties module's Ledger tab. */
+export function usePartyStatement(partyId: string | undefined) {
+  const validId = isValidUuid(partyId);
+  return useQuery({
+    queryKey: ['parties', partyId, 'statement'],
+    queryFn: () => api.get('/reports/party-statement', { params: { party_id: partyId } }).then((r) => r.data?.data),
+    enabled: !!validId,
+  });
+}
+
 export function useInvoices(filters: any) {
   return useQuery({
     queryKey: ['invoices', filters],

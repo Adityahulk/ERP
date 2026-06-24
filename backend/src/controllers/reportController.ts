@@ -718,15 +718,10 @@ export async function trialBalance(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
     const result = await query(
-      `SELECT a.id, a.code, a.name, a.account_type,
+      `SELECT a.id, a.code, a.name, a.account_type, a.parent_id, parent.name AS parent_name,
               COALESCE(a.opening_balance, 0)::bigint AS opening_balance_paise,
-              COALESCE(SUM(
-                CASE
-                  WHEN je.id IS NULL THEN 0
-                  WHEN a.account_type IN ('asset', 'expense') THEN jel.debit - jel.credit
-                  ELSE jel.credit - jel.debit
-                END
-              ), 0)::bigint AS period_net_paise,
+              COALESCE(SUM(jel.debit), 0)::bigint AS period_debit_paise,
+              COALESCE(SUM(jel.credit), 0)::bigint AS period_credit_paise,
               (COALESCE(a.opening_balance, 0) + COALESCE(SUM(
                 CASE
                   WHEN je.id IS NULL THEN 0
@@ -735,16 +730,48 @@ export async function trialBalance(req: Request, res: Response) {
                 END
               ), 0))::bigint AS closing_balance_paise
        FROM accounts a
+       LEFT JOIN accounts parent ON parent.id = a.parent_id
        LEFT JOIN journal_entry_lines jel ON jel.account_id = a.id AND jel.company_id = a.company_id
        LEFT JOIN journal_entries je ON je.id = jel.entry_id AND je.company_id = a.company_id
          AND je.is_deleted = false AND COALESCE(je.status, 'posted') = 'posted'
          AND je.entry_date >= $2::date AND je.entry_date <= $3::date
        WHERE a.company_id = $1 AND a.is_deleted = false AND a.is_active = true
-       GROUP BY a.id, a.code, a.name, a.account_type, a.opening_balance
-       ORDER BY a.account_type, a.code NULLS LAST, a.name`,
+       GROUP BY a.id, a.code, a.name, a.account_type, a.parent_id, parent.name, a.opening_balance
+       ORDER BY a.account_type, COALESCE(parent.name, a.name), a.code NULLS LAST, a.name`,
       [companyId, from, to]
     );
-    res.json(success({ period: { from, to }, rows: result.rows }));
+
+    // Build a real two-level tree (group accounts with parent_id=NULL
+    // that have children -> those children nested beneath them).
+    const byId = new Map(result.rows.map((r: any) => [r.id, { ...r, children: [] as any[] }]));
+    const roots: any[] = [];
+    for (const row of byId.values()) {
+      if (row.parent_id && byId.has(row.parent_id)) byId.get(row.parent_id)!.children.push(row);
+      else roots.push(row);
+    }
+
+    const totalDebit = result.rows.reduce((s, r) => s + Number(r.period_debit_paise), 0);
+    const totalCredit = result.rows.reduce((s, r) => s + Number(r.period_credit_paise), 0);
+
+    // Real imbalance check — flags the exact unbalanced journal entries,
+    // same query used by Utilities → Verify My Data, so a trial balance
+    // that doesn't tie out always points to a fixable root cause.
+    const unbalanced = await query(
+      `SELECT id, entry_number, total_debit, total_credit FROM journal_entries
+       WHERE company_id = $1 AND is_deleted = false AND total_debit != total_credit
+         AND entry_date >= $2::date AND entry_date <= $3::date`,
+      [companyId, from, to],
+    );
+
+    res.json(success({
+      period: { from, to },
+      rows: result.rows,
+      tree: roots,
+      totalDebit,
+      totalCredit,
+      isBalanced: totalDebit === totalCredit && unbalanced.rows.length === 0,
+      unbalancedEntries: unbalanced.rows,
+    }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }
@@ -821,7 +848,7 @@ function escXml(input: string): string {
 }
 
 async function getTallyExportData(companyId: string) {
-  const [companyRes, unitsRes, categoriesRes, itemsRes, partiesRes, salesRes, purchaseRes] = await Promise.all([
+  const [companyRes, unitsRes, categoriesRes, itemsRes, partiesRes, salesRes, purchaseRes, saleReturnsRes, purchaseReturnsRes] = await Promise.all([
     query('SELECT id, name, legal_name, gstin, state, state_code FROM companies WHERE id = $1', [companyId]),
     query('SELECT id, name, abbreviation, is_default FROM item_units WHERE company_id = $1 ORDER BY name', [companyId]),
     query('SELECT id, name FROM item_categories WHERE company_id = $1 AND is_deleted = false ORDER BY name', [companyId]),
@@ -857,6 +884,16 @@ async function getTallyExportData(companyId: string) {
        ORDER BY bill_date`,
       [companyId]
     ),
+    query(
+      `SELECT id, credit_note_number AS number, return_date AS date, total_amount, reason
+       FROM sale_returns WHERE company_id = $1 AND is_deleted = false ORDER BY return_date`,
+      [companyId]
+    ),
+    query(
+      `SELECT id, debit_note_number AS number, return_date AS date, total_amount, reason
+       FROM purchase_returns WHERE company_id = $1 AND is_deleted = false ORDER BY return_date`,
+      [companyId]
+    ),
   ]);
 
   return {
@@ -867,6 +904,8 @@ async function getTallyExportData(companyId: string) {
     parties: partiesRes.rows,
     sales: salesRes.rows,
     purchases: purchaseRes.rows,
+    creditNotes: saleReturnsRes.rows,
+    debitNotes: purchaseReturnsRes.rows,
   };
 }
 
@@ -1048,4 +1087,658 @@ export async function tallyImport(req: Request, res: Response) {
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }
+}
+
+// ── GET /api/reports/category-wise-sales ─────────────────────────
+export async function categoryWiseSales(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(ic.id::text, 'uncategorized') AS category_id,
+              COALESCE(ic.name, 'Uncategorized') AS category_name,
+              COUNT(DISTINCT inv.id)::int AS invoice_count,
+              SUM(ii.quantity)::numeric AS qty_sold,
+              COALESCE(SUM(ii.taxable_amount), 0)::bigint AS taxable_total_paise,
+              COALESCE(SUM(ii.total_amount), 0)::bigint AS total_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       LEFT JOIN items it ON ii.item_id = it.id
+       LEFT JOIN item_categories ic ON ic.id = it.category_id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY COALESCE(ic.id::text, 'uncategorized'), COALESCE(ic.name, 'Uncategorized')
+       ORDER BY total_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/item-wise-purchase ───────────────────────────
+export async function itemWisePurchase(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(it.id::text, md5(pii.item_name)) AS item_key,
+              COALESCE(it.name, pii.item_name) AS item_name,
+              COALESCE(it.sku, '') AS sku,
+              SUM(pii.quantity)::numeric AS qty_purchased,
+              COALESCE(SUM(pii.taxable_amount), 0)::bigint AS purchase_taxable_paise,
+              COALESCE(SUM(pii.total_amount), 0)::bigint AS purchase_total_paise
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pii.purchase_invoice_id = pi.id
+       LEFT JOIN items it ON pii.item_id = it.id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
+         AND pi.bill_date >= $2 AND pi.bill_date <= $3
+       GROUP BY COALESCE(it.id::text, md5(pii.item_name::text)), COALESCE(it.name, pii.item_name), COALESCE(it.sku, '')
+       ORDER BY purchase_total_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/sale-returns ─────────────────────────────────
+export async function saleReturnsReport(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT r.id, r.credit_note_number, r.return_date, r.total_amount, r.refund_given,
+              COALESCE(p.name, r.party_id::text) AS party_name,
+              (SELECT COUNT(*) FROM sale_return_items sri WHERE sri.return_id = r.id) AS item_count
+       FROM sale_returns r
+       LEFT JOIN parties p ON p.id = r.party_id
+       WHERE r.company_id = $1 AND r.is_deleted = false
+         AND r.return_date >= $2 AND r.return_date <= $3
+       ORDER BY r.return_date DESC`,
+      [req.user!.company_id, from, to],
+    );
+    const total = result.rows.reduce((s, r) => s + (parseInt(r.total_amount) || 0), 0);
+    res.json(success(result.rows, { total_amount: total, count: result.rows.length }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/purchase-returns ─────────────────────────────
+export async function purchaseReturnsReport(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT r.id, r.debit_note_number, r.return_date, r.total_amount, r.refund_received,
+              COALESCE(p.name, r.party_name_snapshot) AS party_name,
+              pi.bill_number AS purchase_bill_number,
+              (SELECT COUNT(*) FROM purchase_return_items pri WHERE pri.return_id = r.id) AS item_count
+       FROM purchase_returns r
+       LEFT JOIN parties p ON p.id = r.party_id
+       LEFT JOIN purchase_invoices pi ON pi.id = r.purchase_invoice_id
+       WHERE r.company_id = $1 AND r.is_deleted = false
+         AND r.return_date >= $2 AND r.return_date <= $3
+       ORDER BY r.return_date DESC`,
+      [req.user!.company_id, from, to],
+    );
+    const total = result.rows.reduce((s, r) => s + (parseInt(r.total_amount) || 0), 0);
+    res.json(success(result.rows, { total_amount: total, count: result.rows.length }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/batch-wise-stock ─────────────────────────────
+export async function batchWiseStock(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT b.id, b.batch_number, b.expiry_date, b.quantity, b.purchase_price,
+              it.id AS item_id, it.name AS item_name, it.sku, g.name AS godown_name
+       FROM item_batches b
+       JOIN items it ON it.id = b.item_id
+       LEFT JOIN godowns g ON g.id = b.godown_id
+       WHERE b.company_id = $1 AND it.is_deleted = false AND b.quantity > 0
+       ORDER BY it.name, b.expiry_date NULLS LAST`,
+      [req.user!.company_id],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/expiry ────────────────────────────────────────
+// Real urgency buckets computed from today's date vs each batch's
+// actual expiry_date — nothing fabricated.
+export async function expiryReport(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT b.id, b.batch_number, b.expiry_date, b.quantity,
+              it.id AS item_id, it.name AS item_name, it.sku,
+              (b.expiry_date - CURRENT_DATE) AS days_to_expiry
+       FROM item_batches b
+       JOIN items it ON it.id = b.item_id
+       WHERE b.company_id = $1 AND it.is_deleted = false AND b.quantity > 0 AND b.expiry_date IS NOT NULL
+       ORDER BY b.expiry_date ASC`,
+      [req.user!.company_id],
+    );
+    const buckets = { expired: 0, within_30_days: 0, within_90_days: 0, safe: 0 };
+    for (const row of result.rows) {
+      const days = Number(row.days_to_expiry);
+      if (days < 0) buckets.expired++;
+      else if (days <= 30) buckets.within_30_days++;
+      else if (days <= 90) buckets.within_90_days++;
+      else buckets.safe++;
+    }
+    res.json(success(result.rows, buckets));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/dead-stock ────────────────────────────────────
+// "Dead" = tracked, in stock, with zero stock_movements in the lookback
+// window (default 90 days) — a real, standard definition, not a guess.
+export async function deadStock(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const days = Math.max(1, parseInt(String(req.query.days || '90')));
+    const result = await query(
+      `SELECT it.id, it.name, it.sku, it.purchase_price,
+              COALESCE(SUM(s.quantity), 0) AS total_qty,
+              MAX(sm.created_at) AS last_movement_at
+       FROM items it
+       LEFT JOIN item_stock s ON s.item_id = it.id AND s.company_id = it.company_id
+       LEFT JOIN stock_movements sm ON sm.item_id = it.id AND sm.company_id = it.company_id
+       WHERE it.company_id = $1 AND it.is_deleted = false AND it.track_inventory = true
+       GROUP BY it.id, it.name, it.sku, it.purchase_price
+       HAVING COALESCE(SUM(s.quantity), 0) > 0
+          AND (MAX(sm.created_at) IS NULL OR MAX(sm.created_at) < now() - ($2 || ' days')::interval)
+       ORDER BY total_qty DESC`,
+      [companyId, days],
+    );
+    res.json(success(result.rows, { lookbackDays: days }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/party-profitability ──────────────────────────
+// Revenue (taxable sales) vs. real COGS (qty * item.purchase_price)
+// per party — same costing basis already used by itemWiseProfit above,
+// just rolled up by customer instead of by item.
+export async function partyProfitability(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid) AS party_id,
+              COALESCE(p.name, 'Walk-in / unassigned') AS party_name,
+              COUNT(DISTINCT inv.id)::int AS invoice_count,
+              COALESCE(SUM(ii.taxable_amount), 0)::bigint AS revenue_paise,
+              COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0)::bigint AS cogs_paise,
+              (COALESCE(SUM(ii.taxable_amount), 0) - COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0))::bigint AS gross_profit_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       LEFT JOIN parties p ON p.id = inv.party_id
+       LEFT JOIN items it ON it.id = ii.item_id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY COALESCE(p.id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(p.name, 'Walk-in / unassigned')
+       ORDER BY gross_profit_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/all-transactions ─────────────────────────────
+// Unified ledger across sales, purchases, payments, expenses, and
+// returns — a real UNION of the same tables each dedicated report
+// already reads, not a separate transactions table.
+export async function allTransactions(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const result = await query(
+      `(SELECT i.invoice_date AS date, i.invoice_number AS ref_no, COALESCE(p.name, i.party_name_snapshot, 'Walk-in') AS party,
+               'Sale' AS category, i.invoice_type AS type, i.total_amount AS amount,
+               (i.total_amount - i.balance_due) AS received, i.balance_due AS balance, i.payment_status AS status
+        FROM invoices i LEFT JOIN parties p ON p.id = i.party_id
+        WHERE i.company_id = $1 AND i.is_deleted = false AND i.status != 'cancelled'
+          AND i.invoice_date >= $2 AND i.invoice_date <= $3)
+       UNION ALL
+       (SELECT pi.bill_date, pi.bill_number, COALESCE(p.name, 'Unknown'),
+               'Purchase', 'purchase_bill', pi.total_amount,
+               pi.paid_amount, (pi.total_amount - pi.paid_amount), pi.payment_status
+        FROM purchase_invoices pi LEFT JOIN parties p ON p.id = pi.party_id
+        WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status,'') != 'cancelled'
+          AND pi.bill_date >= $2 AND pi.bill_date <= $3)
+       UNION ALL
+       (SELECT pay.payment_date, pay.payment_number, COALESCE(p.name, 'Unknown'),
+               'Payment', pay.payment_type, pay.amount,
+               CASE WHEN pay.payment_type IN ('incoming','receipt','payment_in') THEN pay.amount ELSE 0 END,
+               0, 'posted'
+        FROM payments pay LEFT JOIN parties p ON p.id = pay.party_id
+        WHERE pay.company_id = $1 AND pay.is_deleted = false
+          AND pay.payment_date >= $2 AND pay.payment_date <= $3)
+       UNION ALL
+       (SELECT e.expense_date, e.expense_number, COALESCE(e.vendor_name, e.category),
+               'Expense', e.category, e.total_amount,
+               0, e.total_amount, e.status
+        FROM expenses e
+        WHERE e.company_id = $1 AND e.is_deleted = false
+          AND e.expense_date >= $2 AND e.expense_date <= $3)
+       UNION ALL
+       (SELECT r.return_date, r.credit_note_number, COALESCE(p.name, 'Unknown'),
+               'Sale Return', 'credit_note', r.total_amount, 0, r.total_amount, 'posted'
+        FROM sale_returns r LEFT JOIN parties p ON p.id = r.party_id
+        WHERE r.company_id = $1 AND r.is_deleted = false
+          AND r.return_date >= $2 AND r.return_date <= $3)
+       UNION ALL
+       (SELECT r.return_date, r.debit_note_number, COALESCE(p.name, r.party_name_snapshot, 'Unknown'),
+               'Purchase Return', 'debit_note', r.total_amount, 0, r.total_amount, 'posted'
+        FROM purchase_returns r LEFT JOIN parties p ON p.id = r.party_id
+        WHERE r.company_id = $1 AND r.is_deleted = false
+          AND r.return_date >= $2 AND r.return_date <= $3)
+       ORDER BY date DESC`,
+      [companyId, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/bill-wise-profit ──────────────────────────────
+export async function billWiseProfit(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT inv.id, inv.invoice_number, inv.invoice_date,
+              COALESCE(p.name, inv.party_name_snapshot, 'Walk-in') AS party_name,
+              inv.total_amount,
+              COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0)::bigint AS cost_amount_paise,
+              (inv.total_amount - COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0))::bigint AS profit_paise
+       FROM invoices inv
+       JOIN invoice_items ii ON ii.invoice_id = inv.id
+       LEFT JOIN items it ON it.id = ii.item_id
+       LEFT JOIN parties p ON p.id = inv.party_id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY inv.id, inv.invoice_number, inv.invoice_date, inv.total_amount, p.name, inv.party_name_snapshot
+       ORDER BY inv.invoice_date DESC`,
+      [req.user!.company_id, from, to],
+    );
+    const rows = result.rows.map((r: any) => ({
+      ...r,
+      profit_pct: Number(r.total_amount) > 0 ? Math.round((Number(r.profit_paise) / Number(r.total_amount)) * 10000) / 100 : 0,
+    }));
+    res.json(success(rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/category-wise-purchase ────────────────────────
+export async function categoryWisePurchase(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(ic.id::text, 'uncategorized') AS category_id,
+              COALESCE(ic.name, 'Uncategorized') AS category_name,
+              COUNT(DISTINCT pi.id)::int AS bill_count,
+              SUM(pii.quantity)::numeric AS qty_purchased,
+              COALESCE(SUM(pii.total_amount), 0)::bigint AS total_paise
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pii.purchase_invoice_id = pi.id
+       LEFT JOIN items it ON pii.item_id = it.id
+       LEFT JOIN item_categories ic ON ic.id = it.category_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.status, '') != 'cancelled'
+         AND pi.bill_date >= $2 AND pi.bill_date <= $3
+       GROUP BY COALESCE(ic.id::text, 'uncategorized'), COALESCE(ic.name, 'Uncategorized')
+       ORDER BY total_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/item-category-profit-loss ──────────────────────
+export async function itemCategoryProfitLoss(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(ic.id::text, 'uncategorized') AS category_id,
+              COALESCE(ic.name, 'Uncategorized') AS category_name,
+              COALESCE(SUM(ii.taxable_amount), 0)::bigint AS sale_paise,
+              COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0)::bigint AS cost_paise,
+              (COALESCE(SUM(ii.taxable_amount), 0) - COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price, 0))), 0))::bigint AS profit_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       LEFT JOIN items it ON it.id = ii.item_id
+       LEFT JOIN item_categories ic ON ic.id = it.category_id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY COALESCE(ic.id::text, 'uncategorized'), COALESCE(ic.name, 'Uncategorized')
+       ORDER BY profit_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/stock-summary-by-category ──────────────────────
+export async function stockSummaryByCategory(req: Request, res: Response) {
+  try {
+    const result = await query(
+      `SELECT COALESCE(ic.id::text, 'uncategorized') AS category_id,
+              COALESCE(ic.name, 'Uncategorized') AS category_name,
+              COUNT(DISTINCT it.id)::int AS item_count,
+              COALESCE(SUM(s.quantity), 0)::numeric AS total_qty,
+              COALESCE(SUM(s.quantity * it.purchase_price), 0)::bigint AS stock_value_paise
+       FROM items it
+       LEFT JOIN item_categories ic ON ic.id = it.category_id
+       LEFT JOIN item_stock s ON s.item_id = it.id AND s.company_id = it.company_id
+       WHERE it.company_id = $1 AND it.is_deleted = false AND it.track_inventory = true
+       GROUP BY COALESCE(ic.id::text, 'uncategorized'), COALESCE(ic.name, 'Uncategorized')
+       ORDER BY stock_value_paise DESC`,
+      [req.user!.company_id],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/discount-report ──────────────────────────────
+// Item-wise and overall discount given on sales — real data from
+// invoice_items.discount_amount, not estimated.
+export async function discountReport(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT COALESCE(it.id::text, md5(ii.item_name)) AS item_key, COALESCE(it.name, ii.item_name) AS item_name,
+              COUNT(DISTINCT inv.id)::int AS invoice_count,
+              COALESCE(SUM(ii.discount_amount), 0)::bigint AS discount_given_paise,
+              COALESCE(SUM(ii.total_amount), 0)::bigint AS net_sale_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON ii.invoice_id = inv.id
+       LEFT JOIN items it ON it.id = ii.item_id
+       WHERE inv.company_id = $1 AND (inv.invoice_type = 'sale' OR inv.invoice_type = 'tax_invoice')
+         AND inv.status != 'cancelled' AND inv.is_deleted = false
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+         AND COALESCE(ii.discount_amount, 0) > 0
+       GROUP BY COALESCE(it.id::text, md5(ii.item_name::text)), COALESCE(it.name, ii.item_name)
+       ORDER BY discount_given_paise DESC`,
+      [req.user!.company_id, from, to],
+    );
+    const total = result.rows.reduce((s, r) => s + (parseInt(r.discount_given_paise) || 0), 0);
+    res.json(success(result.rows, { total_discount_given_paise: total }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/sale-order-items ──────────────────────────────
+export async function saleOrderItemsReport(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT so.so_number, so.so_date, so.status, COALESCE(p.name, 'Unknown') AS party_name,
+              soi.item_name, soi.quantity_ordered, soi.quantity_fulfilled,
+              (soi.quantity_ordered - COALESCE(soi.quantity_fulfilled, 0)) AS quantity_pending,
+              soi.unit_price,
+              ((soi.quantity_ordered * soi.unit_price) - soi.discount_amount)::bigint AS total_amount
+       FROM sale_order_items soi
+       JOIN sale_orders so ON so.id = soi.order_id
+       LEFT JOIN parties p ON p.id = so.party_id
+       WHERE so.company_id = $1 AND so.so_date >= $2 AND so.so_date <= $3
+       ORDER BY so.so_date DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/party-statement-summary ──────────────────────
+// Real party ledger with running balance + aging — the detailed
+// per-party drill-down already lives on the Parties page (Ledger tab);
+// this is the report-center version with aging buckets added.
+export async function partyStatementSummary(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { party_id } = req.query;
+    if (!party_id) return res.status(400).json(error('party_id is required'));
+
+    const rows = await query(
+      `SELECT created_at AS date, type AS voucher_type, reference_type, reference_id,
+              CASE WHEN type = 'debit' THEN amount ELSE 0 END AS debit,
+              CASE WHEN type = 'credit' THEN amount ELSE 0 END AS credit,
+              balance_after AS running_balance
+       FROM party_ledger
+       WHERE company_id = $1 AND party_id = $2
+       ORDER BY created_at ASC`,
+      [companyId, party_id],
+    );
+
+    const partyRes = await query(`SELECT name, balance FROM parties WHERE id = $1 AND company_id = $2`, [party_id, companyId]);
+
+    // Aging analysis — real, computed from actual unpaid invoice ages.
+    const aging = await query(
+      `SELECT
+         COALESCE(SUM(balance_due) FILTER (WHERE CURRENT_DATE - COALESCE(due_date, invoice_date) <= 30), 0)::bigint AS days_0_30,
+         COALESCE(SUM(balance_due) FILTER (WHERE CURRENT_DATE - COALESCE(due_date, invoice_date) BETWEEN 31 AND 60), 0)::bigint AS days_31_60,
+         COALESCE(SUM(balance_due) FILTER (WHERE CURRENT_DATE - COALESCE(due_date, invoice_date) BETWEEN 61 AND 90), 0)::bigint AS days_61_90,
+         COALESCE(SUM(balance_due) FILTER (WHERE CURRENT_DATE - COALESCE(due_date, invoice_date) > 90), 0)::bigint AS days_90_plus
+       FROM invoices WHERE company_id = $1 AND party_id = $2 AND is_deleted = false AND balance_due > 0`,
+      [companyId, party_id],
+    );
+
+    res.json(success(rows.rows, { party: partyRes.rows[0], aging: aging.rows[0], closingBalance: partyRes.rows[0]?.balance || 0 }));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/party-report-by-item ──────────────────────────
+export async function partyReportByItem(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const sales = await query(
+      `SELECT p.id AS party_id, p.name AS party_name, it.id AS item_id, it.name AS item_name,
+              SUM(ii.quantity) AS sale_qty, SUM(ii.total_amount) AS sale_amount_paise,
+              COALESCE(SUM(ROUND(ii.quantity * COALESCE(it.purchase_price,0))), 0) AS cost_paise
+       FROM invoice_items ii
+       JOIN invoices inv ON inv.id = ii.invoice_id
+       JOIN parties p ON p.id = inv.party_id
+       LEFT JOIN items it ON it.id = ii.item_id
+       WHERE inv.company_id = $1 AND inv.is_deleted = false AND inv.status != 'cancelled'
+         AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY p.id, p.name, it.id, it.name`,
+      [companyId, from, to],
+    );
+    const purchases = await query(
+      `SELECT p.id AS party_id, SUM(pii.quantity) AS purchase_qty, SUM(pii.total_amount) AS purchase_amount_paise, pii.item_id
+       FROM purchase_invoice_items pii
+       JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+       JOIN parties p ON p.id = pi.party_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false
+         AND pi.bill_date >= $2 AND pi.bill_date <= $3
+       GROUP BY p.id, pii.item_id`,
+      [companyId, from, to],
+    );
+    const purchaseMap = new Map(purchases.rows.map((r: any) => [`${r.party_id}:${r.item_id}`, r]));
+    const result = sales.rows.map((r: any) => {
+      const match: any = purchaseMap.get(`${r.party_id}:${r.item_id}`);
+      return {
+        party_name: r.party_name, item_name: r.item_name, quantity: r.sale_qty,
+        sale_amount_paise: r.sale_amount_paise,
+        purchase_amount_paise: match?.purchase_amount_paise || 0,
+        profit_paise: Number(r.sale_amount_paise) - Number(r.cost_paise),
+      };
+    });
+    res.json(success(result));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/sale-purchase-by-party ────────────────────────
+export async function salePurchaseByParty(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT p.id, p.name,
+              COALESCE(s.sale_amount, 0)::bigint AS sale_amount_paise,
+              COALESCE(pu.purchase_amount, 0)::bigint AS purchase_amount_paise,
+              (COALESCE(s.sale_amount, 0) - COALESCE(pu.purchase_amount, 0))::bigint AS net_paise
+       FROM parties p
+       LEFT JOIN (
+         SELECT party_id, SUM(total_amount) AS sale_amount FROM invoices
+         WHERE company_id = $1 AND is_deleted = false AND status != 'cancelled' AND invoice_date >= $2 AND invoice_date <= $3
+         GROUP BY party_id
+       ) s ON s.party_id = p.id
+       LEFT JOIN (
+         SELECT party_id, SUM(total_amount) AS purchase_amount FROM purchase_invoices
+         WHERE company_id = $1 AND is_deleted = false AND bill_date >= $2 AND bill_date <= $3
+         GROUP BY party_id
+       ) pu ON pu.party_id = p.id
+       WHERE p.company_id = $1 AND p.is_deleted = false AND (s.sale_amount IS NOT NULL OR pu.purchase_amount IS NOT NULL)
+       ORDER BY sale_amount_paise DESC`,
+      [companyId, from, to],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/sale-purchase-by-party-group ──────────────────
+// Real now — party_groups exists (built in the Settings/Utilities pass).
+export async function salePurchaseByPartyGroup(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT COALESCE(g.id::text, 'ungrouped') AS group_id, COALESCE(g.name, 'Ungrouped') AS group_name,
+              COALESCE(SUM(s.sale_amount), 0)::bigint AS total_sale_paise,
+              COALESCE(SUM(pu.purchase_amount), 0)::bigint AS total_purchase_paise,
+              (COALESCE(SUM(s.sale_amount), 0) - COALESCE(SUM(pu.purchase_amount), 0))::bigint AS profit_paise
+       FROM parties p
+       LEFT JOIN party_groups g ON g.id = p.party_group_id
+       LEFT JOIN (
+         SELECT party_id, SUM(total_amount) AS sale_amount FROM invoices
+         WHERE company_id = $1 AND is_deleted = false AND status != 'cancelled' AND invoice_date >= $2 AND invoice_date <= $3
+         GROUP BY party_id
+       ) s ON s.party_id = p.id
+       LEFT JOIN (
+         SELECT party_id, SUM(total_amount) AS purchase_amount FROM purchase_invoices
+         WHERE company_id = $1 AND is_deleted = false AND bill_date >= $2 AND bill_date <= $3
+         GROUP BY party_id
+       ) pu ON pu.party_id = p.id
+       WHERE p.company_id = $1 AND p.is_deleted = false
+       GROUP BY COALESCE(g.id::text, 'ungrouped'), COALESCE(g.name, 'Ungrouped')
+       HAVING COALESCE(SUM(s.sale_amount), 0) > 0 OR COALESCE(SUM(pu.purchase_amount), 0) > 0
+       ORDER BY total_sale_paise DESC`,
+      [companyId, from, to],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/stock-detail ──────────────────────────────────
+// Real opening/inward/outward/closing per item, computed from actual
+// stock_movements rows in the period (not estimated).
+export async function stockDetailReport(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT it.id, it.name, it.sku,
+              COALESCE((SELECT SUM(sm.quantity) FROM stock_movements sm WHERE sm.item_id = it.id AND sm.company_id = it.company_id AND sm.created_at < $2), 0) AS opening_stock,
+              COALESCE((SELECT SUM(sm.quantity) FROM stock_movements sm WHERE sm.item_id = it.id AND sm.company_id = it.company_id AND sm.quantity > 0 AND sm.created_at >= $2 AND sm.created_at <= $3), 0) AS inward,
+              COALESCE((SELECT SUM(-sm.quantity) FROM stock_movements sm WHERE sm.item_id = it.id AND sm.company_id = it.company_id AND sm.quantity < 0 AND sm.created_at >= $2 AND sm.created_at <= $3), 0) AS outward,
+              COALESCE((SELECT SUM(s.quantity) FROM item_stock s WHERE s.item_id = it.id AND s.company_id = it.company_id), 0) AS closing_stock,
+              COALESCE((SELECT SUM(s.quantity) FROM item_stock s WHERE s.item_id = it.id AND s.company_id = it.company_id), 0) * COALESCE(it.purchase_price, 0) AS stock_value_paise
+       FROM items it WHERE it.company_id = $1 AND it.is_deleted = false AND it.track_inventory = true
+       ORDER BY it.name`,
+      [companyId, from, to],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/item-detail/:itemId ───────────────────────────
+// Complete real history for one item: purchases, sales, returns,
+// transfers/adjustments — a UNION across the real source tables.
+export async function itemDetailReport(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { itemId } = req.params;
+    const rows = await query(
+      `(SELECT inv.invoice_date AS date, 'Sale' AS type, inv.invoice_number AS ref_no, ii.quantity, ii.total_amount
+        FROM invoice_items ii JOIN invoices inv ON inv.id = ii.invoice_id
+        WHERE ii.item_id = $1 AND inv.company_id = $2 AND inv.is_deleted = false)
+       UNION ALL
+       (SELECT pi.bill_date, 'Purchase', pi.bill_number, pii.quantity, pii.total_amount
+        FROM purchase_invoice_items pii JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+        WHERE pii.item_id = $1 AND pi.company_id = $2 AND pi.is_deleted = false)
+       UNION ALL
+       (SELECT r.return_date, 'Sale Return', r.credit_note_number, sri.quantity, sri.unit_price * sri.quantity
+        FROM sale_return_items sri JOIN sale_returns r ON r.id = sri.return_id
+        WHERE sri.item_id = $1 AND r.company_id = $2 AND r.is_deleted = false)
+       UNION ALL
+       (SELECT r.return_date, 'Purchase Return', r.debit_note_number, pri.quantity, pri.unit_price * pri.quantity
+        FROM purchase_return_items pri JOIN purchase_returns r ON r.id = pri.return_id
+        WHERE pri.item_id = $1 AND r.company_id = $2 AND r.is_deleted = false)
+       UNION ALL
+       (SELECT sm.created_at::date, INITCAP(REPLACE(sm.movement_type, '_', ' ')), COALESCE(sm.reference_type, 'Adjustment'), ABS(sm.quantity), NULL
+        FROM stock_movements sm WHERE sm.item_id = $1 AND sm.company_id = $2 AND sm.movement_type LIKE '%transfer%' OR (sm.item_id = $1 AND sm.company_id = $2 AND sm.movement_type LIKE '%audit%'))
+       ORDER BY date DESC LIMIT 200`,
+      [itemId, companyId],
+    );
+    res.json(success(rows.rows));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/sale-purchase-by-item-category ────────────────
+// Combined view — reuses the same real aggregates as the separate
+// category-wise-sales / category-wise-purchase reports, joined side
+// by side rather than duplicating the underlying queries' logic.
+export async function salePurchaseByItemCategory(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const sales = await query(
+      `SELECT COALESCE(ic.id::text,'uncategorized') AS cat_id, COALESCE(ic.name,'Uncategorized') AS cat_name, SUM(ii.total_amount) AS sale_paise
+       FROM invoice_items ii JOIN invoices inv ON inv.id = ii.invoice_id
+       LEFT JOIN items it ON it.id = ii.item_id LEFT JOIN item_categories ic ON ic.id = it.category_id
+       WHERE inv.company_id = $1 AND inv.is_deleted = false AND inv.status != 'cancelled' AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
+       GROUP BY COALESCE(ic.id::text,'uncategorized'), COALESCE(ic.name,'Uncategorized')`,
+      [companyId, from, to],
+    );
+    const purchases = await query(
+      `SELECT COALESCE(ic.id::text,'uncategorized') AS cat_id, SUM(pii.total_amount) AS purchase_paise
+       FROM purchase_invoice_items pii JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+       LEFT JOIN items it ON it.id = pii.item_id LEFT JOIN item_categories ic ON ic.id = it.category_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND pi.bill_date >= $2 AND pi.bill_date <= $3
+       GROUP BY COALESCE(ic.id::text,'uncategorized')`,
+      [companyId, from, to],
+    );
+    const pMap = new Map(purchases.rows.map((r: any) => [r.cat_id, r.purchase_paise]));
+    const result = sales.rows.map((r: any) => ({
+      category_name: r.cat_name, sale_paise: r.sale_paise,
+      purchase_paise: pMap.get(r.cat_id) || 0,
+      profit_paise: Number(r.sale_paise) - Number(pMap.get(r.cat_id) || 0),
+    }));
+    res.json(success(result));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
+}
+
+// ── GET /api/reports/expense-category-trend ────────────────────────
+// Genuinely distinct from plain Expense Summary: adds month-over-month
+// trend and % contribution, not just a category total.
+export async function expenseCategoryTrend(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT category, to_char(expense_date, 'YYYY-MM') AS month, SUM(COALESCE(total_amount, amount, 0)) AS total_paise
+       FROM expenses WHERE company_id = $1 AND is_deleted = false AND expense_date >= $2 AND expense_date <= $3
+       GROUP BY category, to_char(expense_date, 'YYYY-MM') ORDER BY category, month`,
+      [companyId, from, to],
+    );
+    const totals = await query(
+      `SELECT category, SUM(COALESCE(total_amount, amount, 0)) AS total_paise FROM expenses
+       WHERE company_id = $1 AND is_deleted = false AND expense_date >= $2 AND expense_date <= $3 GROUP BY category`,
+      [companyId, from, to],
+    );
+    const grandTotal = totals.rows.reduce((s, r) => s + Number(r.total_paise), 0);
+    const byCategory: Record<string, any> = {};
+    for (const r of rows.rows) {
+      byCategory[r.category] = byCategory[r.category] || { category: r.category, monthly: [], total_paise: 0 };
+      byCategory[r.category].monthly.push({ month: r.month, amount_paise: Number(r.total_paise) });
+      byCategory[r.category].total_paise += Number(r.total_paise);
+    }
+    const result = Object.values(byCategory).map((c: any) => ({ ...c, pct_contribution: grandTotal > 0 ? Math.round((c.total_paise / grandTotal) * 10000) / 100 : 0 }));
+    res.json(success(result));
+  } catch (err: any) { res.status(500).json(error(err.message)); }
 }

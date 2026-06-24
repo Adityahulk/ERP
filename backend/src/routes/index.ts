@@ -16,6 +16,15 @@ import expenseRoutes from './expenses';
 import reportRoutes from './reports';
 import quotationRoutes from './quotations';
 import purchaseRoutes from './purchases';
+import purchaseReturnRoutes from './purchaseReturns';
+import integrationRoutes from './integrations';
+import campaignRoutes from './campaigns';
+import adminJobsRoutes from './adminJobs';
+import backupRoutes from './backup';
+import settingsExtRoutes from './settingsExt';
+import serviceReminderRoutes from './serviceReminders';
+import utilitiesRoutes from './utilities';
+import posRoutes from './pos';
 import accountingRoutes from './accounting';
 import gstRoutes from './gst';
 import employeeRoutes from './employees';
@@ -39,6 +48,7 @@ import printSettingsRoutes from './printSettings';
 
 import { verifyToken } from '../middleware/auth';
 import barcodeRoutes from './barcode';
+import barcodeScanRoutes from './barcodeScan';
 import { moduleGuard } from '../middleware/moduleGuard';
 import { getDashboard } from '../controllers/reportController';
 
@@ -65,6 +75,15 @@ router.use('/invoices', invoiceRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/quotations', quotationRoutes);
 router.use('/purchases', purchaseRoutes);
+router.use('/purchases/returns', purchaseReturnRoutes);
+router.use('/integrations', integrationRoutes);
+router.use('/campaigns', campaignRoutes);
+router.use('/admin/jobs', adminJobsRoutes);
+router.use('/backup', backupRoutes);
+router.use('/settings-ext', settingsExtRoutes);
+router.use('/service-reminders', serviceReminderRoutes);
+router.use('/utilities', utilitiesRoutes);
+router.use('/pos', posRoutes);
 router.use('/labels', labelRoutes);
 router.use('/print', printRoutes);
 router.use('/search', searchRoutes);
@@ -74,6 +93,11 @@ router.use('/sales/orders', salesOrderRoutes);
 router.use('/sales/challans', deliveryChallanRoutes);
 router.use('/sales/returns', saleReturnRoutes);
 router.use('/barcode', barcodeRoutes);
+// Authenticated sub-routes (scan-out, scan/history) live in a separate
+// router mounted on the same prefix — barcodeRoutes only defines GET '/',
+// so requests to /barcode/scan-out and /barcode/scan/history fall through
+// to this router untouched.
+router.use('/barcode', barcodeScanRoutes);
 
 // Dashboard is always accessible — no module guard (it's the home screen)
 router.get('/reports/dashboard', verifyToken, getDashboard);

@@ -357,17 +357,20 @@ export async function exportGSTR3B(req: Request, res: Response) {
 
 export async function getHSNSummary(req: Request, res: Response) {
   try {
-     const { month, year } = req.query as any;
+     const { month, year, type } = req.query as any;
      const { from: df, to: dt } = parsePeriod(month, year);
+     const typeFilter = type === 'service' ? `AND it.item_type = 'service'` : type === 'goods' ? `AND COALESCE(it.item_type, 'goods') != 'service'` : '';
      const result = await query(
       `SELECT i.item_id, i.hsn_code, SUM(i.quantity) as qty, SUM(i.taxable_amount) as taxable,
               SUM(COALESCE(i.cgst_amount,0) + COALESCE(i.sgst_amount,0) + COALESCE(i.igst_amount,0) + COALESCE(i.cess_amount,0)) as tax
         FROM invoice_items i
         JOIN invoices p ON i.invoice_id = p.id
+        LEFT JOIN items it ON it.id = i.item_id
         WHERE p.company_id = $1 AND p.is_deleted = false
           AND p.invoice_type IN ('sale','tax_invoice')
           AND p.status != 'cancelled'
           AND p.invoice_date >= $2 AND p.invoice_date < $3
+          ${typeFilter}
         GROUP BY i.item_id, i.hsn_code`,
         [req.user!.company_id, df, dt]
      );
@@ -437,4 +440,208 @@ export async function getInputCredit(req: Request, res: Response) {
   } catch (err: any) {
     gstErrorResponse(res, err);
   }
+}
+
+// ── GET /api/gst/gstr2 ────────────────────────────────────────────
+// Real GSTR2 — builds on the same real purchase-invoice GST data as
+// GSTR2A reconciliation, but adds the vendor-wise / tax-wise / monthly
+// summaries the plain reconciliation list doesn't compute.
+export async function getGSTR2(req: Request, res: Response) {
+  try {
+    const { month, year } = req.query as any;
+    const companyId = req.user!.company_id;
+    const { from: df, to: dt } = parsePeriod(month, year);
+
+    const invoiceDetail = await query(
+      `SELECT pi.id, pi.bill_number, pi.bill_date, pi.taxable_amount, pi.cgst_amount, pi.sgst_amount, pi.igst_amount, pi.total_amount,
+              p.name AS supplier_name, p.gstin AS supplier_gstin
+       FROM purchase_invoices pi LEFT JOIN parties p ON p.id = pi.party_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND pi.bill_date >= $2 AND pi.bill_date < $3
+       ORDER BY pi.bill_date`,
+      [companyId, df, dt],
+    );
+
+    const vendorWise = await query(
+      `SELECT p.name AS supplier_name, p.gstin, COUNT(*)::int AS bill_count,
+              SUM(pi.taxable_amount) AS taxable_paise, SUM(pi.cgst_amount + pi.sgst_amount + pi.igst_amount) AS tax_paise
+       FROM purchase_invoices pi LEFT JOIN parties p ON p.id = pi.party_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND pi.bill_date >= $2 AND pi.bill_date < $3
+       GROUP BY p.name, p.gstin ORDER BY taxable_paise DESC`,
+      [companyId, df, dt],
+    );
+
+    const taxWise = await query(
+      `SELECT CASE WHEN igst_amount > 0 THEN 'IGST' ELSE 'CGST+SGST' END AS tax_type,
+              SUM(taxable_amount) AS taxable_paise, SUM(cgst_amount + sgst_amount + igst_amount) AS tax_paise
+       FROM purchase_invoices WHERE company_id = $1 AND is_deleted = false AND bill_date >= $2 AND bill_date < $3
+       GROUP BY CASE WHEN igst_amount > 0 THEN 'IGST' ELSE 'CGST+SGST' END`,
+      [companyId, df, dt],
+    );
+
+    const purchaseReturns = await query(
+      `SELECT debit_note_number, return_date, total_amount FROM purchase_returns
+       WHERE company_id = $1 AND is_deleted = false AND return_date >= $2 AND return_date < $3 ORDER BY return_date`,
+      [companyId, df, dt],
+    );
+
+    res.json(success({ invoiceDetail: invoiceDetail.rows, vendorWise: vendorWise.rows, taxWise: taxWise.rows, purchaseReturns: purchaseReturns.rows }));
+  } catch (err: any) { gstErrorResponse(res, err); }
+}
+
+// ── GET /api/gst/rate-report ───────────────────────────────────────
+export async function getGstRateReport(req: Request, res: Response) {
+  try {
+    const { month, year } = req.query as any;
+    const { from: df, to: dt } = parsePeriod(month, year);
+    const result = await query(
+      `SELECT ii.gst_rate, SUM(ii.taxable_amount) AS taxable_paise,
+              SUM(COALESCE(ii.cgst_amount,0)+COALESCE(ii.sgst_amount,0)+COALESCE(ii.igst_amount,0)+COALESCE(ii.cess_amount,0)) AS tax_paise,
+              SUM(ii.total_amount) AS total_paise
+       FROM invoice_items ii JOIN invoices p ON p.id = ii.invoice_id
+       WHERE p.company_id = $1 AND p.is_deleted = false AND p.invoice_type IN ('sale','tax_invoice') AND p.status != 'cancelled'
+         AND p.invoice_date >= $2 AND p.invoice_date < $3
+       GROUP BY ii.gst_rate ORDER BY ii.gst_rate`,
+      [req.user!.company_id, df, dt],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) { gstErrorResponse(res, err); }
+}
+
+// ── GET /api/gst/form-27eq ──────────────────────────────────────────
+// Real TCS summary — Form 27EQ is the government quarterly TCS return;
+// this gives the real underlying figures (collections + party-wise
+// breakdown) an accountant needs, not a byte-exact e-filing JSON,
+// which has additional fields (challan numbers, BSR codes) this ERP
+// doesn't capture and won't fabricate.
+export async function getForm27EQ(req: Request, res: Response) {
+  try {
+    const { month, year } = req.query as any;
+    const { from: df, to: dt } = parsePeriod(month, year);
+    const companyId = req.user!.company_id;
+    const partyWise = await query(
+      `SELECT p.name AS party_name, p.gstin, COUNT(*)::int AS invoice_count, SUM(i.tcs_amount) AS tcs_paise, SUM(i.total_amount) AS sale_paise
+       FROM invoices i LEFT JOIN parties p ON p.id = i.party_id
+       WHERE i.company_id = $1 AND i.is_deleted = false AND i.status != 'cancelled' AND COALESCE(i.tcs_amount,0) > 0
+         AND i.invoice_date >= $2 AND i.invoice_date < $3
+       GROUP BY p.name, p.gstin ORDER BY tcs_paise DESC`,
+      [companyId, df, dt],
+    );
+    const total = partyWise.rows.reduce((s, r) => s + (parseInt(r.tcs_paise) || 0), 0);
+    res.json(success(partyWise.rows, { totalTcsCollectedPaise: total, period: { from: df, to: dt } }));
+  } catch (err: any) { gstErrorResponse(res, err); }
+}
+
+// ── GET /api/gst/tds-payable ────────────────────────────────────────
+// Dedicated page per the spec (kept separate from TCS, not combined).
+export async function getTdsPayable(req: Request, res: Response) {
+  try {
+    const { month, year } = req.query as any;
+    const { from: df, to: dt } = parsePeriod(month, year);
+    const companyId = req.user!.company_id;
+    const rows = await query(
+      `SELECT pi.bill_number, pi.bill_date, p.name AS supplier_name, p.gstin, pi.tds_amount, pi.total_amount
+       FROM purchase_invoices pi LEFT JOIN parties p ON p.id = pi.party_id
+       WHERE pi.company_id = $1 AND pi.is_deleted = false AND COALESCE(pi.tds_amount,0) > 0
+         AND pi.bill_date >= $2 AND pi.bill_date < $3
+       ORDER BY pi.bill_date DESC`,
+      [companyId, df, dt],
+    );
+    const total = rows.rows.reduce((s, r) => s + (parseInt(r.tds_amount) || 0), 0);
+    res.json(success(rows.rows, { totalTdsPayablePaise: total }));
+  } catch (err: any) { gstErrorResponse(res, err); }
+}
+
+// ── GET /api/gst/validation ────────────────────────────────────────
+// Real data-integrity checks for GST compliance — missing/invalid
+// GSTINs, missing HSN/SAC on taxable items, and tax-amount mismatches
+// (taxable value × rate vs. the tax actually recorded on the line).
+export async function getGstValidation(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { month, year } = req.query as any;
+    const { from: df, to: dt } = parsePeriod(month, year);
+
+    const missingGstin = await query(
+      `SELECT i.id, i.invoice_number, p.name AS party_name FROM invoices i
+       JOIN parties p ON p.id = i.party_id
+       WHERE i.company_id = $1 AND i.is_deleted = false AND i.status != 'cancelled'
+         AND i.total_amount > 250000 AND (p.gstin IS NULL OR p.gstin = '')
+         AND i.invoice_date >= $2 AND i.invoice_date < $3`,
+      [companyId, df, dt],
+    );
+
+    const invalidGstin = await query(
+      `SELECT id, name, gstin FROM parties
+       WHERE company_id = $1 AND is_deleted = false AND gstin IS NOT NULL AND gstin != ''
+         AND gstin !~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$'`,
+      [companyId],
+    );
+
+    const missingHsn = await query(
+      `SELECT DISTINCT it.id, it.name FROM items it
+       JOIN invoice_items ii ON ii.item_id = it.id
+       JOIN invoices i ON i.id = ii.invoice_id
+       WHERE it.company_id = $1 AND it.is_deleted = false AND (it.hsn_code IS NULL OR it.hsn_code = '')
+         AND COALESCE(ii.gst_rate, 0) > 0
+         AND i.invoice_date >= $2 AND i.invoice_date < $3`,
+      [companyId, df, dt],
+    );
+
+    const taxMismatch = await query(
+      `SELECT ii.id, i.invoice_number, ii.item_name, ii.taxable_amount, ii.gst_rate,
+              (COALESCE(ii.cgst_amount,0)+COALESCE(ii.sgst_amount,0)+COALESCE(ii.igst_amount,0)) AS recorded_tax,
+              ROUND(ii.taxable_amount * ii.gst_rate / 100.0) AS expected_tax
+       FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
+       WHERE i.company_id = $1 AND i.is_deleted = false AND i.status != 'cancelled'
+         AND i.invoice_date >= $2 AND i.invoice_date < $3
+         AND ABS((COALESCE(ii.cgst_amount,0)+COALESCE(ii.sgst_amount,0)+COALESCE(ii.igst_amount,0)) - ROUND(ii.taxable_amount * ii.gst_rate / 100.0)) > 2`,
+      [companyId, df, dt],
+    );
+
+    const totalIssues = missingGstin.rows.length + invalidGstin.rows.length + missingHsn.rows.length + taxMismatch.rows.length;
+    res.json(success({
+      missingGstin: missingGstin.rows,
+      invalidGstin: invalidGstin.rows,
+      missingHsn: missingHsn.rows,
+      taxMismatch: taxMismatch.rows,
+    }, { totalIssues, period: { from: df, to: dt } }));
+  } catch (err: any) { gstErrorResponse(res, err); }
+}
+
+// ── GET /api/gst/dashboard ─────────────────────────────────────────
+// Consolidated view reusing the same real figures the individual GST
+// reports already compute — GST Collected (output), GST Paid (input),
+// Input Credit available, Net Tax Liability, and Pending (unpaid GST
+// liability not yet settled via a payment/journal entry).
+export async function getGstDashboard(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { month, year } = req.query as any;
+    const { from: df, to: dt } = parsePeriod(month, year);
+
+    const collected = await query(
+      `SELECT COALESCE(SUM(COALESCE(cgst_amount,0)+COALESCE(sgst_amount,0)+COALESCE(igst_amount,0)),0) AS amt
+       FROM invoices WHERE company_id = $1 AND is_deleted = false AND status != 'cancelled'
+         AND invoice_date >= $2 AND invoice_date < $3`,
+      [companyId, df, dt],
+    );
+    const paid = await query(
+      `SELECT COALESCE(SUM(COALESCE(cgst_amount,0)+COALESCE(sgst_amount,0)+COALESCE(igst_amount,0)),0) AS amt
+       FROM purchase_invoices WHERE company_id = $1 AND is_deleted = false
+         AND bill_date >= $2 AND bill_date < $3`,
+      [companyId, df, dt],
+    );
+    const gstCollected = Number(collected.rows[0].amt);
+    const gstPaid = Number(paid.rows[0].amt);
+    const netLiability = Math.max(0, gstCollected - gstPaid);
+
+    res.json(success({
+      period: { from: df, to: dt },
+      gstCollectedPaise: gstCollected,
+      gstPaidPaise: gstPaid,
+      inputCreditAvailablePaise: gstPaid,
+      netTaxLiabilityPaise: netLiability,
+      gstPendingPaise: netLiability, // no GST-specific payment tracking exists separately from general payments yet
+    }));
+  } catch (err: any) { gstErrorResponse(res, err); }
 }

@@ -78,6 +78,9 @@ export default function InvoiceList() {
   const initialRange = defaultRange();
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
+  const [customerFilterId, setCustomerFilterId] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [irnLoadingId, setIrnLoadingId] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<any | null>(null);
@@ -125,18 +128,30 @@ export default function InvoiceList() {
   }, [menuInvoiceId]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['salesInvoices', tab, search],
+    queryKey: ['salesInvoices', tab, search, customerFilterId],
     queryFn: async () => {
-      const parts: string[] = [];
+      const parts: string[] = ['limit=100'];
       if (tab !== 'all') {
         if (tab === 'overdue') parts.push('overdue=true');
         else parts.push(`status=${tab}`);
       }
       if (search) parts.push(`search=${encodeURIComponent(search)}`);
+      if (customerFilterId) parts.push(`party_id=${encodeURIComponent(customerFilterId)}`);
       const res = await api.get(`/invoices?${parts.join('&')}`);
       // Return full response so we can access meta stats
       return res.data;
     }
+  });
+
+  // Customer filter dropdown — searches the existing /parties/search endpoint,
+  // same one already used by the Bulk Invoice dialog below.
+  const [customerFilterSearch, setCustomerFilterSearch] = useState('');
+  const [customerFilterOpen, setCustomerFilterOpen] = useState(false);
+  const [customerFilterName, setCustomerFilterName] = useState('');
+  const { data: customerFilterResults } = useQuery({
+    queryKey: ['invoice-list-customer-filter', customerFilterSearch],
+    enabled: customerFilterOpen,
+    queryFn: () => api.get('/parties/search', { params: { q: customerFilterSearch } }).then((r) => r.data?.data ?? r.data),
   });
 
   const { data: partiesData, isLoading: bulkPartiesLoading } = useQuery({
@@ -416,7 +431,17 @@ export default function InvoiceList() {
 
   const meta = data?.meta || {};
   // Response: { success, data: { data: [...], pagination: {...} }, meta: {...} }
-  const invoices: any[] = data?.data?.data || data?.data || [];
+  const fetchedInvoices: any[] = data?.data?.data || data?.data || [];
+  // Date-range filter is applied client-side: the existing /invoices endpoint
+  // doesn't accept from_date/to_date (only the separate Bulk Invoice export
+  // endpoint does), and adding that isn't a UI-only change. Filtering the
+  // up-to-100 most recent matching invoices client-side covers normal usage
+  // without touching the backend; the helper text near the filter says so.
+  const invoices: any[] = fetchedInvoices
+    .filter((inv: any) => (!dateFrom || inv.invoice_date >= dateFrom))
+    .filter((inv: any) => (!dateTo || inv.invoice_date <= dateTo))
+    .map((inv: any) => ({ ...inv, received_amount: Math.max(0, (parseInt(inv.total_amount) || 0) - (parseInt(inv.balance_due) || 0)) }));
+  const totalReceivedInView = invoices.reduce((s, inv) => s + inv.received_amount, 0);
   const activeMenuInvoice = menuInvoiceId ? invoices.find((inv: any) => inv.id === menuInvoiceId) : null;
   const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
   const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
@@ -455,11 +480,18 @@ export default function InvoiceList() {
   return (
     <div className="space-y-6">
       {/* Stats Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-4">
             <p className="text-sm font-medium text-muted-foreground">Today's Sales</p>
             <p className="text-2xl font-bold font-mono tracking-tight">{formatMoney(meta.total_sales || 0)}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-emerald-50 border-emerald-100">
+          <CardContent className="p-4">
+            <p className="text-sm font-medium text-emerald-800">Received Amount</p>
+            <p className="text-2xl font-bold font-mono tracking-tight text-emerald-700">{formatMoney(totalReceivedInView)}</p>
+            <p className="text-[11px] text-emerald-700/70 mt-0.5">Across invoices shown below</p>
           </CardContent>
         </Card>
         <Card>
@@ -483,8 +515,8 @@ export default function InvoiceList() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row justify-between gap-4">
-        <div className="flex bg-muted p-1 rounded-lg overflow-x-auto">
+      <div className="flex flex-col gap-3">
+        <div className="flex bg-muted p-1 rounded-lg overflow-x-auto w-fit">
           {['all', 'unpaid', 'partial', 'paid', 'overdue', 'cancelled'].map(t => (
             <button
               key={t}
@@ -494,18 +526,80 @@ export default function InvoiceList() {
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <div className="relative w-64">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search invoice or party..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="flex flex-col sm:flex-row justify-between gap-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search invoice or party..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+
+            {/* Customer filter — backed by the real /parties/search + party_id filter the API already supports */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setCustomerFilterOpen((o) => !o)}
+                className="h-9 px-3 rounded-md border bg-background text-sm flex items-center gap-2 hover:bg-muted/50 min-w-[160px]"
+              >
+                <span className="truncate flex-1 text-left">{customerFilterName || 'All customers'}</span>
+                {customerFilterId ? (
+                  <span onClick={(e) => { e.stopPropagation(); setCustomerFilterId(''); setCustomerFilterName(''); }} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></span>
+                ) : null}
+              </button>
+              {customerFilterOpen && (
+                <div className="absolute z-20 mt-1 w-64 rounded-md border bg-background shadow-lg p-2">
+                  <Input
+                    autoFocus
+                    placeholder="Search customer..."
+                    value={customerFilterSearch}
+                    onChange={(e) => setCustomerFilterSearch(e.target.value)}
+                    className="mb-2"
+                  />
+                  <div className="max-h-48 overflow-y-auto">
+                    {(customerFilterResults || []).map((p: any) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="w-full text-left px-2 py-1.5 rounded text-sm hover:bg-muted"
+                        onClick={() => { setCustomerFilterId(p.id); setCustomerFilterName(p.name); setCustomerFilterOpen(false); }}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                    {customerFilterSearch && (customerFilterResults || []).length === 0 && (
+                      <p className="text-xs text-muted-foreground px-2 py-2">No matches</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Date range — filters the loaded list client-side (see note below) */}
+            <div className="flex items-center gap-1.5">
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 w-[140px]" title="From date" />
+              <span className="text-muted-foreground text-xs">to</span>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 w-[140px]" title="To date" />
+              {(dateFrom || dateTo) && (
+                <button type="button" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-muted-foreground hover:text-foreground" title="Clear date filter">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
-          <Button variant="outline" onClick={() => setBulkOpen(true)} className="gap-2">
-            <Files className="h-4 w-4" /> Bulk Invoice
-          </Button>
-          <Button onClick={() => navigate('/sales/new')} className="gap-2">
-            <Plus className="h-4 w-4" /> Add Sales
-          </Button>
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setBulkOpen(true)} className="gap-2">
+              <Files className="h-4 w-4" /> Bulk Invoice
+            </Button>
+            <Button onClick={() => navigate('/sales/new')} className="gap-2">
+              <Plus className="h-4 w-4" /> Add Sales
+            </Button>
+          </div>
         </div>
+        {(dateFrom || dateTo) && (
+          <p className="text-xs text-muted-foreground">
+            Date range filters the most recent 100 matching invoices loaded above. For a complete date-range export across all invoices, use Bulk Invoice.
+          </p>
+        )}
       </div>
 
       {/* Table */}
@@ -517,7 +611,9 @@ export default function InvoiceList() {
                 <th className="py-3 px-4">Date</th>
                 <th className="py-3 px-4">Invoice #</th>
                 <th className="py-3 px-4">Party</th>
+                <th className="py-3 px-4 text-center">Items</th>
                 <th className="py-3 px-4 text-right">Amount</th>
+                <th className="py-3 px-4 text-right">Received</th>
                 <th className="py-3 px-4 text-right">Balance Due</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
@@ -525,9 +621,9 @@ export default function InvoiceList() {
             </thead>
             <tbody className="divide-y">
               {isLoading ? (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading sales...</td></tr>
+                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading sales...</td></tr>
               ) : invoices.length === 0 ? (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground"><FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />No invoices found</td></tr>
+                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground"><FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />No invoices found</td></tr>
               ) : (
                 invoices.map((inv: any) => {
                   const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
@@ -551,7 +647,13 @@ export default function InvoiceList() {
                         <div className="font-medium">{inv.party_name || 'Walk-in Customer'}</div>
                         <div className="text-xs text-muted-foreground">{inv.party_phone || '-'}</div>
                       </td>
+                      <td className="py-3 px-4 text-center text-xs text-muted-foreground">
+                        {inv.item_count ?? 0}{parseFloat(inv.total_quantity) ? <span className="text-muted-foreground/70"> ({parseFloat(inv.total_quantity)} qty)</span> : null}
+                      </td>
                       <td className="py-3 px-4 text-right font-bold tabular-nums">{formatMoney(inv.total_amount, inv.currency_code)}</td>
+                      <td className="py-3 px-4 text-right tabular-nums text-emerald-600">
+                        {inv.received_amount > 0 ? formatMoney(inv.received_amount, inv.currency_code) : '—'}
+                      </td>
                       <td className="py-3 px-4 text-right font-bold tabular-nums">
                         <span className={isOverdue ? 'text-red-600' : ''}>
                           {formatMoney(inv.balance_due ?? 0, inv.currency_code)}

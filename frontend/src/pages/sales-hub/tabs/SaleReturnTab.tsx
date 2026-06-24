@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Edit2, Plus, RotateCcw, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import toast from 'react-hot-toast';
 
 export default function SaleReturnTab() {
@@ -25,7 +25,7 @@ export default function SaleReturnTab() {
   const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
   const [refInvoiceNo, setRefInvoiceNo] = useState('');
   const [reason, setReason] = useState('');
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sale-returns'],
@@ -207,7 +207,7 @@ export default function SaleReturnTab() {
 
             <div>
               <Label className="text-xs mb-2 block">Items Returned</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn showUnit />
+              <LineItemsEditor items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn showUnit />
             </div>
 
             <div>

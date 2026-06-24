@@ -8,5 +8,6 @@ router.use(verifyToken);
 router.get('/', ctrl.listSaleReturns);
 router.post('/', ctrl.createSaleReturn);
 router.put('/:id', ctrl.updateSaleReturn);
+router.post('/:id/refund', ctrl.recordSaleReturnRefund);
 
 export default router;

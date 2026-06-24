@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 import { ArrowLeft, ScanLine, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
@@ -40,7 +40,7 @@ export default function PurchaseOrderForm() {
   const [notes, setNotes] = useState('');
 
   // Line items
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   // Misc
   const [ocrOpen, setOcrOpen] = useState(false);
@@ -284,7 +284,7 @@ export default function PurchaseOrderForm() {
           <CardTitle className="text-sm">Items to Order</CardTitle>
         </CardHeader>
         <CardContent>
-          <VyaparLineItems
+          <LineItemsEditor
             items={items}
             onChange={setItems}
             isGst={true}

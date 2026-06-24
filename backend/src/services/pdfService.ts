@@ -1792,6 +1792,108 @@ export async function generateThermalReceipt(
   return Buffer.from(pdf);
 }
 
+/**
+ * Generates a single, ultra-compact 50mm x 25mm "Thermal Invoice" label —
+ * company name, invoice number, date, item line(s), grand total, and a
+ * scannable CODE-128 barcode encoding the invoice number.
+ *
+ * This is intentionally NOT the same as generateThermalReceipt(): a
+ * 50x25mm label has roughly 1/15th the surface area of an 80mm receipt,
+ * so only a short item summary fits — additional items beyond the first
+ * two are summarized as "+N more items" rather than itemized.
+ */
+export async function generateThermalInvoicePDF(
+  invoice: any,
+  company: any,
+  items: any[],
+): Promise<Buffer> {
+  let tpl = readTpl('thermal/invoice_50x25.html');
+
+  const companyName = companyLegalDisplayName(company) || 'Company';
+
+  const dateStr = (() => {
+    const d = new Date(invoice.invoice_date);
+    if (Number.isNaN(d.getTime())) return String(invoice.invoice_date || '');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mon = d.toLocaleString('en-IN', { month: 'short' });
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}-${mon}-${yy}`;
+  })();
+
+  // 25mm of total height is extremely tight. Two full item rows PLUS a
+  // "+N more" line measured taller than the label in testing and got
+  // clipped. So: show both items only when there are exactly two (no
+  // extra line needed); for 3+ items, show just the first one and
+  // summarize the rest, which keeps every label within its fixed height.
+  const MAX_ITEM_ROWS = items.length > 2 ? 1 : 2;
+  const visibleItems = items.slice(0, MAX_ITEM_ROWS);
+  const extraCount = Math.max(0, items.length - MAX_ITEM_ROWS);
+
+  const itemRowsHtml = visibleItems
+    .map((it) => {
+      const name = escapeHtml(String(it.item_name || it.name || '').slice(0, 16));
+      const qty = escapeHtml(String(it.quantity ?? ''));
+      const lineTotal = it.total_amount ?? (Number(it.unit_price || 0) * Number(it.quantity || 0));
+      return `<div class="item-row">
+        <span class="item-name">${name}</span>
+        <span class="item-qty">x${qty}</span>
+        <span class="item-price">${fmtPaise(lineTotal)}</span>
+      </div>`;
+    })
+    .join('');
+
+  const moreLine = extraCount > 0 ? `<div class="more-line">+${extraCount} more item${extraCount > 1 ? 's' : ''}</div>` : '';
+
+  let barcodeImg = '';
+  try {
+    // CODE-128 density means a long, punctuated invoice number (e.g.
+    // "INV/HQ/26-270001") would render WIDER than the 50mm label itself.
+    // We barcode a short alnum-only payload (max 12 chars, keeping the
+    // most-distinguishing trailing characters) so the bars stay narrow
+    // enough to scan reliably, while the full invoice_number is still
+    // printed as human-readable text on the label.
+    const barcodePayload = String(invoice.invoice_number || '')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .slice(-12) || String(invoice.invoice_number || '');
+    const png = await bwipjs.toBuffer({
+      bcid: 'code128',
+      text: barcodePayload,
+      scale: 2,
+      height: 6,
+      includetext: false,
+    });
+    barcodeImg = `data:image/png;base64,${png.toString('base64')}`;
+  } catch {
+    barcodeImg = '';
+  }
+
+  const vars: Record<string, string> = {
+    COMPANY_NAME: escapeHtml(companyName),
+    INVOICE_NUMBER: escapeHtml(String(invoice.invoice_number || '')),
+    INVOICE_DATE: escapeHtml(dateStr),
+    ITEM_ROWS: itemRowsHtml,
+    MORE_LINE: moreLine,
+    TOTAL_AMOUNT: fmtMoney(invoice.total_amount, invoice.currency),
+    BARCODE_IMG: barcodeImg,
+  };
+
+  tpl = replaceAll(tpl, vars);
+
+  const browser = await launchBrowser();
+  const page = await browser.newPage();
+  await page.setViewport({ width: Math.round((50 / 25.4) * 96), height: Math.round((25 / 25.4) * 96), deviceScaleFactor: 4 });
+  await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+  const pdf = await page.pdf({
+    width: '50mm',
+    height: '25mm',
+    printBackground: true,
+    margin: { top: 0, bottom: 0, left: 0, right: 0 },
+  });
+  await browser.close();
+  return Buffer.from(pdf);
+}
+
 export async function generateEinvoicePdf(
   invoice: any,
   company: any,

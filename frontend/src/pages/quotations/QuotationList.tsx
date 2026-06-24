@@ -121,6 +121,7 @@ export default function QuotationList() {
                   <th className="px-4 py-3">Quote date</th>
                   <th className="px-4 py-3">Valid until</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3 text-center">Items</th>
                   <th className="px-4 py-3 text-right">Amount</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
@@ -137,6 +138,9 @@ export default function QuotationList() {
                       {q.valid_until ? new Date(q.valid_until).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-4 py-3">{q.party_name || '—'}</td>
+                    <td className="px-4 py-3 text-center text-xs text-muted-foreground">
+                      {q.item_count ?? 0}{parseFloat(q.total_quantity) ? <span className="text-muted-foreground/70"> ({parseFloat(q.total_quantity)} qty)</span> : null}
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       ₹{((q.total_amount || 0) / 100).toFixed(2)}
                     </td>
@@ -193,7 +197,7 @@ export default function QuotationList() {
                 ))}
                 {!rows.length && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
                       No quotations yet. Create one to get started.
                     </td>
                   </tr>

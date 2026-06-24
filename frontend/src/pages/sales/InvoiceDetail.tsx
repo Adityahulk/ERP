@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink, Barcode } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeRole } from '@/lib/roles';
@@ -47,6 +47,7 @@ export default function InvoiceDetail() {
   const [waSending, setWaSending] = useState(false);
   const [sharePhone, setSharePhone] = useState('');
   const [printLoading, setPrintLoading] = useState(false);
+  const [thermalPrintLoading, setThermalPrintLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [einvPdfLoading, setEinvPdfLoading] = useState(false);
   const [invoiceCancelLoading, setInvoiceCancelLoading] = useState(false);
@@ -261,6 +262,21 @@ export default function InvoiceDetail() {
     }
   };
 
+  const printThermalInvoice = async () => {
+    setThermalPrintLoading(true);
+    const t = toast.loading('Opening thermal invoice (50×25mm)…');
+    try {
+      const res = await api.get(`/print/thermal-invoice/${id}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+      toast.success('Thermal invoice opened in a new tab', { id: t });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Print failed', { id: t });
+    } finally {
+      setThermalPrintLoading(false);
+    }
+  };
+
   const downloadInvoicePdf = async () => {
     setPdfLoading(true);
     const t = toast.loading('Preparing PDF…');
@@ -425,6 +441,9 @@ Thank you.
           </Button>
           <Button variant="outline" size="sm" onClick={printReceipt} loading={printLoading}>
             Print Receipt
+          </Button>
+          <Button variant="outline" size="sm" onClick={printThermalInvoice} loading={thermalPrintLoading} title="50mm x 25mm thermal label with barcode">
+            <Barcode className="h-4 w-4 mr-2" /> Thermal Invoice
           </Button>
           <Button variant="outline" size="sm" onClick={downloadInvoicePdf} loading={pdfLoading}>
             <Download className="h-4 w-4 mr-2" /> Download PDF

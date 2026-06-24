@@ -7,13 +7,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil, Eye, Download } from 'lucide-react';
+import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil, Eye, Download, X, FileSpreadsheet } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import { useGodowns } from '@/hooks/useStock';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
+import { downloadXlsx } from '@/lib/reportExport';
 import toast from 'react-hot-toast';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
@@ -33,6 +34,12 @@ export default function PurchaseBillsTab() {
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [supplierFilterId, setSupplierFilterId] = useState('');
+  const [supplierFilterName, setSupplierFilterName] = useState('');
+  const [supplierFilterOpen, setSupplierFilterOpen] = useState(false);
+  const [supplierFilterSearch, setSupplierFilterSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const billHydratedRef = useRef<string | null>(null);
@@ -51,15 +58,22 @@ export default function PurchaseBillsTab() {
   const [godownId, setGodownId] = useState('');
   const [isGst, setIsGst] = useState(true);
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
   const [companyBankAccountId, setCompanyBankAccountId] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['purchase-bills', search, statusFilter],
+    queryKey: ['purchase-bills', search, statusFilter, supplierFilterId],
     queryFn: () =>
       api.get('/purchases/invoices', {
-        params: { search: search || undefined, payment_status: statusFilter || undefined, limit: 50 },
+        params: { search: search || undefined, payment_status: statusFilter || undefined, party_id: supplierFilterId || undefined, limit: 100 },
       }).then(r => r.data),
+  });
+
+  // Supplier filter dropdown — same /parties/search endpoint already used by the create form below.
+  const { data: supplierFilterResults } = useQuery({
+    queryKey: ['purchase-bills-supplier-filter', supplierFilterSearch],
+    enabled: supplierFilterOpen,
+    queryFn: () => api.get('/parties/search', { params: { q: supplierFilterSearch } }).then((r) => r.data?.data ?? r.data),
   });
 
   const { data: editBillRes, isLoading: editBillLoading } = useQuery({
@@ -72,12 +86,14 @@ export default function PurchaseBillsTab() {
     enabled: !!editingBillId,
   });
 
-  const bills = (data as any)?.data?.data || [];
+  const bills = ((data as any)?.data?.data || [])
+    .filter((b: any) => (!dateFrom || b.bill_date >= dateFrom))
+    .filter((b: any) => (!dateTo || b.bill_date <= dateTo));
   const meta = (data as any)?.meta || {};
   const stats = [
-    { label: 'Paid', value: formatMoney(parseInt(meta.total_paid) || 0), icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-50' },
-    { label: 'Unpaid', value: formatMoney(parseInt(meta.total_unpaid) || 0), icon: AlertCircle, color: 'text-red-500 bg-red-50' },
-    { label: 'Total', value: formatMoney(parseInt(meta.total_amount) || 0), icon: IndianRupee, color: 'text-blue-600 bg-blue-50' },
+    { label: 'Total Purchase Amount', value: formatMoney(parseInt(meta.total_amount) || 0), icon: IndianRupee, color: 'text-blue-600 bg-blue-50' },
+    { label: 'Paid Amount', value: formatMoney(parseInt(meta.total_paid) || 0), icon: CheckCircle2, color: 'text-emerald-600 bg-emerald-50' },
+    { label: 'Outstanding Amount', value: formatMoney(parseInt(meta.total_unpaid) || 0), icon: AlertCircle, color: 'text-red-500 bg-red-50' },
   ];
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
@@ -305,6 +321,24 @@ export default function PurchaseBillsTab() {
     }
   };
 
+  const exportBillsToExcel = () => {
+    const rows = bills.map((b: any) => {
+      const paidAmt = parseInt(b.paid_amount) || 0;
+      const totalAmt = parseInt(b.total_amount) || 0;
+      return {
+        'Bill No.': b.bill_number || '',
+        Supplier: b.party_name || '',
+        Date: formatDate(b.bill_date),
+        Amount: totalAmt / 100,
+        Paid: paidAmt / 100,
+        Balance: (totalAmt - paidAmt) / 100,
+        Status: b.payment_status || 'unpaid',
+      };
+    });
+    downloadXlsx(`purchase-bills-${new Date().toISOString().slice(0, 10)}.xlsx`, 'Purchase Bills', rows);
+    toast.success('Exported to Excel');
+  };
+
   return (
     <div className="space-y-5">
       {/* Stats */}
@@ -336,12 +370,58 @@ export default function PurchaseBillsTab() {
             {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
+
+        {/* Supplier filter — backed by the real /parties/search + party_id param listPurchaseInvoices already accepts */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setSupplierFilterOpen((o) => !o)}
+            className="h-9 px-3 rounded-md border bg-background text-xs flex items-center gap-2 hover:bg-muted/50 min-w-[150px]"
+          >
+            <span className="truncate flex-1 text-left">{supplierFilterName || 'All suppliers'}</span>
+            {supplierFilterId && (
+              <span onClick={(e) => { e.stopPropagation(); setSupplierFilterId(''); setSupplierFilterName(''); }} className="text-muted-foreground hover:text-foreground">
+                <X className="h-3.5 w-3.5" />
+              </span>
+            )}
+          </button>
+          {supplierFilterOpen && (
+            <div className="absolute z-20 mt-1 w-64 rounded-md border bg-background shadow-lg p-2">
+              <Input autoFocus placeholder="Search supplier…" value={supplierFilterSearch} onChange={(e) => setSupplierFilterSearch(e.target.value)} className="mb-2 h-8" />
+              <div className="max-h-48 overflow-y-auto">
+                {(supplierFilterResults || []).map((p: any) => (
+                  <button key={p.id} type="button" className="w-full text-left px-2 py-1.5 rounded text-sm hover:bg-muted"
+                    onClick={() => { setSupplierFilterId(p.id); setSupplierFilterName(p.name); setSupplierFilterOpen(false); }}>
+                    {p.name}
+                  </button>
+                ))}
+                {supplierFilterSearch && (supplierFilterResults || []).length === 0 && <p className="text-xs text-muted-foreground px-2 py-2">No matches</p>}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Date range — client-side filter, since listPurchaseInvoices has no from_date/to_date param */}
+        <div className="flex items-center gap-1.5">
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9 w-[130px] text-xs" title="From date" />
+          <span className="text-muted-foreground text-xs">to</span>
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-9 w-[130px] text-xs" title="To date" />
+          {(dateFrom || dateTo) && (
+            <button type="button" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-muted-foreground hover:text-foreground" title="Clear date filter">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
         <div className="ml-auto flex flex-wrap gap-2">
           {hasDraft && !editingBillId && (
             <Button size="sm" variant="outline" onClick={loadSavedDraft}>
               Open draft
             </Button>
           )}
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={exportBillsToExcel} disabled={bills.length === 0}>
+            <FileSpreadsheet className="w-4 h-4" /> Export Excel
+          </Button>
           <Button size="sm" className="gap-1.5" onClick={openNewBill}>
             <Plus className="w-4 h-4" /> Add Purchase
           </Button>
@@ -356,16 +436,18 @@ export default function PurchaseBillsTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Bill No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
+              <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden lg:table-cell">Items</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden sm:table-cell">Status</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground hidden sm:table-cell">Paid</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground hidden md:table-cell">Balance</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-28">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={9} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && bills.length === 0 && (
-              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={9} className="p-10 text-center text-muted-foreground">
                 <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 No purchase bills. Click <strong>Add Purchase</strong> to create one.
               </td></tr>
@@ -379,10 +461,14 @@ export default function PurchaseBillsTab() {
                   <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(b.bill_date)}</td>
                   <td className="px-4 py-2.5 font-mono text-xs font-medium">{b.bill_number || '—'}</td>
                   <td className="px-4 py-2.5 font-medium">{b.party_name || '—'}</td>
+                  <td className="px-4 py-2.5 text-center text-xs text-muted-foreground hidden lg:table-cell">
+                    {b.item_count ?? 0}{parseFloat(b.total_quantity) ? <span className="text-muted-foreground/70"> ({parseFloat(b.total_quantity)} qty)</span> : null}
+                  </td>
                   <td className="px-4 py-2.5 text-center hidden sm:table-cell">
                     <PaymentBadge status={b.payment_status || 'unpaid'} />
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-medium">{formatMoney(parseInt(b.total_amount)||0)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-emerald-600 hidden sm:table-cell">{paidAmt > 0 ? formatMoney(paidAmt) : '—'}</td>
                   <td className={`px-4 py-2.5 text-right tabular-nums font-semibold hidden md:table-cell ${balance > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
                     {balance > 0 ? formatMoney(balance) : '✓ Paid'}
                   </td>
@@ -509,7 +595,7 @@ export default function PurchaseBillsTab() {
             {/* Items */}
             <div>
               <Label className="text-xs mb-2 block">Items</Label>
-              <VyaparLineItems
+              <LineItemsEditor
                 items={items}
                 onChange={setItems}
                 isGst={isGst}

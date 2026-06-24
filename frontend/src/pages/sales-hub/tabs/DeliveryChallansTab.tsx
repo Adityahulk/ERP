@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Download, Eye, Pencil, Plus, Trash2, Truck, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import toast from 'react-hot-toast';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -26,7 +26,7 @@ function todayIso() {
   return new Date().toISOString().split('T')[0];
 }
 
-function toLineItem(row: any): VyaparLineItem {
+function toLineItem(row: any): LineItem {
   return {
     item_id: row.item_id || undefined,
     name: row.item_name || row.name || 'Item',
@@ -69,7 +69,7 @@ export default function DeliveryChallansTab() {
   const [lrNumber, setLrNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>(normalizeCurrencyCode((company as any)?.default_currency || (company as any)?.currency || 'INR'));
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['delivery-challans'],
@@ -356,7 +356,7 @@ export default function DeliveryChallansTab() {
                     : 'Pricing is disabled in company settings, so this challan will only show movement details.'}
                 </p>
               </div>
-              <VyaparLineItems
+              <LineItemsEditor
                 items={items}
                 onChange={(next) => setItems(next.map((it) => ({ ...it, gst_rate: 0, cess_rate: 0 })))}
                 isGst={false}
@@ -429,15 +429,16 @@ export default function DeliveryChallansTab() {
               <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Date</th>
               <th className="hidden px-4 py-2.5 text-left text-xs font-medium text-muted-foreground md:table-cell">Challan No.</th>
               <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Party</th>
+              <th className="hidden px-4 py-2.5 text-center text-xs font-medium text-muted-foreground sm:table-cell">Quantity</th>
               <th className="hidden px-4 py-2.5 text-left text-xs font-medium text-muted-foreground lg:table-cell">Due Date</th>
               <th className="px-4 py-2.5 text-center text-xs font-medium text-muted-foreground">Status</th>
               <th className="w-72 px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Action</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading...</td></tr>}
+            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading...</td></tr>}
             {!isLoading && challans.length === 0 && (
-              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
                 <Truck className="mx-auto mb-2 h-10 w-10 opacity-30" />No delivery challans yet.
               </td></tr>
             )}
@@ -448,6 +449,9 @@ export default function DeliveryChallansTab() {
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(c.challan_date)}</td>
                   <td className="hidden px-4 py-2.5 font-mono text-xs md:table-cell">{c.challan_number}</td>
                   <td className="px-4 py-2.5 font-medium">{c.party_name_snapshot || c.party_name || '-'}</td>
+                  <td className="hidden px-4 py-2.5 text-center text-xs text-muted-foreground sm:table-cell">
+                    {parseFloat(c.total_quantity) || 0} <span className="text-muted-foreground/70">({c.item_count ?? 0} items)</span>
+                  </td>
                   <td className="hidden px-4 py-2.5 text-xs text-muted-foreground lg:table-cell">
                     {c.due_date ? formatDate(c.due_date) : '-'}
                   </td>

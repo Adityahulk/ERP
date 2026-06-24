@@ -14,8 +14,11 @@ import ModuleGate from '@/components/shared/ModuleGate';
 
 // Pages
 import ItemList from '@/pages/items/ItemList';
+import ItemCategoriesPage from '@/pages/items/ItemCategoriesPage';
+import ItemUnitsPage from '@/pages/items/ItemUnitsPage';
 import ItemDetail from '@/pages/items/ItemDetail';
 import BarcodeGeneratePage from '@/pages/barcode/BarcodeGeneratePage';
+import BarcodeScanStock from '@/pages/barcode/BarcodeScanStock';
 import StockList from '@/pages/inventory/StockList';
 import StockTransfer from '@/pages/inventory/StockTransfer';
 import StockAdjustment from '@/pages/inventory/StockAdjustment';
@@ -34,10 +37,12 @@ import ReportsHome from '@/pages/reports/ReportsHome';
 import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
 import CashBankPage from '@/pages/accounting/CashBankPage';
 import Settings from '@/pages/settings/Settings';
+import IntegrationsPage from '@/pages/settings/IntegrationsPage';
+import SyncSharePage from '@/pages/settings/SyncSharePage';
 import LandingPage from '@/pages/landing/LandingPage';
 
 import PartyList from '@/pages/parties/PartyList';
-import PartyDetail from '@/pages/parties/PartyDetail';
+import WhatsAppConnect from '@/pages/parties/WhatsAppConnect';
 import PurchaseExpenseHub from '@/pages/purchase-expense/PurchaseExpenseHub';
 import EmployeeListPage from '@/pages/hr/EmployeeListPage';
 import EmployeeDetailPage from '@/pages/hr/EmployeeDetailPage';
@@ -53,6 +58,7 @@ import SuperAdminLicenses from '@/pages/superadmin/SuperAdminLicenses';
 import SuperAdminLicenseDetail from '@/pages/superadmin/SuperAdminLicenseDetail';
 import SuperAdminCompanies from '@/pages/superadmin/SuperAdminCompanies';
 import SuperAdminCompanyDetail from '@/pages/superadmin/SuperAdminCompanyDetail';
+import SuperAdminJobs from '@/pages/superadmin/SuperAdminJobs';
 
 // ── Login Page ────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
@@ -237,13 +243,17 @@ export default function App() {
         <Route path="licenses/:id" element={<SuperAdminLicenseDetail />} />
         <Route path="companies" element={<SuperAdminCompanies />} />
         <Route path="companies/:id" element={<SuperAdminCompanyDetail />} />
+        <Route path="jobs" element={<SuperAdminJobs />} />
       </Route>
 
       <Route element={<ProtectedRoute><TenantGate><AppLayout /></TenantGate></ProtectedRoute>}>
         {/* Items */}
         <Route path="/items" element={<RoleGate allowed={['admin', 'manager']}><ItemList /></RoleGate>} />
+        <Route path="/items/categories" element={<RoleGate allowed={['admin', 'manager']}><ItemCategoriesPage /></RoleGate>} />
+        <Route path="/items/units" element={<RoleGate allowed={['admin', 'manager']}><ItemUnitsPage /></RoleGate>} />
         <Route path="/items/:id" element={<RoleGate allowed={['admin', 'manager']}><ItemDetail /></RoleGate>} />
         <Route path="/barcode/generate" element={<RoleGate allowed={['admin', 'manager']}><BarcodeGeneratePage /></RoleGate>} />
+        <Route path="/barcode/scan" element={<RoleGate allowed={['admin', 'manager']}><BarcodeScanStock /></RoleGate>} />
 
         {/* Inventory */}
         <Route path="/inventory" element={<RoleGate allowed={['admin', 'manager']}><StockList /></RoleGate>} />
@@ -253,7 +263,8 @@ export default function App() {
 
         {/* Parties */}
         <Route path="/parties" element={<RoleGate allowed={['admin', 'manager']}><PartyList /></RoleGate>} />
-        <Route path="/parties/:id" element={<RoleGate allowed={['admin', 'manager']}><PartyDetail /></RoleGate>} />
+        <Route path="/parties/whatsapp-connect" element={<RoleGate allowed={['admin', 'manager']}><WhatsAppConnect /></RoleGate>} />
+        <Route path="/parties/:id" element={<RoleGate allowed={['admin', 'manager']}><PartyList /></RoleGate>} />
 
         {/* Dashboard Core */}
         <Route path="/dashboard" element={<RoleGate allowed={['admin', 'manager']}><Dashboard /></RoleGate>} />
@@ -302,6 +313,8 @@ export default function App() {
 
         {/* Global Config */}
         <Route path="/settings" element={<RoleGate allowed={['admin']}><Settings /></RoleGate>} />
+        <Route path="/settings/integrations" element={<RoleGate allowed={['admin']}><IntegrationsPage /></RoleGate>} />
+        <Route path="/settings/sync-backup" element={<RoleGate allowed={['admin']}><SyncSharePage /></RoleGate>} />
 
       </Route>
 

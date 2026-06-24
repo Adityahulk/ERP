@@ -1,6 +1,6 @@
 # BizFlow — Smart Accounts for Indian Businesses
 
-A comprehensive business management platform built for Indian MSMEs — traders, retailers, manufacturers, distributors, and service businesses. Direct competitor to Vyapar.
+A comprehensive business management platform built for Indian MSMEs — traders, retailers, manufacturers, distributors, and service businesses.
 
 ## 🚀 Tech Stack
 
@@ -62,8 +62,9 @@ npm run dev
 ### Access
 - **Frontend (dev):** http://localhost:3000
 - **Frontend (Docker compose):** http://localhost:8080 (nginx → `/api` proxied to backend)
-- **API:** http://localhost:5000
-- **Health:** http://localhost:5000/health
+- **API (Docker compose):** http://localhost:5000 — set by `docker-compose.yml` (`PORT: 5000`)
+- **API (non-Docker `npm run dev`):** http://localhost:5001 — set by `backend/.env.example` (`PORT=5001`); this also matches the frontend's dev-mode API proxy default in `frontend/src/lib/api.ts`
+- **Health:** `http://localhost:<API port above>/health`
 
 ### Background worker (BullMQ)
 ```bash

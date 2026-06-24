@@ -31,6 +31,9 @@ export type JournalInput = {
   attachmentUrl?: string | null;
   replaceExisting?: boolean;
   skipIfEmpty?: boolean;
+  /** Defaults to 'posted' — every existing caller is unaffected. Only the
+   * manual journal-entry workflow ever passes 'draft' explicitly. */
+  status?: 'draft' | 'pending_approval' | 'posted';
 };
 
 const COA: Array<{
@@ -357,7 +360,7 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
        company_id, entry_number, voucher_number, entry_date, entry_type, voucher_type,
        reference_type, reference_id, description, remarks, attachment_url,
        total_debit, total_credit, status, created_by
-     ) VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'posted',$13)
+     ) VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [
       input.companyId,
@@ -372,6 +375,7 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
       input.attachmentUrl || null,
       totalDebit,
       totalCredit,
+      input.status || 'posted',
       input.createdBy || null,
     ],
   );
@@ -491,6 +495,139 @@ export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: st
         ? { accountId: roundExpense, debit: roundDifference, description: 'Round off / bill adjustment' }
         : { accountId: roundIncome, credit: Math.abs(roundDifference), description: 'Round off / bill adjustment' },
       { accountId: creditors, credit: totalAmount, partyId: invoice.party_id || null },
+    ],
+  });
+}
+
+/**
+ * Sale Return / Credit Note — the reverse of postSalesInvoiceAccounting.
+ * Debits Sales (and reverses output GST), credits Sundry Debtors, since
+ * the customer now owes less.
+ */
+export async function postSaleReturnAccounting(db: Queryable, companyId: string, ret: any, createdBy?: string | null) {
+  const debtor = await getOrCreateDefaultAccount(db, companyId, 'Sundry Debtors', 'asset', 'Current Assets');
+  const sales = await getOrCreateDefaultAccount(db, companyId, 'Sale (Revenue) Account', 'income', 'Sale Accounts');
+
+  const totalAmount = paise(ret.total_amount);
+  // sale_returns doesn't separately track a taxable/GST split per return
+  // (it's a simpler document than a full invoice), so the full amount is
+  // debited against Sales — directionally correct and keeps the books
+  // balanced without inventing a GST split the return doesn't capture.
+  return postJournalEntry(db, {
+    companyId,
+    entryDate: toSqlDate(ret.return_date),
+    entryType: 'system',
+    voucherType: 'sale_return',
+    voucherNumber: ret.credit_note_number,
+    referenceType: 'sale_return',
+    referenceId: ret.id,
+    description: `Sale return / credit note ${ret.credit_note_number}`,
+    createdBy,
+    skipIfEmpty: true,
+    lines: [
+      { accountId: sales, debit: totalAmount, description: 'Sales reversed by credit note' },
+      { accountId: debtor, credit: totalAmount, partyId: ret.party_id || null },
+    ],
+  });
+}
+
+/**
+ * Purchase Return / Debit Note — the reverse of postPurchaseInvoiceAccounting.
+ * Debits Sundry Creditors (we owe the supplier less), credits Purchase.
+ */
+export async function postPurchaseReturnAccounting(db: Queryable, companyId: string, ret: any, createdBy?: string | null) {
+  const creditors = await getOrCreateDefaultAccount(db, companyId, 'Sundry Creditors', 'liability', 'Current Liabilities');
+  const purchase = await getOrCreateDefaultAccount(db, companyId, 'Purchase', 'expense', 'Purchase Accounts');
+
+  const totalAmount = paise(ret.total_amount);
+  return postJournalEntry(db, {
+    companyId,
+    entryDate: toSqlDate(ret.return_date),
+    entryType: 'system',
+    voucherType: 'purchase_return',
+    voucherNumber: ret.debit_note_number,
+    referenceType: 'purchase_return',
+    referenceId: ret.id,
+    description: `Purchase return / debit note ${ret.debit_note_number}`,
+    createdBy,
+    skipIfEmpty: true,
+    lines: [
+      { accountId: creditors, debit: totalAmount, partyId: ret.party_id || null },
+      { accountId: purchase, credit: totalAmount, description: 'Purchases reversed by debit note' },
+    ],
+  });
+}
+
+/**
+ * Loan transactions previously never touched the journal at all — a
+ * real gap, not a style choice. Disbursement increases the asset
+ * (cash/bank) and the liability (loan); repayment/interest reduce the
+ * asset and the liability/expense respectively.
+ */
+export async function postLoanAccounting(db: Queryable, companyId: string, loan: any, tx: any, createdBy?: string | null) {
+  const cash = await getOrCreateDefaultAccount(db, companyId, 'Cash', 'asset', 'Current Assets');
+  const bank = await getOrCreateDefaultAccount(db, companyId, 'Bank Accounts', 'asset', 'Current Assets');
+  const loanLiability = await getOrCreateDefaultAccount(db, companyId, `Loan — ${loan.account_name}`, 'liability', 'Loans (Liability)');
+  const interestExpense = await getOrCreateDefaultAccount(db, companyId, 'Interest on Loan', 'expense', 'Indirect Expenses');
+  const assetAccount = String(loan.received_in || 'bank').toLowerCase() === 'cash' ? cash : bank;
+  const amount = paise(tx.amount);
+
+  if (tx.transaction_type === 'disbursement') {
+    return postJournalEntry(db, {
+      companyId, entryDate: toSqlDate(tx.transaction_date), entryType: 'system', voucherType: 'loan_transaction',
+      voucherNumber: tx.reference_number || `LOAN-${tx.id}`, referenceType: 'loan_transaction', referenceId: tx.id,
+      description: `Loan disbursement — ${loan.account_name}`, createdBy, skipIfEmpty: true,
+      lines: [
+        { accountId: assetAccount, debit: amount },
+        { accountId: loanLiability, credit: amount },
+      ],
+    });
+  }
+  if (tx.transaction_type === 'interest') {
+    return postJournalEntry(db, {
+      companyId, entryDate: toSqlDate(tx.transaction_date), entryType: 'system', voucherType: 'loan_transaction',
+      voucherNumber: tx.reference_number || `LOAN-${tx.id}`, referenceType: 'loan_transaction', referenceId: tx.id,
+      description: `Interest accrued — ${loan.account_name}`, createdBy, skipIfEmpty: true,
+      lines: [
+        { accountId: interestExpense, debit: amount },
+        { accountId: loanLiability, credit: amount },
+      ],
+    });
+  }
+  // repayment / adjustment — reduces the liability and the asset
+  return postJournalEntry(db, {
+    companyId, entryDate: toSqlDate(tx.transaction_date), entryType: 'system', voucherType: 'loan_transaction',
+    voucherNumber: tx.reference_number || `LOAN-${tx.id}`, referenceType: 'loan_transaction', referenceId: tx.id,
+    description: `Loan ${tx.transaction_type} — ${loan.account_name}`, createdBy, skipIfEmpty: true,
+    lines: [
+      { accountId: loanLiability, debit: amount },
+      { accountId: assetAccount, credit: amount },
+    ],
+  });
+}
+
+/**
+ * Bank-to-bank (or bank-to-cash) transfers are journal-neutral: this
+ * system tracks per-bank balances directly off payments rows (see
+ * signedPaymentSql), not per-bank GL sub-accounts — so a transfer
+ * nets to zero against the single combined "Bank Accounts"/"Cash"
+ * asset accounts. Still posted for audit-trail completeness in the
+ * voucher register.
+ */
+export async function postBankTransferAccounting(db: Queryable, companyId: string, transfer: any, createdBy?: string | null) {
+  const cash = await getOrCreateDefaultAccount(db, companyId, 'Cash', 'asset', 'Current Assets');
+  const bank = await getOrCreateDefaultAccount(db, companyId, 'Bank Accounts', 'asset', 'Current Assets');
+  const fromAccount = transfer.from_account_id ? bank : cash;
+  const toAccount = transfer.to_account_id ? bank : cash;
+  const amount = paise(transfer.amount);
+
+  return postJournalEntry(db, {
+    companyId, entryDate: toSqlDate(transfer.transfer_date), entryType: 'system', voucherType: 'bank_transfer',
+    voucherNumber: transfer.reference_number || `TRF-${transfer.id}`, referenceType: 'bank_transfer', referenceId: transfer.id,
+    description: transfer.notes || 'Fund transfer', createdBy, skipIfEmpty: true,
+    lines: [
+      { accountId: toAccount, debit: amount },
+      { accountId: fromAccount, credit: amount },
     ],
   });
 }

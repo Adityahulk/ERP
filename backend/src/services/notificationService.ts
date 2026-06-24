@@ -27,7 +27,9 @@ const client = createTwilioClient();
 const TEMPLATES: Record<string, string> = {
   INVOICE_SHARE: "Dear {party_name},\n\nYour invoice from {company_name}:\nInvoice No: {invoice_number}\nDate: {date}\nAmount: ₹{amount}\n\nView & Download: {link}\n\nFor queries: {phone}\n— {company_name}",
   PAYMENT_REMINDER: "Dear {party_name},\n\nThis is a reminder for pending payment:\nInvoice: {invoice_number} dated {date}\nDue: {due_date}\nAmount Due: ₹{amount}\n\nPlease make the payment at your earliest.\n📞 {phone}\n— {company_name}",
-  LOW_STOCK_ALERT: "📦 Low Stock Alert — {company_name}\n{item_name} ({sku}) is running low.\nCurrent Stock: {quantity} {unit}\nReorder Level: {reorder_point}\nPlease reorder from your supplier."
+  LOW_STOCK_ALERT: "📦 Low Stock Alert — {company_name}\n{item_name} ({sku}) is running low.\nCurrent Stock: {quantity} {unit}\nReorder Level: {reorder_point}\nPlease reorder from your supplier.",
+  CAMPAIGN_BROADCAST: "{message}",
+  SERVICE_REMINDER: "{message}",
 };
 
 /**
@@ -38,7 +40,11 @@ function compileTemplate(template: string, variables: Record<string, any>) {
 }
 
 export async function sendWhatsApp(phone: string, template_type: string, variables: Record<string, any>, companyId: string) {
-   const defaultTemplate = TEMPLATES[template_type] || "Message from {company_name}";
+   const customTemplate = await query(
+     `SELECT content FROM message_templates WHERE company_id = $1 AND channel = 'whatsapp' AND template_type = $2 AND is_active = true`,
+     [companyId, template_type],
+   ).then((r) => r.rows[0]?.content).catch(() => null);
+   const defaultTemplate = customTemplate || TEMPLATES[template_type] || "Message from {company_name}";
    const messageText = compileTemplate(defaultTemplate, variables);
 
    let status = 'pending';

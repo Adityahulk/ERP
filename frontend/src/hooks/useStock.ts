@@ -95,3 +95,25 @@ export function useGodowns() {
     queryFn: () => api.get('/godowns').then(r => r.data),
   });
 }
+
+/** Scan a barcode → find item → reduce stock → log a stock movement. */
+export function useScanAndDeduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { barcode: string; godown_id: string; quantity?: number; notes?: string }) =>
+      api.post('/barcode/scan-out', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['items'] });
+      qc.invalidateQueries({ queryKey: ['barcode', 'scan-history'] });
+    },
+  });
+}
+
+/** Audit trail of every barcode-driven stock deduction. */
+export function useBarcodeScanHistory(filters: any) {
+  return useQuery({
+    queryKey: ['barcode', 'scan-history', filters],
+    queryFn: () => api.get('/barcode/scan/history', { params: filters }).then(r => r.data),
+  });
+}

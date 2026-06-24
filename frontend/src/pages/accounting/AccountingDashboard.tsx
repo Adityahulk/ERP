@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -13,17 +14,22 @@ import {
   Printer,
   RefreshCcw,
   Search,
+  Repeat,
+  Receipt,
+  History,
+  FileSpreadsheet,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDate, formatMoney } from '@/lib/formatters';
 import MoneyInput from '@/components/transactions/MoneyInput';
 
-type Workspace = 'journal' | 'chart' | 'statement';
+type Workspace = 'journal' | 'chart' | 'statement' | 'templates' | 'gst_ledger' | 'audit_logs' | 'gst_returns';
 type AccountNode = {
   id: string;
   name: string;
@@ -105,7 +111,9 @@ function drCrClass(kind?: string) {
 
 export default function AccountingDashboard() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace>('journal');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [accountType, setAccountType] = useState<string>('Assets');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [accountSearch, setAccountSearch] = useState('');
@@ -126,6 +134,25 @@ export default function AccountingDashboard() {
   });
 
   const [statementAccountId, setStatementAccountId] = useState('');
+
+  // Drill-down from Trial Balance (and anywhere else) lands here via
+  // ?account=<id> — this is what actually opens the Account Statement
+  // workspace pre-loaded with that account, rather than just navigating
+  // to a blank page and leaving the user to pick it manually.
+  useEffect(() => {
+    const accountId = searchParams.get('account');
+    if (accountId) {
+      setWorkspace('statement');
+      setStatementAccountId(accountId);
+      // Clean the URL so refreshing/sharing the link later doesn't
+      // re-trigger this every time, while keeping the selection live
+      // in state for the rest of the session.
+      const next = new URLSearchParams(searchParams);
+      next.delete('account');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [fromDate, setFromDate] = useState(monthStart());
   const [toDate, setToDate] = useState(today());
 
@@ -170,6 +197,36 @@ export default function AccountingDashboard() {
     queryFn: async () => (await api.get('/accounting/journal-entries')).data?.data || [],
   });
 
+  const { data: templates = [], isLoading: templatesLoading } = useQuery({
+    queryKey: ['accounting', 'journal-templates'],
+    queryFn: async () => (await api.get('/accounting/journal-templates')).data?.data || [],
+    enabled: workspace === 'templates',
+  });
+
+  const { data: gstLedger, isLoading: gstLedgerLoading } = useQuery({
+    queryKey: ['accounting', 'gst-ledger', fromDate, toDate],
+    queryFn: async () => (await api.get('/accounting/gst-ledger', { params: { from_date: fromDate, to_date: toDate } })).data,
+    enabled: workspace === 'gst_ledger',
+  });
+
+  const { data: auditLogs, isLoading: auditLogsLoading } = useQuery({
+    queryKey: ['accounting', 'audit-logs'],
+    queryFn: async () => (await api.get('/accounting/audit-logs', { params: { limit: 100 } })).data?.data,
+    enabled: workspace === 'audit_logs',
+  });
+
+  const { data: gstDashboard, isLoading: gstDashboardLoading } = useQuery({
+    queryKey: ['gst', 'dashboard'],
+    queryFn: async () => (await api.get('/gst/dashboard')).data?.data,
+    enabled: workspace === 'gst_returns',
+  });
+
+  const { data: gstValidation, isLoading: gstValidationLoading } = useQuery({
+    queryKey: ['gst', 'validation'],
+    queryFn: async () => (await api.get('/gst/validation')).data,
+    enabled: workspace === 'gst_returns',
+  });
+
   const { data: statement, isLoading: statementLoading } = useQuery({
     queryKey: ['accounting', 'statement', statementAccountId, fromDate, toDate],
     enabled: !!statementAccountId,
@@ -179,8 +236,8 @@ export default function AccountingDashboard() {
 
   const createJournalMutation = useMutation({
     mutationFn: (payload: any) => api.post('/accounting/journal-entries', payload),
-    onSuccess: () => {
-      toast.success('Journal entry posted');
+    onSuccess: (_res, payload) => {
+      toast.success(payload?.status === 'draft' ? 'Saved as draft' : 'Journal entry posted');
       setJournalOpen(false);
       setJournalForm((f) => ({
         ...f,
@@ -227,6 +284,47 @@ export default function AccountingDashboard() {
     onError: (e: any) => toast.error(e.response?.data?.error || 'Could not rebuild ledger'),
   });
 
+  const applyTemplateMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/accounting/journal-templates/${id}/apply`),
+    onSuccess: () => {
+      toast.success('Draft journal entry created from template — review and post it from Journal Entries');
+      setWorkspace('journal');
+      qc.invalidateQueries({ queryKey: ['accounting', 'journal-entries'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not apply template'),
+  });
+
+  const saveTemplateMutation = useMutation({
+    mutationFn: (name: string) => api.post('/accounting/journal-templates', {
+      name,
+      voucher_type: 'journal',
+      lines: journalForm.lines
+        .filter((l) => l.account_id && (Number(l.debit) > 0 || Number(l.credit) > 0))
+        .map((l) => ({ account_id: l.account_id, debit: l.debit, credit: l.credit, description: l.description })),
+    }),
+    onSuccess: () => {
+      toast.success('Template saved — find it under Journal Templates');
+      qc.invalidateQueries({ queryKey: ['accounting', 'journal-templates'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not save template'),
+  });
+
+  const submitJournalMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/accounting/journal-entries/${id}/submit`),
+    onSuccess: () => { toast.success('Submitted for approval'); qc.invalidateQueries({ queryKey: ['accounting'] }); },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not submit'),
+  });
+  const approveJournalMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/accounting/journal-entries/${id}/approve`),
+    onSuccess: () => { toast.success('Journal entry approved and posted'); qc.invalidateQueries({ queryKey: ['accounting'] }); },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not approve'),
+  });
+  const rejectJournalMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.post(`/accounting/journal-entries/${id}/reject`, { reason }),
+    onSuccess: () => { toast.success('Journal entry sent back to draft'); qc.invalidateQueries({ queryKey: ['accounting'] }); },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not reject'),
+  });
+
   const totals = useMemo(() => {
     const debit = journalForm.lines.reduce((sum, l) => sum + Number(l.debit || 0), 0);
     const credit = journalForm.lines.reduce((sum, l) => sum + Number(l.credit || 0), 0);
@@ -240,7 +338,7 @@ export default function AccountingDashboard() {
     }));
   };
 
-  const saveJournal = () => {
+  const saveJournal = (status: 'draft' | 'posted' = 'posted') => {
     const lines = journalForm.lines.filter((l) => l.account_id && (Number(l.debit) > 0 || Number(l.credit) > 0));
     if (!journalForm.description.trim()) return toast.error('Enter journal description');
     if (lines.length < 2) return toast.error('Add at least two journal lines');
@@ -251,6 +349,7 @@ export default function AccountingDashboard() {
       description: journalForm.description,
       remarks: journalForm.remarks || undefined,
       attachment_url: journalForm.attachment_url || undefined,
+      status,
       lines,
     });
   };
@@ -314,6 +413,10 @@ export default function AccountingDashboard() {
             ['journal', FileText, 'Journal Entries'],
             ['chart', ListTree, 'Chart of Accounts'],
             ['statement', BookOpen, 'Account Statements'],
+            ['templates', Repeat, 'Journal Templates'],
+            ['gst_ledger', Receipt, 'GST Ledger'],
+            ['gst_returns', FileSpreadsheet, 'GST Returns'],
+            ['audit_logs', History, 'Audit Logs'],
           ].map(([key, Icon, label]) => {
             const I = Icon as typeof FileText;
             return (
@@ -338,6 +441,9 @@ export default function AccountingDashboard() {
               loading={journalsLoading}
               rows={journals}
               onReverse={(id) => reverseJournalMutation.mutate(id)}
+              onSubmit={(id) => submitJournalMutation.mutate(id)}
+              onApprove={(id) => approveJournalMutation.mutate(id)}
+              onReject={(id) => { const reason = window.prompt('Reason for rejecting this entry?'); if (reason) rejectJournalMutation.mutate({ id, reason }); }}
             />
           )}
 
@@ -409,6 +515,182 @@ export default function AccountingDashboard() {
               </CardContent>
             </Card>
           )}
+
+          {workspace === 'templates' && (
+            <Card>
+              <CardHeader className="border-b flex flex-row items-center justify-between">
+                <CardTitle>Journal Templates</CardTitle>
+                <p className="text-xs text-muted-foreground">Apply a template to create a draft entry — amounts are confirmed and posted manually, never auto-posted.</p>
+              </CardHeader>
+              <CardContent className="p-0">
+                {templatesLoading && <p className="p-8 text-center text-slate-500">Loading templates...</p>}
+                {!templatesLoading && !templates.length && (
+                  <div className="grid place-items-center py-16 text-center">
+                    <Repeat className="mx-auto h-12 w-12 text-slate-300" />
+                    <p className="mt-3 text-sm text-slate-500">No journal templates yet. Save a recurring entry (like monthly depreciation or rent) as a template from Journal Entries.</p>
+                  </div>
+                )}
+                <div className="divide-y">
+                  {templates.map((t: any) => (
+                    <div key={t.id} className="flex items-center justify-between p-4">
+                      <div>
+                        <p className="font-semibold">{t.name}</p>
+                        <p className="text-xs text-slate-500">{t.description || `${(t.lines || []).length} lines`} {t.is_recurring ? `· Recurring (${t.recurrence})` : ''}</p>
+                      </div>
+                      <Button size="sm" onClick={() => applyTemplateMutation.mutate(t.id)} disabled={applyTemplateMutation.isPending}>Use Template</Button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {workspace === 'gst_ledger' && (
+            <Card>
+              <CardHeader className="border-b">
+                <CardTitle>GST Ledger</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">Input/Output CGST, SGST, and IGST account balances — drawn from the same journal postings as every sale and purchase invoice.</p>
+              </CardHeader>
+              <CardContent className="p-4">
+                <div className="grid gap-3 md:grid-cols-2 mb-4">
+                  <label className="text-sm font-medium">From<Input className="mt-1" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
+                  <label className="text-sm font-medium">To<Input className="mt-1" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
+                </div>
+                {gstLedgerLoading && <p className="text-center text-slate-500 py-8">Loading...</p>}
+                {!gstLedgerLoading && gstLedger && (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-3 mb-4">
+                      <SummaryTile label="Output GST (Payable)" value={formatMoney(gstLedger.meta?.total_output_gst_paise || 0)} />
+                      <SummaryTile label="Input GST (Credit)" value={formatMoney(gstLedger.meta?.total_input_gst_paise || 0)} />
+                      <SummaryTile label="Net GST Payable" value={formatMoney(gstLedger.meta?.net_gst_payable_paise || 0)} />
+                    </div>
+                    <div className="overflow-auto rounded-md border bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Account</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th></tr></thead>
+                        <tbody>
+                          {(gstLedger.data || []).map((row: any) => (
+                            <tr key={row.account_id} className="border-t">
+                              <td className="px-3 py-2 font-medium">{row.account_name}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatMoney(row.debit)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{formatMoney(row.credit)}</td>
+                            </tr>
+                          ))}
+                          {!(gstLedger.data || []).length && <tr><td colSpan={3} className="p-8 text-center text-slate-500">No GST postings in this period yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {workspace === 'gst_returns' && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="border-b"><CardTitle>GST Dashboard</CardTitle></CardHeader>
+                <CardContent className="p-4">
+                  {gstDashboardLoading && <p className="text-center text-slate-500 py-6">Loading...</p>}
+                  {!gstDashboardLoading && gstDashboard && (
+                    <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                      <SummaryTile label="GST Collected" value={formatMoney(gstDashboard.gstCollectedPaise)} />
+                      <SummaryTile label="GST Paid (Input)" value={formatMoney(gstDashboard.gstPaidPaise)} />
+                      <SummaryTile label="Input Credit Available" value={formatMoney(gstDashboard.inputCreditAvailablePaise)} />
+                      <SummaryTile label="Net Tax Liability" value={formatMoney(gstDashboard.netTaxLiabilityPaise)} />
+                      <SummaryTile label="GST Pending" value={formatMoney(gstDashboard.gstPendingPaise)} />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="border-b flex flex-row items-center justify-between">
+                  <CardTitle>GST Validation</CardTitle>
+                  {gstValidation?.meta?.totalIssues > 0 ? (
+                    <Badge className="bg-red-100 text-red-700">{gstValidation.meta.totalIssues} issue{gstValidation.meta.totalIssues === 1 ? '' : 's'}</Badge>
+                  ) : (
+                    <Badge className="bg-emerald-100 text-emerald-700">No issues found</Badge>
+                  )}
+                </CardHeader>
+                <CardContent className="p-4 space-y-3">
+                  {gstValidationLoading && <p className="text-center text-slate-500 py-4">Checking...</p>}
+                  {!gstValidationLoading && gstValidation?.data && (
+                    <>
+                      {gstValidation.data.missingGstin.length > 0 && (
+                        <div className="text-sm"><span className="font-semibold text-red-700">{gstValidation.data.missingGstin.length} invoice(s)</span> over ₹2,50,000 with no party GSTIN on file.</div>
+                      )}
+                      {gstValidation.data.invalidGstin.length > 0 && (
+                        <div className="text-sm"><span className="font-semibold text-red-700">{gstValidation.data.invalidGstin.length} part{gstValidation.data.invalidGstin.length === 1 ? 'y' : 'ies'}</span> with a GSTIN that doesn't match the standard 15-character format.</div>
+                      )}
+                      {gstValidation.data.missingHsn.length > 0 && (
+                        <div className="text-sm"><span className="font-semibold text-red-700">{gstValidation.data.missingHsn.length} item(s)</span> sold with GST applied but no HSN code on file.</div>
+                      )}
+                      {gstValidation.data.taxMismatch.length > 0 && (
+                        <div className="text-sm"><span className="font-semibold text-red-700">{gstValidation.data.taxMismatch.length} line item(s)</span> where the recorded tax doesn't match taxable value × GST rate.</div>
+                      )}
+                      {gstValidation.meta.totalIssues === 0 && <p className="text-sm text-muted-foreground">All checks passed for the current period.</p>}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="border-b"><CardTitle>GST Returns</CardTitle></CardHeader>
+                <CardContent className="p-4 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ['GSTR-1 Data', 'Outward supplies — B2B, B2C, exports, nil-rated, exempted'],
+                    ['GSTR2', 'Inward supplies from purchase bills and vendor GST data'],
+                    ['GSTR-2A Reconciliation', 'Match your purchase records against vendor-filed data'],
+                    ['GSTR-3B Summary', 'Monthly summary return — output GST, input GST, net payable'],
+                    ['HSN Summary', 'Goods sold, grouped by HSN code'],
+                    ['SAC Summary', 'Services sold, grouped by SAC code'],
+                    ['GST Rate Report', 'Sales grouped by GST rate slab'],
+                  ].map(([name, desc]) => (
+                    <button key={name} onClick={() => navigate(`/reports?report=${encodeURIComponent(name)}`)} className="text-left p-3 rounded-md border hover:border-indigo-400 hover:bg-indigo-50/50 transition-colors">
+                      <p className="font-semibold text-sm">{name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                    </button>
+                  ))}
+                </CardContent>
+                <CardContent className="p-4 pt-0">
+                  <p className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded-md p-3">
+                    <strong>GSTR9 (annual return)</strong> isn't built yet — it's a complex annual reconciliation with specific government schema requirements, and getting it wrong on an actual tax filing is a real risk. The monthly reports above give you the real underlying figures an accountant would need to prepare it manually in the meantime.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {workspace === 'audit_logs' && (
+            <Card>
+              <CardHeader className="border-b">
+                <CardTitle>Audit Logs</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">Who created, modified, or approved records, with old/new values and IP address.</p>
+              </CardHeader>
+              <CardContent className="p-0">
+                {auditLogsLoading && <p className="p-8 text-center text-slate-500">Loading...</p>}
+                {!auditLogsLoading && (
+                  <div className="overflow-auto">
+                    <table className="w-full min-w-[820px] text-sm">
+                      <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Time</th><th className="px-3 py-2">User</th><th className="px-3 py-2">Action</th><th className="px-3 py-2">Entity</th><th className="px-3 py-2">IP Address</th></tr></thead>
+                      <tbody>
+                        {(auditLogs?.data || []).map((log: any) => (
+                          <tr key={log.id} className="border-t align-top">
+                            <td className="px-3 py-2 whitespace-nowrap">{new Date(log.created_at).toLocaleString('en-IN')}</td>
+                            <td className="px-3 py-2">{log.user_name || 'System'}</td>
+                            <td className="px-3 py-2 capitalize">{String(log.action).replace(/_/g, ' ')}</td>
+                            <td className="px-3 py-2 capitalize">{log.entity}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-slate-500">{log.ip_address || '—'}</td>
+                          </tr>
+                        ))}
+                        {!(auditLogs?.data || []).length && <tr><td colSpan={5} className="p-8 text-center text-slate-500">No audit activity recorded yet.</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </main>
       </div>
 
@@ -475,7 +757,21 @@ export default function AccountingDashboard() {
                   <div className="flex justify-between"><span>Credit</span><b>{formatMoney(totals.credit)}</b></div>
                   <div className={`rounded-md p-3 font-semibold ${totals.balanced ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{totals.balanced ? 'Balanced' : 'Debit and credit must match'}</div>
                 </div>
-                <Button className="mt-5 w-full" disabled={!totals.balanced || createJournalMutation.isPending} onClick={saveJournal}>Post Journal Entry</Button>
+                <div className="mt-5 flex gap-2">
+                  <Button variant="outline" className="flex-1" disabled={!totals.balanced || createJournalMutation.isPending} onClick={() => saveJournal('draft')}>Save as Draft</Button>
+                  <Button className="flex-1" disabled={!totals.balanced || createJournalMutation.isPending} onClick={() => saveJournal('posted')}>Post Journal Entry</Button>
+                </div>
+                <button
+                  type="button"
+                  className="mt-2 w-full text-center text-xs text-indigo-600 hover:underline disabled:opacity-50"
+                  disabled={!totals.balanced || saveTemplateMutation.isPending}
+                  onClick={() => {
+                    const name = window.prompt('Save this as a template named:', journalForm.description);
+                    if (name?.trim()) saveTemplateMutation.mutate(name.trim());
+                  }}
+                >
+                  Save these lines as a reusable template
+                </button>
               </div>
             </div>
           </div>
@@ -524,7 +820,18 @@ function SummaryTile({ label, value }: { label: string; value: string }) {
   return <div className="rounded-md border bg-white p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-bold tabular-nums">{value}</p></div>;
 }
 
-function JournalEntries({ loading, rows, onReverse }: { loading: boolean; rows: any[]; onReverse: (id: string) => void }) {
+const JOURNAL_STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-slate-100 text-slate-600',
+  pending_approval: 'bg-amber-100 text-amber-700',
+  posted: 'bg-emerald-100 text-emerald-700',
+  cancelled: 'bg-slate-200 text-slate-500',
+  reversed: 'bg-red-100 text-red-700',
+};
+
+function JournalEntries({ loading, rows, onReverse, onSubmit, onApprove, onReject }: {
+  loading: boolean; rows: any[]; onReverse: (id: string) => void;
+  onSubmit: (id: string) => void; onApprove: (id: string) => void; onReject: (id: string) => void;
+}) {
   return (
     <Card>
       <CardHeader className="border-b"><CardTitle>Journal Entries</CardTitle></CardHeader>
@@ -539,8 +846,8 @@ function JournalEntries({ loading, rows, onReverse }: { loading: boolean; rows: 
           </div>
         ) : (
           <div className="overflow-auto">
-            <table className="w-full min-w-[900px] text-sm">
-              <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Voucher</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Particulars</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2">Status</th><th /></tr></thead>
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="bg-slate-100 text-left text-xs uppercase text-slate-500"><tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Voucher</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Particulars</th><th className="px-3 py-2 text-right">Debit</th><th className="px-3 py-2 text-right">Credit</th><th className="px-3 py-2">Status</th><th className="px-3 py-2 text-right">Actions</th></tr></thead>
               <tbody>
                 {loading ? <tr><td colSpan={8} className="p-8 text-center text-slate-500">Loading journal entries...</td></tr> : null}
                 {rows.map((row: any) => (
@@ -551,8 +858,21 @@ function JournalEntries({ loading, rows, onReverse }: { loading: boolean; rows: 
                     <td className="px-3 py-2">{row.description}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(row.total_debit || 0))}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatMoney(Number(row.total_credit || 0))}</td>
-                    <td className="px-3 py-2"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs capitalize">{row.status || 'posted'}</span></td>
-                    <td className="px-3 py-2 text-right"><Button variant="ghost" size="sm" disabled={row.status === 'reversed'} onClick={() => onReverse(row.id)}>Reverse</Button></td>
+                    <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs capitalize ${JOURNAL_STATUS_COLORS[row.status] || 'bg-slate-100 text-slate-600'}`}>{(row.status || 'posted').replace('_', ' ')}</span></td>
+                    <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
+                      {row.entry_type === 'manual' && row.status === 'draft' && (
+                        <Button variant="outline" size="sm" onClick={() => onSubmit(row.id)}>Submit</Button>
+                      )}
+                      {row.status === 'pending_approval' && (
+                        <>
+                          <Button variant="outline" size="sm" className="text-emerald-700" onClick={() => onApprove(row.id)}>Approve</Button>
+                          <Button variant="ghost" size="sm" className="text-red-600" onClick={() => onReject(row.id)}>Reject</Button>
+                        </>
+                      )}
+                      {row.status === 'posted' && (
+                        <Button variant="ghost" size="sm" onClick={() => onReverse(row.id)}>Reverse</Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

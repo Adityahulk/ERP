@@ -68,6 +68,20 @@ const config: Config = {
           900: '#1e3a8a',
           950: '#172554',
         },
+        // Sidebar / desktop-ERP dark navy theme
+        navy: {
+          50: '#f0f4fa',
+          100: '#dbe4f0',
+          200: '#b8c8de',
+          300: '#8aa3c4',
+          400: '#5b7aa3',
+          500: '#3d5a80',
+          600: '#2c4566',
+          700: '#1e3252',
+          800: '#162542',
+          900: '#0F172A',
+          950: '#0a0f1c',
+        },
         success: {
           DEFAULT: '#10b981',
           foreground: '#ffffff',

@@ -53,7 +53,9 @@ export async function listDeliveryChallans(req: Request, res: Response) {
     const [rows, countRes] = await Promise.all([
       query(
         `SELECT c.*, p.name AS party_name, p.phone AS party_phone,
-                so.so_number
+                so.so_number,
+                COALESCE((SELECT COUNT(*) FROM delivery_challan_items dci WHERE dci.challan_id = c.id), 0) AS item_count,
+                COALESCE((SELECT SUM(dci.quantity) FROM delivery_challan_items dci WHERE dci.challan_id = c.id), 0) AS total_quantity
          FROM delivery_challans c
          LEFT JOIN parties p ON p.id = c.party_id
          LEFT JOIN sale_orders so ON so.id = c.so_id

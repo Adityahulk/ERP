@@ -11,7 +11,7 @@ import toast from 'react-hot-toast';
 import { ArrowLeft, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { DOCUMENT_THEME_OPTIONS, INVOICE_PDF_TEMPLATES, normalizeInvoiceThemeId, type DocumentThemeId, type InvoicePdfTemplateId } from '@/components/invoices/InvoicePreviewWorkspace';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
@@ -55,7 +55,7 @@ export default function QuotationForm() {
   const [showExtras, setShowExtras] = useState(false);
 
   // Line items
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   const defaultGodown = useMemo(() => {
     const def = godowns.find((g: any) => g.is_default);
@@ -304,7 +304,7 @@ export default function QuotationForm() {
           <CardTitle className="text-sm">Items / Services</CardTitle>
         </CardHeader>
         <CardContent>
-          <VyaparLineItems
+          <LineItemsEditor
             items={items}
             onChange={setItems}
             isGst={isGstQuote}

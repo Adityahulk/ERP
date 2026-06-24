@@ -2,9 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { formatMoney } from '@/lib/formatters';
-import { IndianRupee, AlertTriangle, ArrowRight, Truck, Wrench } from 'lucide-react';
+import {
+  IndianRupee, AlertTriangle, ArrowRight, Truck, Wrench, ArrowUpRight, ArrowDownRight,
+  TrendingUp, TrendingDown, Wallet, Package, Bell, Clock,
+} from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { normalizeRole } from '@/lib/roles';
 
@@ -15,15 +19,29 @@ function getGreeting() {
   return 'Good evening';
 }
 
+function KpiCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="p-5 flex items-center justify-between">
+        <div className="space-y-2 flex-1">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-6 w-28" />
+        </div>
+        <Skeleton className="h-10 w-10 rounded-full" />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  
+
   if (normalizeRole(user?.role) === 'staff') {
       return <Navigate to="/attendance" replace />;
   }
 
-  const { data: rawData } = useQuery({
+  const { data: rawData, isLoading: dashLoading } = useQuery({
      queryKey: ['dashboard_hub'],
      queryFn: async () => (await api.get('/reports/dashboard')).data?.data
   });
@@ -38,20 +56,87 @@ export default function Dashboard() {
     queryFn: () => api.get('/job-work/overdue').then(r => r.data?.data ?? []),
   });
 
+  // Low Stock Items widget — real data from the existing /reports/low-stock endpoint
+  const { data: lowStockItems } = useQuery({
+    queryKey: ['dashboard-low-stock'],
+    queryFn: () => api.get('/reports/low-stock').then(r => r.data?.data ?? []),
+  });
+
+  // Purchase Analytics widget — real data from the existing /reports/purchase-register
+  // endpoint (defaults to the current month when no from/to is given).
+  const { data: purchaseRows } = useQuery({
+    queryKey: ['dashboard-purchase-register'],
+    queryFn: () => api.get('/reports/purchase-register').then(r => r.data?.data ?? []),
+  });
+
   const todaySales = rawData?.today?.sales?.total || 0;
   const totalReceivable = rawData?.balances?.total_receivable || 0;
+  const totalPayable = rawData?.balances?.total_payable || 0;
   const netProfit = rawData?.month?.profit || 0;
-  
+  const dueCustomers = rawData?.balances?.due_customers_count || 0;
+
   const trendData = rawData?.sales_trend?.map((t:any) => ({
       name: new Date(t.date).toLocaleDateString('en-US', { weekday: 'short' }),
       sales: Number(t.total)
   })) || [];
 
+  // Real day-over-day growth indicator for Today's Revenue, derived from the
+  // same 7-day trend series the chart below uses (no fabricated numbers).
+  const todayGrowthPct = (() => {
+    const series = rawData?.sales_trend;
+    if (!Array.isArray(series) || series.length < 2) return null;
+    const yesterday = Number(series[series.length - 2]?.total || 0);
+    const today = Number(series[series.length - 1]?.total || 0);
+    if (yesterday <= 0) return null;
+    return Math.round(((today - yesterday) / yesterday) * 100);
+  })();
+
   const overdueCount = jwOverdue?.length ?? 0;
   const wsOrdersThisMonth = (wsStats?.confirmed_count ?? 0) + (wsStats?.dispatched_count ?? 0) + (wsStats?.delivered_count ?? 0);
 
+  const purchaseTotalThisMonth = (purchaseRows || []).reduce((s: number, r: any) => s + (parseInt(r.total_amount) || 0), 0);
+
+  const kpis = [
+    {
+      label: "Today's Revenue",
+      value: formatMoney(todaySales),
+      icon: IndianRupee,
+      color: 'text-indigo-600 bg-indigo-50',
+      growth: todayGrowthPct,
+      growthLabel: 'vs yesterday',
+    },
+    {
+      label: 'Total Receivable',
+      value: formatMoney(totalReceivable),
+      icon: ArrowUpRight,
+      color: 'text-emerald-600 bg-emerald-50',
+      sub: `${dueCustomers} customer${dueCustomers !== 1 ? 's' : ''} owe you`,
+    },
+    {
+      label: 'Total Payable',
+      value: formatMoney(totalPayable),
+      icon: ArrowDownRight,
+      color: 'text-rose-600 bg-rose-50',
+      sub: 'You owe suppliers',
+    },
+    {
+      label: 'Net Profit',
+      value: formatMoney(netProfit),
+      icon: TrendingUp,
+      color: 'text-violet-600 bg-violet-50',
+      sub: 'This month',
+    },
+    {
+      label: 'Customer Dues',
+      value: `${dueCustomers}`,
+      icon: AlertTriangle,
+      color: 'text-amber-600 bg-amber-50',
+      sub: `${formatMoney(totalReceivable)} outstanding`,
+    },
+  ];
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 max-w-7xl mx-auto p-4 md:p-6 lg:p-8">
+    <div className="space-y-6 animate-in fade-in duration-500 max-w-[1600px] mx-auto p-4 md:p-6 lg:p-8">
       <div className="flex justify-between items-end">
          <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">{getGreeting()}, {user?.name}</h1>
@@ -73,74 +158,38 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* ROW 1: KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-         {/* Today's Revenue */}
-         <Card className="hover:shadow-md transition-shadow">
-            <CardContent className="p-5 flex items-center justify-between">
-               <div>
-                  <p className="text-sm font-medium text-slate-500">Today's Revenue</p>
-                  <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(todaySales)}</p>
-               </div>
-               <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600"><IndianRupee className="w-5 h-5"/></div>
-            </CardContent>
-         </Card>
-
-         {/* Wholesale Orders */}
-         <Card className="hover:shadow-md transition-shadow">
-            <CardContent className="p-5 flex items-center justify-between">
-               <div>
-                  <p className="text-sm font-medium text-slate-500">Wholesale Orders (Month)</p>
-                  <p className="text-2xl font-bold text-slate-900 mt-1">{wsOrdersThisMonth}</p>
-                  <p className="text-xs text-emerald-600 mt-0.5">{formatMoney(wsStats?.delivered_value || 0)} delivered</p>
-               </div>
-               <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-600"><Truck className="w-5 h-5"/></div>
-            </CardContent>
-         </Card>
-
-         {/* Financial Summary (Merged Outstanding Receivable & Profit/Expenses) */}
-         <Card className="hover:shadow-md transition-shadow border-amber-200">
-            <CardContent className="p-5 flex flex-col justify-between h-full min-h-[90px]">
-               <div>
-                  <p className="text-xs font-medium text-slate-500">Net Profit (This Month)</p>
-                  <p className="text-2xl font-bold text-green-600 mt-0.5">{formatMoney(netProfit)}</p>
-               </div>
-               <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col gap-1 text-[10px]">
-                  <div className="flex justify-between">
-                     <span className="text-slate-500">Outstanding Receivable:</span>
-                     <span className="text-amber-600 font-bold">{formatMoney(totalReceivable)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                     <span className="text-slate-500">This Month Expenses:</span>
-                     <span className="text-red-500 font-bold">{formatMoney(rawData?.month?.expenses || 0)}</span>
-                  </div>
-               </div>
-            </CardContent>
-         </Card>
-
-         {/* Customer Dues (All Time) (Replaces Low Stock Alerts) */}
-         <Card className="hover:shadow-md transition-shadow">
-            <CardContent className="p-5 flex items-center justify-between">
-               <div>
-                  <p className="text-sm font-medium text-slate-500">Customer Dues</p>
-                  <p className="text-2xl font-bold text-slate-900 mt-1">
-                     {rawData?.balances?.due_customers_count || 0} Customer{Number(rawData?.balances?.due_customers_count) !== 1 ? 's' : ''}
-                  </p>
-                  <p className="text-xs text-red-500 mt-0.5">{formatMoney(totalReceivable)} Due</p>
-               </div>
-               <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-red-500"><AlertTriangle className="w-5 h-5"/></div>
-            </CardContent>
-         </Card>
+      {/* ROW 1: 5 KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {dashLoading
+          ? Array.from({ length: 5 }).map((_, i) => <KpiCardSkeleton key={i} />)
+          : kpis.map((c) => (
+            <Card key={c.label} className="rounded-2xl hover:shadow-md transition-shadow">
+              <CardContent className="p-5 flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-slate-500 truncate">{c.label}</p>
+                  <p className="text-xl font-bold text-slate-900 mt-1 truncate">{c.value}</p>
+                  {c.growth !== undefined && c.growth !== null ? (
+                    <p className={`text-[11px] mt-0.5 flex items-center gap-1 font-semibold ${c.growth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {c.growth >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      {Math.abs(c.growth)}% {c.growthLabel}
+                    </p>
+                  ) : c.sub ? (
+                    <p className="text-[11px] text-slate-400 mt-0.5 truncate">{c.sub}</p>
+                  ) : null}
+                </div>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${c.color}`}><c.icon className="w-5 h-5"/></div>
+              </CardContent>
+            </Card>
+          ))}
       </div>
 
-      {/* ROW 2: Charts (Revenue Trend & Customer Dues List) */}
+      {/* ROW 2: Revenue Trend + Sales/Purchase Analytics */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-         {/* Revenue Trend Area Chart */}
-         <Card className="lg:col-span-2">
+         <Card className="lg:col-span-2 rounded-2xl">
             <CardHeader className="pb-2">
                <CardTitle className="text-base font-semibold">Revenue Trend (Last 7 Days)</CardTitle>
             </CardHeader>
-            <CardContent className="h-[280px]">
+            <CardContent className="h-[260px]">
                {trendData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                      <AreaChart data={trendData}>
@@ -162,76 +211,169 @@ export default function Dashboard() {
             </CardContent>
          </Card>
 
-         {/* Top Customer Dues List */}
-         <Card>
-            <CardHeader className="pb-2">
-               <CardTitle className="text-base font-semibold">Top Customer Dues (All Time)</CardTitle>
-            </CardHeader>
-            <CardContent className="h-[280px] overflow-y-auto">
-               {rawData?.topDueParties && rawData.topDueParties.length > 0 ? (
-                  <div className="space-y-2">
-                     {rawData.topDueParties.map((party: any) => (
-                        <div
-                           key={party.id}
-                           onClick={() => navigate('/sales-hub/invoices?search=' + encodeURIComponent(party.name))}
-                           className="flex justify-between items-center p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer"
-                        >
-                           <div className="flex-1 min-w-0 mr-2">
-                              <p className="font-semibold text-sm truncate text-slate-800">{party.name}</p>
-                           </div>
-                           <div className="flex items-center gap-3">
-                              <p className="font-bold text-sm text-red-500">{formatMoney(party.balance)}</p>
-                              {party.phone && (
-                                 <a
-                                    href={`tel:+91${party.phone}`}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="p-1 hover:bg-slate-100 rounded text-slate-500 transition-colors text-xs"
-                                 >
-                                    📞
-                                 </a>
-                              )}
-                           </div>
-                        </div>
-                     ))}
-                  </div>
-               ) : (
-                  <div className="h-full flex items-center justify-center text-slate-500 font-medium py-10">
-                     No outstanding dues 🎉
-                  </div>
-               )}
-            </CardContent>
-         </Card>
+         {/* Sales & Purchase Analytics stacked */}
+         <div className="space-y-4">
+           <Card className="rounded-2xl">
+             <CardHeader className="pb-2">
+               <CardTitle className="text-sm font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-600" /> Sales Analytics</CardTitle>
+             </CardHeader>
+             <CardContent className="grid grid-cols-2 gap-3 text-sm">
+               <div>
+                 <p className="text-muted-foreground text-xs">Today</p>
+                 <p className="font-bold tabular-nums">{rawData?.today?.sales?.count ?? 0} bills</p>
+               </div>
+               <div>
+                 <p className="text-muted-foreground text-xs">This month</p>
+                 <p className="font-bold tabular-nums">{rawData?.month?.sales?.count ?? 0} bills</p>
+               </div>
+             </CardContent>
+           </Card>
+           <Card className="rounded-2xl">
+             <CardHeader className="pb-2">
+               <CardTitle className="text-sm font-semibold flex items-center gap-2"><Truck className="w-4 h-4 text-sky-600" /> Purchase Analytics</CardTitle>
+             </CardHeader>
+             <CardContent className="text-sm">
+               <p className="text-muted-foreground text-xs">This month's purchases</p>
+               <p className="font-bold tabular-nums text-lg">{formatMoney(purchaseTotalThisMonth)}</p>
+               <p className="text-[11px] text-muted-foreground mt-0.5">{(purchaseRows || []).length} bill{(purchaseRows || []).length !== 1 ? 's' : ''} recorded</p>
+             </CardContent>
+           </Card>
+         </div>
       </div>
 
-      {/* ROW 3: Recent activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-         {/* Recent Invoices */}
-         <Card>
+      {/* ROW 3: Recent Transactions + Right widget rail */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Recent Transactions */}
+        <Card className="lg:col-span-2 rounded-2xl">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between">
+             <CardTitle className="text-base font-semibold">Recent Transactions</CardTitle>
+             <Link to="/sales-hub/invoices" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
+          </CardHeader>
+          <CardContent className="p-0">
+            {(!rawData?.recent_invoices || rawData.recent_invoices.length === 0) ? (
+              <p className="text-sm text-slate-500 py-8 text-center">No recent invoices.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-slate-50/60">
+                      <th className="px-4 py-2 text-left font-medium text-xs text-muted-foreground">Invoice</th>
+                      <th className="px-4 py-2 text-left font-medium text-xs text-muted-foreground hidden sm:table-cell">Party</th>
+                      <th className="px-4 py-2 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Date</th>
+                      <th className="px-4 py-2 text-right font-medium text-xs text-muted-foreground">Amount</th>
+                      <th className="px-4 py-2 text-center font-medium text-xs text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {rawData.recent_invoices.map((inv:any) => (
+                      <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/sales/${inv.id}`)}>
+                        <td className="px-4 py-2.5 font-medium text-indigo-700">{inv.invoice_number}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground truncate max-w-[160px] hidden sm:table-cell">{inv.party_name || 'Walk-in Customer'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground hidden md:table-cell">{new Date(inv.invoice_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</td>
+                        <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{formatMoney(inv.total_amount)}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${inv.status==='paid'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{inv.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Right widget rail */}
+        <div className="space-y-4">
+          {/* Top Customer Dues */}
+          <Card className="rounded-2xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2"><Wallet className="w-4 h-4 text-amber-600" /> Top Customer Dues</CardTitle>
+            </CardHeader>
+            <CardContent className="max-h-[180px] overflow-y-auto p-0">
+              {rawData?.topDueParties && rawData.topDueParties.length > 0 ? (
+                <div className="divide-y">
+                  {rawData.topDueParties.slice(0, 5).map((party: any) => (
+                    <div
+                      key={party.id}
+                      onClick={() => navigate('/parties')}
+                      className="flex justify-between items-center px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm"
+                    >
+                      <span className="truncate font-medium">{party.name}</span>
+                      <span className="font-bold text-red-500 tabular-nums text-xs shrink-0">{formatMoney(party.balance)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground py-6 text-center">No outstanding dues 🎉</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Low Stock Items */}
+          <Card className="rounded-2xl">
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
-               <CardTitle className="text-base font-semibold">Recent Invoices</CardTitle>
-               <Link to="/sales-hub/invoices" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2"><Package className="w-4 h-4 text-orange-600" /> Low Stock Items</CardTitle>
+              {(lowStockItems?.length ?? 0) > 0 && <Link to="/inventory" className="text-[11px] text-indigo-600 hover:underline">View all</Link>}
+            </CardHeader>
+            <CardContent className="max-h-[180px] overflow-y-auto p-0">
+              {lowStockItems && lowStockItems.length > 0 ? (
+                <div className="divide-y">
+                  {lowStockItems.slice(0, 5).map((it: any) => (
+                    <div key={it.id} onClick={() => navigate(`/items/${it.id}`)} className="flex justify-between items-center px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                      <span className="truncate font-medium">{it.name}</span>
+                      <span className="font-bold text-orange-600 tabular-nums text-xs shrink-0">{it.total_qty} left</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground py-6 text-center">Stock levels are healthy ✓</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Pending Payments (today) */}
+          <Card className="rounded-2xl">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2"><Clock className="w-4 h-4 text-blue-600" /> Pending Payments Today</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground text-xs">Received</p>
+                <p className="font-bold text-emerald-600 tabular-nums">{formatMoney(rawData?.today?.payments?.received || 0)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Paid out</p>
+                <p className="font-bold text-red-500 tabular-nums">{formatMoney(rawData?.today?.payments?.paid || 0)}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* ROW 4: Wholesale + Job Work — preserved from the original dashboard */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+         <Card className="rounded-2xl">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+               <CardTitle className="text-base font-semibold flex items-center gap-2"><Bell className="w-4 h-4 text-emerald-600" /> Wholesale Orders (Month)</CardTitle>
+               <Link to="/wholesale" className="text-xs text-indigo-600 font-medium flex items-center hover:underline">View All <ArrowRight className="w-3 h-3 ml-1"/></Link>
             </CardHeader>
             <CardContent>
-               <div className="space-y-2">
-                  {rawData?.recent_invoices?.map((inv:any) => (
-                     <div key={inv.id} className="flex justify-between items-center p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors">
-                        <div>
-                           <p className="font-semibold text-sm">{inv.invoice_number}</p>
-                           <p className="text-xs text-slate-500 truncate max-w-[180px]">{inv.party_name || 'Walk-in Customer'}</p>
-                        </div>
-                        <div className="text-right">
-                           <p className="font-bold text-sm">{formatMoney(inv.total_amount)}</p>
-                           <p className={`text-[10px] font-bold uppercase ${inv.status==='paid'?'text-emerald-600':'text-amber-500'}`}>{inv.status}</p>
-                        </div>
-                     </div>
-                  ))}
-                  {(!rawData?.recent_invoices || rawData.recent_invoices.length === 0) && <p className="text-sm text-slate-500 py-4 text-center">No recent invoices.</p>}
+               <div className="flex items-center justify-between">
+                 <div>
+                    <p className="text-2xl font-bold">{wsOrdersThisMonth}</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">{formatMoney(wsStats?.delivered_value || 0)} delivered</p>
+                 </div>
+                 <ResponsiveContainer width="50%" height={60}>
+                   <BarChart data={[{ n: 'Confirmed', v: wsStats?.confirmed_count ?? 0 }, { n: 'Dispatched', v: wsStats?.dispatched_count ?? 0 }, { n: 'Delivered', v: wsStats?.delivered_count ?? 0 }]}>
+                     <Bar dataKey="v" fill="#10b981" radius={[4,4,0,0]} />
+                   </BarChart>
+                 </ResponsiveContainer>
                </div>
             </CardContent>
          </Card>
 
-         {/* Job Work Overdue */}
-         <Card>
+         <Card className="rounded-2xl">
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
                <CardTitle className="text-base font-semibold flex items-center gap-2">
                   <Wrench className="w-4 h-4 text-amber-600" /> Job Work Status

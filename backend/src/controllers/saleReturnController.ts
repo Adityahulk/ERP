@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
+import { resolveDefaultGodownId } from './invoiceController';
+import { postSaleReturnAccounting } from '../services/accountingService';
 
 async function nextCreditNoteNumber(companyId: string, client: any) {
   const yr = new Date().getFullYear().toString().slice(-2);
@@ -75,13 +77,36 @@ export async function createSaleReturn(req: Request, res: Response) {
       );
       const returnId = returnRes.rows[0].id;
 
+      // Resolve which godown the returned stock goes back into.
+      const godownId = await resolveDefaultGodownId(client, companyId, d.godown_id, null);
+
       for (const it of d.items as any[]) {
-        await client.query(
+        const itemRes = await client.query(
           `INSERT INTO sale_return_items (return_id, item_id, item_name, hsn_code, unit, quantity, unit_price, gst_rate)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
           [returnId, it.item_id || null, it.item_name || it.name,
            it.hsn_code || null, it.unit || null, it.quantity, it.unit_price, it.gst_rate || 0],
         );
+
+        // Stock comes back in. Only items linked to a real catalog item with
+        // tracked inventory affect stock — free-text return lines don't.
+        if (it.item_id && godownId) {
+          const trackRes = await client.query(`SELECT track_inventory FROM items WHERE id = $1 AND company_id = $2`, [it.item_id, companyId]);
+          if (trackRes.rows[0]?.track_inventory) {
+            await client.query(
+              `INSERT INTO item_stock (company_id, item_id, godown_id, quantity)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (item_id, godown_id) DO UPDATE SET quantity = item_stock.quantity + EXCLUDED.quantity, updated_at = now()`,
+              [companyId, it.item_id, godownId, it.quantity],
+            );
+            const balRes = await client.query(`SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3`, [it.item_id, godownId, companyId]);
+            await client.query(
+              `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
+               VALUES ($1,$2,$3,'sale_return_in','sale_return',$4,$5,$6,$7,$8)`,
+              [companyId, it.item_id, godownId, returnId, it.quantity, balRes.rows[0]?.quantity ?? it.quantity, `Credit note ${cnNumber}`, req.user!.id],
+            );
+          }
+        }
       }
 
       // Reduce party balance (credit note reduces what they owe)
@@ -97,6 +122,8 @@ export async function createSaleReturn(req: Request, res: Response) {
           [companyId, d.party_id, totalAmount, returnId],
         );
       }
+
+      await postSaleReturnAccounting(client, companyId, returnRes.rows[0], req.user!.id);
 
       return returnRes.rows[0];
     });
@@ -203,5 +230,42 @@ export async function updateSaleReturn(req: Request, res: Response) {
   } catch (err: any) {
     const msg = err?.message || 'Failed to update credit note';
     res.status(/not found|required/i.test(msg) ? 400 : 500).json(error(msg));
+  }
+}
+
+// ── POST /api/sales/returns/:id/refund ──────────────────────────
+// Records that some or all of a credit note's value was actually
+// refunded in cash/bank to the customer, rather than just held as
+// account credit. Purely additive — does not touch party balance
+// (the balance was already adjusted when the credit note was created).
+export async function recordSaleReturnRefund(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const { id } = req.params;
+    const amount = Math.round(Number(req.body.amount) || 0);
+    if (amount <= 0) return res.status(400).json(error('Refund amount must be positive'));
+
+    const result = await withTransaction(async (client) => {
+      const retRes = await client.query(
+        `SELECT * FROM sale_returns WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!retRes.rows.length) throw new Error('Credit note not found');
+      const ret = retRes.rows[0];
+      const newRefund = Number(ret.refund_given || 0) + amount;
+      if (newRefund > Number(ret.total_amount || 0)) {
+        throw new Error(`Refund exceeds credit note value. Already refunded: ${ret.refund_given}, note total: ${ret.total_amount}`);
+      }
+      const updated = await client.query(
+        `UPDATE sale_returns SET refund_given = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+        [newRefund, id],
+      );
+      return updated.rows[0];
+    });
+
+    res.json(success(result));
+  } catch (err: any) {
+    const msg = err?.message || 'Failed to record refund';
+    res.status(/not found|exceeds|positive/i.test(msg) ? 400 : 500).json(error(msg));
   }
 }

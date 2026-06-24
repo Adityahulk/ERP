@@ -536,8 +536,10 @@ export async function upsertBankAccount(req: Request, res: Response) {
         const r = await client.query(
           `UPDATE company_bank_accounts SET
              account_label = $1, bank_name = $2, account_number = $3, ifsc = $4, branch = $5,
-             upi_id = $6, is_primary = $7, is_active = $8
-           WHERE id = $9 AND company_id = $10 AND is_deleted = false
+             upi_id = $6, is_primary = $7, is_active = $8, account_type = $9, opening_balance = $10,
+             opening_date = $11, notes = $12, print_on_invoice = $13, print_upi_qr = $14,
+             accept_online_payments = $15
+           WHERE id = $16 AND company_id = $17 AND is_deleted = false
            RETURNING *`,
           [
             label || null,
@@ -548,6 +550,13 @@ export async function upsertBankAccount(req: Request, res: Response) {
             d.upi_id || null,
             !!d.is_primary,
             d.is_active !== false,
+            d.account_type || 'current',
+            Math.round(Number(d.opening_balance) || 0),
+            d.opening_date || null,
+            d.notes || null,
+            !!d.print_on_invoice,
+            !!d.print_upi_qr,
+            !!d.accept_online_payments,
             id,
             companyId,
           ],
@@ -558,8 +567,9 @@ export async function upsertBankAccount(req: Request, res: Response) {
 
       const r = await client.query(
         `INSERT INTO company_bank_accounts (
-           company_id, account_label, bank_name, account_number, ifsc, branch, upi_id, is_primary, is_active
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+           company_id, account_label, bank_name, account_number, ifsc, branch, upi_id, is_primary, is_active,
+           account_type, opening_balance, opening_date, notes, print_on_invoice, print_upi_qr, accept_online_payments
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
         [
           companyId,
           label || null,
@@ -570,6 +580,13 @@ export async function upsertBankAccount(req: Request, res: Response) {
           d.upi_id || null,
           !!d.is_primary,
           d.is_active !== false,
+          d.account_type || 'current',
+          Math.round(Number(d.opening_balance) || 0),
+          d.opening_date || null,
+          d.notes || null,
+          !!d.print_on_invoice,
+          !!d.print_upi_qr,
+          !!d.accept_online_payments,
         ],
       );
       return r.rows[0];

@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Plus, ClipboardList } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
-import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
+import LineItemsEditor, { type LineItem } from '@/components/shared/LineItemsEditor';
 import { useGodowns } from '@/hooks/useStock';
 import toast from 'react-hot-toast';
 
@@ -42,7 +42,7 @@ export default function PurchaseOrdersTab() {
     const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
   });
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
 
   // Bill generation form
   const [billNumber, setBillNumber] = useState('');
@@ -177,15 +177,16 @@ export default function PurchaseOrdersTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">PO No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden sm:table-cell">Date</th>
+              <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden lg:table-cell">Items</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground w-36">Action</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && orders.length === 0 && (
-              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
                 <ClipboardList className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 No purchase orders yet.
               </td></tr>
@@ -195,6 +196,9 @@ export default function PurchaseOrdersTab() {
                 <td className="px-4 py-2.5 font-medium">{po.party_name_snapshot || po.party_name || '—'}</td>
                 <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{po.po_number}</td>
                 <td className="px-4 py-2.5 text-muted-foreground text-xs hidden sm:table-cell">{formatDate(po.po_date)}</td>
+                <td className="px-4 py-2.5 text-center text-xs text-muted-foreground hidden lg:table-cell">
+                  {po.item_count ?? 0}{parseFloat(po.total_quantity) ? <span className="text-muted-foreground/70"> ({parseFloat(po.total_quantity)} qty)</span> : null}
+                </td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-medium">{formatMoney(parseInt(po.total_amount)||0)}</td>
                 <td className="px-4 py-2.5 text-center">
                   <span className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize ${STATUS_COLORS[po.status] || 'bg-slate-100 text-slate-500'}`}>
@@ -260,7 +264,7 @@ export default function PurchaseOrdersTab() {
             </div>
             <div>
               <Label className="text-xs mb-2 block">Items to Order</Label>
-              <VyaparLineItems
+              <LineItemsEditor
                 items={items}
                 onChange={setItems}
                 isGst={true}

@@ -3,6 +3,8 @@
  * within the Purchase & Expense hub.
  */
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import api from '@/lib/api';
 import { useExpenses, useCreateExpense } from '@/hooks/useBusiness';
 import { useCompany } from '@/hooks/useBusiness';
 import { formatMoney, formatDate } from '@/lib/formatters';
@@ -20,16 +22,36 @@ import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
 
+function ExpenseStatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    approved: 'bg-emerald-100 text-emerald-700',
+    rejected: 'bg-red-100 text-red-700',
+    pending: 'bg-amber-100 text-amber-700',
+  };
+  return <Badge variant="secondary" className={`text-[10px] capitalize ${colors[status] || 'bg-slate-100 text-slate-600'}`}>{status || 'pending'}</Badge>;
+}
+
 export default function ExpensesTab() {
   const [filters, setFilters] = useState<any>({ page: 1, limit: 25 });
   const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const { data, isLoading } = useExpenses({ ...filters, search: search || undefined });
+  const { data, isLoading } = useExpenses({ ...filters, search: search || undefined, from_date: dateFrom || undefined, to_date: dateTo || undefined });
   const createMutation = useCreateExpense();
 
   const expenses = data?.data?.data || [];
   const pagination = data?.data?.pagination;
   const meta = data?.meta || {};
+
+  // Separate, unpaginated fetch just for the GST / Non-GST split cards, so it
+  // doesn't disturb the table's existing pagination.
+  const { data: gstStatsData } = useQuery({
+    queryKey: ['expenses-gst-stats', dateFrom, dateTo],
+    queryFn: () => api.get('/expenses', { params: { limit: 100, from_date: dateFrom || undefined, to_date: dateTo || undefined } }).then((r) => r.data?.data?.data ?? []),
+  });
+  const gstExpenseTotal = (gstStatsData || []).filter((e: any) => (parseInt(e.tax_amount) || 0) > 0).reduce((s: number, e: any) => s + (parseInt(e.total_amount) || 0), 0);
+  const nonGstExpenseTotal = (gstStatsData || []).filter((e: any) => (parseInt(e.tax_amount) || 0) === 0).reduce((s: number, e: any) => s + (parseInt(e.total_amount) || 0), 0);
 
   const authCompany = useAuthStore((s) => s.company);
   const { data: companyData } = useCompany();
@@ -60,14 +82,30 @@ export default function ExpensesTab() {
   return (
     <div className="space-y-5">
       {/* Summary */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        <Card className="shrink-0 min-w-[160px]">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Card>
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Total Expenses</p>
             <p className="text-lg font-bold tabular-nums">{formatMoney(meta.total_expenses || 0)}</p>
           </CardContent>
         </Card>
-        {(meta.by_category || []).slice(0, 4).map((c: any) => (
+        <Card className="border-violet-200 bg-violet-50/50">
+          <CardContent className="p-4">
+            <p className="text-xs text-violet-700">GST Expenses</p>
+            <p className="text-lg font-bold tabular-nums text-violet-700">{formatMoney(gstExpenseTotal)}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-slate-200">
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">Non-GST Expenses</p>
+            <p className="text-lg font-bold tabular-nums">{formatMoney(nonGstExpenseTotal)}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* By category */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {(meta.by_category || []).slice(0, 6).map((c: any) => (
           <Card key={c.category} className="shrink-0 min-w-[140px]">
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">{c.category}</p>
@@ -79,11 +117,17 @@ export default function ExpensesTab() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex gap-3 items-center">
+      <div className="flex gap-3 items-center flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search expenses…" className="pl-9 h-9" value={search}
             onChange={e => { setSearch(e.target.value); setFilters((f: any) => ({ ...f, page: 1 })); }} />
+        </div>
+        {/* Date range filter — real from_date/to_date params the backend already supports */}
+        <div className="flex items-center gap-1.5">
+          <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setFilters((f: any) => ({ ...f, page: 1 })); }} className="h-9 w-[130px] text-xs" title="From date" />
+          <span className="text-muted-foreground text-xs">to</span>
+          <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setFilters((f: any) => ({ ...f, page: 1 })); }} className="h-9 w-[130px] text-xs" title="To date" />
         </div>
         <div className="ml-auto">
           <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
@@ -98,28 +142,32 @@ export default function ExpensesTab() {
           <thead>
             <tr className="border-b bg-muted/40">
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Expense No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Category</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Description</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Vendor</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden sm:table-cell">Mode</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
+              <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && expenses.length === 0 && (
-              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">
                 <Receipt className="w-10 h-10 mx-auto mb-2 opacity-30" />No expenses recorded
               </td></tr>
             )}
             {expenses.map((e: any) => (
               <tr key={e.id} className="border-b hover:bg-muted/20">
                 <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(e.expense_date)}</td>
+                <td className="px-4 py-2.5 hidden lg:table-cell font-mono text-xs text-muted-foreground">{e.expense_number || '—'}</td>
                 <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px]">{e.category}</Badge></td>
                 <td className="px-4 py-2.5 hidden md:table-cell text-muted-foreground truncate max-w-[200px] text-xs">{e.description || '—'}</td>
                 <td className="px-4 py-2.5 hidden lg:table-cell text-muted-foreground text-xs">{e.vendor_name || '—'}</td>
                 <td className="px-4 py-2.5 text-center hidden sm:table-cell capitalize text-xs text-muted-foreground">{e.payment_mode?.replace('_', ' ')}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{formatMoney(e.total_amount)}</td>
+                <td className="px-4 py-2.5 text-center"><ExpenseStatusBadge status={e.status} /></td>
               </tr>
             ))}
           </tbody>
