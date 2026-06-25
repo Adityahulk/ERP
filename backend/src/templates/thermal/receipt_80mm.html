@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: monospace;
+      background: #fff;
+      color: #000;
+    }
+    .receipt {
+      width: {{PAPER_WIDTH}};
+      padding: 2mm;
+      overflow: hidden;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 3mm;
+      width: 100%;
+    }
+    .center {
+      text-align: center;
+    }
+    .divider {
+      border-top: 1px dashed black;
+      margin: 2mm 0;
+    }
+    .title {
+      font-size: 4mm;
+      font-weight: bold;
+      margin-bottom: 1mm;
+    }
+    .small {
+      font-size: 2.8mm;
+    }
+    .col-item {
+      width: 50%;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .col-qty {
+      width: 20%;
+      text-align: center;
+    }
+    .col-price {
+      width: 30%;
+      text-align: right;
+    }
+    .total {
+      font-size: 4mm;
+      font-weight: bold;
+    }
+    .qr {
+      text-align: center;
+      margin: 3mm 0;
+    }
+    .qr img {
+      width: 35mm;
+      height: 35mm;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+    }
+    .bc {
+      text-align: center;
+      margin: 3mm 0;
+    }
+    .bc img {
+      width: 45mm;
+      height: 16mm;
+      max-width: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+      margin: 0 auto;
+    }
+    .logo-img {
+      max-width: 40mm;
+      max-height: 15mm;
+      object-fit: contain;
+      filter: grayscale(1) contrast(3);
+      margin: 0 auto 2mm auto;
+      display: block;
+    }
+    .refund-header {
+      font-size: 3.5mm;
+      font-weight: bold;
+      margin: 2mm 0;
+      color: #000;
+      border: 1px solid #000;
+      padding: 1mm;
+    }
+    .tax-subline {
+      font-size: 2.5mm;
+      color: #555;
+      text-align: left;
+      margin-top: 0.5mm;
+      margin-bottom: 1.5mm;
+      padding-left: 2mm;
+    }
+    .item-row {
+      margin-bottom: 2mm;
+    }
+    .deposit-block {
+      border: 1px solid #000;
+      padding: 2mm;
+      margin: 2mm 0;
+      background: #fdfdfd;
+    }
+    .block {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    {{LOGO_BLOCK}}
+    {{REFUND_HEADER}}
+    {{COMPANY_NAME_LINE}}
+    {{COMPANY_ADDRESS_LINE}}
+    {{CITY_STATE_PIN_LINE}}
+    {{GSTIN_LINE}}
+    {{PHONE_LINE}}
+    <div class="divider"></div>
+    {{REFUND_ORIGINAL_TXN_LINE}}
+    {{INVOICE_NUMBER_LINE}}
+    {{DATE_LINE}}
+    {{TIME_LINE}}
+    {{PARTY_NAME_LINE}}
+    
+    {{BODY_SECTION}}
+    
+    {{PAYMENT_DETAILS_SECTION}}
+    
+    {{UPI_QR_BLOCK}}
+    {{RETURN_POLICY_SECTION}}
+    {{THANK_YOU_SECTION}}
+    {{DIGITAL_LOOKUP_SECTION}}
+  </div>
+</body>
+</html>

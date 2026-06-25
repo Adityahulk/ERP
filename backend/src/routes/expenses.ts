@@ -1,0 +1,38 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { verifyToken } from '../middleware/auth';
+import { requireMinRole } from '../middleware/role';
+import { validateBody } from '../middleware/validate';
+import * as ctrl from '../controllers/expenseController';
+
+const router = Router();
+router.use(verifyToken);
+
+const createSchema = z.object({
+  expense_date: z.string().optional(),
+  category: z.string().min(1, 'Category is required'),
+  amount: z.number().int().positive('Amount must be positive'),
+  /** When true, `amount` is total paid in paise (GST-inclusive). When false, `amount` is taxable value in paise (GST extra). */
+  amount_includes_gst: z.boolean().optional(),
+  gst_rate: z.coerce.number().min(0).max(100).optional(),
+  payment_mode: z.enum(['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'other']).default('cash'),
+  reference_number: z.string().optional(),
+  vendor_name: z.string().optional(),
+  vendor_gstin: z.string().max(15).optional(),
+  description: z.string().optional(),
+  notes: z.string().optional(),
+  is_reimbursable: z.boolean().optional(),
+});
+
+router.get('/categories', ctrl.getExpenseCategories);
+router.post('/bulk-import', ctrl.bulkImportExpenses);
+
+router.get('/', ctrl.listExpenses);
+router.post('/', validateBody(createSchema), ctrl.createExpense);
+router.get('/:id', ctrl.getExpense);
+router.patch('/:id', ctrl.updateExpense);
+router.delete('/:id', requireMinRole('manager'), ctrl.deleteExpense);
+router.post('/:id/approve', requireMinRole('manager'), ctrl.approveExpense);
+router.post('/:id/reject', requireMinRole('manager'), ctrl.rejectExpense);
+
+export default router;

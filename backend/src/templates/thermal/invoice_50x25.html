@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Courier New', monospace;
+      background: #fff;
+      color: #000;
+    }
+    .label {
+      width: 50mm;
+      height: 25mm;
+      padding: 1mm 1.5mm;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .company {
+      font-size: 3mm;
+      font-weight: bold;
+      text-align: center;
+      line-height: 1.05;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 2.1mm;
+      line-height: 1.15;
+      margin-top: 0.3mm;
+    }
+    .divider {
+      border-top: 0.3mm dashed #000;
+      margin: 0.5mm 0;
+    }
+    .items {
+      flex: 1;
+      overflow: hidden;
+    }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 2.1mm;
+      line-height: 1.2;
+    }
+    .item-name {
+      max-width: 26mm;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .item-qty {
+      width: 7mm;
+      text-align: center;
+    }
+    .item-price {
+      width: 13mm;
+      text-align: right;
+    }
+    .more-line {
+      font-size: 1.8mm;
+      color: #333;
+      text-align: right;
+      margin-bottom: 0.4mm;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 2.6mm;
+      font-weight: bold;
+      border-top: 0.3mm solid #000;
+      padding-top: 0.3mm;
+      margin-top: 0.3mm;
+    }
+    .barcode-block {
+      text-align: center;
+      margin-top: 0.4mm;
+    }
+    .barcode-block img {
+      width: 35mm;
+      height: 15mm;
+      max-width: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+      margin: 0 auto;
+    }
+    .barcode-text {
+      font-size: 1.8mm;
+      text-align: center;
+      letter-spacing: 0.2mm;
+      margin-top: -0.3mm;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">
+    <div class="company">{{COMPANY_NAME}}</div>
+    <div class="meta-row"><span>{{INVOICE_NUMBER}}</span><span>{{INVOICE_DATE}}</span></div>
+    <div class="divider"></div>
+    <div class="items">
+      {{ITEM_ROWS}}
+      {{MORE_LINE}}
+    </div>
+    <div class="total-row"><span>TOTAL</span><span>{{TOTAL_AMOUNT}}</span></div>
+    <div class="barcode-block">
+      <img src="{{BARCODE_IMG}}" alt="barcode"/>
+    </div>
+    <div class="barcode-text">{{INVOICE_NUMBER}}</div>
+  </div>
+</body>
+</html>

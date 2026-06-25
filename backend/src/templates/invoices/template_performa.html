@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    body { font-family: Arial, sans-serif; color: #111; margin: 0; font-size: 11px; position: relative; }
+    .wm { position: fixed; top: 35%; left: 8%; font-size: 58px; color: rgba(79,70,229,0.10); transform: rotate(-32deg); font-weight: 900; pointer-events: none; z-index: 0; }
+    .content { position: relative; z-index: 1; }
+    .hdr { background: #111827; color: #fff; padding: 16px; border-radius: 8px; display: grid; grid-template-columns: 1fr auto; gap: 18px; }
+    .hdr img { max-height: 56px; max-width: 120px; background: #fff; object-fit: contain; }
+    h1 { margin: 0; font-size: 26px; color: #fff; }
+    .muted { color: #d1d5db; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .box { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; background: rgba(255,255,255,.92); }
+    .label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: {{PRIMARY_COLOR}}; font-weight: 800; margin-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 11px; background: #fff; }
+    th, td { border: 1px solid #e5e7eb; padding: 7px 6px; }
+    th { background: {{PRIMARY_COLOR}}; color: #fff; text-align: left; }
+    .right { text-align: right; }
+    .tot { margin-top: 14px; margin-left: auto; width: 320px; border: 2px solid {{PRIMARY_COLOR}}; padding: 10px; font-size: 14px; }
+    .bank { margin-top: 12px; border: 1px dashed #9ca3af; border-radius: 8px; padding: 10px; line-height: 1.55; }
+    .sign { margin-top: 24px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="wm">PROFORMA</div>
+  <div class="content">
+    <div class="hdr">
+      <div>
+        {{LOGO_BLOCK}}
+        <h2 style="margin:8px 0 2px">{{COMPANY_NAME}}</h2>
+        <div class="muted">{{COMPANY_ADDRESS}}</div>
+        <div>GSTIN: {{COMPANY_GSTIN}}</div>
+      </div>
+      <div style="text-align:right">
+        <h1>PROFORMA INVOICE</h1>
+        <div>No. <b>{{INVOICE_NUMBER}}</b></div>
+        <div>Date: {{INVOICE_DATE}}</div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <div class="label">Seller</div>
+        <b>{{COMPANY_NAME}}</b>
+        <div>{{COMPANY_ADDRESS}}</div>
+        <div>GSTIN: {{COMPANY_GSTIN}}</div>
+      </div>
+      <div class="box">
+        <div class="label">Buyer</div>
+        <b>{{BUYER_NAME}}</b>
+        <div>{{BUYER_ADDRESS}}</div>
+        <div>GSTIN: {{BUYER_GSTIN}}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>HSN</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Total</th></tr></thead>
+      <tbody>{{ITEM_ROWS}}</tbody>
+    </table>
+    <div class="tot"><b>Grand Total:</b> <span style="float:right">₹{{GRAND_TOTAL}}</span></div>
+    <p><b>Amount in words:</b> {{AMOUNT_WORDS}}</p>
+    <div class="bank"><div class="label">Company Bank Details</div>{{BANK_BLOCK}}</div>
+    {{SIGNATURE_BLOCK}}
+  </div>
+</body>
+</html>

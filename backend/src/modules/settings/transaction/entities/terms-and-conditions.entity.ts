@@ -1,0 +1,9 @@
+export type TermsTransactionType =
+  | 'SALE'
+  | 'PURCHASE_ORDER'
+  | 'PURCHASE_BILL'
+  | 'PROFORMA_INVOICE'
+  | 'ESTIMATE_QUOTATION'
+  | 'DELIVERY_CHALLAN'
+  | 'SALE_ORDER'
+  | 'PAYMENT_IN';

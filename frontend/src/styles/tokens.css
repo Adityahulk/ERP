@@ -1,0 +1,75 @@
+/* Inter is loaded from index.html (single request). Avoid @import here — it blocks the rest of
+   this bundle until fonts load and can look like “no CSS” if that request is slow or blocked. */
+
+:root {
+  /* Brand Indigo */
+  --brand-50: #EEF2FF;
+  --brand-100: #E0E7FF;
+  --brand-200: #C7D2FE;
+  --brand-300: #A5B4FC;
+  --brand-400: #818CF8;
+  --brand-500: #4F46E5;
+  --brand-600: #4338CA;
+  --brand-700: #3730A3;
+  --brand-800: #312E81;
+  --brand-900: #1E1B4B;
+
+  /* Surfaces Light */
+  --surface-page: #F7F7F5;
+  --surface-card: #FFFFFF;
+  --surface-sidebar: #1E1B4B;
+
+  /* Semantic */
+  --color-success: #16A34A;
+  --color-warning: #D97706;
+  --color-danger: #DC2626;
+  --color-info: #2563EB;
+  
+  --color-money-positive: #16A34A;
+  --color-money-negative: #DC2626;
+
+  /* Typography */
+  --font-sans: 'Inter', sans-serif;
+  --text-base: 14px;
+
+  /* Spacing Base 4px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-raised: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-floating: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.dark {
+  /* Surfaces Dark */
+  --surface-page: #0F0F10;
+  --surface-card: #1A1A1B;
+  --surface-sidebar: #12102A;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--surface-page);
+  color: #111827;
+  font-size: var(--text-base);
+}
+
+.dark body {
+  color: #F9FAFB;
+}
