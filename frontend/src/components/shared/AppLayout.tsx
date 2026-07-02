@@ -19,6 +19,7 @@ import api, { getApiBaseURL } from '@/lib/api';
 import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 import { normalizeRole } from '@/lib/roles';
 import toast from 'react-hot-toast';
+import ChatWidget from '@/components/chat/ChatWidget';
 
 const SIDEBAR_COLLAPSED_KEY = 'erp_sidebar_collapsed';
 const NAV_GROUP_VISIBLE_COUNT = 2;
@@ -804,6 +805,7 @@ export default function AppLayout() {
             </RouteErrorBoundary>
           )}
         </main>
+        {user?.role !== 'super_admin' && <ChatWidget />}
       </div>
     </div>
   );
