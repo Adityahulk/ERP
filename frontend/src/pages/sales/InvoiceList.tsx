@@ -78,6 +78,7 @@ export default function InvoiceList() {
   const initialRange = defaultRange();
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
   const [irnLoadingId, setIrnLoadingId] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<any | null>(null);
@@ -125,9 +126,9 @@ export default function InvoiceList() {
   }, [menuInvoiceId]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['salesInvoices', tab, search],
+    queryKey: ['salesInvoices', tab, search, page],
     queryFn: async () => {
-      const parts: string[] = [];
+      const parts: string[] = [`page=${page}`, 'limit=25'];
       if (tab !== 'all') {
         if (tab === 'overdue') parts.push('overdue=true');
         else parts.push(`status=${tab}`);
@@ -138,6 +139,10 @@ export default function InvoiceList() {
       return res.data;
     }
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search]);
 
   const { data: partiesData, isLoading: bulkPartiesLoading } = useQuery({
     queryKey: ['bulk-sales-parties', bulkPartySearch],
@@ -417,6 +422,7 @@ export default function InvoiceList() {
   const meta = data?.meta || {};
   // Response: { success, data: { data: [...], pagination: {...} }, meta: {...} }
   const invoices: any[] = data?.data?.data || data?.data || [];
+  const pagination = data?.data?.pagination;
   const activeMenuInvoice = menuInvoiceId ? invoices.find((inv: any) => inv.id === menuInvoiceId) : null;
   const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
   const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
@@ -623,6 +629,17 @@ export default function InvoiceList() {
             </tbody>
           </table>
         </div>
+        {pagination && pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <span className="text-sm text-muted-foreground">
+              Page {pagination.page} of {pagination.totalPages} ({pagination.total} invoices)
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={!pagination.hasPrev} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+              <Button size="sm" variant="outline" disabled={!pagination.hasNext} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {activeMenuInvoice && menuPosition && (
