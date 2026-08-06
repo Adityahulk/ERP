@@ -195,6 +195,7 @@ function companyAddress(company: any): string {
 }
 
 function companyLegalDisplayName(company: any): string {
+  if (company?.__hide_company_name === true) return '';
   return String(
     company?.legal_name ||
     company?.gstin_legal_name ||
@@ -434,6 +435,8 @@ const DEFAULT_PRINT_SETTINGS = {
     print_original_duplicate: false,
     extra_top_space: 0,
     min_item_rows: 0,
+    extra_bottom_lines: 0,
+    number_of_copies: 1,
   },
   header: {
     company_name: true,
@@ -546,6 +549,50 @@ function parseObject(value: unknown): Record<string, any> {
   return typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
+function invoiceSettingsDetailsBlock(invoice: any): string {
+  const customFields = parseObject(invoice?.custom_fields);
+  const sections = [
+    {
+      title: 'Additional Details',
+      values: parseObject(customFields.transaction_settings),
+      transportation: false,
+    },
+    {
+      title: 'Transportation Details',
+      values: parseObject(customFields.transportation_details),
+      transportation: true,
+    },
+  ];
+
+  const rendered = sections.flatMap(({ title, values, transportation }) => {
+    const configuredFields = Array.isArray(values.__fields)
+      ? values.__fields.filter((field: any) => field && typeof field === 'object')
+      : [];
+    const fields = configuredFields.length > 0
+      ? configuredFields
+      : Object.keys(values)
+          .filter((key) => !key.startsWith('__'))
+          .map((key) => ({
+            key,
+            label: key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' '),
+            showInPrint: true,
+          }));
+    const rows = fields
+      .filter((field: any) => !transportation || field.showInPrint !== false)
+      .map((field: any) => {
+        const value = values[String(field.key || '')];
+        if (value === undefined || value === null || String(value).trim() === '') return '';
+        const displayValue = field.type === 'date' ? formatDocDate(value) : String(value);
+        return `<div class="custom-detail-row"><span>${escapeHtml(String(field.label || field.key || 'Field'))}</span><b>${escapeHtml(displayValue)}</b></div>`;
+      })
+      .filter(Boolean);
+    if (rows.length === 0) return [];
+    return [`<div class="info-card custom-details"><h3>${title}</h3>${rows.join('')}</div>`];
+  });
+
+  return rendered.join('');
+}
+
 function resolvePrintSettings(company: any): PrintSettings {
   const raw = parseObject(company?.print_settings);
   const regularRaw = parseObject(raw.regular);
@@ -582,6 +629,7 @@ function resolvePrintSettings(company: any): PrintSettings {
 function printAwareCompany(company: any, settings: PrintSettings) {
   return {
     ...company,
+    __hide_company_name: settings.header.company_name === false,
     name: settings.header.company_name ? company?.name : '',
     legal_name: settings.header.company_name ? company?.legal_name : '',
     gstin_legal_name: settings.header.company_name ? company?.gstin_legal_name : '',
@@ -598,12 +646,16 @@ function printAwareCompany(company: any, settings: PrintSettings) {
 }
 
 function printMoney(paise: number, currencyCode: string, settings: PrintSettings): string {
-  if (settings.totals.amount_with_decimal !== false) return fmtMoney(paise, currencyCode);
   const code = normalizeCurrencyCode(currencyCode);
   const symbol = currencySymbol(code);
   const locale = code === 'USD' ? 'en-US' : 'en-IN';
-  const amount = Math.round(Number(paise || 0) / 100);
-  return `${symbol}${amount.toLocaleString(locale)}`;
+  const withDecimals = settings.totals.amount_with_decimal !== false;
+  const amount = withDecimals ? Math.round(Number(paise || 0)) / 100 : Math.round(Number(paise || 0) / 100);
+  return `${symbol}${amount.toLocaleString(locale, {
+    minimumFractionDigits: withDecimals ? 2 : 0,
+    maximumFractionDigits: withDecimals ? 2 : 0,
+    useGrouping: settings.totals.print_amount_with_grouping !== false,
+  })}`;
 }
 
 const PRINT_COLUMN_LABELS: Record<string, string> = {
@@ -683,7 +735,15 @@ function invoiceItemTable(items: any[], currencyCode: string, settings: PrintSet
   const rows = items.map((it, i) => `<tr>${columns.map((col) => `<td class="${col === 'serial_no' ? 'idx' : ''} ${RIGHT_PRINT_COLUMNS.has(col) ? 'right' : ''} ${col === 'amount' ? 'amount' : ''}">${itemColumnValue(it, i, col, currencyCode, settings)}</td>`).join('')}</tr>`).join('');
   const blankRows = Math.max(0, Number(settings.regular.min_item_rows || 0) - items.length);
   const blanks = Array.from({ length: blankRows }, () => `<tr class="blank-row">${columns.map(() => '<td>&nbsp;</td>').join('')}</tr>`).join('');
-  return `<table class="items"><thead><tr>${headers}</tr></thead><tbody>${rows}${blanks}</tbody></table>`;
+  const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const quantityFooter = settings.totals.total_item_quantity === false
+    ? ''
+    : `<tfoot><tr class="items-total">${columns.map((column, index) => {
+        if (column === 'quantity') return `<td class="right"><b>${fmtQty(totalQuantity)}</b></td>`;
+        if (column === 'item_name' || (index === 0 && !columns.includes('item_name'))) return '<td><b>Total quantity</b></td>';
+        return '<td></td>';
+      }).join('')}</tr></tfoot>`;
+  return `<table class="items"><thead><tr>${headers}</tr></thead><tbody>${rows}${blanks}</tbody>${quantityFooter}</table>`;
 }
 
 function totalsRows(invoice: any, currencyCode: string, settings: PrintSettings): string {
@@ -888,6 +948,7 @@ function buildReferenceTaxInvoiceHtml(args: {
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:8.35px;line-height:1.04}.ref-page{width:100%;min-height:281mm;padding:15mm 15mm 5mm}.ref-title{text-align:center;font-size:12px;font-weight:700;margin:0 0 -1px}.ref-grid,.ref-grid td,.ref-grid th,.ref-tax-summary,.ref-tax-summary td,.ref-tax-summary th{border:.75px solid #000;border-collapse:collapse}.ref-grid{width:100%;table-layout:fixed}.ref-grid td,.ref-grid th{padding:2px 4px;vertical-align:top}.ref-top-grid{height:88mm}.ref-firm{font-size:10.25px;font-weight:700;letter-spacing:.01em}.ref-left-block{padding:2px 4px;overflow:hidden}.ref-seller{height:21mm}.ref-consignee{height:31mm;border-top:.75px solid #000}.ref-buyer{height:36mm;border-top:.75px solid #000}.ref-party-title{font-size:8.4px;margin:0 0 2px}.ref-party-name{font-weight:700;font-size:9.3px}.ref-meta{width:100%;height:88mm;border-collapse:collapse;table-layout:fixed}.ref-meta td{border:.75px solid #000;padding:2px 4px;height:8mm;overflow:hidden}.ref-meta tr:first-child td{height:9mm}.ref-meta tr:nth-child(9) td{height:23mm}.ref-label{display:block;color:#000;font-size:8px}.ref-value{font-weight:700}.ref-items{width:100%;border-collapse:collapse;border-left:.75px solid #000;border-right:.75px solid #000;table-layout:fixed}.ref-items th,.ref-items td{border:.75px solid #000;padding:3px 4px;vertical-align:top}.ref-items th{text-align:center;font-weight:400;height:8mm}.center{text-align:center}.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.ref-desc,.ref-custom-line{font-size:7.9px;margin-top:1px}.ref-custom-line span{font-weight:700}.ref-tax-lines{margin-top:23mm;text-align:right;padding-right:10px;display:grid;gap:3px;font-style:italic;font-size:9px}.ref-tax-amounts{margin-top:23mm;display:grid;gap:3px}.ref-total-line td{height:6mm}.ref-total-row{font-weight:700}.ref-total-row td{font-weight:700}.ref-words{border-left:.75px solid #000;border-right:.75px solid #000;border-bottom:.75px solid #000;padding:2px 4px;min-height:6mm}.ref-tax-summary{width:100%;text-align:center;table-layout:fixed}.ref-tax-summary th,.ref-tax-summary td{padding:1.5px 4px;height:4.5mm}.ref-bottom{display:grid;grid-template-columns:1fr 1fr;border-left:.75px solid #000;border-right:.75px solid #000;border-bottom:.75px solid #000}.ref-bottom>div{min-height:19mm;padding:2px 4px}.ref-sign{border-left:.75px solid #000;text-align:right;display:flex;flex-direction:column;justify-content:space-between;padding-top:5px!important}.ref-computer{text-align:center;margin-top:4px;font-size:8.4px}.ref-eway-page{page-break-before:always;padding:25mm 12mm 8mm;font-size:9.5px;line-height:1.16}.ref-eway-page h2{text-align:center;text-decoration:underline;font-size:13px;margin:0 0 26px}.ref-eway-head{display:grid;grid-template-columns:1fr 170px;align-items:start;margin:0 0 18px;min-height:42mm}.ref-eway-head span{display:inline-block;width:58px}.ref-eway-qr{text-align:center;font-size:9px}.ref-eway-qr img{display:block;width:130px;height:130px;margin:9px auto}.ref-eway-rule{border-top:.75px solid #000;margin:8px 0}.ref-eway-section h3{font-size:9.5px;margin:0 0 8px}.ref-eway-detail-grid{display:grid;grid-template-columns:1fr 1fr 1.15fr;column-gap:18px;row-gap:4px}.ref-eway-detail-grid p{margin:0}.ref-eway-detail-grid span{display:inline-block;width:72px}.ref-eway-address-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;min-height:34mm}
+    ${printSettings.regular.print_original_duplicate ? 'body::before{content:"ORIGINAL FOR RECIPIENT";position:fixed;right:15mm;top:5mm;border:.75px solid #000;padding:2px 5px;font-size:7px;font-weight:700;z-index:10;background:#fff}' : ''}
   </style></head><body>
     <main class="ref-page">
       <h1 class="ref-title">Tax Invoice</h1>
@@ -1010,7 +1071,11 @@ function buildInvoiceHtml(args: {
   const balanceDue = Number(invoice.balance_due ?? Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.paid_amount || 0)));
   const terms = String(invoice.terms_and_conditions || company.terms_and_conditions || 'Thank you for your business.').trim();
   const notes = String(invoice.notes || company.invoice_notes || 'Thanks for your business.').trim();
-  const logo = logoSrc ? `<img src="${logoSrc}" alt="${escapeHtml(legalCompanyName || 'Logo')}"/>` : `<div class="logo-fallback">${escapeHtml((legalCompanyName || 'M').slice(0, 1))}</div>`;
+  const logo = printSettings.header.company_logo === false
+    ? ''
+    : logoSrc
+      ? `<img src="${logoSrc}" alt="${escapeHtml(legalCompanyName || 'Logo')}"/>`
+      : `<div class="logo-fallback">${escapeHtml((legalCompanyName || 'M').slice(0, 1))}</div>`;
   const signature = signatureSrc
     ? `<img src="${signatureSrc}" alt="Signature" />`
     : '<div class="signature-line"></div>';
@@ -1040,12 +1105,23 @@ function buildInvoiceHtml(args: {
     : `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>${escapeHtml(printSettings.footer.signature_text || 'Authorized Signatory')}</p></div>`;
   const itemTable = invoiceItemTable(items, currencyCode, printSettings, invoice.pricing_mode);
   const paidAmount = Number(invoice.paid_amount || 0);
-  const totals = `<div class="totals">${totalsRows(invoice, currencyCode, printSettings)}<div class="grand total-row"><span>Total</span><b>${printMoney(Number(invoice.total_amount || 0), currencyCode, printSettings)}</b></div>${printSettings.totals.received_amount === false ? '' : `<div class="total-row"><span>Received</span><b>${printMoney(paidAmount, currencyCode, printSettings)}</b></div>`}${printSettings.totals.balance_amount === false ? '' : `<div class="due total-row"><span>Balance Due</span><b>${printMoney(balanceDue, currencyCode, printSettings)}</b></div>`}</div>`;
+  const partyBalance = Number(party?.balance || 0);
+  const currentBalanceRow = printSettings.totals.current_balance_of_party
+    ? `<div class="total-row"><span>Current Party Balance</span><b>${printMoney(partyBalance, currencyCode, printSettings)}</b></div>`
+    : '';
+  const youSavedRow = printSettings.totals.you_saved === false || Number(invoice.discount_amount || 0) === 0
+    ? ''
+    : `<div class="total-row"><span>You Saved</span><b>${printMoney(Number(invoice.discount_amount || 0), currencyCode, printSettings)}</b></div>`;
+  const totals = `<div class="totals">${totalsRows(invoice, currencyCode, printSettings)}<div class="grand total-row"><span>Total</span><b>${printMoney(Number(invoice.total_amount || 0), currencyCode, printSettings)}</b></div>${printSettings.totals.received_amount === false ? '' : `<div class="total-row"><span>Received</span><b>${printMoney(paidAmount, currencyCode, printSettings)}</b></div>`}${currentBalanceRow}${youSavedRow}${printSettings.totals.balance_amount === false ? '' : `<div class="due total-row"><span>Balance Due</span><b>${printMoney(balanceDue, currencyCode, printSettings)}</b></div>`}</div>`;
   const notesBlock = printSettings.footer.print_description === false ? '' : `<div class="note-block"><h3>Notes</h3>${escapeHtml(notes)}</div>`;
   const termsBlock = printSettings.footer.print_terms === false ? '' : `<div class="note-block"><h3>Terms & Conditions</h3>${escapeHtml(terms)}</div>`;
+  const settingsDetailsBlock = invoiceSettingsDetailsBlock(invoice);
   const receivedByBlock = printSettings.footer.print_received_by === false ? '' : `<div class="info-card"><h3>Received By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
   const deliveredByBlock = printSettings.footer.print_delivered_by === false ? '' : `<div class="info-card"><h3>Delivered By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
   const paymentModeBlock = printSettings.footer.payment_mode ? `<div class="info-card"><h3>Payment Mode</h3>${escapeHtml(invoice.payment_mode || invoice.payment_type || '—')}</div>` : '';
+  const acknowledgementBlock = printSettings.footer.acknowledgement ? '<div class="info-card"><h3>Acknowledgement</h3><div>Goods/services received in good condition.</div><div class="signature-line"></div><div>Receiver signature</div></div>' : '';
+  const extraBottomLines = Math.max(0, Math.min(20, Number(printSettings.regular.extra_bottom_lines || 0)));
+  const extraBottomBlock = extraBottomLines ? `<div class="extra-bottom-lines">${Array.from({ length: extraBottomLines }, () => '<div></div>').join('')}</div>` : '';
   const topSpace = Math.max(0, Math.min(80, Number(printSettings.regular.extra_top_space || 0)));
   const companyNameSize = printSettings.regular.company_name_text_size === 'small' ? '13px' : printSettings.regular.company_name_text_size === 'medium' ? '16px' : '19px';
   const invoiceTitleSize = printSettings.regular.invoice_text_size === 'small' ? '24px' : printSettings.regular.invoice_text_size === 'large' ? '42px' : '32px';
@@ -1054,7 +1130,7 @@ function buildInvoiceHtml(args: {
   <style>
     ${isThermal ? `@page{size:${thermalWidth || '80mm'} auto;margin:0}\n    html,body{width:${thermalWidth || '80mm'};min-width:${thermalWidth || '80mm'}}\n    .page{padding:5px!important}` : `@page{size:${['A1','A2','A3','A4','A5','Letter','Legal'].includes(printSettings.regular.paper_size as string) ? printSettings.regular.paper_size : 'A4'};margin:8mm}`}
     *{box-sizing:border-box}
-    body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}
+    body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}${printSettings.regular.print_original_duplicate ? '\n    body::before{content:"ORIGINAL FOR RECIPIENT";position:fixed;right:9mm;top:3mm;border:1px solid #52525b;padding:2px 6px;font-size:8px;font-weight:800;letter-spacing:.05em;z-index:10;background:#fff}' : ''}
     .page{padding:${8 + topSpace}px 14px 8px;position:relative}
     .muted,.item-desc,.item-meta{color:#71717a}.mono,.mono-line{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .logo img{max-width:150px;max-height:88px;object-fit:contain;display:block}.logo-fallback{width:68px;height:68px;border-radius:50%;background:${palette.primary};color:#fff;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900}
@@ -1063,11 +1139,12 @@ function buildInvoiceHtml(args: {
     .business-block{line-height:1.45}.business-lines{font-size:10px;margin-top:4px;color:#374151}.business-lines .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.block-title{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary};font-weight:800}
     .bill-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.bill-card h3,.info-card h3{font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:.08em;color:${palette.primary}}
     .bill-card{border:1px solid #e5e7eb;padding:10px;min-height:88px}.meta-grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb}.meta-grid div{padding:7px 9px;border-bottom:1px solid #e5e7eb}.meta-grid div:nth-child(odd){border-right:1px solid #e5e7eb}.meta-grid div:nth-last-child(-n+2){border-bottom:0}.meta-grid span{display:block;color:#71717a;font-size:10px}.meta-grid b{display:block;margin-top:1px}
-    table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-desc{white-space:pre-line;margin-top:2px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
+    table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items thead{display:${printSettings.regular.repeat_header === false ? 'table-row-group' : 'table-header-group'}}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}table.items tfoot td{border-top:1px solid #d4d4d8;background:#fff!important}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-desc{white-space:pre-line;margin-top:2px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
     .lower{display:grid;grid-template-columns:1fr 330px;gap:18px;margin-top:10px}.totals{background:${palette.soft};padding:9px 12px}.total-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0}.grand{font-size:14px;border-top:2px solid #d4d4d8;margin-top:3px;padding-top:8px}.due{margin:8px -12px -9px;padding:9px 12px;background:${palette.primary};color:#fff;font-size:14px;font-weight:900}
     .info-card{border:1px solid #e5e7eb;padding:10px;margin-bottom:8px}.bank-card{line-height:1.55}.tax-summary{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-top:6px;color:#52525b}.tax-summary span{color:#71717a}
+    .custom-details{break-inside:avoid}.custom-detail-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:3px 0;border-bottom:1px solid #f1f5f9}.custom-detail-row:last-child{border-bottom:0}.custom-detail-row span{color:#71717a}.custom-detail-row b{text-align:right;white-space:pre-wrap;overflow-wrap:anywhere}
     .note-block{margin-top:10px;color:#52525b}.note-block h3{font-size:13px;color:#111827;margin:0 0 3px}.signature-card{text-align:right;margin-top:10px;break-inside:avoid}.signature-card img{max-height:48px;max-width:160px;object-fit:contain}.signature-line{height:34px;border-bottom:1px solid #9ca3af;margin-left:auto;width:160px}.qr-card{display:inline-flex;gap:8px;align-items:center;border:1px solid #e5e7eb;padding:6px;margin-top:6px}.qr-card img{width:70px;height:70px}.einv{font-size:9px;border:1px dashed ${palette.primary};padding:6px;margin-top:6px;word-break:break-all}.einv img{width:76px;height:76px}
-    .lower{break-inside:avoid}.footer-line{margin-top:10px;border-top:1px solid #e5e7eb;padding-top:5px;color:#71717a;font-size:9px}
+    .lower{break-inside:avoid}.footer-line{margin-top:10px;border-top:1px solid #e5e7eb;padding-top:5px;color:#71717a;font-size:9px}.extra-bottom-lines div{height:12px;border-bottom:1px solid #e5e7eb}
   </style>`;
 
   const standard = `${baseCss}</head><body><main class="page standard">
@@ -1077,7 +1154,7 @@ function buildInvoiceHtml(args: {
     </section>
     <section class="bill-grid"><div class="bill-card">${primaryPartyBlock}</div><div>${invoiceMeta}</div></section>
     ${shipToSection}
-    ${itemTable}<section class="lower"><div>${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
+    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
     <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
 
@@ -1085,13 +1162,13 @@ function buildInvoiceHtml(args: {
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>${fmtMoney(balanceDue, currencyCode)}</b></section>
     <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:24px">${shipToBlock}</div>` : ''}</div>${invoiceMeta}</div>
-    ${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section></section>
+    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}</section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-width:150px;max-height:82px}.performa .logo-fallback{margin:0 auto;width:64px;height:64px;font-size:30px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
     <div class="rule"></div><section class="bill-card">${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:10px">${shipToBlock}</div>` : ''}</section><div class="rule"></div>
-    ${invoiceMeta}${itemTable}<section class="lower"><div><div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
+    ${invoiceMeta}${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
   </main></body></html>`;
 
   const monochrome = `${baseCss}<style>
@@ -1122,7 +1199,7 @@ function buildInvoiceHtml(args: {
       <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(supplyStateCode)}</td></tr>
     </table>
     ${itemTable}
-    <section class="lower"><div>${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}${termsBlock}${notesBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}</div><div>${totals}${visibleSignBlock}</div></section>
+    <section class="lower"><div>${settingsDetailsBlock}${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}${termsBlock}${notesBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
     <div class="footer-line">${escapeHtml(notes || 'Thank you for your business.')}</div>
   </main></body></html>`;
 
@@ -1206,6 +1283,20 @@ export async function generateInvoicePDF(
     const browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
+    if (copyCount > 1) {
+      await page.evaluate((copies) => {
+        const doc = (globalThis as any).document;
+        const originals = (Array.from(doc.body.children || []) as any[]).map((node) => node.cloneNode(true));
+        for (let copy = 1; copy < copies; copy += 1) {
+          originals.forEach((original, index) => {
+            const clone = original.cloneNode(true);
+            if (index === 0) clone.style.pageBreakBefore = 'always';
+            doc.body.appendChild(clone);
+          });
+        }
+      }, copyCount);
+    }
     const pdf = await page.pdf({
       format: 'A4',
       printBackground: true,
@@ -1219,8 +1310,24 @@ export async function generateInvoicePDF(
   const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
+  if (copyCount > 1) {
+    await page.evaluate((copies) => {
+      const doc = (globalThis as any).document;
+      const original = doc.body.firstElementChild?.cloneNode(true);
+      if (!original) return;
+      for (let copy = 1; copy < copies; copy += 1) {
+        const clone = original.cloneNode(true);
+        clone.style.pageBreakBefore = 'always';
+        doc.body.appendChild(clone);
+      }
+    }, copyCount);
+  }
+  const requestedPaperSize = ['A1', 'A2', 'A3', 'A4', 'A5', 'Letter', 'Legal'].includes(String(effectivePrintSettings.regular.paper_size))
+    ? effectivePrintSettings.regular.paper_size
+    : 'A4';
   const pdf = await page.pdf({
-    format: effectivePrintSettings.regular.paper_size === 'Letter' ? 'Letter' : 'A4',
+    format: requestedPaperSize as any,
     landscape: effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
     printBackground: true,
     margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
@@ -1534,59 +1641,127 @@ export async function generateThermalReceipt(
     : null;
   const party = partyRes?.rows[0] || null;
 
-  const rawPrintSettings = parseObject(company?.print_settings);
-  const printSettings = resolvePrintSettings(company);
-  const savedTheme = rawPrintSettings.invoiceTheme || rawPrintSettings.invoice_theme || rawPrintSettings.regular?.layout || company.invoice_pdf_template || company.document_theme;
-  const invoiceTheme = invoice.pdf_template || invoice.document_theme;
-  const resolvedTheme = normalizeInvoicePrintTheme(invoiceTheme || savedTheme || 'business-theme-1') as InvoicePrintTheme;
-  const invoiceCustomFields = parseObject(invoice?.custom_fields);
-  const invoiceLayoutColor = String(invoiceCustomFields.__print_layout_color || '').trim();
-  const effectivePrintSettings = {
-    ...printSettings,
-    regular: { ...printSettings.regular, layout: resolvedTheme },
-    layout_colors: {
-      ...printSettings.layout_colors,
-      ...(invoiceLayoutColor ? { [resolvedTheme]: invoiceLayoutColor } : {}),
-    },
-  };
-  
-  const kind = PRINT_LAYOUT_KIND[resolvedTheme] || 'standard';
-  
-  const pricingMode = invoice.pricing_mode === 'inclusive' ? 'inclusive' : 'exclusive';
-  const convertedItems = items.map((it) => {
-    const originalPrice = Number(it.unit_price) || 0;
-    const itemIncludesTax = it.price_includes_tax === true;
-    const gstRate = Number(it.gst_rate) || 0;
-    const cessRate = Number(it.cess_rate) || 0;
-    const convertedPrice = getConvertedPrice(originalPrice, itemIncludesTax, pricingMode, gstRate, cessRate);
-    return { ...it, unit_price: convertedPrice };
-  });
-
   const thermalWidth = width === 58 ? '58mm' : width === 100 ? '100mm' : '80mm';
-  
-  const html = buildInvoiceHtml({
-    invoice,
-    company,
-    party,
-    items: convertedItems,
-    kind,
-    theme: resolvedTheme,
-    printSettings: effectivePrintSettings,
-    logoSrc: logoSrc || '',
-    signatureSrc: signatureSrc || '',
-    upiQr: upiQr || '',
-    einvBlock: '',
-    isThermal: true,
-    thermalWidth,
-  });
+  const rawPrintSettings = parseObject(company?.print_settings);
+  const thermal = parseObject(rawPrintSettings.thermal);
+  const customFields = parseObject(invoice?.custom_fields);
+  const posFields = parseObject(customFields.pos);
+  const currency = invoice.currency_code || 'INR';
+  const paid = Number(invoice.paid_amount || 0);
+  const tendered = Number(posFields.tendered_amount ?? paid);
+  const change = Number(posFields.change_amount ?? Math.max(0, tendered - Number(invoice.total_amount || 0)));
+  const sellerName = thermal.show_seller_name === false
+    ? ''
+    : String(thermal.seller_name || companyLegalDisplayName(company));
+  const sellerPhone = thermal.show_seller_phone === false
+    ? ''
+    : String(thermal.seller_phone || company.phone || '');
+  const sellerAddress = thermal.show_seller_address === false
+    ? ''
+    : String(thermal.seller_address || company.registered_address || company.address || '');
+  const showTaxColumns = thermal.show_tax_columns === true;
+  const showPaymentDetails = thermal.show_payment_details !== false;
+  const returnPolicy = String(thermal.return_policy ?? company.receipt_footer_message ?? 'Items can be returned within 7 days in original condition.');
+  const showThankYou = thermal.show_footer_thank_you !== false;
+  const barcodeMode = String(thermal.barcode_or_qr || 'barcode');
+  const effectiveLogoSrc = logoSrc
+    || inlineAssetAsDataUri(company.logo_url)
+    || resolveAssetUrl(company.logo_url);
+  let lookupCode = '';
+  if (barcodeMode === 'barcode' && invoice.invoice_number) {
+    try {
+      const barcodeBuffer = await bwipjs.toBuffer({
+        bcid: 'code128',
+        text: String(invoice.invoice_number),
+        scale: 2,
+        height: 9,
+        includetext: false,
+      });
+      lookupCode = `data:image/png;base64,${barcodeBuffer.toString('base64')}`;
+    } catch {
+      lookupCode = '';
+    }
+  } else if (barcodeMode === 'qr' && invoice.invoice_number) {
+    lookupCode = await QRCode.toDataURL(String(invoice.invoice_number), { width: 180, margin: 1 });
+  }
+  const invoiceDate = formatDocDate(invoice.invoice_date || invoice.created_at);
+  const invoiceTime = invoice.created_at
+    ? new Date(invoice.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+    : '';
+  const partyName = String(invoice.party_name_snapshot || party?.name || 'Walk-in Customer');
+  const rows = items.map((item) => {
+    const quantity = Number(item.quantity || 0);
+    const total = Number(item.total_amount ?? item.line_total ?? (Number(item.unit_price || 0) * quantity));
+    const meta = showTaxColumns
+      ? [item.hsn_code ? `HSN: ${escapeHtml(String(item.hsn_code))}` : '', item.gst_rate != null ? `GST: ${Number(item.gst_rate)}%` : ''].filter(Boolean).join(' | ')
+      : '';
+    return `<div class="item-row">
+      <div class="item-main"><span>${escapeHtml(String(item.item_name || item.name || 'Item'))}</span><span>${quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}</span><span>${fmtMoney(total, currency)}</span></div>
+      ${meta ? `<div class="item-meta">${meta}</div>` : ''}
+    </div>`;
+  }).join('');
+  const taxRows = [
+    ['CGST', Number(invoice.cgst_amount || 0)],
+    ['SGST', Number(invoice.sgst_amount || 0)],
+    ['IGST', Number(invoice.igst_amount || 0)],
+    ['Cess', Number(invoice.cess_amount || 0)],
+    ['Round Off', Number(invoice.round_off_amount || 0)],
+  ].filter(([, amount]) => Number(amount) !== 0)
+    .map(([label, amount]) => `<div class="money-row"><span>${label}</span><span>${fmtMoney(Number(amount), currency)}</span></div>`)
+    .join('');
+  const paymentMode = String(invoice.payment_mode || invoice.payment_type || 'cash');
+  const html = `<!doctype html><html><head><meta charset="utf-8"/>
+    <style>
+      @page{size:${thermalWidth} auto;margin:0}
+      *{box-sizing:border-box}
+      html,body{margin:0;width:${thermalWidth};min-width:${thermalWidth};background:#fff;color:#000}
+      body{font-family:"Courier New",ui-monospace,monospace;font-size:${width === 58 ? '9px' : '11px'};line-height:1.28}
+      main{width:100%;padding:${width === 58 ? '2mm' : '3mm'}}
+      .center{text-align:center}.strong{font-weight:700}.seller{font-size:${width === 58 ? '12px' : '14px'};font-weight:800;text-transform:uppercase}
+      .small{font-size:.88em}.rule{border-top:1px dashed #000;margin:6px 0}
+      .kv,.money-row{display:flex;justify-content:space-between;gap:8px}.kv span:last-child,.money-row span:last-child{text-align:right}
+      .item-head,.item-main{display:grid;grid-template-columns:minmax(0,1fr) 20% 31%;gap:3px}
+      .item-head{font-weight:700}.item-head span:nth-child(2),.item-main span:nth-child(2){text-align:center}
+      .item-head span:last-child,.item-main span:last-child{text-align:right}.item-row{margin:4px 0}
+      .item-main span:first-child{overflow-wrap:anywhere}.item-meta{font-size:.8em;padding-left:3px}
+      .total{font-size:1.2em;font-weight:800;padding:2px 0}.footer{font-size:.85em;text-align:center}
+      .logo{display:block;max-width:${width === 58 ? '34mm' : '44mm'};max-height:15mm;margin:0 auto 4px;object-fit:contain;filter:grayscale(1) contrast(1.5)}
+      .lookup{display:block;max-width:90%;max-height:${barcodeMode === 'qr' ? '24mm' : '13mm'};margin:7px auto 2px;object-fit:contain}
+    </style></head><body><main>
+      ${thermal.show_logo !== false && effectiveLogoSrc ? `<img class="logo" src="${effectiveLogoSrc}" alt="Logo"/>` : ''}
+      <div class="center">${sellerName ? `<div class="seller">${escapeHtml(sellerName)}</div>` : ''}${sellerAddress ? `<div class="small">${escapeHtml(sellerAddress)}</div>` : ''}${company.gstin ? `<div class="small">GSTIN: ${escapeHtml(String(company.gstin))}</div>` : ''}${sellerPhone ? `<div class="small">Ph: ${escapeHtml(sellerPhone)}</div>` : ''}</div>
+      <div class="rule"></div>
+      ${thermal.show_bill_no === false ? '' : `<div class="kv"><span>INVOICE:</span><span class="strong">${escapeHtml(String(invoice.invoice_number || ''))}</span></div>`}
+      ${thermal.show_date_time === false ? '' : `<div class="kv"><span>Date:</span><span>${escapeHtml(invoiceDate)}</span></div><div class="kv"><span>Time:</span><span>${escapeHtml(invoiceTime)}</span></div>`}
+      <div class="kv"><span>Party:</span><span>${escapeHtml(partyName)}</span></div>
+      <div class="rule"></div>
+      <div class="item-head"><span>Item</span><span>Qty</span><span>Price</span></div>
+      <div class="rule"></div>${rows || '<div class="center">No items</div>'}<div class="rule"></div>
+      <div class="money-row"><span>Subtotal</span><span>${fmtMoney(Number(invoice.subtotal || 0), currency)}</span></div>
+      ${Number(invoice.discount_amount || 0) ? `<div class="money-row"><span>Discount</span><span>-${fmtMoney(Number(invoice.discount_amount), currency)}</span></div>` : ''}
+      ${taxRows}<div class="rule"></div>
+      <div class="money-row total"><span>TOTAL</span><span>${fmtMoney(Number(invoice.total_amount || 0), currency)}</span></div>
+      ${showPaymentDetails ? `<div class="rule"></div><div class="money-row"><span>Payment</span><span>${escapeHtml(paymentMode)}</span></div><div class="money-row"><span>Paid</span><span>${fmtMoney(paid, currency)}</span></div>${paymentMode.toLowerCase() === 'cash' ? `<div class="money-row"><span>Tendered</span><span>${fmtMoney(tendered, currency)}</span></div><div class="money-row"><span>Change</span><span>${fmtMoney(change, currency)}</span></div>` : ''}` : ''}
+      ${returnPolicy ? `<div class="rule"></div><div class="footer">${escapeHtml(returnPolicy)}</div>` : ''}
+      ${showThankYou ? '<div class="center strong" style="margin-top:6px">Thank you for your business!</div>' : ''}
+      ${lookupCode ? `<img class="lookup" src="${lookupCode}" alt="Invoice lookup code"/><div class="center small">${escapeHtml(String(invoice.invoice_number || ''))}</div>` : ''}
+    </main></body></html>`;
 
   const browser = await launchBrowser();
   const page = await browser.newPage();
+  const viewportWidth = Math.ceil((width / 25.4) * 96);
+  await page.setViewport({ width: viewportWidth, height: 100, deviceScaleFactor: 1 });
   await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.evaluate(() => (globalThis as any).document.fonts?.ready);
+  const contentHeight = await page.evaluate(() => {
+    const doc = (globalThis as any).document;
+    const receipt = doc.querySelector('main');
+    return receipt ? Math.ceil(receipt.getBoundingClientRect().height) : doc.body.scrollHeight;
+  });
   const pdf = await page.pdf({
     printBackground: true,
     width: thermalWidth,
-    height: '400mm',
+    height: `${Math.max(80, Math.ceil(contentHeight + 2))}px`,
     margin: { top: '0', bottom: '0', left: '0', right: '0' },
   });
   await browser.close();

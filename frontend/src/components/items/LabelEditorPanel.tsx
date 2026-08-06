@@ -287,6 +287,14 @@ export function LabelEditorPanel() {
       } catch { toast.error('Failed to auto-generate barcode'); }
     }
 
+    let savedProfile: any = null;
+    try {
+      const profileRes = await api.get(`/labels/profile/${item.id}`);
+      savedProfile = profileRes.data?.data?.config || null;
+    } catch {
+      // A missing profile is expected the first time an item is selected.
+    }
+
     const isVertical = config.barcodeOrientation === 'vertical';
     const defaultAlign = isVertical ? 'center' : 'left';
 
@@ -311,7 +319,8 @@ export function LabelEditorPanel() {
     const gstRate = Number(item.gst_rate ?? 18);
     const initialPriceVal = spFlag ? Math.round(basePrice * (1 + gstRate / 100)) : basePrice;
 
-    setConfig((prev) => ({
+    setConfig((prev) => {
+      const generated: LabelConfig = {
       ...prev,
       line1: createField(item.name, 'plain', 'normal', {}, 'Line 1'),
       line2: createField('', 'plain', 'normal', {}, 'Line 2'),
@@ -326,7 +335,25 @@ export function LabelEditorPanel() {
       showBarcodeText: true,
       barcodeSource: 'system',
       customBarcodeValue: '',
-    }));
+      };
+      if (!savedProfile) return generated;
+      const restored = {
+        ...generated,
+        ...savedProfile,
+        line1: { ...generated.line1, ...(savedProfile.line1 || {}) },
+        line2: { ...generated.line2, ...(savedProfile.line2 || {}) },
+        line3: { ...generated.line3, ...(savedProfile.line3 || {}) },
+        line4: { ...generated.line4, ...(savedProfile.line4 || {}) },
+        line5: { ...generated.line5, ...(savedProfile.line5 || {}) },
+        line6: { ...generated.line6, ...(savedProfile.line6 || {}) },
+        price: { ...generated.price, ...(savedProfile.price || {}) },
+        barcodeValue: barcodeVal,
+      } as LabelConfig;
+      setCopiesRaw(String(restored.copies || 1));
+      setPriceIncludesGst(savedProfile.priceIncludesGst !== false);
+      toast.success('Previous label details restored');
+      return restored;
+    });
   };
 
   const buildPayload = () => {
@@ -349,6 +376,7 @@ export function LabelEditorPanel() {
         showBarcode: config.showBarcode, showBarcodeText: config.showBarcodeText,
         barcodeSource: config.barcodeSource, customBarcodeValue: config.customBarcodeValue,
         barcodeOrientation: config.barcodeOrientation,
+        labelConfig: { ...config, priceIncludesGst },
       }],
     };
   };

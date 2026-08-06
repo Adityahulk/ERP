@@ -156,7 +156,7 @@ export async function exportGSTR1(req: Request, res: Response) {
      const retPeriod = fp;
      res.json(success({
        meta: {
-         schema: 'bizflow.gstr1.export',
+         schema: 'microtechnique_accounts.gstr1.export',
          version: '1.0',
          generated_at: new Date().toISOString(),
          ret_period: retPeriod,
@@ -337,12 +337,12 @@ export async function exportGSTR3B(req: Request, res: Response) {
     const retPeriod = fp;
     res.json(success({
       meta: {
-        schema: 'bizflow.gstr3b.export',
+        schema: 'microtechnique_accounts.gstr3b.export',
         version: '1.0',
         generated_at: new Date().toISOString(),
         ret_period: retPeriod,
         disclaimer:
-          'Aggregated outward supplies and ITC from BizFlow purchase bills. Use with your CA for GSTR-3B preparation; not a NIC portal upload file.',
+          'Aggregated outward supplies and ITC from Microtechnique Accounts purchase bills. Use with your CA for GSTR-3B preparation; not a NIC portal upload file.',
       },
       gstin: cRes.rows[0]?.gstin || null,
       fp,

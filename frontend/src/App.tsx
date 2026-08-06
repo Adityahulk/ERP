@@ -1,9 +1,10 @@
-import { Routes, Route, Navigate, Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useRegistrantStore } from '@/store/registrantStore';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import AppLayout from '@/components/shared/AppLayout';
 import RegisterPage from '@/pages/register/RegisterPage';
-import RegisterLoginPage from '@/pages/register/RegisterLoginPage';
+import UnifiedLoginPage from '@/pages/auth/UnifiedLoginPage';
 import RegisterDashboard from '@/pages/register/RegisterDashboard';
 import LicenseTiersPage from '@/pages/register/LicenseTiersPage';
 import LicenseDetailPage from '@/pages/register/LicenseDetailPage';
@@ -54,108 +55,9 @@ import SuperAdminLicenses from '@/pages/superadmin/SuperAdminLicenses';
 import SuperAdminLicenseDetail from '@/pages/superadmin/SuperAdminLicenseDetail';
 import SuperAdminCompanies from '@/pages/superadmin/SuperAdminCompanies';
 import SuperAdminCompanyDetail from '@/pages/superadmin/SuperAdminCompanyDetail';
-
-// ── Login Page ────────────────────────────────────────────────
-import { useState, useEffect } from 'react';
-import { Loader2, ArrowLeft } from 'lucide-react';
-import api from '@/lib/api';
-import toast from 'react-hot-toast';
+import SuperAdminRegistrants from '@/pages/superadmin/SuperAdminRegistrants';
+import { useEffect } from 'react';
 import { canAccessRole, normalizeRole, type NormalizedRole } from '@/lib/roles';
-
-function LoginPage() {
-  const { login } = useAuthStore();
-  const navigate = useNavigate();
-  const prefillDemo = import.meta.env.VITE_PREFILL_DEMO_LOGIN === 'true';
-  const [email, setEmail] = useState(prefillDemo ? 'admin@demo.com' : '');
-  const [password, setPassword] = useState(prefillDemo ? 'Demo@1234' : '');
-  const [loading, setLoading] = useState(false);
-  const [sessionMsg] = useState(() => {
-    const msg = sessionStorage.getItem('session_replaced_msg');
-    if (msg) sessionStorage.removeItem('session_replaced_msg');
-    return msg;
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const { data: res } = await api.post('/auth/login', { email, password });
-      if (res.success) {
-        const company = res.data.company;
-        const isSuper = res.data.user.role === 'super_admin';
-        login(
-          {
-            id: res.data.user.id,
-            companyId: company?.id ?? null,
-            name: res.data.user.name,
-            email: res.data.user.email,
-            role: res.data.user.role,
-          },
-          company
-            ? {
-                id: company.id,
-                name: company.name,
-                gstin: company.gstin,
-                itemTerminology: company.item_terminology || 'Product',
-                itemTerminologyPlural: company.item_terminology_plural || 'Products',
-              }
-            : null,
-          res.data.accessToken,
-          res.data.refreshToken
-        );
-        toast.success(`Welcome back, ${res.data.user.name}!`);
-        navigate(isSuper ? '/superadmin' : '/dashboard', { replace: true });
-      }
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Login failed');
-    } finally { setLoading(false); }
-  };
-
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-[#2d0444] to-slate-900 p-4">
-      <div className="absolute top-8 left-8">
-        <RouterLink to="/" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
-          <ArrowLeft className="w-4 h-4" />
-          Back to Home
-        </RouterLink>
-      </div>
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="h-28 mx-auto mb-4 drop-shadow-lg" />
-          <h1 className="text-2xl font-bold text-white uppercase tracking-wider">Microtechnique Accounts</h1>
-          <p className="text-purple-300 mt-1">Smart application for Indian Manufacturers</p>
-        </div>
-        {sessionMsg && (
-          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-sm text-center">
-            {sessionMsg}
-          </div>
-        )}
-        <form onSubmit={handleSubmit} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 space-y-5">
-          <div>
-            <label className="text-sm font-medium text-purple-200">Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition" />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-purple-200">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="mt-1 w-full h-11 rounded-lg bg-white/10 border border-white/20 px-4 text-white placeholder:text-white/40 focus:ring-2 focus:ring-purple-400 focus:border-transparent outline-none transition" />
-          </div>
-          <button type="submit" disabled={loading} className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#420662] to-purple-600 hover:from-purple-700 hover:to-[#420662] text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 transition-all disabled:opacity-50">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            {loading ? 'Signing in…' : 'Sign In'}
-          </button>
-        </form>
-        <div className="text-center mt-4 space-y-2">
-          <p className="text-sm text-slate-400">
-            Want to purchase a license?{' '}
-            <RouterLink to="/register" className="text-purple-400 hover:text-purple-300 font-medium">
-              Register here
-            </RouterLink>
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Protected Route ───────────────────────────────────────────
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -189,7 +91,7 @@ function LoginEntry() {
   if (isAuthenticated) {
     return <Navigate to={user?.role === 'super_admin' ? '/superadmin' : '/dashboard'} replace />;
   }
-  return <LoginPage />;
+  return <UnifiedLoginPage />;
 }
 
 function OnboardingEntry() {
@@ -210,7 +112,7 @@ function RoleGate({ allowed, children }: { allowed: NormalizedRole[]; children: 
 // ── Registrant Protected Route ────────────────────────────────
 function RegistrantRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, token } = useRegistrantStore();
-  const hasToken = !!(token || localStorage.getItem('bizflow_registrant_token'));
+  const hasToken = !!(token || readStorageWithLegacy(STORAGE_KEYS.registrantToken, LEGACY_STORAGE_KEYS.registrantToken));
   return isAuthenticated && hasToken ? <>{children}</> : <Navigate to="/register/login" replace />;
 }
 
@@ -222,7 +124,7 @@ export default function App() {
   // localStorage (e.g. cleared externally, or tokens expired before next visit), force
   // a clean logout so the user is sent to /login instead of hitting 401s on every request.
   useEffect(() => {
-    if (isAuthenticated && !localStorage.getItem('bizflow_access_token')) {
+    if (isAuthenticated && !readStorageWithLegacy(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken)) {
       logout();
     }
   }, []);
@@ -234,6 +136,7 @@ export default function App() {
 
       <Route path="/superadmin" element={<SuperAdminShell />}>
         <Route index element={<SuperAdminDashboard />} />
+        <Route path="registrants" element={<SuperAdminRegistrants />} />
         <Route path="licenses" element={<SuperAdminLicenses />} />
         <Route path="licenses/:id" element={<SuperAdminLicenseDetail />} />
         <Route path="companies" element={<SuperAdminCompanies />} />
@@ -268,7 +171,7 @@ export default function App() {
         <Route path="/quotations" element={<Navigate to="/sales-hub/quotations" replace />} />
 
         {/* Keep detail + create pages accessible */}
-        <Route path="/billing" element={<RoleGate allowed={['admin', 'manager']}><BillingScreen /></RoleGate>} />
+        <Route path="/billing" element={<RoleGate allowed={['admin', 'manager', 'staff']}><BillingScreen /></RoleGate>} />
         <Route path="/sales/new" element={<RoleGate allowed={['admin', 'manager']}><InvoiceCreate /></RoleGate>} />
         <Route path="/sales/:id/edit" element={<RoleGate allowed={['admin', 'manager']}><InvoiceCreate /></RoleGate>} />
         <Route path="/sales/:id" element={<RoleGate allowed={['admin', 'manager']}><InvoiceDetail /></RoleGate>} />
@@ -313,7 +216,7 @@ export default function App() {
 
       {/* ── Registrant / License routes ─────────────────────── */}
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/register/login" element={<RegisterLoginPage />} />
+      <Route path="/register/login" element={<Navigate to="/login?mode=licenses" replace />} />
       <Route path="/register/verify" element={<VerifyEmailPage />} />
       <Route path="/register/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/register/reset-password" element={<ResetPasswordPage />} />

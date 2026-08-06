@@ -211,7 +211,7 @@ export default function MobileScannerScreen() {
             <Sparkles className="w-5 h-5 animate-pulse" />
           </div>
           <div>
-            <h1 className="font-extrabold text-sm tracking-wide text-white uppercase">BizFlow POS Mobile</h1>
+            <h1 className="font-extrabold text-sm tracking-wide text-white uppercase">Microtechnique POS Mobile</h1>
             <span className="text-[10px] text-slate-400 font-mono">ID: {sessionId.substring(9, 15)}...</span>
           </div>
         </div>

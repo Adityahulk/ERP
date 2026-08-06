@@ -51,7 +51,14 @@ export function toCamel(row: Record<string, any>) {
 
 async function ensureDefaults(db: Db, firmId: string) {
   await db.query(`INSERT INTO transaction_settings (firm_id) VALUES ($1) ON CONFLICT (firm_id) DO NOTHING`, [firmId]);
-  await db.query(`INSERT INTO transaction_prefixes (firm_id) VALUES ($1) ON CONFLICT (firm_id) DO NOTHING`, [firmId]);
+  await db.query(
+    `INSERT INTO transaction_prefixes (firm_id, sale)
+     SELECT id, COALESCE(NULLIF(invoice_prefix, ''), 'INV')
+     FROM companies
+     WHERE id = $1
+     ON CONFLICT (firm_id) DO NOTHING`,
+    [firmId],
+  );
   await db.query(`INSERT INTO additional_fields_config (firm_id) VALUES ($1) ON CONFLICT (firm_id) DO NOTHING`, [firmId]);
   await db.query(`INSERT INTO transportation_details_config (firm_id) VALUES ($1) ON CONFLICT (firm_id) DO NOTHING`, [firmId]);
   await db.query(`INSERT INTO additional_charges_config (firm_id) VALUES ($1) ON CONFLICT (firm_id) DO NOTHING`, [firmId]);

@@ -9,7 +9,10 @@ import fs from 'fs';
 import path from 'path';
 import { decodeSmartBarcode, isSmartBarcode, getOrCreateItemBarcode } from '../utils/barcodeUtils';
 
-const VALID_GST_RATES = new Set([0, 1, 3, 5, 6, 12, 18, 28, 40]);
+function isValidGstRate(value: unknown) {
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate >= 0 && rate <= 100 && Math.round(rate * 1000) === rate * 1000;
+}
 
 async function applyOpeningStock(
   client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
@@ -281,8 +284,8 @@ async function getItemActivity(companyId: string, itemId: string) {
          COALESCE(g.name, '—') AS godown_name,
          COALESCE(sm.quantity, 0)::numeric AS quantity,
          COALESCE(sm.unit_cost, 0)::bigint AS unit_price,
-         (COALESCE(sm.quantity, 0)::bigint * COALESCE(sm.unit_cost, 0)::bigint) AS gross_amount,
-         (COALESCE(sm.quantity, 0)::bigint * COALESCE(sm.unit_cost, 0)::bigint) AS taxable_amount,
+         ROUND(COALESCE(sm.quantity, 0)::numeric * COALESCE(sm.unit_cost, 0)::numeric)::bigint AS gross_amount,
+         ROUND(COALESCE(sm.quantity, 0)::numeric * COALESCE(sm.unit_cost, 0)::numeric)::bigint AS taxable_amount,
          0::bigint AS tax_amount,
          'posted'::text AS status,
          sm.id AS reference_id,
@@ -442,8 +445,8 @@ export async function createItem(req: Request, res: Response) {
           const dupRes = await client.query(
             `SELECT 1 FROM items WHERE barcode = $1 AND is_deleted = false
              UNION
-             SELECT 1 FROM barcode_registry WHERE barcode = $1`,
-            [barcode]
+             SELECT 1 FROM barcode_registry WHERE company_id = $2 AND barcode = $1`,
+            [barcode, companyId]
           );
           if (dupRes.rows.length === 0) {
             unique = true;
@@ -491,8 +494,12 @@ export async function createItem(req: Request, res: Response) {
       // Save barcode to registry if it exists
       if (item.barcode) {
         await client.query(
-          'INSERT INTO barcode_registry (barcode, item_id) VALUES ($1, $2) ON CONFLICT (barcode) DO NOTHING',
-          [item.barcode, item.id]
+          `INSERT INTO barcode_registry (company_id, barcode, item_id, source, is_primary)
+           VALUES ($1, $2, $3, 'system', true)
+           ON CONFLICT (company_id, barcode) DO UPDATE
+             SET item_id = EXCLUDED.item_id,
+                 is_primary = true`,
+          [companyId, item.barcode, item.id]
         );
       }
 
@@ -773,6 +780,26 @@ export async function updateItem(req: Request, res: Response) {
       const upd = await client.query(
         `UPDATE items SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING *`, values
       );
+      if (data.barcode !== undefined && data.barcode !== old.barcode) {
+        if (old.barcode) {
+          await client.query(
+            `DELETE FROM barcode_registry
+             WHERE company_id = $1 AND item_id = $2 AND barcode = $3 AND is_primary = true`,
+            [companyId, id, old.barcode],
+          );
+        }
+        if (data.barcode) {
+          await client.query(
+            `INSERT INTO barcode_registry (company_id, barcode, item_id, source, is_primary)
+             VALUES ($1, $2, $3, 'system', true)
+             ON CONFLICT (company_id, barcode) DO UPDATE
+               SET item_id = EXCLUDED.item_id,
+                   source = 'system',
+                   is_primary = true`,
+            [companyId, data.barcode, id],
+          );
+        }
+      }
       return upd.rows[0];
     });
 
@@ -862,14 +889,14 @@ export async function bulkImport(req: Request, res: Response) {
         item_type: importedType,
         selling_price: Math.round(Number(row['Selling Price'] || row['selling_price'] || 0) * 100),
         purchase_price: Math.round(Number(row['Purchase Price'] || row['purchase_price'] || 0) * 100),
-        gst_rate: parseInt(row['GST Rate'] || row['gst_rate'] || 18),
+        gst_rate: Number(row['GST Rate'] ?? row['gst_rate'] ?? 18),
         opening_stock: importedIsService ? 0 : Number(row['Opening Stock'] || row['opening_stock'] || 0),
         reorder_point: Number(row['Reorder Point'] || row['reorder_point'] || 0),
       };
 
       const rowErrors: string[] = [];
       if (!item.name) rowErrors.push('Name is required');
-      if (!VALID_GST_RATES.has(item.gst_rate)) rowErrors.push('Invalid GST rate');
+      if (!isValidGstRate(item.gst_rate)) rowErrors.push('GST rate must be between 0 and 100 with at most three decimal places');
       if (item.selling_price < 0) rowErrors.push('Selling price cannot be negative');
       const skuKey = String(item.sku || '').trim();
       const barcodeKey = String(item.barcode || '').trim();
@@ -1026,51 +1053,75 @@ export async function getOrGenerateBarcode(req: Request, res: Response) {
 }
 
 // ── POST /api/items/scan ──────────────────────────────────────
+async function findItemByScannableCode(companyId: string, code: string, godownId?: string | null) {
+  const stockParams: any[] = [companyId];
+  let stockJoin = `LEFT JOIN (
+    SELECT item_id, SUM(quantity) AS total_stock
+    FROM item_stock
+    WHERE company_id = $1
+    GROUP BY item_id
+  ) ts ON ts.item_id = i.id`;
+  let stockSelect = 'COALESCE(ts.total_stock, 0) AS total_stock, COALESCE(ts.total_stock, 0) AS available_stock';
+  if (godownId) {
+    stockParams.push(godownId);
+    stockJoin = `LEFT JOIN item_stock ts
+      ON ts.item_id = i.id AND ts.company_id = $1 AND ts.godown_id = $2`;
+    stockSelect = 'COALESCE(ts.quantity, 0) AS total_stock, COALESCE(ts.quantity, 0) AS available_stock';
+  }
+
+  if (isSmartBarcode(code)) {
+    const decoded = decodeSmartBarcode(code);
+    if (!decoded || decoded.companyId !== companyId) return { rows: [] as any[] };
+    return query(
+      `SELECT i.*, c.name AS category_name,
+              COALESCE(u.abbreviation, u.name, 'PCS') AS unit,
+              u.name AS unit_name,
+              ${stockSelect}
+       FROM items i
+       LEFT JOIN item_categories c ON i.category_id = c.id
+       LEFT JOIN item_units u ON i.unit_id = u.id
+       ${stockJoin}
+       WHERE i.id = $${stockParams.length + 1}
+         AND i.company_id = $1
+         AND i.is_deleted = false
+         AND i.is_active = true
+       LIMIT 1`,
+      [...stockParams, decoded.itemId],
+    );
+  }
+
+  return query(
+    `SELECT i.*, c.name AS category_name,
+            COALESCE(u.abbreviation, u.name, 'PCS') AS unit,
+            u.name AS unit_name,
+            ${stockSelect}
+     FROM items i
+     LEFT JOIN item_categories c ON i.category_id = c.id
+     LEFT JOIN item_units u ON i.unit_id = u.id
+     ${stockJoin}
+     WHERE i.company_id = $1
+       AND i.is_deleted = false
+       AND i.is_active = true
+       AND (
+         i.barcode = $${stockParams.length + 1}
+         OR i.sku = $${stockParams.length + 1}
+         OR i.id = (
+           SELECT br.item_id
+           FROM barcode_registry br
+           WHERE br.company_id = $1 AND br.barcode = $${stockParams.length + 1}
+           LIMIT 1
+         )
+       )
+     LIMIT 1`,
+    [...stockParams, code],
+  );
+}
+
 export async function scanBarcode(req: Request, res: Response) {
   try {
-    const { barcode } = req.body;
+    const { barcode, godown_id } = req.body;
     const companyId = req.user!.company_id;
-
-    let result;
-
-    if (isSmartBarcode(barcode)) {
-      // ── Smart barcode path ──────────────────────────────────
-      // Decode "SC|companyId|itemId" and look up directly by UUID.
-      // This is faster and more reliable than text-matching.
-      const decoded = decodeSmartBarcode(barcode);
-      if (!decoded) {
-        return res.status(400).json(error('Invalid smart barcode format'));
-      }
-      // Enforce that the barcode belongs to the caller's company
-      if (decoded.companyId !== companyId) {
-        return res.status(404).json(error('No item found for this barcode'));
-      }
-      result = await query(
-        `SELECT i.*, c.name as category_name, u.name as unit_name,
-                COALESCE(ts.total_stock, 0) as total_stock
-         FROM items i
-         LEFT JOIN item_categories c ON i.category_id = c.id
-         LEFT JOIN item_units u ON i.unit_id = u.id
-         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
-         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false
-         LIMIT 1`,
-        [decoded.itemId, companyId]
-      );
-    } else {
-      // ── Legacy barcode path ─────────────────────────────────
-      // Plain SKU, EAN-13, or any other barcode — match barcode, sku or registry mapping.
-      result = await query(
-        `SELECT i.*, c.name as category_name, u.name as unit_name,
-                COALESCE(ts.total_stock, 0) as total_stock
-         FROM items i
-         LEFT JOIN item_categories c ON i.category_id = c.id
-         LEFT JOIN item_units u ON i.unit_id = u.id
-         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
-         WHERE (i.barcode = $1 OR i.sku = $1 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $1 LIMIT 1)) AND i.company_id = $2 AND i.is_deleted = false
-         LIMIT 1`,
-        [barcode, companyId]
-      );
-    }
+    const result = await findItemByScannableCode(companyId, String(barcode || '').trim(), godown_id);
 
     if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
     res.json(success(result.rows[0]));
@@ -1085,41 +1136,8 @@ export async function getItemByBarcode(req: Request, res: Response) {
   try {
     const { code } = req.params;
     const companyId = req.user!.company_id;
-
-    let result;
-
-    if (isSmartBarcode(code)) {
-      const decoded = decodeSmartBarcode(code);
-      if (!decoded) {
-        return res.status(400).json(error('Invalid smart barcode format'));
-      }
-      if (decoded.companyId !== companyId) {
-        return res.status(404).json(error('No item found for this barcode'));
-      }
-      result = await query(
-        `SELECT i.*, c.name as category_name, u.name as unit_name,
-                COALESCE(ts.total_stock, 0) as total_stock
-         FROM items i
-         LEFT JOIN item_categories c ON i.category_id = c.id
-         LEFT JOIN item_units u ON i.unit_id = u.id
-         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
-         WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false
-         LIMIT 1`,
-        [decoded.itemId, companyId]
-      );
-    } else {
-      result = await query(
-        `SELECT i.*, c.name as category_name, u.name as unit_name,
-                COALESCE(ts.total_stock, 0) as total_stock
-         FROM items i
-         LEFT JOIN item_categories c ON i.category_id = c.id
-         LEFT JOIN item_units u ON i.unit_id = u.id
-         LEFT JOIN (SELECT item_id, SUM(quantity) as total_stock FROM item_stock GROUP BY item_id) ts ON ts.item_id = i.id
-         WHERE (i.barcode = $1 OR i.sku = $1 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $1 LIMIT 1)) AND i.company_id = $2 AND i.is_deleted = false
-         LIMIT 1`,
-        [code, companyId]
-      );
-    }
+    const godownId = typeof req.query.godown_id === 'string' ? req.query.godown_id : null;
+    const result = await findItemByScannableCode(companyId, String(code || '').trim(), godownId);
 
     if (!result.rows.length) return res.status(404).json(error('No item found for this barcode'));
     res.json(success(result.rows[0]));

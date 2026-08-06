@@ -53,7 +53,7 @@ app.use('/api', routes);
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
-    service: 'bizflow-api',
+    service: 'microtechnique-accounts-api',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });

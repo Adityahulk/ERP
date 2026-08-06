@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { LEGACY_STORAGE_KEYS, migrateStorageKey, removeStorageWithLegacy, STORAGE_KEYS, writeStorageWithLegacyCleanup } from '@/lib/storageKeys';
 
 export interface User {
   id: string;
@@ -48,6 +49,10 @@ interface AuthState {
   setLicense: (license: LicenseInfo | null) => void;
 }
 
+migrateStorageKey(STORAGE_KEYS.authStore, LEGACY_STORAGE_KEYS.authStore);
+migrateStorageKey(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken);
+migrateStorageKey(STORAGE_KEYS.refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -59,8 +64,8 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
 
       login: (user, company, accessToken, refreshToken) => {
-        localStorage.setItem('bizflow_access_token', accessToken);
-        localStorage.setItem('bizflow_refresh_token', refreshToken);
+        writeStorageWithLegacyCleanup(STORAGE_KEYS.accessToken, accessToken, LEGACY_STORAGE_KEYS.accessToken);
+        writeStorageWithLegacyCleanup(STORAGE_KEYS.refreshToken, refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
         set({
           user,
           company,
@@ -71,8 +76,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
-        localStorage.removeItem('bizflow_access_token');
-        localStorage.removeItem('bizflow_refresh_token');
+        removeStorageWithLegacy(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken);
+        removeStorageWithLegacy(STORAGE_KEYS.refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
         set({
           user: null,
           company: null,
@@ -94,15 +99,15 @@ export const useAuthStore = create<AuthState>()(
         })),
 
       setTokens: (accessToken, refreshToken) => {
-        localStorage.setItem('bizflow_access_token', accessToken);
-        localStorage.setItem('bizflow_refresh_token', refreshToken);
+        writeStorageWithLegacyCleanup(STORAGE_KEYS.accessToken, accessToken, LEGACY_STORAGE_KEYS.accessToken);
+        writeStorageWithLegacyCleanup(STORAGE_KEYS.refreshToken, refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
         set({ accessToken, refreshToken });
       },
 
       setLicense: (license) => set({ license }),
     }),
     {
-      name: 'bizflow-auth',
+      name: STORAGE_KEYS.authStore,
       partialize: (state) => ({
         user: state.user,
         company: state.company,

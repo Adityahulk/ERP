@@ -38,6 +38,14 @@ export async function getOrCreateItemBarcode(itemId: string, companyId: string, 
   
   const item = itemRes.rows[0];
   if (item.barcode) {
+    await db.query(
+      `INSERT INTO barcode_registry (company_id, barcode, item_id, source, is_primary)
+       VALUES ($1, $2, $3, 'system', true)
+       ON CONFLICT (company_id, barcode) DO UPDATE
+         SET item_id = EXCLUDED.item_id,
+             is_primary = true`,
+      [companyId, item.barcode, itemId]
+    );
     return item.barcode;
   }
   
@@ -54,10 +62,10 @@ export async function getOrCreateItemBarcode(itemId: string, companyId: string, 
     
     // Check if it's already used in items or barcode_registry
     const dupRes = await db.query(
-      `SELECT 1 FROM items WHERE barcode = $1 AND is_deleted = false
+      `SELECT 1 FROM items WHERE company_id = $2 AND barcode = $1 AND is_deleted = false
        UNION
-       SELECT 1 FROM barcode_registry WHERE barcode = $1`,
-      [barcodeText]
+       SELECT 1 FROM barcode_registry WHERE company_id = $2 AND barcode = $1`,
+      [barcodeText, companyId]
     );
     if (dupRes.rows.length === 0) {
       unique = true;
@@ -69,15 +77,79 @@ export async function getOrCreateItemBarcode(itemId: string, companyId: string, 
   }
   
   // 3. Save the generated barcode to the item
-  await db.query('UPDATE items SET barcode = $1 WHERE id = $2', [barcodeText, itemId]);
+  await db.query(
+    'UPDATE items SET barcode = $1 WHERE id = $2 AND company_id = $3',
+    [barcodeText, itemId, companyId]
+  );
   
   // 4. Save to barcode_registry
   await db.query(
-    'INSERT INTO barcode_registry (barcode, item_id) VALUES ($1, $2) ON CONFLICT (barcode) DO NOTHING',
-    [barcodeText, itemId]
+    `INSERT INTO barcode_registry (company_id, barcode, item_id, source, is_primary)
+     VALUES ($1, $2, $3, 'system', true)
+     ON CONFLICT (company_id, barcode) DO UPDATE
+       SET item_id = EXCLUDED.item_id,
+           is_primary = true`,
+    [companyId, barcodeText, itemId]
   );
   
   return barcodeText;
+}
+
+export function normalizeScannableCode(value: unknown): string {
+  const code = String(value || '').trim();
+  if (!code) throw new Error('Barcode cannot be empty');
+  if (code.length > 128) throw new Error('Barcode cannot exceed 128 characters');
+  if (/[\u0000-\u001f\u007f]/.test(code)) throw new Error('Barcode contains unsupported characters');
+  return code;
+}
+
+/**
+ * Registers an additional printed code for an item without replacing its
+ * primary system barcode. Codes are unique inside a company.
+ */
+export async function registerItemBarcodeAlias(
+  itemId: string,
+  companyId: string,
+  value: unknown,
+  client?: any,
+): Promise<string> {
+  const db = client || { query };
+  const code = normalizeScannableCode(value);
+  const itemRes = await db.query(
+    `SELECT id
+     FROM items
+     WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+    [itemId, companyId],
+  );
+  if (!itemRes.rows.length) throw new Error('Item not found');
+
+  const conflict = await db.query(
+    `SELECT id
+     FROM items
+     WHERE company_id = $1
+       AND is_deleted = false
+       AND id <> $2
+       AND (barcode = $3 OR sku = $3)
+     UNION ALL
+     SELECT item_id AS id
+     FROM barcode_registry
+     WHERE company_id = $1 AND barcode = $3 AND item_id <> $2
+     LIMIT 1`,
+    [companyId, itemId, code],
+  );
+  if (conflict.rows.length) {
+    throw new Error('This barcode is already assigned to another item');
+  }
+
+  await db.query(
+    `INSERT INTO barcode_registry (company_id, barcode, item_id, source, is_primary)
+     VALUES ($1, $2, $3, 'custom', false)
+     ON CONFLICT (company_id, barcode) DO UPDATE
+       SET item_id = EXCLUDED.item_id,
+           source = 'custom'`,
+    [companyId, code, itemId],
+  );
+  return code;
 }
 
 /**

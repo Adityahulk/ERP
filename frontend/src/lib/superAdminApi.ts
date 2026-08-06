@@ -16,6 +16,9 @@ export interface SuperAdminStats {
   revoked_licenses: number;
   total_companies: number;
   total_users: number;
+  total_registrants: number;
+  new_leads: number;
+  verified_registrants: number;
   revenue_potential: number;
   recent_requests: Array<{
     id: string;
@@ -115,6 +118,30 @@ export interface CompanyRow {
   user_count: number;
 }
 
+export type LeadStatus = 'all' | 'new' | 'contacted' | 'qualified' | 'customer' | 'lost';
+
+export interface RegistrantRow {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  is_active: boolean;
+  is_verified: boolean;
+  email_verified_at: string | null;
+  last_login_at: string | null;
+  created_at: string;
+  lead_status: Exclude<LeadStatus, 'all'>;
+  lead_source: string;
+  admin_notes: string | null;
+  last_contacted_at: string | null;
+  license_count: number;
+  live_license_count: number;
+  latest_license_status: string | null;
+  license_id: string | null;
+  company_id: string | null;
+  company_name: string | null;
+}
+
 export async function fetchSuperAdminStats(): Promise<SuperAdminStats> {
   const res = await api.get('/superadmin/stats');
   return unwrap<SuperAdminStats>(res);
@@ -212,4 +239,37 @@ export async function addSuperAdminCompanyUser(
 export async function toggleSuperAdminUser(userId: string) {
   const res = await api.put(`/superadmin/users/${userId}/toggle`);
   return unwrap<{ user: Record<string, unknown> }>(res);
+}
+
+export async function deleteSuperAdminCompanyUser(userId: string) {
+  const res = await api.delete(`/superadmin/users/${userId}`);
+  return unwrap<{ message: string; user: Record<string, unknown> }>(res);
+}
+
+export async function fetchSuperAdminRegistrants(params: {
+  status?: LeadStatus;
+  page?: number;
+  limit?: number;
+  q?: string;
+}): Promise<Paginated<RegistrantRow>> {
+  const res = await api.get('/superadmin/registrants', { params });
+  return unwrap<Paginated<RegistrantRow>>(res);
+}
+
+export async function updateSuperAdminRegistrant(
+  id: string,
+  body: {
+    lead_status?: Exclude<LeadStatus, 'all'>;
+    admin_notes?: string;
+    mark_contacted?: boolean;
+    is_active?: boolean;
+  },
+) {
+  const res = await api.put(`/superadmin/registrants/${id}`, body);
+  return unwrap<{ registrant: RegistrantRow }>(res);
+}
+
+export async function deleteSuperAdminRegistrant(id: string) {
+  const res = await api.delete(`/superadmin/registrants/${id}`);
+  return unwrap<{ message: string; registrant: Pick<RegistrantRow, 'id' | 'name' | 'email'> }>(res);
 }

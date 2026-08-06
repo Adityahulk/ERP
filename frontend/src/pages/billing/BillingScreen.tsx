@@ -10,11 +10,14 @@ import { Search, Loader2, Camera, Smartphone, Plus, Minus, Trash2, User, FileTex
 import { QuickAddItemSheet } from '@/components/items/QuickAddItemSheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import { formatMoney } from '@/lib/formatters';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import { useCompany } from '@/hooks/useBusiness';
 import { useAuthStore } from '@/store/authStore';
 import ThermalReceipt from '@/components/shared/ThermalReceipt';
 import { QRCodeSVG } from 'qrcode.react';
 import { FixedSizeList as List } from 'react-window';
+import { useGodowns } from '@/hooks/useStock';
+import { printPdfBlob } from '@/lib/printPdf';
 
 interface BillItem {
   item_id: string;
@@ -23,6 +26,8 @@ interface BillItem {
   hsn_code: string;
   item_type?: string;
   track_inventory?: boolean;
+  unit?: string;
+  available_stock?: number;
   quantity: number;
   unit_price: number;
   gst_rate: number;
@@ -52,7 +57,7 @@ export default function BillingScreen() {
   const qc = useQueryClient();
   const [modalUpiId, setModalUpiId] = useState('');
   const [customUpiQr, setCustomUpiQr] = useState<string>(() => {
-    return localStorage.getItem('bizflow_custom_upi_qr') || '';
+    return readStorageWithLegacy(STORAGE_KEYS.customUpiQr, LEGACY_STORAGE_KEYS.customUpiQr) || '';
   });
 
   const [isEditingCustomer, setIsEditingCustomer] = useState(false);
@@ -61,6 +66,9 @@ export default function BillingScreen() {
   const [showMobileConnectModal, setShowMobileConnectModal] = useState(false);
   const [serverIps, setServerIps] = useState<string[]>([]);
   const [selectedIp, setSelectedIp] = useState<string>('');
+  const [selectedGodownId, setSelectedGodownId] = useState('');
+  const lastProcessedScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+  const lookupBarcodeRef = useRef<(code: string, source?: string) => Promise<void>>(async () => undefined);
   
   const getQrUrl = () => {
     const hostname = window.location.hostname;
@@ -132,6 +140,14 @@ export default function BillingScreen() {
   };
 
   const { data: companyData } = useCompany();
+  const { data: godownResponse } = useGodowns();
+  const godowns = godownResponse?.data ?? [];
+
+  useEffect(() => {
+    if (selectedGodownId || !godowns.length) return;
+    const preferred = godowns.find((g: any) => g.is_default) || godowns[0];
+    if (preferred?.id) setSelectedGodownId(preferred.id);
+  }, [godowns, selectedGodownId]);
 
   // Transaction Settings Fetching
   const { data: transactionConfig } = useQuery({
@@ -143,7 +159,7 @@ export default function BillingScreen() {
     if (showQrModal) {
       const defaultUpi = transactionConfig?.settings?.defaultUpiId || companyData?.upi_id || '';
       setModalUpiId(defaultUpi);
-      setCustomUpiQr(localStorage.getItem('bizflow_custom_upi_qr') || '');
+      setCustomUpiQr(readStorageWithLegacy(STORAGE_KEYS.customUpiQr, LEGACY_STORAGE_KEYS.customUpiQr) || '');
     }
   }, [showQrModal, transactionConfig, companyData]);
 
@@ -167,13 +183,16 @@ export default function BillingScreen() {
 
   // Search Results
   const { data: searchResults, isFetching: isSearching } = useQuery({
-    queryKey: ['billingSearch', searchQuery],
+    queryKey: ['billingSearch', searchQuery, selectedGodownId],
     queryFn: async () => {
       if (searchQuery.length < 2) return [];
-      const res = await api.post('/invoices/search-items', { q: searchQuery });
+      const res = await api.post('/invoices/search-items', {
+        q: searchQuery,
+        godown_id: selectedGodownId || undefined,
+      });
       return res.data?.data || [];
     },
-    enabled: searchQuery.length >= 2,
+    enabled: searchQuery.length >= 2 && Boolean(selectedGodownId),
     staleTime: 0,
   });
 
@@ -182,46 +201,23 @@ export default function BillingScreen() {
   }, [searchResults]);
 
   const handlePrintReceipt = async (id: string) => {
-    const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
-    let pdfUrl = '';
+    const printer = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) || 'a4';
     try {
       // Always print the receipt preview (thermal) in POS Billing rather than the standard A4 invoice
       const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
       const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
-      pdfUrl = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
-
-      if (pdfUrl) {
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        iframe.style.visibility = 'hidden';
-        iframe.src = pdfUrl;
-
-        iframe.onload = () => {
-          iframe.focus();
-          try {
-            iframe.contentWindow?.print();
-          } catch (e) {
-            console.error("Direct printing failed, opening in new tab:", e);
-            window.open(pdfUrl, '_blank');
-          }
-          setTimeout(() => {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-            window.URL.revokeObjectURL(pdfUrl);
-          }, 60000);
-        };
-
-        document.body.appendChild(iframe);
+      const receipt = new Blob([pdfRes.data], { type: 'application/pdf' });
+      try {
+        const mode = await printPdfBlob(receipt);
+        toast.success(mode === 'direct' ? 'Receipt sent to thermal printer' : 'Receipt opened in print dialog');
+      } catch (directError: any) {
+        console.error('Direct receipt print failed, using browser print:', directError);
+        await printPdfBlob(receipt, { direct: false });
+        toast.error('Direct printer was unavailable. Receipt opened in the browser print dialog.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error('Receipt/Invoice PDF could not be generated');
+      toast.error(err?.response?.data?.error || 'Receipt PDF could not be generated');
     }
   };
 
@@ -258,8 +254,8 @@ export default function BillingScreen() {
         return;
       }
       
-      // Ctrl + Enter to Checkout
-      if (e.ctrlKey && e.key === 'Enter') {
+      // Ctrl + Enter or F10 to Checkout
+      if ((e.ctrlKey && e.key === 'Enter') || e.key === 'F10') {
         e.preventDefault();
         handleCheckout();
         return;
@@ -304,65 +300,67 @@ export default function BillingScreen() {
     addItemRef.current = addItem;
   }, [addItem]);
 
+  useEffect(() => {
+    lookupBarcodeRef.current = async (rawCode: string, source = 'Scanner') => {
+      const code = String(rawCode || '').trim();
+      if (!code) return;
+      const now = Date.now();
+      if (lastProcessedScanRef.current.code === code && now - lastProcessedScanRef.current.at < 400) {
+        return;
+      }
+      lastProcessedScanRef.current = { code, at: now };
+      try {
+        const res = await api.get(`/items/barcode/${encodeURIComponent(code)}`, {
+          params: { godown_id: selectedGodownId || undefined },
+        });
+        const item = res.data?.data || res.data;
+        if (!item) throw new Error('Item not found');
+        addItemRef.current?.(item);
+        setSearchQuery('');
+        toast.success(`${source}: ${item.name}`);
+      } catch (err: any) {
+        toast.error(err.response?.data?.error || `Barcode not found: ${code}`);
+      }
+    };
+  }, [selectedGodownId]);
+
   // USB Barcode Scanner global keyboard intercept
   useEffect(() => {
     let buffer = '';
-    let lastKeyTime = Date.now();
+    let firstKeyTime = 0;
+    let lastKeyTime = 0;
 
-    const handleGlobalKeyDown = async (e: KeyboardEvent) => {
-      // Ignore modifier keys
-      if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta') {
-        return;
-      }
+    const reset = () => {
+      buffer = '';
+      firstKeyTime = 0;
+      lastKeyTime = 0;
+    };
 
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const currentTime = Date.now();
-      const timeDiff = currentTime - lastKeyTime;
-      lastKeyTime = currentTime;
-
-      // Handle Enter (end of barcode scan)
-      if (e.key === 'Enter') {
-        if (buffer.length >= 3 && timeDiff < 40) {
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        const elapsed = firstKeyTime ? currentTime - firstKeyTime : Number.POSITIVE_INFINITY;
+        const averageGap = buffer.length > 1 ? elapsed / (buffer.length - 1) : elapsed;
+        if (buffer.length >= 3 && elapsed <= 2_500 && averageGap <= 120) {
           e.preventDefault();
           e.stopPropagation();
           const code = buffer.trim();
-          buffer = '';
-
-          try {
-            const res = await api.get(`/items/barcode/${encodeURIComponent(code)}`);
-            const item = res.data?.data || res.data;
-            if (item) {
-              addItemRef.current(item);
-              toast.success(`Scanned: ${item.name}`);
-              
-              // Clear search input if focused
-              setSearchQuery('');
-              
-              // Clean up active input field if the barcode was typed in it
-              const activeEl = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
-              if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
-                const val = activeEl.value;
-                if (val.endsWith(code)) {
-                  activeEl.value = val.slice(0, -code.length);
-                  const event = new Event('input', { bubbles: true });
-                  activeEl.dispatchEvent(event);
-                }
-              }
-            }
-          } catch (err: any) {
-            toast.error(err.response?.data?.error || `Barcode not found: ${code}`);
-          }
+          reset();
+          void lookupBarcodeRef.current(code, 'Scanned');
+          return;
         }
-        buffer = '';
+        reset();
         return;
       }
 
-      // If time delta is too high, it's manual human typing
-      if (timeDiff > 40) {
-        buffer = '';
-      }
-
       if (e.key.length === 1) {
+        if (!firstKeyTime || currentTime - lastKeyTime > 120) {
+          buffer = '';
+          firstKeyTime = currentTime;
+        }
         buffer += e.key;
+        lastKeyTime = currentTime;
       }
     };
 
@@ -384,17 +382,7 @@ export default function BillingScreen() {
         if (data.status === 'connected') {
           setIsMobileConnected(true);
         } else if (data.barcode) {
-          const code = data.barcode;
-          try {
-            const res = await api.get(`/items/barcode/${encodeURIComponent(code)}`);
-            const item = res.data?.data || res.data;
-            if (item) {
-              addItemRef.current(item);
-              toast.success(`Mobile Scanned: ${item.name}`);
-            }
-          } catch (err: any) {
-            toast.error(err.response?.data?.error || `Mobile barcode not found: ${code}`);
-          }
+          void lookupBarcodeRef.current(data.barcode, 'Mobile scan');
         }
       } catch (err) {
         console.error('Error processing mobile scan event:', err);
@@ -447,18 +435,7 @@ export default function BillingScreen() {
         return;
       }
       if (searchQuery) {
-        try {
-          const res = await api.get(`/items/barcode/${encodeURIComponent(searchQuery)}`);
-          const item = res.data?.data || res.data;
-          if (item) {
-            addItem(item);
-            setSearchQuery('');
-            toast.success('Item added');
-            return;
-          }
-        } catch (err: any) {
-          toast.error(err.response?.data?.error || 'Item not found');
-        }
+        await lookupBarcodeRef.current(searchQuery, 'Added');
       }
     }
   };
@@ -466,8 +443,20 @@ export default function BillingScreen() {
   function addItem(item: any) {
     setBillItems(prev => {
       const existing = prev.find(i => i.item_id === item.id);
+      const tracked = item.track_inventory !== false && item.item_type !== 'service';
+      const available = item.available_stock == null && item.total_stock == null
+        ? undefined
+        : Number(item.available_stock ?? item.total_stock ?? 0);
       if (existing) {
+        if (tracked && available != null && existing.quantity + 1 > available) {
+          toast.error(`Only ${available} ${item.unit || 'units'} available for ${item.name}`);
+          return prev;
+        }
         return prev.map(i => i.item_id === item.id ? updateCommputed({ ...i, quantity: i.quantity + 1 }) : i);
+      }
+      if (tracked && available != null && available < 1) {
+        toast.error(`${item.name} is out of stock in the selected godown`);
+        return prev;
       }
       return [...prev, updateCommputed({
         item_id: item.id,
@@ -476,6 +465,8 @@ export default function BillingScreen() {
         hsn_code: item.hsn_code,
         item_type: item.item_type,
         track_inventory: item.track_inventory,
+        unit: item.unit || item.unit_name || 'PCS',
+        available_stock: available,
         quantity: 1,
         unit_price: item.unit_price || item.selling_price || 0,
         gst_rate: item.gst_rate || 0,
@@ -488,6 +479,14 @@ export default function BillingScreen() {
 
   const updateItem = (index: number, changes: Partial<BillItem>) => {
     const newItems = [...billItems];
+    const current = newItems[index];
+    if (changes.quantity != null && current.track_inventory !== false && current.item_type !== 'service') {
+      const requested = Math.max(0.001, Number(changes.quantity) || 1);
+      if (current.available_stock != null && requested > current.available_stock) {
+        toast.error(`Only ${current.available_stock} ${current.unit || 'units'} available for ${current.name}`);
+        changes = { ...changes, quantity: current.available_stock };
+      }
+    }
     newItems[index] = updateCommputed({ ...newItems[index], ...changes });
     setBillItems(newItems);
   };
@@ -508,7 +507,17 @@ export default function BillingScreen() {
   // Note: POS often strictly considers CGST/SGST by default. Interstate can be toggled by party selection. We assume Intra.
   const totalTax = billItems.reduce((acc, i) => acc + Math.round(i.taxable * i.gst_rate / 100), 0);
   const rawTotal = taxable + totalTax - discountTotal;
-  const grandTotal = Math.max(0, Math.round(rawTotal / 100) * 100); // nearest rupee in paise
+  const roundOffEnabled = transactionConfig?.settings?.roundOffTotal !== false;
+  const roundToPaise = [1, 10, 100].includes(Number(transactionConfig?.settings?.roundOffTo))
+    ? Number(transactionConfig.settings.roundOffTo) * 100
+    : 100;
+  const roundMode = transactionConfig?.settings?.roundOffType || 'NEAREST';
+  const rounded = roundMode === 'FLOOR'
+    ? Math.floor(rawTotal / roundToPaise) * roundToPaise
+    : roundMode === 'CEIL'
+      ? Math.ceil(rawTotal / roundToPaise) * roundToPaise
+      : Math.round(rawTotal / roundToPaise) * roundToPaise;
+  const grandTotal = Math.max(0, roundOffEnabled ? rounded : rawTotal);
   const roundOff = grandTotal - rawTotal;
 
   // Submit Pipeline
@@ -518,6 +527,7 @@ export default function BillingScreen() {
         item_id: b.item_id,
         item_name: b.name,
         hsn_code: b.hsn_code,
+        unit: b.unit || 'PCS',
         quantity: b.quantity,
         unit_price: b.unit_price,
         gst_rate: b.gst_rate,
@@ -529,21 +539,31 @@ export default function BillingScreen() {
           : amountTendered === ''
             ? grandTotal
             : Math.round(Number(amountTendered) * 100);
+      const paidPaise = paymentMode === 'credit' ? 0 : Math.min(grandTotal, Math.max(0, tenderPaise));
+      const payments = paidPaise > 0 ? [{
+        amount: paidPaise,
+        payment_mode: paymentMode,
+      }] : [];
       const payload: Record<string, unknown> = {
         invoice_type: 'tax_invoice',
+        is_gst_invoice: true,
         is_interstate: false,
+        transaction_source: 'pos',
+        godown_id: selectedGodownId,
         items: itemsPayload,
         discount_amount: discountTotal,
-        payments: [
-          {
-            amount: tenderPaise,
-            payment_mode: paymentMode,
-          }
-        ],
-        amount_paid: tenderPaise,
+        round_off_enabled: roundOffEnabled,
+        payments,
+        amount_paid: paidPaise,
         payment_mode: paymentMode,
         party_name: customerInfo.name,
         party_phone: customerInfo.phone || undefined,
+        custom_fields: {
+          pos: {
+            tendered_amount: tenderPaise,
+            change_amount: Math.max(0, tenderPaise - grandTotal),
+          },
+        },
       };
       if (customerInfo.id) payload.party_id = customerInfo.id;
       if (companyBankAccountId) payload.company_bank_account_id = companyBankAccountId;
@@ -569,19 +589,44 @@ export default function BillingScreen() {
       }));
 
       setLastCreatedInvoiceId(id);
-      setCompletedInvoice({ ...inv, items: itemsSnapshot });
+      const tenderPaise =
+        paymentMode === 'credit'
+          ? 0
+          : amountTendered === ''
+            ? grandTotal
+            : Math.round(Number(amountTendered) * 100);
+      setCompletedInvoice({
+        ...inv,
+        items: itemsSnapshot,
+        paid_amount: paymentMode === 'credit' ? 0 : Math.min(grandTotal, Math.max(0, tenderPaise)),
+        tendered_amount: tenderPaise,
+        change_amount: Math.max(0, tenderPaise - grandTotal),
+      });
       
       setBillItems([]);
       setSearchQuery('');
       setAmountTendered('');
       setCustomerInfo({ name: 'Walk-in Customer' });
+      qc.invalidateQueries({ queryKey: ['stock'] });
+      qc.invalidateQueries({ queryKey: ['billingSearch'] });
       searchInputRef.current?.focus();
+
+      const directPrint = readStorageWithLegacy(
+        STORAGE_KEYS.directThermalPrint,
+        LEGACY_STORAGE_KEYS.directThermalPrint,
+      ) === 'true';
+      if (id && directPrint) {
+        void handlePrintReceipt(id);
+      }
     },
     onError: (err: any) => toast.error(err.response?.data?.error || 'Failed to generate bill')
   });
 
   const handleCheckout = () => {
     if (billItems.length === 0) return toast.error('Bill is empty');
+    if (!selectedGodownId && billItems.some((item) => item.track_inventory !== false && item.item_type !== 'service')) {
+      return toast.error('Select a godown before billing stock items');
+    }
     if (paymentMode === 'upi') {
       setShowQrModal(true);
     } else {
@@ -597,6 +642,29 @@ export default function BillingScreen() {
           
           {/* Search Bar Segment */}
           <div className="p-3 border-b flex gap-2 items-center bg-muted/20 relative z-30">
+            <select
+              value={selectedGodownId}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (next === selectedGodownId) return;
+                if (billItems.length) {
+                  setBillItems([]);
+                  toast.success('Cart cleared because the billing godown changed');
+                }
+                setSelectedGodownId(next);
+                setSearchQuery('');
+              }}
+              className="h-12 max-w-[180px] rounded-md border bg-background px-3 text-sm font-medium"
+              aria-label="Billing godown"
+              title="Stock will be deducted from this godown"
+            >
+              <option value="">Select godown</option>
+              {godowns.map((godown: any) => (
+                <option key={godown.id} value={godown.id}>
+                  {godown.name}{godown.is_default ? ' (Default)' : ''}
+                </option>
+              ))}
+            </select>
             <div className="relative flex-1 z-40">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
@@ -703,11 +771,19 @@ export default function BillingScreen() {
                     <div style={style} className="grid grid-cols-[1fr_8rem_6rem_6rem_8rem_3rem] items-center border-b hover:bg-muted/50 py-2 px-4 transition-colors">
                       <div>
                         <div className="font-bold truncate max-w-[200px]">{item.name}</div>
-                        <div className="text-xs text-muted-foreground">GST {item.gst_rate}%</div>
+                        <div className="text-xs text-muted-foreground">
+                          GST {item.gst_rate}%
+                          {item.available_stock != null && item.track_inventory !== false
+                            ? ` · Stock ${item.available_stock} ${item.unit || ''}`
+                            : ''}
+                        </div>
                       </div>
                       <div className="flex items-center justify-center bg-background border rounded-md overflow-hidden shadow-sm max-w-[100px] mx-auto">
                         <button className="px-2 py-1 hover:bg-muted" onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })}><Minus className="h-3 w-3"/></button>
                         <Input 
+                          type="number"
+                          min="0.001"
+                          step="any"
                           value={item.quantity} 
                           onChange={e => updateItem(index, { quantity: Number(e.target.value) || 1 })} 
                           className="w-10 h-8 text-center border-0 p-0 focus-visible:ring-0" 
@@ -937,9 +1013,7 @@ export default function BillingScreen() {
         isOpen={isScannerOpen} 
         onClose={() => setScannerOpen(false)} 
         onScan={(code) => {
-           setSearchQuery(code);
-           // Mimic keyboard ENTER payload behavior via state sync timeout 
-           setTimeout(() => handleSearchKeyPress({ key: 'Enter' } as any), 50);
+           void lookupBarcodeRef.current(code, 'Camera scan');
         }} 
       />
 
@@ -957,6 +1031,10 @@ export default function BillingScreen() {
             track_inventory: row.track_inventory !== false,
             unit_price: Number(row.selling_price ?? 0),
             gst_rate: Number(row.gst_rate ?? 0),
+            unit: String(row.unit ?? row.unit_name ?? 'PCS'),
+            available_stock: row.track_inventory === false
+              ? undefined
+              : Number(row.opening_stock ?? 0),
           });
         }}
       />
@@ -1066,7 +1144,7 @@ export default function BillingScreen() {
           invoice={completedInvoice}
           company={companyData || { name: useAuthStore?.getState?.()?.company?.name || 'My Company' }}
           items={completedInvoice.items || billItems}
-          widthMm={localStorage.getItem('bizflow_printer_type') === 'thermal58' ? 58 : 80}
+          widthMm={readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? 58 : 80}
           onClose={() => setCompletedInvoice(null)}
           onPrint={() => handlePrintReceipt(completedInvoice.id)}
         />

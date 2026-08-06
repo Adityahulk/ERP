@@ -6,4 +6,4 @@ import { startScheduledWorkers } from './jobs/registerWorkers';
 const connection = createRedisConnection();
 startScheduledWorkers(connection);
 
-logger.info('BizFlow worker process started (BullMQ listeners active)');
+logger.info('Microtechnique Accounts worker process started (BullMQ listeners active)');

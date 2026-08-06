@@ -1,4 +1,4 @@
-# BizFlow — Smart Accounts for Indian Businesses
+# Microtechnique Accounts — Smart Accounts for Indian Businesses
 
 A comprehensive business management platform built for Indian MSMEs — traders, retailers, manufacturers, distributors, and service businesses. Direct competitor to Vyapar.
 
@@ -99,7 +99,7 @@ Starts stub processors for scheduled queues (`overdueInvoiceReminder`, `lowStock
 2. Clone repo, configure `backend/.env` (strong JWT secrets, `DATABASE_URL`, `REDIS_URL`).
 3. Run `deploy.sh` from the repo root (adjust paths/sudo as needed), or manually:
    - `cd backend && npm ci && npm run build && npm run migrate`
-   - `cd frontend && npm ci && npm run build` and sync `frontend/dist` to nginx `root` (e.g. `/var/www/bizflow`).
+   - `cd frontend && npm ci && npm run build` and sync `frontend/dist` to nginx `root` (for example, the configured web root on your server).
 4. `pm2 reload ecosystem.config.js --env production` — runs API (cluster) + `worker.js`.
 
 Docker production: `docker compose up -d --build` after setting `backend/.env`. Backend image runs `node dist/server.js` with Chromium for PDFs.

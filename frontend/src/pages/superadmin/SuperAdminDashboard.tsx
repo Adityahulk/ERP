@@ -52,6 +52,8 @@ export default function SuperAdminDashboard() {
   }
 
   const stats = [
+    { label: 'Registrations', value: data.total_registrants },
+    { label: 'New leads', value: data.new_leads },
     { label: 'Total licenses', value: data.total_licenses },
     { label: 'Pending', value: data.pending_licenses },
     { label: 'Active', value: data.active_licenses },
@@ -68,7 +70,7 @@ export default function SuperAdminDashboard() {
         <p className="text-slate-500 text-sm mt-1">Licenses, tenants, and platform activity.</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {stats.map((s) => (
           <div key={s.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{s.label}</p>

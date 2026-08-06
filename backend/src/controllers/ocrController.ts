@@ -3,6 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { success, error } from '../lib/response';
 import { query } from '../config/db';
 
@@ -27,6 +29,7 @@ export const ocrUpload = multer({
 // ── Regex helpers ──────────────────────────────────────────────
 const GSTIN_RE = /\b(\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/g;
 const MONEY_RE = /(?:₹|rs\.?|inr)?\s*[\d,]+(?:\.\d{1,2})?/i;
+const execFileAsync = promisify(execFile);
 
 const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
@@ -49,20 +52,35 @@ interface OcrItemCandidate {
   unit: string | null;
   rate_paise: number | null;
   amount_paise: number | null;
+  discount_paise?: number | null;
+  gst_rate?: number | null;
+  cess_rate?: number | null;
   confidence: number;
   source: string;
+}
+
+interface OcrTaxSummary {
+  taxable_amount_paise: number | null;
+  cgst_paise: number | null;
+  sgst_paise: number | null;
+  igst_paise: number | null;
+  cess_paise: number | null;
+  discount_paise: number | null;
+  round_off_paise: number | null;
+  gst_rate: number | null;
 }
 
 /** Normalise a raw date string into YYYY-MM-DD */
 function parseRawDate(raw: string): string | null {
   raw = raw.trim();
 
-  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-  let m = raw.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY (two digit years are common on invoices)
+  let m = raw.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2}|\d{4})$/);
   if (m) {
     const [, d, mo, y] = m;
+    const year = y.length === 2 ? `20${y}` : y;
     if (+mo >= 1 && +mo <= 12 && +d >= 1 && +d <= 31)
-      return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      return `${year}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
 
   // YYYY-MM-DD or YYYY/MM/DD
@@ -74,11 +92,12 @@ function parseRawDate(raw: string): string | null {
   }
 
   // DD Mon YYYY or D Mon YYYY
-  m = raw.match(/^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+(\d{4})$/i);
+  m = raw.match(/^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+(\d{2}|\d{4})$/i);
   if (m) {
     const [, d, mon, y] = m;
     const mo = MONTHS[mon.toLowerCase().slice(0, 3)];
-    if (mo) return `${y}-${mo}-${d.padStart(2, '0')}`;
+    const year = y.length === 2 ? `20${y}` : y;
+    if (mo) return `${year}-${mo}-${d.padStart(2, '0')}`;
   }
 
   return null;
@@ -117,7 +136,7 @@ function detectDocumentType(text: string, context: string): OcrDocumentType {
 /** Pull the first date that appears after a date keyword. Falls back to any date in the text. */
 function extractDate(text: string): string | null {
   const keywordPat =
-    /(?:date|bill\s*date|invoice\s*date|dated?)\s*[:\-]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})/gi;
+    /(?:date|bill\s*date|invoice\s*date|dated?)\s*[:\-]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{2,4})/gi;
   let m = keywordPat.exec(text);
   if (m) {
     const d = parseRawDate(m[1]);
@@ -126,7 +145,7 @@ function extractDate(text: string): string | null {
 
   // Fallback: first standalone date anywhere
   const anyDate =
-    /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})\b/gi;
+    /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{2,4})\b/gi;
   for (const match of text.matchAll(anyDate)) {
     const d = parseRawDate(match[1]);
     if (d) return d;
@@ -139,12 +158,12 @@ function extractDateCandidates(text: string, lines: string[]): OcrCandidate<stri
   const seen = new Set<string>();
   const patterns = [
     {
-      re: /(?:invoice\s*date|bill\s*date|date\s*of\s*invoice|dated?)\s*[:\-]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})/gi,
+      re: /(?:invoice\s*date|bill\s*date|date\s*of\s*invoice|dated?)\s*[:\-]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{2,4})/gi,
       score: 0.92,
       reason: 'date_label',
     },
     {
-      re: /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{4})\b/gi,
+      re: /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,]+\d{2,4})\b/gi,
       score: 0.62,
       reason: 'standalone_date',
     },
@@ -386,6 +405,109 @@ function parseAmountToPaise(raw: string): number | null {
   if (v > 10000000) return null;
 
   return Math.round(v * 100);
+}
+
+function parseLooseAmount(raw: string | undefined): number | null {
+  return raw ? parseAmountToPaise(raw) : null;
+}
+
+function extractLabeledValue(lines: string[], labels: RegExp[], maxNextLines = 1): string | null {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const label = labels.find((pattern) => pattern.test(line));
+    if (!label) continue;
+
+    const inline = line
+      .replace(label, '')
+      .replace(/^[\s:#\-–—]+/, '')
+      .trim();
+    if (inline && !/^(?:no\.?|number|date|details?)$/i.test(inline)) return inline.slice(0, 240);
+
+    for (let offset = 1; offset <= maxNextLines; offset += 1) {
+      const next = lines[index + offset]?.trim();
+      if (!next || /^(?:bill\s*to|ship\s*to|buyer|consignee|items?|description|qty|quantity)$/i.test(next)) continue;
+      return next.slice(0, 240);
+    }
+  }
+  return null;
+}
+
+function extractAddressBlock(lines: string[], labels: RegExp[], ownCompanyName?: string | null): string | null {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!labels.some((pattern) => pattern.test(lines[index]))) continue;
+    const block: string[] = [];
+    const inline = lines[index].replace(labels.find((pattern) => pattern.test(lines[index]))!, '').replace(/^[\s:#\-–—]+/, '').trim();
+    if (inline && inline.length > 3 && !isNoiseLine(inline)) block.push(inline);
+    for (let offset = 1; offset <= 5; offset += 1) {
+      const next = lines[index + offset]?.trim();
+      if (!next) break;
+      if (/^(?:bill\s*to|ship\s*to|buyer|consignee|invoice\s*(?:no|number)|items?|description|qty|quantity|total|tax|gstin|gst\s*no)/i.test(next)) break;
+      if (isLikelyCompanyOwnLine(next, ownCompanyName) || /^(?:name|party)\s*[:\-]?$/i.test(next)) continue;
+      block.push(next);
+    }
+    if (block.length) return block.join(', ').replace(/\s+,/g, ',').slice(0, 500);
+  }
+  return null;
+}
+
+function extractPhone(lines: string[]): string | null {
+  for (const line of lines) {
+    if (!/phone|mobile|contact|tel/i.test(line)) continue;
+    const number = line.match(/(?:\+91[\s-]?)?[6-9]\d{9}|\b\d{10}\b/);
+    if (number) return number[0].replace(/\s|-/g, '');
+  }
+  return null;
+}
+
+function extractTaxSummary(lines: string[]): OcrTaxSummary {
+  const amountFor = (label: string) => {
+    for (const line of lines) {
+      const match = line.match(new RegExp(`\\b${label}\\b(?:\\s*@?\\s*\\d+(?:\\.\\d+)?%?)?[^\\d₹]{0,24}(?:₹|Rs\\.?|INR)?\\s*([\\d,]+(?:\\.\\d{1,2})?)`, 'i'));
+      if (match?.[1]) return parseLooseAmount(match[1]);
+    }
+    return null;
+  };
+  const rateLine = lines.find((line) => /(?:cgst|sgst|igst)\s*@?\s*\d+(?:\.\d+)?%/i.test(line));
+  const rateMatch = rateLine?.match(/(?:cgst|sgst|igst)\s*@?\s*(\d+(?:\.\d+)?)%/i);
+  const componentRate = rateMatch ? Number(rateMatch[1]) : null;
+  const cgst = amountFor('cgst');
+  const sgst = amountFor('sgst|utgst');
+  const igst = amountFor('igst');
+  return {
+    taxable_amount_paise: amountFor('taxable(?:\\s+value|\\s+amount)?'),
+    cgst_paise: cgst,
+    sgst_paise: sgst,
+    igst_paise: igst,
+    cess_paise: amountFor('cess'),
+    discount_paise: amountFor('discount'),
+    round_off_paise: amountFor('round\\s*off'),
+    gst_rate: componentRate == null ? null : (igst != null ? componentRate : componentRate * 2),
+  };
+}
+
+function extractReferenceFields(lines: string[]) {
+  const date = (labels: RegExp[]) => {
+    const value = extractLabeledValue(lines, labels);
+    return value ? parseRawDate(value.match(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}[\s,]+\d{4}/)?.[0] || '') : null;
+  };
+  return {
+    eway_bill_no: extractLabeledValue(lines, [/e[-\s]?way\s*bill\s*(?:no\.?|number)?/i]),
+    delivery_note: extractLabeledValue(lines, [/delivery\s*note(?!\s*date)/i]),
+    mode_terms_payment: extractLabeledValue(lines, [/(?:mode|terms?)\s*(?:of\s*)?payment/i]),
+    reference_no_date: extractLabeledValue(lines, [/reference\s*(?:no\.?|number)?(?:\s*(?:&|and)\s*date)?/i]),
+    other_references: extractLabeledValue(lines, [/other\s*references?/i]),
+    buyer_order_no: extractLabeledValue(lines, [/(?:buyer'?s?|customer'?s?)\s*order\s*(?:no\.?|number)?/i]),
+    buyer_order_date: date([/(?:buyer'?s?|customer'?s?)\s*order\s*date/i]),
+    dispatch_doc_no: extractLabeledValue(lines, [/dispatch\s*(?:doc(?:ument)?|note)\s*(?:no\.?|number)?/i]),
+    delivery_note_date: date([/delivery\s*note\s*date/i]),
+    dispatched_through: extractLabeledValue(lines, [/dispatched\s*(?:through|via)/i]),
+    destination: extractLabeledValue(lines, [/destination/i]),
+    vessel_flight_no: extractLabeledValue(lines, [/(?:vessel|flight)\s*(?:no\.?|number)?/i]),
+    receipt_by_shipper: extractLabeledValue(lines, [/place\s*of\s*receipt\s*by\s*shipper/i]),
+    port_loading: extractLabeledValue(lines, [/(?:city|port)\s*of\s*loading/i]),
+    port_discharge: extractLabeledValue(lines, [/(?:city|port)\s*of\s*discharge/i]),
+    terms_delivery: extractLabeledValue(lines, [/terms?\s*of\s*delivery/i]),
+  };
 }
 
 /** Extract largest "total" amount in paise */
@@ -750,7 +872,6 @@ function formatOcrDescription(desc: string): string {
 }
 
 function extractItemCandidates(lines: string[]): OcrItemCandidate[] {
-  console.log("ITEM LINES:", lines);
   const itemRows: OcrItemCandidate[] = [];
   let tableStarted = false;
 
@@ -809,6 +930,82 @@ function extractItemCandidates(lines: string[]): OcrItemCandidate[] {
   return itemRows;
 }
 
+/**
+ * A tolerant item-table parser for real world GST bills. It deliberately does
+ * not assume a fixed column order: vendor layouts often include Sl No., HSN,
+ * unit and tax columns in different positions.
+ */
+function extractItemCandidatesV2(lines: string[], documentGstRate: number | null): OcrItemCandidate[] {
+  const results: OcrItemCandidate[] = [];
+  let inTable = false;
+  let pendingDescription = '';
+  const unitPattern = /\b(?:PCS?|NOS?|KGS?|KG|GMS?|GM|LTRS?|LIT(?:RE|ER)?S?|MTRS?|METERS?|BOX(?:ES)?|BAGS?|SETS?|HRS?|HOURS?|DAYS?)\b/i;
+
+  const isHeader = (line: string) =>
+    /(?:item|description|particulars?|goods|product|service)/i.test(line) &&
+    /(?:qty|quantity|rate|price|amount|total|unit)/i.test(line);
+
+  for (const line of lines) {
+    if (!inTable) {
+      if (isHeader(line)) inTable = true;
+      continue;
+    }
+    if (/^(?:sub\s*total|grand\s*total|total\s*(?:amount)?|cgst|sgst|igst|round\s*off|terms|bank|amount\s*in\s*words|taxable\s*value)/i.test(line)) break;
+
+    const tokens = [...line.matchAll(/(?:₹|rs\.?|inr)?\s*\d[\d,]*(?:\.\d{1,2})?/gi)]
+      .map((match) => Number(match[0].replace(/[^\d.]/g, '').replace(/,(?=\d{3}\b)/g, '')))
+      .filter(Number.isFinite);
+    if (tokens.length < 3) {
+      if (!/\d/.test(line) && line.length >= 2 && line.length <= 140 && !/^(?:hsn|sac|unit|rate|quantity|amount)$/i.test(line)) {
+        pendingDescription = `${pendingDescription} ${line}`.trim().slice(0, 160);
+      }
+      continue;
+    }
+
+    const amount = tokens[tokens.length - 1];
+    let best: { qty: number; rate: number; error: number } | null = null;
+    for (let quantityIndex = 0; quantityIndex < tokens.length - 1; quantityIndex += 1) {
+      for (let rateIndex = 0; rateIndex < tokens.length - 1; rateIndex += 1) {
+        if (quantityIndex === rateIndex) continue;
+        const quantity = tokens[quantityIndex];
+        const rate = tokens[rateIndex];
+        if (quantity <= 0 || rate <= 0 || quantity > 1_000_000 || rate > 10_000_000) continue;
+        const taxableError = Math.abs((quantity * rate) - amount) / Math.max(amount, 1);
+        const grossError = documentGstRate && documentGstRate > 0
+          ? Math.abs((quantity * rate * (1 + documentGstRate / 100)) - amount) / Math.max(amount, 1)
+          : taxableError;
+        const error = Math.min(taxableError, grossError);
+        if (!best || error < best.error) best = { qty: quantity, rate, error };
+      }
+    }
+    if (!best || best.error > 0.06) continue;
+
+    const hsnCode = line.match(/\b\d{4,8}\b/)?.[0] || null;
+    const unit = line.match(unitPattern)?.[0]?.toUpperCase() || 'PCS';
+    const description = formatOcrDescription(`${pendingDescription} ${line
+      .replace(/(?:₹|rs\.?|inr)?\s*\d[\d,]*(?:\.\d{1,2})?/gi, ' ')
+      .replace(unitPattern, ' ')
+      .replace(/[|_]+/g, ' ')}`)
+      .replace(/^[\s,.:;\-\\/_#+*!?&()]+|[\s,.:;\-\\/_#+*!?&()]+$/g, '')
+      .trim();
+    if (!description || /^(?:total|subtotal|taxable|amount)$/i.test(description)) continue;
+
+    results.push({
+      description: description.slice(0, 160),
+      hsn_code: hsnCode,
+      quantity: best.qty,
+      unit,
+      rate_paise: Math.round(best.rate * 100),
+      amount_paise: Math.round(amount * 100),
+      gst_rate: documentGstRate,
+      confidence: clampConfidence(0.9 - Math.min(best.error, 0.15)),
+      source: line,
+    });
+    pendingDescription = '';
+  }
+  return results;
+}
+
 function buildWarnings(args: {
   docType: OcrDocumentType;
   invoiceNumber: string | null;
@@ -850,7 +1047,9 @@ async function extractInvoiceData(rawText: string, companyId: string, opts: { ow
   const dateCandidates = extractDateCandidates(text, lines);
   const numberCandidates = extractInvoiceNumberCandidates(lines);
   const totalCandidates = extractTotalCandidates(lines);
-  const itemCandidates = extractItemCandidates(lines);
+  const taxSummary = extractTaxSummary(lines);
+  const parsedItems = extractItemCandidatesV2(lines, taxSummary.gst_rate);
+  const itemCandidates = parsedItems.length > 0 ? parsedItems : extractItemCandidates(lines);
   const supplierGstin = pickBest(gstinCandidates.filter(c => c.value !== ownGstin))?.value
     ?? choosePartyGstin(lines, uniqueGstins, ownGstin, context)
     ?? partyGstins[0]
@@ -859,6 +1058,14 @@ async function extractInvoiceData(rawText: string, companyId: string, opts: { ow
   const bestDate = pickBest(dateCandidates);
   const bestNumber = pickBest(numberCandidates);
   const bestTotal = pickBest(totalCandidates);
+  const dueDateRaw = extractLabeledValue(lines, [/due\s*date/i, /payment\s*due/i]);
+  const dueDate = dueDateRaw
+    ? parseRawDate(dueDateRaw.match(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}\s+[A-Za-z]{3,9}[\s,]+\d{2,4}/)?.[0] || '')
+    : null;
+  const placeOfSupply = extractLabeledValue(lines, [/place\s*of\s*supply/i, /state\s*(?:code|name)/i]);
+  const partyAddress = extractAddressBlock(lines, [/bill\s*to/i, /buyer(?:\s*\(bill\s*to\))?/i, /customer/i], opts.ownCompanyName);
+  const shippingAddress = extractAddressBlock(lines, [/ship\s*to/i, /consignee/i, /delivery\s*address/i], opts.ownCompanyName);
+  const referenceInvoice = extractReferenceFields(lines);
   const base = {
     invoice_number: bestNumber?.value ?? extractInvoiceNumber(lines),
     bill_date: bestDate?.value ?? extractDate(text),
@@ -866,6 +1073,13 @@ async function extractInvoiceData(rawText: string, companyId: string, opts: { ow
     supplier_gstin: supplierGstin,
     buyer_gstin: ownGstin || partyGstins[1] || uniqueGstins[1] || null,
     total_amount_paise: bestTotal?.value ?? extractTotal(lines),
+    due_date: dueDate,
+    party_address: partyAddress,
+    shipping_address: shippingAddress,
+    party_phone: extractPhone(lines),
+    place_of_supply: placeOfSupply,
+    tax_summary: taxSummary,
+    reference_invoice: referenceInvoice,
     raw_lines: lines.slice(0, 60),
   };
 
@@ -925,8 +1139,29 @@ export async function extractOcrData(req: Request, res: Response) {
   if (!file) return res.status(400).json(error('No file uploaded'));
 
   let text = '';
+  let renderedPdfPath: string | null = null;
   try {
     const ext = path.extname(file.originalname).toLowerCase();
+
+    const recognizeImage = async (imagePath: string) => {
+      // Tesseract's automatic page segmentation is substantially more reliable
+      // for photographed invoices than its default sparse-text behaviour.
+      // Keeping spaces tells the table parser where columns were detected.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { createWorker } = require('tesseract.js');
+      const worker = await createWorker('eng', 1, { logger: () => {} });
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: '3',
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300',
+        });
+        const { data } = await worker.recognize(imagePath);
+        return data.text ?? '';
+      } finally {
+        await worker.terminate();
+      }
+    };
 
     if (ext === '.pdf') {
       // pdf-parse v2: PDFParse({ data }) + getText() — there is no .parse() on the instance
@@ -940,14 +1175,21 @@ export async function extractOcrData(req: Request, res: Response) {
       } finally {
         await parser.destroy();
       }
+      // PDFs from phone scanners are frequently image-only. Use the embedded
+      // text when useful, otherwise rasterise page one at 300 DPI and OCR it.
+      if (text.replace(/\s/g, '').length < 40) {
+        const outputBase = path.join(os.tmpdir(), `ocr_pdf_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+        try {
+          await execFileAsync('pdftoppm', ['-f', '1', '-l', '1', '-r', '300', '-png', '-singlefile', file.path, outputBase]);
+          renderedPdfPath = `${outputBase}.png`;
+          text = await recognizeImage(renderedPdfPath);
+        } catch {
+          // Keep the text extraction result so the user receives a clear
+          // response instead of masking a missing optional Poppler utility.
+        }
+      }
     } else {
-      // Image → Tesseract OCR
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { createWorker } = require('tesseract.js');
-      const worker = await createWorker('eng', 1, { logger: () => { } });
-      const { data } = await worker.recognize(file.path);
-      text = data.text ?? '';
-      await worker.terminate();
+      text = await recognizeImage(file.path);
     }
 
     if (!text.trim()) {
@@ -967,5 +1209,6 @@ export async function extractOcrData(req: Request, res: Response) {
     res.status(500).json(error('OCR extraction failed: ' + err.message));
   } finally {
     fs.unlink(file.path).catch(() => { });
+    if (renderedPdfPath) fs.unlink(renderedPdfPath).catch(() => { });
   }
 }

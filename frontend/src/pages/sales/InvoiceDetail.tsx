@@ -14,6 +14,7 @@ import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, P
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeRole } from '@/lib/roles';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import {
   useCancelEinvoice,
   useCancelEwayBill,
@@ -246,7 +247,7 @@ export default function InvoiceDetail() {
   const attachmentUrl = (url?: string) => (url && String(url).startsWith('http') ? url : `${uploadsBase}${url || ''}`);
 
   const handlePrintReceipt = async (id: string) => {
-    const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
+    const printer = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) || 'a4';
     let pdfUrl = '';
     try {
       const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
@@ -289,7 +290,7 @@ export default function InvoiceDetail() {
   };
 
   const openReceiptPdf = async () => {
-    const w = localStorage.getItem('bizflow_printer_type');
+    const w = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType);
     const width = w === 'thermal58' ? '58' : '80';
     const t = toast.loading('Preparing receipt PDF…');
     try {
@@ -1026,7 +1027,7 @@ Thank you.
           invoice={inv}
           company={company || { name: 'My Company' }}
           items={inv.items || []}
-          widthMm={localStorage.getItem('bizflow_printer_type') === 'thermal58' ? 58 : 80}
+          widthMm={readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? 58 : 80}
           onClose={() => setShowThermalModal(false)}
           onPrint={() => handlePrintReceipt(inv.id)}
         />

@@ -154,7 +154,28 @@ type PreviewProps = {
   showReceivedBy: boolean;
   showDeliveredBy: boolean;
   showSignature: boolean;
+  showOriginalDuplicate: boolean;
+  showCurrentBalance: boolean;
+  showTotalItemQuantity: boolean;
+  amountWithDecimal: boolean;
+  printAmountWithGrouping: boolean;
+  minItemRows: number;
+  extraTopSpace: number;
+  extraBottomLines: number;
+  paperSize: 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'Letter' | 'Legal';
+  orientation: 'portrait' | 'landscape';
+  companyNameTextSize: 'small' | 'medium' | 'large';
+  invoiceTextSize: 'small' | 'medium' | 'large';
 };
+
+function previewAmount(props: PreviewProps, amount: number, withSymbol = true) {
+  const formatted = amount.toLocaleString('en-IN', {
+    useGrouping: props.printAmountWithGrouping,
+    minimumFractionDigits: props.amountWithDecimal ? 2 : 0,
+    maximumFractionDigits: props.amountWithDecimal ? 2 : 0,
+  });
+  return withSymbol ? `₹${formatted}` : formatted;
+}
 
 type PickerProps = {
   value: string;
@@ -290,7 +311,9 @@ export function PrintLayoutPicker({ value, onChange }: PickerProps) {
   );
 }
 
-function ItemsTable({ columns, getCellValue, dense = false }: Pick<PreviewProps, 'columns' | 'getCellValue'> & { dense?: boolean }) {
+function ItemsTable({ props, dense = false }: { props: PreviewProps; dense?: boolean }) {
+  const { columns, getCellValue } = props;
+  const blankRows = Math.max(0, Math.min(12, Number(props.minItemRows || 0)) - 2);
   return (
     <div className="overflow-x-auto">
       <table className={`min-w-full border-collapse ${dense ? 'text-[8px]' : 'text-[9px]'}`}>
@@ -309,9 +332,22 @@ function ItemsTable({ columns, getCellValue, dense = false }: Pick<PreviewProps,
               ))}
             </tr>
           ))}
+          {Array.from({ length: blankRows }, (_, index) => (
+            <tr key={`blank-${index}`} className="h-6">
+              {columns.map((col) => <td key={col.key} className="border border-slate-400 px-1 py-1">&nbsp;</td>)}
+            </tr>
+          ))}
           <tr className="font-bold">
             {columns.map((col, index) => (
-              <td key={col.key} className="border border-slate-500 px-1 py-1">{index === 1 ? 'TOTAL' : ['quantity', 'tax_amount', 'amount'].includes(col.key) ? getCellValue(col.key, 1) : ''}</td>
+              <td key={col.key} className="border border-slate-500 px-1 py-1">
+                {index === 1
+                  ? 'TOTAL'
+                  : col.key === 'quantity'
+                    ? (props.showTotalItemQuantity ? '3.00' : '')
+                    : ['tax_amount', 'amount'].includes(col.key)
+                      ? getCellValue(col.key, 1)
+                      : ''}
+              </td>
             ))}
           </tr>
         </tbody>
@@ -324,9 +360,9 @@ function Header({ data, compact = false }: { data: PrintPreviewData; compact?: b
   return (
     <div className={`flex items-start justify-between gap-3 ${compact ? 'text-[8px]' : 'text-[9px]'}`}>
       <div className="flex min-w-0 gap-2">
-        {data.firm.logo ? <img src={data.firm.logo} alt="Logo" className="h-8 w-12 object-contain" /> : <div className="h-8 w-12 border bg-slate-100" />}
+        {data.firm.logo && <img src={data.firm.logo} alt="Logo" className="h-8 w-12 object-contain" />}
         <div className="min-w-0">
-          <h2 className={`${compact ? 'text-[12px]' : 'text-sm'} break-words font-bold`}>{data.firm.name}</h2>
+          <h2 className="preview-company-name break-words font-bold">{data.firm.name}</h2>
           <p>{data.firm.address}</p>
           <p>Phone: {data.firm.phone} · GSTIN: {data.firm.gstin}</p>
           <p>Email: {data.firm.email} · State: {data.firm.state}</p>
@@ -370,14 +406,14 @@ function PartyBlocks({ data, three = false }: { data: PrintPreviewData; three?: 
   );
 }
 
-function TaxSummary() {
+function TaxSummary({ props }: { props: PreviewProps }) {
   return (
     <table className="w-full border-collapse text-[8px]">
       <thead><tr><th className="border p-1">HSN/SAC</th><th className="border p-1">Taxable</th><th className="border p-1">CGST%</th><th className="border p-1">CGST</th><th className="border p-1">SGST%</th><th className="border p-1">SGST</th><th className="border p-1">Total Tax</th></tr></thead>
       <tbody>
-        <tr><td className="border p-1">9983</td><td className="border p-1">475.00</td><td className="border p-1">9%</td><td className="border p-1">42.75</td><td className="border p-1">9%</td><td className="border p-1">42.75</td><td className="border p-1">85.50</td></tr>
-        <tr><td className="border p-1">9985</td><td className="border p-1">700.00</td><td className="border p-1">9%</td><td className="border p-1">63.00</td><td className="border p-1">9%</td><td className="border p-1">63.00</td><td className="border p-1">126.00</td></tr>
-        <tr className="font-bold"><td className="border p-1">Total</td><td className="border p-1">1175.00</td><td className="border p-1" /><td className="border p-1">105.75</td><td className="border p-1" /><td className="border p-1">105.75</td><td className="border p-1">211.50</td></tr>
+        <tr><td className="border p-1">9983</td><td className="border p-1">{previewAmount(props, 475, false)}</td><td className="border p-1">9%</td><td className="border p-1">{previewAmount(props, 42.75, false)}</td><td className="border p-1">9%</td><td className="border p-1">{previewAmount(props, 42.75, false)}</td><td className="border p-1">{previewAmount(props, 85.5, false)}</td></tr>
+        <tr><td className="border p-1">9985</td><td className="border p-1">{previewAmount(props, 700, false)}</td><td className="border p-1">9%</td><td className="border p-1">{previewAmount(props, 63, false)}</td><td className="border p-1">9%</td><td className="border p-1">{previewAmount(props, 63, false)}</td><td className="border p-1">{previewAmount(props, 126, false)}</td></tr>
+        <tr className="font-bold"><td className="border p-1">Total</td><td className="border p-1">{previewAmount(props, 1175, false)}</td><td className="border p-1" /><td className="border p-1">{previewAmount(props, 105.75, false)}</td><td className="border p-1" /><td className="border p-1">{previewAmount(props, 105.75, false)}</td><td className="border p-1">{previewAmount(props, 211.5, false)}</td></tr>
       </tbody>
     </table>
   );
@@ -386,13 +422,14 @@ function TaxSummary() {
 function Totals({ props, compact = false }: { props: PreviewProps; compact?: boolean }) {
   return (
     <div className={`${compact ? 'text-[8px]' : 'text-[9px]'} space-y-1`}>
-      <div className="flex justify-between"><span>Sub Total</span><b>₹1,175.00</b></div>
-      <div className="flex justify-between"><span>Discount</span><b>₹25.00</b></div>
-      {props.showTaxDetails && <div className="flex justify-between"><span>Tax</span><b>₹211.50</b></div>}
-      <div className="flex justify-between bg-[var(--accent-color)] px-2 py-1 font-bold text-white"><span>Total</span><span>₹1,386.50</span></div>
-      {props.showReceived && <div className="flex justify-between"><span>Received</span><b>₹500.00</b></div>}
-      {props.showBalance && <div className="flex justify-between"><span>Balance</span><b>₹886.50</b></div>}
-      {props.showYouSaved && <div className="flex justify-between"><span>You Saved</span><b>₹25.00</b></div>}
+      <div className="flex justify-between"><span>Sub Total</span><b>{previewAmount(props, 1175)}</b></div>
+      <div className="flex justify-between"><span>Discount</span><b>{previewAmount(props, 25)}</b></div>
+      {props.showTaxDetails && <div className="flex justify-between"><span>Tax</span><b>{previewAmount(props, 211.5)}</b></div>}
+      <div className="flex justify-between bg-[var(--accent-color)] px-2 py-1 font-bold text-white"><span>Total</span><span>{previewAmount(props, 1386.5)}</span></div>
+      {props.showReceived && <div className="flex justify-between"><span>Received</span><b>{previewAmount(props, 500)}</b></div>}
+      {props.showBalance && <div className="flex justify-between"><span>Balance</span><b>{previewAmount(props, 886.5)}</b></div>}
+      {props.showCurrentBalance && <div className="flex justify-between"><span>Current Party Balance</span><b>{previewAmount(props, 124097.11)}</b></div>}
+      {props.showYouSaved && <div className="flex justify-between"><span>You Saved</span><b>{previewAmount(props, 25)}</b></div>}
     </div>
   );
 }
@@ -410,8 +447,12 @@ function BankSignature({ props, cols = 'grid-cols-2' }: { props: PreviewProps; c
       </div>
       <div className="text-right">
         <p>For: {props.data.firm.name}</p>
-        {props.showSignature && (props.data.firm.signature ? <img src={props.data.firm.signature} alt="Signature" className="ml-auto h-9 object-contain" /> : <div className="ml-auto h-9 w-24 bg-slate-100" />)}
-        <b>{props.data.footer.authorizedSignature}</b>
+        {props.showSignature && (
+          <>
+            {props.data.firm.signature ? <img src={props.data.firm.signature} alt="Signature" className="ml-auto h-9 object-contain" /> : <div className="ml-auto h-9 w-24 bg-slate-100" />}
+            <b>{props.data.footer.authorizedSignature}</b>
+          </>
+        )}
       </div>
     </div>
   );
@@ -437,12 +478,142 @@ function TallyTheme(props: PreviewProps) {
       <div className="border-b border-slate-700 p-2"><Header data={props.data} /></div>
       <PartyBlocks data={props.data} />
       <div className="border-b border-slate-700 p-2"><b>Ship To:</b> {props.data.shipTo.address}</div>
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} dense />
+      <ItemsTable props={props} dense />
       <div className="grid grid-cols-[1.45fr_0.75fr] border-t border-slate-700">
-        <div className="border-r border-slate-700 p-2"><TaxSummary /></div>
+        {props.showTaxDetails && <div className="border-r border-slate-700 p-2"><TaxSummary props={props} /></div>}
         <div className="p-2"><Totals props={props} compact /><Notes props={props} /></div>
       </div>
       <div className="grid grid-cols-2 border-t border-slate-700 p-2"><Notes props={props} /><BankSignature props={props} /></div>
+    </div>
+  );
+}
+
+function ReferenceTaxEwayTheme(props: PreviewProps) {
+  const border = 'border-slate-900';
+  return (
+    <div className={`font-sans text-[8px] leading-[1.25] text-black ${border}`}>
+      <h1 className="text-center text-sm font-bold">Tax Invoice</h1>
+      <div className={`grid grid-cols-[1fr_1fr] border ${border}`}>
+        <div className={`border-r ${border}`}>
+          <div className={`border-b p-1.5 ${border}`}>
+            <p className="text-[10px] font-bold">{props.data.firm.name}</p>
+            <p>{props.data.firm.address}</p>
+            <p>GSTIN/UIN: {props.data.firm.gstin}</p>
+            <p>State Name: {props.data.firm.state}</p>
+          </div>
+          <div className={`border-b p-1.5 ${border}`}>
+            <p>Consignee (Ship to)</p>
+            <p className="font-bold">{props.data.shipTo.name}</p>
+            <p>{props.data.shipTo.address}</p>
+            <p>GSTIN/UIN: 24AAAAA0000A1Z5</p>
+            <p>State Name: {props.data.firm.state}</p>
+          </div>
+          <div className="min-h-[104px] p-1.5">
+            <p>Buyer (Bill to)</p>
+            <p className="font-bold">{props.data.billTo.name}</p>
+            <p>{props.data.billTo.address}</p>
+            <p>Contact: {props.data.billTo.contact}</p>
+            <p>Place of Supply: {props.data.firm.state}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2">
+          {[
+            ['Invoice No.', props.data.invoice.number],
+            ['e-Way Bill No.', '—'],
+            ['Dated', props.data.invoice.date],
+            ['Delivery Note', ''],
+            ['Mode/Terms of Payment', ''],
+            ['Reference No. & Date.', ''],
+            ['Other References', ''],
+            ["Buyer’s Order No.", ''],
+            ['Dated', ''],
+            ['Dispatch Doc No.', ''],
+            ['Delivery Note Date', ''],
+            ['Dispatched through', ''],
+            ['Destination', ''],
+            ['Vessel/Flight No.', ''],
+            ['Place of receipt by shipper', ''],
+            ['City/Port of Loading', ''],
+            ['City/Port of Discharge', ''],
+            ['Terms of Delivery', ''],
+          ].map(([label, value], index) => (
+            <div
+              key={`${label}-${index}`}
+              className={`min-h-[26px] border-b p-1 ${index % 2 === 0 ? `border-r ${border}` : ''} ${border}`}
+            >
+              <p>{label}</p>
+              {value && <p className="font-bold">{value}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <table className={`w-full table-fixed border-x border-collapse ${border}`}>
+        <colgroup>
+          <col className="w-[4%]" />
+          <col className="w-[42%]" />
+          <col className="w-[12%]" />
+          <col className="w-[12%]" />
+          <col className="w-[12%]" />
+          <col className="w-[5%]" />
+          <col className="w-[13%]" />
+        </colgroup>
+        <thead>
+          <tr>
+            {['Sl No.', 'Description of Goods', 'HSN/SAC', 'Quantity', 'Rate', 'per', 'Amount'].map((label) => (
+              <th key={label} className={`border-b border-r p-1 font-normal last:border-r-0 ${border}`}>{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="h-[245px] align-top">
+            <td className={`border-r p-1 text-center ${border}`}>1</td>
+            <td className={`border-r p-1 ${border}`}>
+              <p className="font-bold">Premium Service</p>
+              <div className="mt-10 text-right font-bold italic">
+                <p>CGST</p><p>SGST</p><p>Round Off</p>
+              </div>
+            </td>
+            <td className={`border-r p-1 ${border}`}>9983</td>
+            <td className={`border-r p-1 text-right font-bold ${border}`}>1.000 N</td>
+            <td className={`border-r p-1 text-right ${border}`}>{previewAmount(props, 500, false)}</td>
+            <td className={`border-r p-1 text-center ${border}`}>N</td>
+            <td className="p-1 text-right font-bold">
+              <p>{previewAmount(props, 500, false)}</p><div className="mt-10"><p>{previewAmount(props, 45, false)}</p><p>{previewAmount(props, 45, false)}</p><p>{previewAmount(props, 0, false)}</p></div>
+            </td>
+          </tr>
+          <tr className={`border-y ${border}`}>
+            <td className={`border-r ${border}`} />
+            <td className={`border-r p-1 text-right ${border}`}>Total</td>
+            <td className={`border-r ${border}`} />
+            <td className={`border-r p-1 text-right font-bold ${border}`}>1.000 N</td>
+            <td className={`border-r ${border}`} />
+            <td className={`border-r ${border}`} />
+            <td className="p-1 text-right text-[10px] font-bold">{previewAmount(props, 590)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div className={`border-x border-b p-1 ${border}`}>
+        <p>Amount Chargeable (in words)</p>
+        <p className="font-bold">{props.amountInWords}</p>
+      </div>
+      {props.showTaxDetails && <TaxSummary props={props} />}
+      <div className={`grid grid-cols-[1.15fr_1fr] border-x border-b ${border}`}>
+        <div className={`border-r p-1 ${border}`}>
+          <p>Tax Amount (in words): <b>INR Ninety Only</b></p>
+          {props.showDescription && <p className="mt-1">Description: {props.data.footer.description}</p>}
+          <p className="mt-1">Declaration</p>
+          {props.showTerms && <p>{props.data.footer.termsAndConditions}</p>}
+          {props.showPaymentMode && <p>Payment Mode: Bank Transfer</p>}
+          {props.showReceivedBy && <p>Received By: __________</p>}
+          {props.showDeliveredBy && <p>Delivered By: __________</p>}
+          {props.showAcknowledgement && <p>Acknowledgement: Received in good condition</p>}
+        </div>
+        <div className="flex min-h-[72px] flex-col justify-between p-1 text-right">
+          <p className="font-bold">for {props.data.firm.name}</p>
+          {props.showSignature && <p>{props.data.footer.authorizedSignature || 'Authorised Signatory'}</p>}
+        </div>
+      </div>
+      <p className="py-2 text-center">This is a Computer Generated Invoice</p>
     </div>
   );
 }
@@ -453,10 +624,10 @@ function LandscapeTheme1(props: PreviewProps) {
       <h1 className="border-b pb-1 text-center text-sm font-bold">{props.data.invoice.type}</h1>
       <Header data={props.data} compact />
       <PartyBlocks data={props.data} />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} dense />
-      <div className="flex flex-wrap gap-2 border p-2 text-[8px]"><b>Sub Total: ₹1,175.00</b><span>Discount: ₹25.00</span><span>Tax: ₹211.50</span><span>TCS: ₹0.00</span><b>Total: ₹1,386.50</b><span>{props.amountInWords}</span></div>
-      <div className="flex flex-wrap gap-4 border p-2 text-[8px]">{props.showReceived && <span>Received: ₹500.00</span>}{props.showBalance && <span>Balance: ₹886.50</span>}<span>Current Balance: ₹1,24,097.11</span>{props.showYouSaved && <span>You Saved: ₹25.00</span>}</div>
-      <div className="grid grid-cols-2 gap-2"><TaxSummary /><BankSignature props={props} /></div>
+      <ItemsTable props={props} dense />
+      <div className="flex flex-wrap gap-2 border p-2 text-[8px]"><b>Sub Total: {previewAmount(props, 1175)}</b><span>Discount: {previewAmount(props, 25)}</span>{props.showTaxDetails && <span>Tax: {previewAmount(props, 211.5)}</span>}<span>TCS: {previewAmount(props, 0)}</span><b>Total: {previewAmount(props, 1386.5)}</b><span>{props.amountInWords}</span></div>
+      <div className="flex flex-wrap gap-4 border p-2 text-[8px]">{props.showReceived && <span>Received: {previewAmount(props, 500)}</span>}{props.showBalance && <span>Balance: {previewAmount(props, 886.5)}</span>}{props.showCurrentBalance && <span>Current Balance: {previewAmount(props, 124097.11)}</span>}{props.showYouSaved && <span>You Saved: {previewAmount(props, 25)}</span>}</div>
+      <div className="grid grid-cols-2 gap-2">{props.showTaxDetails && <TaxSummary props={props} />}<BankSignature props={props} /></div>
       <div className="grid grid-cols-3 gap-2 border p-2"><Notes props={props} /><div>{props.showTerms && props.data.footer.termsAndConditions}</div><BankSignature props={props} /></div>
     </div>
   );
@@ -468,9 +639,9 @@ function LandscapeTheme2(props: PreviewProps) {
       <h1 className="border-b pb-1 text-center text-sm font-bold">{props.data.invoice.type}</h1>
       <Header data={props.data} compact />
       <PartyBlocks data={props.data} />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} dense />
-      <div className="grid grid-cols-[1.4fr_0.8fr] gap-2 border p-2"><TaxSummary /><Totals props={props} compact /></div>
-      <div className="grid grid-cols-4 gap-2 border p-2"><Notes props={props} /><div>{props.data.footer.termsAndConditions}</div><div>{props.data.footer.bankName}<br />{props.data.footer.bankAccount}</div><BankSignature props={props} /></div>
+      <ItemsTable props={props} dense />
+      <div className="grid grid-cols-[1.4fr_0.8fr] gap-2 border p-2">{props.showTaxDetails && <TaxSummary props={props} />}<Totals props={props} compact /></div>
+      <div className="grid grid-cols-4 gap-2 border p-2"><Notes props={props} /><div>{props.showTerms && props.data.footer.termsAndConditions}</div><div>{props.data.footer.bankName}<br />{props.data.footer.bankAccount}</div><BankSignature props={props} /></div>
     </div>
   );
 }
@@ -481,7 +652,7 @@ function GstTheme1(props: PreviewProps) {
       <Header data={props.data} />
       <h1 className="border-y py-2 text-center text-xl font-bold text-[var(--accent-color)]">{props.data.invoice.type}</h1>
       <PartyBlocks data={props.data} three />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} />
+      <ItemsTable props={props} />
       <div className="grid grid-cols-[1fr_230px] gap-4"><Notes props={props} /><Totals props={props} /></div>
       <BankSignature props={props} />
     </div>
@@ -493,8 +664,8 @@ function GstTheme2(props: PreviewProps) {
     <div className="space-y-3 text-[9px]">
       <div className="grid grid-cols-[80px_1fr_150px] items-center border p-2"><div>{props.data.firm.logo ? <img src={props.data.firm.logo} alt="Logo" /> : 'Logo'}</div><h2 className="text-center text-base font-bold">{props.data.firm.name}</h2><div className="text-right">{props.data.firm.gstin}</div></div>
       <PartyBlocks data={props.data} three />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} />
-      <div className="grid grid-cols-[1fr_210px] gap-3"><TaxSummary /><Totals props={props} /></div>
+      <ItemsTable props={props} />
+      <div className="grid grid-cols-[1fr_210px] gap-3">{props.showTaxDetails && <TaxSummary props={props} />}<Totals props={props} /></div>
       <Notes props={props} />
       <BankSignature props={props} />
     </div>
@@ -506,8 +677,8 @@ function GstTheme3(props: PreviewProps) {
     <div className="space-y-3 text-[9px]">
       <div className="grid grid-cols-[1fr_190px] gap-3"><Header data={props.data} /><div className="border p-2 text-right"><b>{props.data.invoice.type}</b><p>{props.data.invoice.number}</p><p>{props.data.invoice.date}</p></div></div>
       <div className="border p-2"><b>Bill To:</b> {props.data.billTo.name}, {props.data.billTo.address}</div>
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} />
-      <div className="grid grid-cols-[1fr_200px] gap-3"><TaxSummary /><Totals props={props} /></div>
+      <ItemsTable props={props} />
+      <div className="grid grid-cols-[1fr_200px] gap-3">{props.showTaxDetails && <TaxSummary props={props} />}<Totals props={props} /></div>
       <BankSignature props={props} />
     </div>
   );
@@ -518,9 +689,9 @@ function GstTheme4(props: PreviewProps) {
     <div className="space-y-3 text-[9px]">
       <div className="flex justify-between border-b pb-2"><div><h2 className="text-xl font-bold">{props.data.firm.name}</h2><p>{props.data.firm.address}</p></div><div className="text-right"><b>{props.data.invoice.type}</b><p>{props.data.invoice.number}</p><p>{props.data.invoice.date}</p></div></div>
       <PartyBlocks data={props.data} />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} />
+      <ItemsTable props={props} />
       <div className="ml-auto w-56"><Totals props={props} /></div>
-      <div className="grid grid-cols-3 gap-3 border-t pt-2"><Notes props={props} /><div>{props.data.footer.termsAndConditions}</div><BankSignature props={props} /></div>
+      <div className="grid grid-cols-3 gap-3 border-t pt-2"><Notes props={props} /><div>{props.showTerms && props.data.footer.termsAndConditions}</div><BankSignature props={props} /></div>
     </div>
   );
 }
@@ -530,7 +701,7 @@ function GstTheme5(props: PreviewProps) {
     <div className="space-y-2 text-[8px]">
       <div className="flex items-center justify-between gap-2 border p-1"><b>{props.data.firm.name}</b><span>{props.data.firm.gstin}</span><span>{props.data.firm.phone}</span></div>
       <PartyBlocks data={props.data} three />
-      <ItemsTable columns={props.columns} getCellValue={props.getCellValue} dense />
+      <ItemsTable props={props} dense />
       <div className="ml-auto w-48"><Totals props={props} compact /></div>
       <div className="grid grid-cols-3 gap-2 border-t pt-2"><div>{props.data.footer.bankName}<br />{props.data.footer.bankAccount}</div><Notes props={props} /><BankSignature props={props} /></div>
     </div>
@@ -550,26 +721,50 @@ const LAYOUT_COMPONENTS: Record<PrintLayoutId, (props: PreviewProps) => JSX.Elem
   'gst-theme-3': GstTheme3,
   'gst-theme-4': GstTheme4,
   'gst-theme-5': GstTheme5,
-  'reference-tax-eway-theme': TallyTheme,
+  'reference-tax-eway-theme': ReferenceTaxEwayTheme,
 };
 
 export function PrintInvoiceLayoutPreview(props: PreviewProps) {
   const layoutId = normalizedLayoutId(props.layoutId);
   const Layout = LAYOUT_COMPONENTS[layoutId];
-  const landscape = PRINT_LAYOUT_BY_ID[layoutId].orientation === 'landscape';
+  const landscape = props.orientation === 'landscape';
+  const paperDimensions = {
+    A1: [594, 841],
+    A2: [420, 594],
+    A3: [297, 420],
+    A4: [210, 297],
+    A5: [148, 210],
+    Letter: [216, 279],
+    Legal: [216, 356],
+  }[props.paperSize] || [210, 297];
+  const [paperWidth, paperHeight] = landscape ? [paperDimensions[1], paperDimensions[0]] : paperDimensions;
+  const companyNameSize = props.companyNameTextSize === 'small' ? '11px' : props.companyNameTextSize === 'medium' ? '14px' : '18px';
+  const invoiceSize = props.invoiceTextSize === 'small' ? '8px' : props.invoiceTextSize === 'large' ? '11px' : '9px';
   return (
     <div className="overflow-auto rounded-lg border bg-slate-200 p-4 shadow-inner">
       <div
-        className="mx-auto origin-top overflow-hidden rounded-sm bg-white p-4 shadow-lg"
+        className="relative mx-auto origin-top overflow-hidden rounded-sm bg-white p-4 shadow-lg"
         style={{
-          width: landscape ? '297mm' : '210mm',
-          minHeight: landscape ? '210mm' : '297mm',
+          width: `${paperWidth}mm`,
+          minHeight: `${paperHeight}mm`,
           maxWidth: '100%',
+          paddingTop: `${16 + Math.max(0, Math.min(80, Number(props.extraTopSpace || 0)))}px`,
+          fontSize: invoiceSize,
           ['--accent-color' as string]: props.accentColor,
           ['--font-family' as string]: 'Inter, system-ui, sans-serif',
+          ['--preview-company-name-size' as string]: companyNameSize,
         }}
       >
+        <style>{`.preview-company-name{font-size:var(--preview-company-name-size)} .preview-invoice-title{font-size:inherit}`}</style>
+        {props.showOriginalDuplicate && (
+          <div className="absolute right-4 top-2 rounded border border-slate-500 px-2 py-0.5 text-[7px] font-bold uppercase tracking-wide text-slate-700">
+            Original for recipient
+          </div>
+        )}
         <Layout {...props} />
+        {Array.from({ length: Math.max(0, Math.min(20, Number(props.extraBottomLines || 0))) }, (_, index) => (
+          <div key={index} className="h-5 border-b border-dashed border-slate-300" />
+        ))}
       </div>
     </div>
   );

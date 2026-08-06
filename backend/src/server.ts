@@ -40,7 +40,7 @@ async function start(): Promise<void> {
 
     // Start server
     app.listen(PORT, () => {
-      logger.info(`🚀 BizFlow API running on http://localhost:${PORT}`);
+      logger.info(`🚀 Microtechnique Accounts API running on http://localhost:${PORT}`);
       logger.info(`📋 Environment: ${env.NODE_ENV}`);
       logger.info(`🏥 Health check: http://localhost:${PORT}/health`);
       if (env.NODE_ENV === 'production' && env.EINVOICE_MODE === 'mock') {

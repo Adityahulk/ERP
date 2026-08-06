@@ -54,8 +54,8 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        // BizFlow brand colors
-        bizflow: {
+        // Microtechnique Accounts brand colors
+        microtechnique: {
           50: '#eff6ff',
           100: '#dbeafe',
           200: '#bfdbfe',

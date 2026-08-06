@@ -1,14 +1,103 @@
 import { Router, Request, Response } from 'express';
 import { verifyToken } from '../middleware/auth';
+import { requireMinRole } from '../middleware/role';
 import { query } from '../config/db';
 import { generateLabelsPDF } from '../services/labelService';
+import { getOrCreateItemBarcode, registerItemBarcodeAlias } from '../utils/barcodeUtils';
 
 const router = Router();
 router.use(verifyToken);
 
 const VALID_TEMPLATES = new Set(['58x40', '80x50', '100x50', '116x40', '100x100', '50x25', 'a4']);
 
-router.post('/bulk', async (req: Request, res: Response) => {
+function labelProfileConfig(body: any, item: any) {
+  if (item.labelConfig && typeof item.labelConfig === 'object' && !Array.isArray(item.labelConfig)) {
+    return item.labelConfig;
+  }
+  return {
+    printMode: body.mode || 'general_printer',
+    size: body.size || '58x40',
+    labelsPerPage: Number(body.labels_per_page || 0) || undefined,
+    templateId: body.templateId || undefined,
+    orientation: body.orientation || 'horizontal',
+    brandName: item.label_brand || body.customCompanyName || '',
+    line1: item.label_line1,
+    line2: item.label_line2,
+    line3: item.label_line3,
+    line4: item.label_line4,
+    line5: item.label_line5,
+    line6: item.label_line6,
+    price: item.price,
+    currency: item.currency || 'INR',
+    showBarcode: item.showBarcode !== false,
+    showBarcodeText: item.showBarcodeText !== false,
+    barcodeSource: item.barcodeSource === 'custom' ? 'custom' : 'system',
+    customBarcodeValue: item.barcodeSource === 'custom' ? String(item.customBarcodeValue || '').trim() : '',
+  };
+}
+
+router.get('/profile/:itemId', async (req: Request, res: Response) => {
+  try {
+    const companyId = req.user!.company_id;
+    const item = await query(
+      `SELECT id, barcode
+       FROM items
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [req.params.itemId, companyId],
+    );
+    if (!item.rows.length) return res.status(404).json({ success: false, error: 'Item not found' });
+    const profile = await query(
+      `SELECT config, updated_at
+       FROM barcode_label_profiles
+       WHERE company_id = $1 AND item_id = $2`,
+      [companyId, req.params.itemId],
+    );
+    res.json({
+      success: true,
+      data: {
+        systemBarcode: item.rows[0].barcode || null,
+        config: profile.rows[0]?.config || null,
+        updatedAt: profile.rows[0]?.updated_at || null,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to load label profile' });
+  }
+});
+
+router.put('/profile/:itemId', requireMinRole('staff'), async (req: Request, res: Response) => {
+  try {
+    const companyId = req.user!.company_id;
+    const itemId = req.params.itemId;
+    const config = req.body?.config;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return res.status(400).json({ success: false, error: 'A label configuration is required' });
+    }
+    if (JSON.stringify(config).length > 32_000) {
+      return res.status(400).json({ success: false, error: 'Label configuration is too large' });
+    }
+    if (config.barcodeSource === 'custom') {
+      await registerItemBarcodeAlias(itemId, companyId, config.customBarcodeValue);
+    } else {
+      await getOrCreateItemBarcode(itemId, companyId);
+    }
+    await query(
+      `INSERT INTO barcode_label_profiles (company_id, item_id, config, updated_by)
+       VALUES ($1, $2, $3::jsonb, $4)
+       ON CONFLICT (company_id, item_id) DO UPDATE
+         SET config = EXCLUDED.config,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = now()`,
+      [companyId, itemId, JSON.stringify(config), req.user!.id],
+    );
+    res.json({ success: true, data: { config } });
+  } catch (err: any) {
+    const status = /not found|already assigned|cannot be empty|unsupported|exceed/i.test(err.message) ? 400 : 500;
+    res.status(status).json({ success: false, error: err.message || 'Failed to save label profile' });
+  }
+});
+
+router.post('/bulk', requireMinRole('staff'), async (req: Request, res: Response) => {
    try {
      const { items, size, mode, labels_per_page, templateId, orientation: bodyOrientation, customCompanyName } = req.body;
      // Accept orientation from query string OR request body (frontend may use either)
@@ -49,8 +138,6 @@ router.post('/bulk', async (req: Request, res: Response) => {
      ]);
      const companyName = companyRes.rows[0]?.name || 'My Company';
 
-     const { getOrCreateItemBarcode } = await import('../utils/barcodeUtils');
-
      // Generate/Get barcodes for all items in sequence
      const barcodeMap = new Map<string, string>();
      for (const id of ids) {
@@ -69,6 +156,9 @@ router.post('/bulk', async (req: Request, res: Response) => {
          (r: { id: string }) => r.id === reqItem.item_id
        );
        if (dbMeta) {
+         if (reqItem.barcodeSource === 'custom') {
+           await registerItemBarcodeAlias(dbMeta.id, companyId, reqItem.customBarcodeValue);
+         }
          const itemBarcode = barcodeMap.get(dbMeta.id) || dbMeta.barcode || dbMeta.sku || 'LABEL';
          const finalBarcode = (reqItem.barcodeSource === 'custom' && reqItem.customBarcodeValue)
            ? reqItem.customBarcodeValue
@@ -100,6 +190,20 @@ router.post('/bulk', async (req: Request, res: Response) => {
              customBarcodeValue: reqItem.customBarcodeValue || '',
            });
          }
+
+         const profile = labelProfileConfig(
+           { mode, size: template, labels_per_page, templateId, orientation, customCompanyName },
+           reqItem,
+         );
+         await query(
+           `INSERT INTO barcode_label_profiles (company_id, item_id, config, updated_by)
+            VALUES ($1, $2, $3::jsonb, $4)
+            ON CONFLICT (company_id, item_id) DO UPDATE
+              SET config = EXCLUDED.config,
+                  updated_by = EXCLUDED.updated_by,
+                  updated_at = now()`,
+           [companyId, dbMeta.id, JSON.stringify(profile), req.user!.id],
+         );
        }
      }
 

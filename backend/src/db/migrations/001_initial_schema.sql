@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
--- BizFlow Accounts — Complete Initial Schema
+-- Microtechnique Accounts — Complete Initial Schema
 -- Migration: 001_initial_schema.sql
 -- All money values stored in PAISE (₹1 = 100 paise)
 -- All dates stored as UTC, displayed in IST (Asia/Kolkata)

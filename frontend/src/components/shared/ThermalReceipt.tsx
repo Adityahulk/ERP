@@ -32,6 +32,14 @@ interface ThermalReceiptProps {
     invoice_type?: string;
     reference_number?: string;
     running_balance?: number;
+    tendered_amount?: number;
+    change_amount?: number;
+    custom_fields?: {
+      pos?: {
+        tendered_amount?: number;
+        change_amount?: number;
+      };
+    };
   };
   company: {
     name: string;
@@ -138,7 +146,12 @@ export default function ThermalReceipt({
 
   const rateGuess = items[0]?.gst_rate ?? 0;
   const paid = invoice.paid_amount ?? invoice.total_amount;
-  const change = paid > invoice.total_amount ? paid - invoice.total_amount : 0;
+  const tendered = invoice.tendered_amount
+    ?? invoice.custom_fields?.pos?.tendered_amount
+    ?? paid;
+  const change = invoice.change_amount
+    ?? invoice.custom_fields?.pos?.change_amount
+    ?? (tendered > invoice.total_amount ? tendered - invoice.total_amount : 0);
 
   // Generate UPI QR payload if payment mode is UPI
   const upiId = invoice.upi_id_snapshot || company.upi_id;
@@ -391,7 +404,7 @@ export default function ThermalReceipt({
                         </div>
                         <div className="flex justify-between">
                           <span>Tendered:</span>
-                          <span className="tabular-nums">{formatMoney(paid)}</span>
+                          <span className="tabular-nums">{formatMoney(tendered)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Change:</span>

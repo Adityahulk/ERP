@@ -77,7 +77,7 @@ export default function ChatWidget() {
           <div className="flex items-center justify-between p-4 bg-indigo-600 text-white">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5" />
-              <h3 className="font-semibold text-sm">BizFlow AI Assistant</h3>
+              <h3 className="font-semibold text-sm">Microtechnique AI Assistant</h3>
             </div>
             <button onClick={toggleChat} className="text-indigo-200 hover:text-white transition-colors">
               <X className="w-5 h-5" />

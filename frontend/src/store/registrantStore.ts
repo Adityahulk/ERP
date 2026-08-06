@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { LEGACY_STORAGE_KEYS, migrateStorageKey, removeStorageWithLegacy, STORAGE_KEYS, writeStorageWithLegacyCleanup } from '@/lib/storageKeys';
 
 export interface Registrant {
   id: string;
@@ -19,7 +20,11 @@ interface RegistrantState {
   updateRegistrant: (updates: Partial<Registrant>) => void;
 }
 
-const TOKEN_KEY = 'bizflow_registrant_token';
+const TOKEN_KEY = STORAGE_KEYS.registrantToken;
+const LEGACY_TOKEN_KEY = LEGACY_STORAGE_KEYS.registrantToken;
+
+migrateStorageKey(STORAGE_KEYS.registrantStore, LEGACY_STORAGE_KEYS.registrantStore);
+migrateStorageKey(TOKEN_KEY, LEGACY_TOKEN_KEY);
 
 export const useRegistrantStore = create<RegistrantState>()(
   persist(
@@ -29,12 +34,12 @@ export const useRegistrantStore = create<RegistrantState>()(
       isAuthenticated: !!localStorage.getItem(TOKEN_KEY),
 
       login: (registrant, token) => {
-        localStorage.setItem(TOKEN_KEY, token);
+        writeStorageWithLegacyCleanup(TOKEN_KEY, token, LEGACY_TOKEN_KEY);
         set({ registrant, token, isAuthenticated: true });
       },
 
       logout: () => {
-        localStorage.removeItem(TOKEN_KEY);
+        removeStorageWithLegacy(TOKEN_KEY, LEGACY_TOKEN_KEY);
         set({ registrant: null, token: null, isAuthenticated: false });
       },
 
@@ -44,7 +49,7 @@ export const useRegistrantStore = create<RegistrantState>()(
         })),
     }),
     {
-      name: 'bizflow-registrant',
+      name: STORAGE_KEYS.registrantStore,
       partialize: (state) => ({
         registrant: state.registrant,
         token: state.token,

@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useCreateInvoice, useCompany, useInvoice, useUpdateInvoice } from '@/hooks/useBusiness';
 import { useGodowns } from '@/hooks/useStock';
@@ -7,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { ArrowLeft, ScanLine, UserPlus, Paperclip, Printer } from 'lucide-react';
+import { ArrowLeft, ScanLine, UserPlus, Paperclip, Printer, Settings2 } from 'lucide-react';
 import {
   InvoicePreviewWorkspace,
   normalizeInvoiceThemeId,
@@ -31,6 +32,7 @@ import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import PaymentRowsEditor, { newPaymentEditorRow, type PaymentEditorRow } from '@/components/transactions/PaymentRowsEditor';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
 import {
   DEFAULT_PRINT_LAYOUT_COLORS,
@@ -87,7 +89,7 @@ function salesCustomFieldDefs(company: any, scope: 'invoice' | 'item'): SalesCus
   const defs = Array.isArray(company?.sales_invoice_custom_fields) ? company.sales_invoice_custom_fields : [];
   const itemDefs = scope === 'item' && Array.isArray(company?.item_custom_fields)
     ? company.item_custom_fields
-        .filter((d: any) => d?.enabled === true && d?.show_in_print === true)
+        .filter((d: any) => d?.enabled === true)
         .map((d: any) => ({
           id: String(d?.id || d?.key || '').trim(),
           label: String(d?.label || d?.id || d?.key || '').trim(),
@@ -175,6 +177,18 @@ export default function InvoiceCreate() {
   const { data: company } = useCompany();
   const { data: godownData } = useGodowns();
   const godowns = godownData?.data || [];
+  const { data: transactionConfig } = useQuery({
+    queryKey: ['settings', 'transaction', 'invoice-create'],
+    queryFn: async () => {
+      const response = await api.get('/settings/transaction');
+      return response.data?.data || response.data;
+    },
+    staleTime: 60_000,
+  });
+  const transactionSettings = transactionConfig?.settings || {};
+  const isLiteSale = transactionSettings.billingType === 'LITE_SALE';
+  const transactionAdditionalFields = transactionConfig?.additionalFields || {};
+  const transportationSettings = transactionConfig?.transportation || {};
 
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
@@ -213,6 +227,7 @@ export default function InvoiceCreate() {
   };
 
   const [notes, setNotes] = useState('');
+  const [selectedTermsId, setSelectedTermsId] = useState('');
   const [externalDescription, setExternalDescription] = useState('');
   const [customFields, setCustomFields] = useState<Record<string, any>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentEditorRow[]>([newPaymentEditorRow()]);
@@ -221,12 +236,112 @@ export default function InvoiceCreate() {
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const transactionDefaultsHydratedRef = useRef(false);
+  const saleTerms = useMemo(
+    () => (Array.isArray(transactionConfig?.terms?.SALE) ? transactionConfig.terms.SALE : []),
+    [transactionConfig],
+  );
 
   const invoiceCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'invoice'), [company]);
   const itemCustomFieldDefs = useMemo(() => salesCustomFieldDefs(company, 'item'), [company]);
+  const visibleItemFieldDefs = useMemo(() => {
+    const fields = [...itemCustomFieldDefs];
+    if (transactionSettings.showCountColumn === true && !fields.some((field) => field.id === '__transaction_count')) {
+      fields.push({
+        id: '__transaction_count',
+        label: String(transactionSettings.countColumnLabel || 'Count'),
+        scope: 'item',
+        type: 'number',
+        required: false,
+        enabled: true,
+      });
+    }
+    return fields;
+  }, [itemCustomFieldDefs, transactionSettings.countColumnLabel, transactionSettings.showCountColumn]);
   const referenceSettings = useMemo(() => referenceInvoiceSettings(company), [company]);
+  const itemSettings = (company as any)?.item_settings || {};
+  const taxSettings = (company as any)?.tax_settings || {};
   const selectedReferenceValues = (customFields.reference_invoice && typeof customFields.reference_invoice === 'object' ? customFields.reference_invoice : {}) as Record<string, string>;
   const referenceTemplateSelected = pdfTemplate === 'reference-tax-eway-theme';
+  const enabledTransactionFields = useMemo(() => {
+    const fields = [
+      ['billingName', transactionSettings.showBillingNameOfParties === true, 'Billing Name', 'text'],
+      ['customerPoNumber', transactionSettings.showCustomerPODetails === true, "Customer P.O. No.", 'text'],
+      ['customerPoDate', transactionSettings.showCustomerPODetails === true, "Customer P.O. Date", 'date'],
+      ['transactionTime', transactionSettings.addTimeOnTransactions === true, 'Transaction Time', 'time'],
+      ['ewayBillNumber', transactionSettings.enableEwayBill === true, 'e-Way Bill No.', 'text'],
+      ['txnField1', transactionAdditionalFields.showOnSales && transactionAdditionalFields.txnField1Enabled, transactionAdditionalFields.txnField1Label, 'text'],
+      ['txnField2', transactionAdditionalFields.showOnSales && transactionAdditionalFields.txnField2Enabled, transactionAdditionalFields.txnField2Label, 'text'],
+      ['txnField3', transactionAdditionalFields.showOnSales && transactionAdditionalFields.txnField3Enabled, transactionAdditionalFields.txnField3Label, 'text'],
+      ['txnDateField', transactionAdditionalFields.showOnSales && transactionAdditionalFields.txnDateFieldEnabled, transactionAdditionalFields.txnDateFieldLabel, 'date'],
+    ];
+    return fields
+      .filter(([, enabled, label]) => enabled && String(label || '').trim())
+      .map(([key, , label, type]) => ({ key: String(key), label: String(label), type: String(type) }));
+  }, [
+    transactionAdditionalFields,
+    transactionSettings.addTimeOnTransactions,
+    transactionSettings.enableEwayBill,
+    transactionSettings.showBillingNameOfParties,
+    transactionSettings.showCustomerPODetails,
+  ]);
+  const enabledTransportationFields = useMemo(() => {
+    const fields = [];
+    for (let index = 1; index <= 6; index += 1) {
+      if (transportationSettings[`field${index}Enabled`]) {
+        fields.push({
+          key: `field${index}`,
+          label: String(transportationSettings[`field${index}Label`] || `Field ${index}`),
+          showInPrint: transportationSettings[`field${index}ShowInPrint`] !== false,
+        });
+      }
+    }
+    return fields;
+  }, [transportationSettings]);
+  const customFieldsForPayload = useMemo(() => {
+    const transactionValues = customFields.transaction_settings && typeof customFields.transaction_settings === 'object'
+      ? customFields.transaction_settings
+      : {};
+    const transportationValues = customFields.transportation_details && typeof customFields.transportation_details === 'object'
+      ? customFields.transportation_details
+      : {};
+
+    return {
+      ...customFields,
+      __print_layout: pdfTemplate,
+      __print_layout_color: invoiceLayoutColor,
+      ...(enabledTransactionFields.length > 0 || Object.keys(transactionValues).length > 0
+        ? {
+            transaction_settings: {
+              ...transactionValues,
+              __fields: enabledTransactionFields.map((field) => ({
+                key: field.key,
+                label: field.label,
+                type: field.type,
+              })),
+            },
+          }
+        : {}),
+      ...(enabledTransportationFields.length > 0 || Object.keys(transportationValues).length > 0
+        ? {
+            transportation_details: {
+              ...transportationValues,
+              __fields: enabledTransportationFields.map((field) => ({
+                key: field.key,
+                label: field.label,
+                showInPrint: field.showInPrint,
+              })),
+            },
+          }
+        : {}),
+    };
+  }, [
+    customFields,
+    enabledTransactionFields,
+    enabledTransportationFields,
+    invoiceLayoutColor,
+    pdfTemplate,
+  ]);
   const updateReferenceValue = (key: string, value: string) => {
     setCustomFields((prev) => ({
       ...prev,
@@ -246,7 +361,33 @@ export default function InvoiceCreate() {
     if (editInvoiceId || !company) return;
     const preferred = normalizeCurrencyCode((company as any).default_currency || (company as any).currency || 'INR');
     setCurrencyCode(enabledCurrencies.includes(preferred) ? preferred : enabledCurrencies[0]);
+    setIsGstInvoice(taxSettings.enable_gst !== false);
   }, [company, editInvoiceId, enabledCurrencies]);
+
+  useEffect(() => {
+    if (!transactionConfig || editInvoiceId || duplicateInvoiceId || transactionDefaultsHydratedRef.current) return;
+    setRoundOffEnabled(transactionSettings.roundOffTotal !== false);
+    const defaultSaleTerms = (transactionConfig.terms?.SALE || []).find((term: any) => term.isDefault);
+    if (transactionSettings.enableTermsAndConditions !== false && defaultSaleTerms?.content) {
+      setNotes((current) => current || String(defaultSaleTerms.content));
+      setSelectedTermsId(String(defaultSaleTerms.id || ''));
+    }
+    setPaymentRows((current) => {
+      const first = current[0] || newPaymentEditorRow();
+      return [{
+        ...first,
+        payment_mode: transactionSettings.cashSaleByDefault === true ? 'cash' : 'credit',
+        amount: 0,
+      }, ...current.slice(1)];
+    });
+    transactionDefaultsHydratedRef.current = true;
+  }, [duplicateInvoiceId, editInvoiceId, transactionConfig, transactionSettings]);
+
+  useEffect(() => {
+    if (!notes || saleTerms.length === 0) return;
+    const matchingTerms = saleTerms.find((term: any) => String(term.content || '').trim() === notes.trim());
+    if (matchingTerms) setSelectedTermsId(String(matchingTerms.id));
+  }, [notes, saleTerms]);
 
   useEffect(() => {
     if (!company || editInvoiceId || duplicateInvoiceId || defaultLayoutHydratedRef.current) return;
@@ -315,6 +456,8 @@ export default function InvoiceCreate() {
       unit_price: Number(it.unit_price) || 0,
       discount_amount: Number(it.discount_amount || 0),
       gst_rate: Number(it.gst_rate) || 0,
+      tax_option_id: it.tax_option_id ? String(it.tax_option_id) : undefined,
+      tax_components: Array.isArray(it.tax_components) ? it.tax_components : [],
       cess_rate: Number(it.cess_rate) || 0,
       custom_fields: (it.custom_fields && typeof it.custom_fields === 'object' ? it.custom_fields : {}) as Record<string, string>,
       selling_price_includes_tax: it.price_includes_tax,
@@ -369,6 +512,8 @@ export default function InvoiceCreate() {
       unit_price: Number(it.unit_price) || 0,
       discount_amount: Number(it.discount_amount || 0),
       gst_rate: Number(it.gst_rate) || 0,
+      tax_option_id: it.tax_option_id ? String(it.tax_option_id) : undefined,
+      tax_components: Array.isArray(it.tax_components) ? it.tax_components : [],
       cess_rate: Number(it.cess_rate) || 0,
       custom_fields: (it.custom_fields && typeof it.custom_fields === 'object' ? it.custom_fields : {}) as Record<string, string>,
       selling_price_includes_tax: it.price_includes_tax,
@@ -412,6 +557,27 @@ export default function InvoiceCreate() {
 
   const handleOcrConfirm = (data: OcrResult & { overrides: any }) => {
     if (data.bill_date) setInvoiceDate(data.bill_date);
+    if (data.due_date) setDueDate(data.due_date);
+    if (data.party_phone) setPartyPhone(String(data.party_phone));
+    if (data.shipping_address || data.party_address) {
+      setShippingAddress(String(data.shipping_address || data.party_address || ''));
+    }
+    if (data.place_of_supply) {
+      const detectedSupply = String(data.place_of_supply);
+      const stateCode = detectedSupply.match(/\b(?:code\s*[:\-]?)?(\d{2})\b/i)?.[1]
+        || GST_STATE_OPTIONS.find(([, name]) => name.toLowerCase() === detectedSupply.trim().toLowerCase())?.[0]
+        || '';
+      if (stateCode) updatePlaceOfSupply(stateCode);
+    }
+    if (data.reference_invoice && typeof data.reference_invoice === 'object') {
+      setCustomFields((previous) => ({
+        ...previous,
+        reference_invoice: {
+          ...(previous.reference_invoice && typeof previous.reference_invoice === 'object' ? previous.reference_invoice : {}),
+          ...Object.fromEntries(Object.entries(data.reference_invoice || {}).filter(([, value]) => Boolean(value))),
+        },
+      }));
+    }
     if (data.invoice_number) {
       setInvoiceNumberEdited(true);
       setInvoiceNumber(String(data.invoice_number).trim().toUpperCase().slice(0, 16));
@@ -429,8 +595,8 @@ export default function InvoiceCreate() {
           quantity: Number(item.quantity) || 1,
           unit_price: rate,
           discount_amount: 0,
-          gst_rate: 18,
-          cess_rate: 0,
+          gst_rate: Number(item.gst_rate ?? data.tax_summary?.gst_rate ?? 0) || 0,
+          cess_rate: Number(item.cess_rate ?? 0) || 0,
           custom_fields: {},
         };
       });
@@ -511,6 +677,10 @@ export default function InvoiceCreate() {
   };
 
   const setGstEnabled = (enabled: boolean) => {
+    if (enabled && taxSettings.enable_gst === false) {
+      toast.error('GST is disabled in Settings > Taxes & GST');
+      return;
+    }
     setIsGstInvoice(enabled);
     if (!enabled) {
       setIsInterstate(false);
@@ -519,17 +689,51 @@ export default function InvoiceCreate() {
   };
 
   const totals = useMemo(
-    () => computeTotals(items, isGstInvoice, roundOffEnabled, pricingMode, invoiceDiscountType, invoiceDiscountValue),
-    [items, isGstInvoice, roundOffEnabled, pricingMode, invoiceDiscountType, invoiceDiscountValue],
+    () => computeTotals(
+      items,
+      isGstInvoice,
+      roundOffEnabled,
+      pricingMode,
+      invoiceDiscountType,
+      invoiceDiscountValue,
+      isInterstate,
+      transactionSettings.roundOffType === 'FLOOR' || transactionSettings.roundOffType === 'CEIL'
+        ? transactionSettings.roundOffType
+        : 'NEAREST',
+      transactionSettings.roundOffTo === 10 || transactionSettings.roundOffTo === 100
+        ? transactionSettings.roundOffTo
+        : 1,
+    ),
+    [
+      items,
+      isGstInvoice,
+      roundOffEnabled,
+      pricingMode,
+      invoiceDiscountType,
+      invoiceDiscountValue,
+      isInterstate,
+      transactionSettings.roundOffType,
+      transactionSettings.roundOffTo,
+    ],
   );
-  const cgstDisplay = isInterstate ? 0 : Math.round(totals.tax / 2);
-  const sgstDisplay = isInterstate ? 0 : (totals.tax - cgstDisplay);
-  const igstDisplay = isInterstate ? totals.tax : 0;
+  const cgstDisplay = totals.cgst;
+  const sgstDisplay = totals.sgst;
+  const igstDisplay = totals.igst;
   const effectivePartyName = partyId ? partyName.trim() : (partySearch.trim() || partyName.trim());
   const amountPaid = paymentRows
     .filter((row) => row.payment_mode !== 'credit')
     .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
   const balanceDue = totals.total - amountPaid;
+  const quickPaymentMode = paymentRows[0]?.payment_mode === 'credit' ? 'credit' : 'cash';
+  const setQuickPaymentMode = (mode: 'credit' | 'cash') => {
+    const first = paymentRows[0] || newPaymentEditorRow();
+    const nextFirst = {
+      ...first,
+      payment_mode: mode,
+      amount: mode === 'credit' ? 0 : totals.total,
+    };
+    setPaymentRows([nextFirst, ...paymentRows.slice(1)]);
+  };
 
   const itemPayload = () => items.map((i) => ({
     item_id: i.item_id || null,
@@ -541,6 +745,8 @@ export default function InvoiceCreate() {
     quantity: Number(i.quantity) || 0,
     unit_price: Number(i.unit_price) || 0,
     gst_rate: isGstInvoice ? Number(i.gst_rate) || 0 : 0,
+    tax_option_id: isGstInvoice ? i.tax_option_id || null : null,
+    tax_components: isGstInvoice && Array.isArray(i.tax_components) ? i.tax_components : [],
     discount_amount: Number(i.discount_amount) || 0,
     cess_rate: isGstInvoice ? Number(i.cess_rate) || 0 : 0,
     currency_code: currencyCode,
@@ -580,7 +786,7 @@ export default function InvoiceCreate() {
       currency_code: currencyCode,
       notes: notes || undefined,
       external_description: externalDescription || undefined,
-      custom_fields: { ...customFields, __print_layout: pdfTemplate, __print_layout_color: invoiceLayoutColor },
+      custom_fields: customFieldsForPayload,
       amount_paid: amountPaid,
       payments: paymentRows,
       company_bank_account_id: companyBankAccountId || undefined,
@@ -588,7 +794,7 @@ export default function InvoiceCreate() {
       pricing_mode: pricingMode,
       discount_amount: totals.invoiceDiscount || undefined,
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFields, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, invoiceLayoutColor, companyBankAccountId, pricingMode, totals.invoiceDiscount],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFieldsForPayload, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId, pricingMode, totals.invoiceDiscount],
   );
 
   const draftState = useMemo(() => ({
@@ -599,7 +805,7 @@ export default function InvoiceCreate() {
   }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items, pricingMode, invoiceDiscountType, invoiceDiscountValue]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:sales-invoice',
+    STORAGE_KEYS.drafts.salesInvoice,
     draftState,
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
@@ -632,6 +838,7 @@ export default function InvoiceCreate() {
     },
     {
       enabled: !editInvoiceId && !duplicateInvoiceId,
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.salesInvoice,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.partySearch || draft.invoiceNumber || draft.dueDate ||
         draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
@@ -687,7 +894,7 @@ export default function InvoiceCreate() {
   };
 
   const handlePrintReceipt = async (id: string) => {
-    const printer = localStorage.getItem('bizflow_printer_type') || 'a4';
+    const printer = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) || 'a4';
     let pdfUrl = '';
     try {
       const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
@@ -752,7 +959,7 @@ export default function InvoiceCreate() {
       party_phone: partyPhone || undefined,
       notes,
       external_description: externalDescription || undefined,
-      custom_fields: { ...customFields, __print_layout: pdfTemplate, __print_layout_color: invoiceLayoutColor },
+      custom_fields: customFieldsForPayload,
       round_off_enabled: roundOffEnabled,
       company_bank_account_id: companyBankAccountId || undefined,
       items: itemPayload(),
@@ -918,6 +1125,7 @@ export default function InvoiceCreate() {
           <div className="flex justify-between"><span className="text-muted-foreground">{isGstInvoice ? 'Subtotal (taxable)' : 'Subtotal'}</span><span className="tabular-nums">{formatMoney(totals.taxable + totals.invoiceDiscount, currencyCode)}</span></div>
 
           {/* Invoice-level discount control */}
+          {transactionSettings.enableTransactionWiseDiscount === true && (
           <div className="rounded-lg border bg-background/60 p-2.5 space-y-2">
             <p className="text-xs font-semibold text-muted-foreground">Invoice Discount</p>
             <div className="flex items-center gap-1.5">
@@ -961,6 +1169,7 @@ export default function InvoiceCreate() {
               </div>
             )}
           </div>
+          )}
 
           {totals.lineDiscount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Item Discounts</span><span className="tabular-nums text-muted-foreground">-{formatMoney(totals.lineDiscount, currencyCode)}</span></div>}
           <div className="flex justify-between"><span className="text-muted-foreground">{isGstInvoice ? 'Taxable' : 'After Discount'}</span><span className="tabular-nums font-medium">{formatMoney(totals.taxable, currencyCode)}</span></div>
@@ -990,7 +1199,7 @@ export default function InvoiceCreate() {
             onCancel={() => navigate(cancelTo)}
             onPreview={handlePreview}
             onSave={handleSubmit}
-            canPreview={canSave}
+            canPreview={canSave && transactionSettings.doNotShowInvoicePreview !== true}
             canSave={canSave}
             saving={saving}
             saveLabel={editInvoiceId ? 'Save changes' : 'Create Invoice'}
@@ -1034,26 +1243,64 @@ export default function InvoiceCreate() {
         }
       />
 
-      <div className="inline-flex rounded-lg bg-muted p-1">
-        <button
-          type="button"
-          className={`h-8 rounded-md px-4 text-sm font-medium transition-colors ${isGstInvoice ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-          onClick={() => setGstEnabled(true)}
-        >
-          GST Bill
-        </button>
-        <button
-          type="button"
-          className={`h-8 rounded-md px-4 text-sm font-medium transition-colors ${!isGstInvoice ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-          onClick={() => setGstEnabled(false)}
-        >
-          Non-GST Bill
-        </button>
-      </div>
+      <TransactionGrid>
+        <section className="overflow-visible rounded-lg border bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-50 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-4">
+              <h2 className="text-lg font-semibold text-slate-950">Sale</h2>
+              {!editInvoiceId && (
+                <div className="inline-flex items-center rounded-md border bg-white p-0.5">
+                  <button
+                    type="button"
+                    className={`h-8 rounded px-3 text-sm font-medium transition-colors ${quickPaymentMode === 'credit' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setQuickPaymentMode('credit')}
+                  >
+                    Credit
+                  </button>
+                  <button
+                    type="button"
+                    className={`h-8 rounded px-3 text-sm font-medium transition-colors ${quickPaymentMode === 'cash' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setQuickPaymentMode('cash')}
+                  >
+                    Cash
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-md border bg-white p-0.5">
+                <button
+                  type="button"
+                  disabled={taxSettings.enable_gst === false}
+                  title={taxSettings.enable_gst === false ? 'Enable GST in Settings > Taxes & GST' : 'Create a GST invoice'}
+                  className={`h-8 rounded px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${isGstInvoice ? 'bg-slate-900 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setGstEnabled(true)}
+                >
+                  GST Bill
+                </button>
+                <button
+                  type="button"
+                  className={`h-8 rounded px-3 text-xs font-semibold transition-colors ${!isGstInvoice ? 'bg-slate-900 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setGstEnabled(false)}
+                >
+                  Non-GST Bill
+                </button>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                title="Configure item columns"
+                onClick={() => navigate('/settings?section=items')}
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
-      <TransactionGrid sidebar={summary}>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <TransactionSection title="Customer" compact>
+          <div className={`grid bg-slate-50/40 ${isLiteSale ? 'lg:grid-cols-1' : 'lg:grid-cols-2'}`}>
+          <TransactionSection title="Customer" compact className={`rounded-none border-0 border-b ${isLiteSale ? '' : 'lg:border-r'}`}>
             <div className="space-y-3">
               {partyId ? (
                 <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
@@ -1095,8 +1342,9 @@ export default function InvoiceCreate() {
             </div>
           </TransactionSection>
 
-          <TransactionSection title="Invoice Details" compact>
+          {!isLiteSale && <TransactionSection title="Invoice Details" compact className="rounded-none border-0 border-b">
             <div className="grid grid-cols-2 gap-4">
+              {transactionSettings.showInvoiceNumber !== false && (
               <div className="col-span-2">
                 <Label className="text-xs">Invoice Number</Label>
                 <Input
@@ -1125,8 +1373,11 @@ export default function InvoiceCreate() {
                   )}
                 </div>
               </div>
+              )}
               <div><Label className="text-xs">Invoice Date</Label><Input type="date" className="mt-1 h-9" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} /></div>
-              <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
+              {transactionSettings.enableDueDatesAndPaymentTerms === true && (
+                <div><Label className="text-xs">Due Date</Label><Input type="date" className="mt-1 h-9" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
+              )}
               <div className="col-span-2">
                 <Label className="text-xs">Currency</Label>
                 <select
@@ -1149,12 +1400,12 @@ export default function InvoiceCreate() {
                 <Input className="mt-1 h-9" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Leave blank to use party shipping or billing address" />
               </div>
             </div>
-          </TransactionSection>
-        </div>
+          </TransactionSection>}
+          </div>
 
 
 
-        <TransactionSection title="Items" description="Search catalog items, add services, and expand a row only when extra details are needed." compact>
+        <TransactionSection title="Items" compact className="rounded-none border-x-0 border-t-0">
           <VyaparLineItems
             items={items}
             onChange={handleItemsChange}
@@ -1163,18 +1414,30 @@ export default function InvoiceCreate() {
             searchMode="invoice"
             defaultRateFrom="selling"
             godownId={godownId}
-            showHsn={isGstInvoice}
-            showUnit
-            showDescription
-            showCess={isGstInvoice}
+            partyId={partyId}
+            showHsn={isGstInvoice && taxSettings.enable_hsn_sac !== false}
+            showUnit={itemSettings.items_unit !== false}
+            showDescription={itemSettings.description === true}
+            showCess={isGstInvoice && taxSettings.additional_cess_on_item === true}
+            showDiscount={itemSettings.item_wise_discount !== false}
+            showTax={itemSettings.item_wise_tax !== false}
+            showPurchasePrice={transactionSettings.showPurchasePriceInItems === true}
+            showLastSalePrices={transactionSettings.showLast5SalePrice === true}
+            showLastPurchasePrices={transactionSettings.showLast5PurchasePrice === true}
+            showFreeQuantity={transactionSettings.showFreeItemQuantity === true}
+            showProfit={transactionSettings.showProfitWhileMakingSaleInvoice === true}
+            showLowStockDialog={itemSettings.show_low_stock_dialog === true}
+            usePartyWiseRate={itemSettings.party_wise_item_rate === true}
+            quantityDecimalPlaces={Math.max(0, Math.min(4, Number(itemSettings.quantity_decimal_places ?? 2) || 0))}
             currencyCode={currencyCode}
-            customFields={itemCustomFieldDefs}
+            customFields={visibleItemFieldDefs}
             pricingMode={pricingMode}
+            showTotals={false}
           />
         </TransactionSection>
 
         {invoiceCustomFieldDefs.length > 0 && (
-          <TransactionSection title="Additional Fields" compact>
+          <TransactionSection title="Additional Fields" compact className="rounded-none border-x-0 border-t-0">
             <div className="grid gap-3 md:grid-cols-3">
               {invoiceCustomFieldDefs.map((field) => (
                 <div key={field.id}>
@@ -1193,11 +1456,72 @@ export default function InvoiceCreate() {
           </TransactionSection>
         )}
 
+        {(enabledTransactionFields.length > 0 || enabledTransportationFields.length > 0) && (
+          <TransactionSection
+            title="Transaction Details"
+            compact
+            className="rounded-none border-x-0 border-t-0"
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              {enabledTransactionFields.map((field) => {
+                const values = customFields.transaction_settings && typeof customFields.transaction_settings === 'object'
+                  ? customFields.transaction_settings
+                  : {};
+                return (
+                  <div key={field.key}>
+                    <Label className="text-xs">{field.label}</Label>
+                    <Input
+                      type={field.type}
+                      className="mt-1 h-9"
+                      value={values[field.key] || ''}
+                      onChange={(event) => setCustomFields((previous) => ({
+                        ...previous,
+                        transaction_settings: {
+                          ...(previous.transaction_settings && typeof previous.transaction_settings === 'object'
+                            ? previous.transaction_settings
+                            : {}),
+                          [field.key]: event.target.value,
+                        },
+                      }))}
+                    />
+                  </div>
+                );
+              })}
+              {enabledTransportationFields.map((field) => {
+                const values = customFields.transportation_details && typeof customFields.transportation_details === 'object'
+                  ? customFields.transportation_details
+                  : {};
+                return (
+                  <div key={field.key}>
+                    <Label className="text-xs">
+                      {field.label}
+                      {field.showInPrint && <span className="ml-1 text-[10px] text-muted-foreground">(prints)</span>}
+                    </Label>
+                    <Input
+                      className="mt-1 h-9"
+                      value={values[field.key] || ''}
+                      onChange={(event) => setCustomFields((previous) => ({
+                        ...previous,
+                        transportation_details: {
+                          ...(previous.transportation_details && typeof previous.transportation_details === 'object'
+                            ? previous.transportation_details
+                            : {}),
+                          [field.key]: event.target.value,
+                        },
+                      }))}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </TransactionSection>
+        )}
+
         {referenceTemplateSelected && referenceSettings.enabledKeys.length > 0 && (
           <TransactionSection
             title="Reference Invoice Details"
-            description="Fields enabled in Invoice Settings for the Reference Tax + E-Way template."
             compact
+            className="rounded-none border-x-0 border-t-0"
           >
             <div className="grid gap-3 md:grid-cols-3">
               {REFERENCE_INVOICE_FIELDS.filter(([key]) => referenceSettings.enabledKeys.includes(key)).map(([key, label]) => (
@@ -1215,43 +1539,77 @@ export default function InvoiceCreate() {
           </TransactionSection>
         )}
 
-        <div className={`grid gap-3 ${editInvoiceId ? '' : 'lg:grid-cols-2'}`}>
-          {!editInvoiceId && (
-            <TransactionSection title="Payment" compact>
-              <PaymentRowsEditor
-                rows={paymentRows}
-                onChange={setPaymentRows}
-                defaultBankAccountId={companyBankAccountId}
-                currencyCode={currencyCode}
-              />
-            </TransactionSection>
-          )}
-
-          <TransactionSection title="Notes, Terms & Attachments" compact>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <Label className="text-xs">Description / Work Details</Label>
-                <textarea className="mt-1 min-h-9 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm focus:min-h-[76px]" value={externalDescription} onChange={e => setExternalDescription(e.target.value)} placeholder="Optional printed description saved with this invoice" />
-              </div>
-              <div>
-                <Label className="text-xs">Notes / Terms</Label>
-                <textarea className="mt-1 min-h-9 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm focus:min-h-[76px]" value={notes} onChange={e => setNotes(e.target.value)} placeholder={(company as any)?.terms_and_conditions || 'Terms, notes, or internal comments'} />
-              </div>
+          <div className={`grid border-t ${isLiteSale ? 'lg:grid-cols-1' : 'lg:grid-cols-[minmax(0,1fr)_380px]'}`}>
+            {!isLiteSale && <div className="min-w-0">
               {!editInvoiceId && (
-                <div className="md:col-span-2">
-                  <Label className="text-xs">Images / Documents</Label>
-                  <label className="mt-1 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 text-sm text-muted-foreground hover:bg-muted/40">
-                    <Paperclip className="h-4 w-4" />
-                    <span>{invoiceFiles.length ? `${invoiceFiles.length} file(s) selected` : 'Attach files'}</span>
-                    <input type="file" multiple className="hidden" onChange={(e) => setInvoiceFiles(Array.from(e.target.files || []))} />
-                  </label>
-                </div>
+                <TransactionSection title="Payment" compact className="rounded-none border-x-0 border-t-0">
+                  <PaymentRowsEditor
+                    rows={paymentRows}
+                    onChange={setPaymentRows}
+                    defaultBankAccountId={companyBankAccountId}
+                    currencyCode={currencyCode}
+                    showHeader={false}
+                  />
+                </TransactionSection>
               )}
-            </div>
-          </TransactionSection>
-        </div>
 
-        <CollapsibleTransactionSection title={`Advanced invoice settings${advancedHasCustom ? ' •' : ''}`} open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <TransactionSection title="Terms, Description & Attachments" compact className="rounded-none border-x-0 border-b-0">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Description / Work Details</Label>
+                    <textarea className="mt-1 min-h-20 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm" value={externalDescription} onChange={e => setExternalDescription(e.target.value)} placeholder="Printed description or work details" />
+                  </div>
+                  {transactionSettings.enableTermsAndConditions !== false && <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-xs">Terms & Conditions</Label>
+                      {transactionSettings.enableTermsAndConditions !== false && saleTerms.length > 0 && (
+                        <select
+                          className="h-7 max-w-[190px] rounded-md border bg-background px-2 text-xs"
+                          value={selectedTermsId || 'custom'}
+                          onChange={(event) => {
+                            const nextId = event.target.value;
+                            setSelectedTermsId(nextId === 'custom' ? '' : nextId);
+                            const selected = saleTerms.find((term: any) => String(term.id) === nextId);
+                            if (selected) setNotes(String(selected.content || ''));
+                          }}
+                        >
+                          {saleTerms.map((term: any) => (
+                            <option key={term.id} value={term.id}>{term.title || 'Saved terms'}</option>
+                          ))}
+                          <option value="custom">Custom terms</option>
+                        </select>
+                      )}
+                    </div>
+                    <textarea
+                      className="mt-1 min-h-20 w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm"
+                      value={notes}
+                      onChange={(event) => {
+                        setNotes(event.target.value);
+                        setSelectedTermsId('');
+                      }}
+                      placeholder={(company as any)?.terms_and_conditions || 'Terms and conditions printed on this invoice'}
+                    />
+                  </div>}
+                  {!editInvoiceId && (
+                    <div className="md:col-span-2">
+                      <Label className="text-xs">Images / Documents</Label>
+                      <label className="mt-1 flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 text-sm text-muted-foreground hover:bg-muted/40">
+                        <Paperclip className="h-4 w-4" />
+                        <span>{invoiceFiles.length ? `${invoiceFiles.length} file(s) selected` : 'Attach files'}</span>
+                        <input type="file" multiple className="hidden" onChange={(e) => setInvoiceFiles(Array.from(e.target.files || []))} />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </TransactionSection>
+            </div>}
+            <aside className={`bg-slate-50 p-3 ${isLiteSale ? '' : 'border-t lg:border-l lg:border-t-0'}`}>
+              {summary}
+            </aside>
+          </div>
+        </section>
+
+        {!isLiteSale && <CollapsibleTransactionSection title={`Advanced invoice settings${advancedHasCustom ? ' •' : ''}`} open={advancedOpen} onOpenChange={setAdvancedOpen}>
           <div className="grid gap-4 md:grid-cols-3">
             <div>
               <Label className="text-xs">Godown</Label>
@@ -1262,13 +1620,13 @@ export default function InvoiceCreate() {
             </div>
             {isGstInvoice && (
               <>
-                <div>
+                {taxSettings.enable_place_of_supply !== false && <div>
                   <Label className="text-xs">Place of Supply State</Label>
                   <select className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={placeOfSupply} onChange={e => updatePlaceOfSupply(e.target.value)}>
                     <option value="">Same as party billing state</option>
                     {GST_STATE_OPTIONS.map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}
                   </select>
-                </div>
+                </div>}
                 <label className="mt-5 flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
                   <input type="checkbox" checked={isGstInvoice} onChange={e => setGstEnabled(e.target.checked)} className="rounded border-input" />
                   GST invoice
@@ -1278,6 +1636,19 @@ export default function InvoiceCreate() {
                   Interstate (IGST)
                 </label>
               </>
+            )}
+            {transactionSettings.showInclusiveExclusiveTax !== false && (
+              <div>
+                <Label className="text-xs">Tax on item rate</Label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                  value={pricingMode}
+                  onChange={(event) => setPricingMode(event.target.value === 'inclusive' ? 'inclusive' : 'exclusive')}
+                >
+                  <option value="exclusive">Tax exclusive</option>
+                  <option value="inclusive">Tax inclusive</option>
+                </select>
+              </div>
             )}
             <div className="md:col-span-3">
               <Label className="text-xs">Invoice layout</Label>
@@ -1322,14 +1693,14 @@ export default function InvoiceCreate() {
               <BankAccountPicker value={companyBankAccountId} onChange={setCompanyBankAccountId} />
             </div>
           </div>
-        </CollapsibleTransactionSection>
+        </CollapsibleTransactionSection>}
 
         <MobileActionBar>
           <DocumentActionsBar
             onCancel={() => navigate(cancelTo)}
             onPreview={handlePreview}
             onSave={handleSubmit}
-            canPreview={canSave}
+            canPreview={canSave && transactionSettings.doNotShowInvoicePreview !== true}
             canSave={canSave}
             saving={saving}
             saveLabel={editInvoiceId ? 'Save changes' : 'Create Invoice'}
@@ -1372,7 +1743,7 @@ export default function InvoiceCreate() {
           invoice={completedInvoice}
           company={company || { name: 'My Company' }}
           items={completedInvoice.items}
-          widthMm={localStorage.getItem('bizflow_printer_type') === 'thermal58' ? 58 : 80}
+          widthMm={readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? 58 : 80}
           onClose={() => {
             const nextId = completedInvoice.id;
             setCompletedInvoice(null);

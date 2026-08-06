@@ -14,7 +14,7 @@ export const logger = winston.createLogger({
     timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     logFormat
   ),
-  defaultMeta: { service: 'bizflow-api' },
+  defaultMeta: { service: 'microtechnique-accounts-api' },
   transports: [
     new winston.transports.Console({
       format: combine(colorize(), logFormat),

@@ -18,6 +18,9 @@ export async function getDashboardStats(req: Request, res: Response) {
          (SELECT COUNT(*)::int FROM licenses WHERE status = 'revoked' AND is_deleted = false) AS revoked_licenses,
          (SELECT COUNT(*)::int FROM companies WHERE is_deleted = false) AS total_companies,
          (SELECT COUNT(*)::int FROM users WHERE is_deleted = false AND company_id IS NOT NULL) AS total_users,
+         (SELECT COUNT(*)::int FROM registrants WHERE is_deleted = false) AS total_registrants,
+         (SELECT COUNT(*)::int FROM registrants WHERE is_deleted = false AND lead_status = 'new') AS new_leads,
+         (SELECT COUNT(*)::int FROM registrants WHERE is_deleted = false AND email_verified_at IS NOT NULL) AS verified_registrants,
          (SELECT COALESCE(SUM(lt.price_inr), 0)::bigint
             FROM licenses l
             JOIN license_tiers lt ON lt.id = l.tier_id
@@ -85,6 +88,208 @@ export async function getDashboardStats(req: Request, res: Response) {
   }
 }
 
+export async function getAllRegistrants(req: Request, res: Response) {
+  try {
+    const { q, status } = req.query as { q?: string; status?: string };
+    const { page, limit, offset } = parsePagination(req.query);
+    const conditions = ['r.is_deleted = false'];
+    const params: unknown[] = [];
+
+    if (status && status !== 'all') {
+      params.push(status);
+      conditions.push(`r.lead_status = $${params.length}`);
+    }
+
+    if (q && String(q).trim()) {
+      params.push(`%${String(q).trim().toLowerCase()}%`);
+      const p = params.length;
+      conditions.push(`(
+        lower(r.name) LIKE $${p}
+        OR lower(r.email) LIKE $${p}
+        OR lower(coalesce(r.phone, '')) LIKE $${p}
+        OR EXISTS (
+          SELECT 1
+          FROM licenses sl
+          LEFT JOIN companies sc ON sc.id = sl.company_id
+          WHERE sl.registrant_id = r.id
+            AND sl.is_deleted = false
+            AND (
+              lower(sl.license_key) LIKE $${p}
+              OR lower(coalesce(sc.name, '')) LIKE $${p}
+            )
+        )
+      )`);
+    }
+
+    const whereSql = `WHERE ${conditions.join(' AND ')}`;
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS c FROM registrants r ${whereSql}`,
+      params,
+    );
+    const total = countResult.rows[0].c;
+
+    params.push(limit, offset);
+    const limitIndex = params.length - 1;
+    const offsetIndex = params.length;
+    const result = await query(
+      `SELECT r.id, r.name, r.email, r.phone, r.is_active, r.is_verified,
+              r.email_verified_at, r.last_login_at, r.created_at,
+              r.lead_status, r.lead_source, r.admin_notes, r.last_contacted_at,
+              (SELECT COUNT(*)::int FROM licenses l
+               WHERE l.registrant_id = r.id AND l.is_deleted = false) AS license_count,
+              (SELECT COUNT(*)::int FROM licenses l
+               WHERE l.registrant_id = r.id AND l.is_deleted = false
+                 AND l.status IN ('active', 'trial')) AS live_license_count,
+              latest.status AS latest_license_status,
+              latest.license_id,
+              latest.company_id,
+              latest.company_name
+       FROM registrants r
+       LEFT JOIN LATERAL (
+         SELECT l.id AS license_id, l.status, c.id AS company_id, c.name AS company_name
+         FROM licenses l
+         LEFT JOIN companies c ON c.id = l.company_id AND c.is_deleted = false
+         WHERE l.registrant_id = r.id AND l.is_deleted = false
+         ORDER BY COALESCE(l.activated_at, l.requested_at, l.created_at) DESC
+         LIMIT 1
+       ) latest ON true
+       ${whereSql}
+       ORDER BY
+         CASE r.lead_status
+           WHEN 'new' THEN 0
+           WHEN 'qualified' THEN 1
+           WHEN 'contacted' THEN 2
+           WHEN 'customer' THEN 3
+           ELSE 4
+         END,
+         r.created_at DESC
+       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
+      params,
+    );
+
+    res.json(success(buildPaginatedResponse(result.rows, total, page, limit)));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function updateRegistrantLead(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const body = req.body as {
+      lead_status?: string;
+      admin_notes?: string;
+      mark_contacted?: boolean;
+      is_active?: boolean;
+    };
+    const current = await query(
+      `SELECT id, name, email, lead_status, admin_notes, last_contacted_at, is_active
+       FROM registrants
+       WHERE id = $1 AND is_deleted = false`,
+      [id],
+    );
+    if (!current.rows.length) return res.status(404).json(error('Registration not found'));
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    const setValue = (column: string, value: unknown) => {
+      values.push(value);
+      updates.push(`${column} = $${values.length}`);
+    };
+    if (body.lead_status !== undefined) setValue('lead_status', body.lead_status);
+    if (body.admin_notes !== undefined) setValue('admin_notes', body.admin_notes.trim() || null);
+    if (body.is_active !== undefined) setValue('is_active', body.is_active);
+    if (body.mark_contacted === true) updates.push('last_contacted_at = NOW()');
+    if (!updates.length) return res.status(400).json(error('No changes provided'));
+    updates.push('updated_at = NOW()');
+    values.push(id);
+
+    const updated = await query(
+      `UPDATE registrants
+       SET ${updates.join(', ')}
+       WHERE id = $${values.length} AND is_deleted = false
+       RETURNING id, name, email, phone, lead_status, admin_notes,
+                 last_contacted_at, is_active, is_verified, email_verified_at`,
+      values,
+    );
+
+    await logAction(
+      req.user!.id,
+      null,
+      'update_registrant_lead',
+      'registrant',
+      id,
+      current.rows[0],
+      updated.rows[0],
+      req.ip,
+      req.get('User-Agent'),
+    );
+    res.json(success({ registrant: updated.rows[0] }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function deleteRegistrantLead(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const deleted = await withTransaction(async (client) => {
+      const registrantResult = await client.query(
+        `SELECT id, name, email
+         FROM registrants
+         WHERE id = $1 AND is_deleted = false
+         FOR UPDATE`,
+        [id],
+      );
+      if (!registrantResult.rows.length) return null;
+
+      const protectedRecords = await client.query(
+        `SELECT COUNT(*)::int AS c
+         FROM licenses
+         WHERE registrant_id = $1
+           AND is_deleted = false
+           AND (status IN ('active', 'trial') OR company_id IS NOT NULL)`,
+        [id],
+      );
+      if (protectedRecords.rows[0].c > 0) {
+        const err = new Error('Active customers or registrations linked to a company cannot be deleted. Revoke the license or manage the company instead.');
+        (err as any).status = 409;
+        throw err;
+      }
+
+      await client.query(
+        `UPDATE licenses
+         SET is_deleted = true, updated_at = NOW()
+         WHERE registrant_id = $1 AND is_deleted = false`,
+        [id],
+      );
+      await client.query(
+        `UPDATE registrants
+         SET is_deleted = true, is_active = false, updated_at = NOW()
+         WHERE id = $1`,
+        [id],
+      );
+      return registrantResult.rows[0];
+    });
+
+    if (!deleted) return res.status(404).json(error('Registration not found'));
+    await logAction(
+      req.user!.id,
+      null,
+      'delete_registrant_lead',
+      'registrant',
+      id,
+      deleted,
+      { is_deleted: true },
+      req.ip,
+      req.get('User-Agent'),
+    );
+    res.json(success({ message: 'Registration deleted', registrant: deleted }));
+  } catch (err: any) {
+    res.status(err?.status || 500).json(error(err.message));
+  }
+}
+
 export async function getAllLicenses(req: Request, res: Response) {
   try {
     const { status, q } = req.query as { status?: string; q?: string };
@@ -107,7 +312,9 @@ export async function getAllLicenses(req: Request, res: Response) {
       const p = params.length;
       conditions.push(`(
         lower(r.name) LIKE $${p} OR lower(r.email) LIKE $${p}
+        OR lower(coalesce(r.phone, '')) LIKE $${p}
         OR lower(coalesce(c.name, '')) LIKE $${p}
+        OR lower(coalesce(l.license_key, '')) LIKE $${p}
       )`);
     }
 
@@ -546,8 +753,28 @@ export async function toggleUserActive(req: Request, res: Response) {
     }
 
     const next = !u.is_active;
+    if (!next && ['company_admin', 'admin'].includes(u.role)) {
+      const otherAdmins = await query(
+        `SELECT COUNT(*)::int AS count
+         FROM users
+         WHERE company_id = $1
+           AND id <> $2
+           AND role IN ('company_admin', 'admin')
+           AND is_active = true
+           AND is_deleted = false`,
+        [u.company_id, userId]
+      );
+      if (Number(otherAdmins.rows[0]?.count || 0) === 0) {
+        return res.status(409).json(error('Add or activate another company administrator before disabling this user'));
+      }
+    }
     const upd = await query(
-      `UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2 RETURNING id, name, email, role, is_active`,
+      `UPDATE users
+       SET is_active = $1,
+           session_version = CASE WHEN $1 = false THEN session_version + 1 ELSE session_version END,
+           updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, name, email, role, is_active`,
       [next, userId]
     );
 
@@ -564,6 +791,69 @@ export async function toggleUserActive(req: Request, res: Response) {
     );
 
     res.json(success({ user: upd.rows[0] }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
+export async function deleteCompanyUser(req: Request, res: Response) {
+  try {
+    const { userId } = req.params;
+    const current = await query(
+      `SELECT id, company_id, name, email, role, is_active
+       FROM users
+       WHERE id = $1 AND is_deleted = false`,
+      [userId]
+    );
+    if (!current.rows.length) {
+      return res.status(404).json(error('User not found'));
+    }
+
+    const user = current.rows[0];
+    if (user.role === 'super_admin' || !user.company_id) {
+      return res.status(400).json(error('Platform administrators cannot be deleted here'));
+    }
+
+    if (['company_admin', 'admin'].includes(user.role)) {
+      const otherAdmins = await query(
+        `SELECT COUNT(*)::int AS count
+         FROM users
+         WHERE company_id = $1
+           AND id <> $2
+           AND role IN ('company_admin', 'admin')
+           AND is_active = true
+           AND is_deleted = false`,
+        [user.company_id, userId]
+      );
+      if (Number(otherAdmins.rows[0]?.count || 0) === 0) {
+        return res.status(409).json(error('Add or activate another company administrator before deleting this user'));
+      }
+    }
+
+    const deleted = await query(
+      `UPDATE users
+       SET is_deleted = true,
+           is_active = false,
+           session_version = session_version + 1,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, email, role`,
+      [userId]
+    );
+
+    await logAction(
+      req.user!.id,
+      user.company_id,
+      'delete_company_user',
+      'user',
+      userId,
+      user,
+      { is_deleted: true, is_active: false },
+      req.ip,
+      req.get('User-Agent')
+    );
+
+    res.json(success({ message: 'User deleted', user: deleted.rows[0] }));
   } catch (err: any) {
     res.status(500).json(error(err.message));
   }

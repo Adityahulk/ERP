@@ -3,7 +3,11 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
-import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
+import {
+  calculateInvoiceTotals,
+  determineGSTType,
+  resolveTaxComponentRates,
+} from '../services/gstService';
 import {
   generateInvoicePDF,
   generateThermalReceipt,
@@ -22,7 +26,6 @@ import {
   cancelEwayBill as cancelEwayBillViaService,
   type EinvoiceItemRow,
 } from '../services/eInvoiceService';
-import { redis } from '../config/redis';
 import { env } from '../config/env';
 import {
   resolveBankSnapshotsForInsert,
@@ -70,6 +73,17 @@ async function resolveCompanyCurrency(db: Queryable, companyId: string, requeste
 function trimOrNull(value: unknown): string | null {
   const s = String(value ?? '').trim();
   return s ? s : null;
+}
+
+function objectSetting(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 const INVOICE_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
@@ -182,82 +196,130 @@ async function assertInvoiceNumberAvailable(
   }
 }
 
-async function generateInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
-  const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
-  const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
-  const prefix = prefixRes.rows[0]?.invoice_prefix || defaultPrefix;
+function financialYearFor(value?: string | Date) {
+  const date = value instanceof Date ? value : value ? new Date(`${value}T00:00:00`) : new Date();
+  const startYear = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return {
+    key: `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`,
+    start: `${startYear}-04-01`,
+    end: `${startYear + 1}-04-01`,
+  };
+}
 
-  const now = new Date();
-  const month = now.getMonth();
-  const yearStr = now.getFullYear().toString().slice(-2);
-  const nextYearStr = (now.getFullYear() + 1).toString().slice(-2);
-  const prevYearStr = (now.getFullYear() - 1).toString().slice(-2);
-  const fyShort = month >= 3 ? `${yearStr}-${nextYearStr}` : `${prevYearStr}-${yearStr}`;
-
-  const branchCode = godownId ? 'GW' : 'HQ';
-
-  const redisKey = `seq:invoice:${companyId}:${fyShort}:${invoiceKind}`;
-  let seq = 1;
-
-  if (redis) {
-    try {
-      seq = await redis.incr(redisKey);
-    } catch {
-      const dbRes = await query(
-        `SELECT COUNT(*)::int as count FROM invoices WHERE company_id = $1 AND is_deleted = false AND created_at >= $2`,
-        [companyId, new Date(now.getFullYear(), 0, 1).toISOString()]
-      );
-      seq = (dbRes.rows[0]?.count || 0) + 1;
-    }
+async function resolveInvoiceNumberFormat(db: Queryable, companyId: string, invoiceKind: string) {
+  const result = await db.query(
+    `SELECT c.invoice_prefix, tp.firm_id AS prefix_settings_id, tp.sale
+     FROM companies c
+     LEFT JOIN transaction_prefixes tp ON tp.firm_id = c.id
+     WHERE c.id = $1`,
+    [companyId],
+  );
+  const row = result.rows[0] || {};
+  if (invoiceKind !== 'purchase' && row.prefix_settings_id) {
+    return { configured: true, prefix: String(row.sale || '') };
   }
+  return {
+    configured: false,
+    prefix: String(row.invoice_prefix || (invoiceKind === 'purchase' ? 'PUR' : 'INV')),
+  };
+}
 
-  const paddedSeq = String(seq).padStart(4, '0');
-  return `${prefix}/${branchCode}/${fyShort}${paddedSeq}`;
+function formatGeneratedInvoiceNumber(
+  sequence: number,
+  format: { configured: boolean; prefix: string },
+  financialYear: string,
+  godownId: string | null,
+) {
+  const padded = String(sequence).padStart(4, '0');
+  if (format.configured) return format.prefix ? `${format.prefix}${padded}` : String(sequence);
+  return `${format.prefix}/${godownId ? 'GW' : 'HQ'}/${financialYear}${padded}`;
+}
+
+async function currentInvoiceSequence(
+  db: Queryable,
+  companyId: string,
+  documentType: string,
+  financialYear: ReturnType<typeof financialYearFor>,
+) {
+  const result = await db.query(
+    `SELECT COALESCE(MAX((substring(invoice_number FROM '([0-9]+)$'))::bigint), 0)::bigint AS last_number
+     FROM invoices
+     WHERE company_id = $1
+       AND invoice_date >= $2::date
+       AND invoice_date < $3::date
+       AND ($4 = 'sale' AND invoice_type IN ('sale', 'tax_invoice'))`,
+    [companyId, financialYear.start, financialYear.end, documentType],
+  );
+  return Number(result.rows[0]?.last_number || 0);
+}
+
+async function generateInvoiceNumber(
+  db: Queryable,
+  companyId: string,
+  invoiceKind: string,
+  godownId: string | null,
+  invoiceDate?: string,
+): Promise<string> {
+  const documentType = invoiceKind === 'purchase' ? 'purchase' : 'sale';
+  const financialYear = financialYearFor(invoiceDate);
+  const existingMax = await currentInvoiceSequence(db, companyId, documentType, financialYear);
+  await db.query(
+    `INSERT INTO document_sequences (company_id, document_type, financial_year, last_number)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (company_id, document_type, financial_year)
+     DO UPDATE SET last_number = GREATEST(document_sequences.last_number, EXCLUDED.last_number),
+                   updated_at = NOW()`,
+    [companyId, documentType, financialYear.key, existingMax],
+  );
+  const sequenceResult = await db.query(
+    `UPDATE document_sequences
+     SET last_number = last_number + 1, updated_at = NOW()
+     WHERE company_id = $1 AND document_type = $2 AND financial_year = $3
+     RETURNING last_number`,
+    [companyId, documentType, financialYear.key],
+  );
+  const format = await resolveInvoiceNumberFormat(db, companyId, invoiceKind);
+  return formatGeneratedInvoiceNumber(
+    Number(sequenceResult.rows[0].last_number),
+    format,
+    financialYear.key,
+    godownId,
+  );
 }
 
 async function previewNextInvoiceNumber(companyId: string, invoiceKind: string, godownId: string | null): Promise<string> {
-  const prefixRes = await query('SELECT invoice_prefix FROM companies WHERE id = $1', [companyId]);
-  const defaultPrefix = invoiceKind === 'purchase' ? 'PUR' : 'INV';
-  const prefix = prefixRes.rows[0]?.invoice_prefix || defaultPrefix;
-
-  const now = new Date();
-  const month = now.getMonth();
-  const yearStr = now.getFullYear().toString().slice(-2);
-  const nextYearStr = (now.getFullYear() + 1).toString().slice(-2);
-  const prevYearStr = (now.getFullYear() - 1).toString().slice(-2);
-  const fyShort = month >= 3 ? `${yearStr}-${nextYearStr}` : `${prevYearStr}-${yearStr}`;
-  const branchCode = godownId ? 'GW' : 'HQ';
-  const redisKey = `seq:invoice:${companyId}:${fyShort}:${invoiceKind}`;
-
-  const dbRes = await query(
-    `SELECT COUNT(*)::int AS count
-     FROM invoices
-     WHERE company_id = $1 AND is_deleted = false AND created_at >= $2`,
-    [companyId, new Date(now.getFullYear(), 0, 1).toISOString()],
+  const documentType = invoiceKind === 'purchase' ? 'purchase' : 'sale';
+  const financialYear = financialYearFor();
+  const existingMax = await currentInvoiceSequence({ query }, companyId, documentType, financialYear);
+  const sequenceResult = await query(
+    `SELECT last_number
+     FROM document_sequences
+     WHERE company_id = $1 AND document_type = $2 AND financial_year = $3`,
+    [companyId, documentType, financialYear.key],
   );
-  let seq = (dbRes.rows[0]?.count || 0) + 1;
-
-  if (redis) {
-    try {
-      const current = Number(await redis.get(redisKey));
-      if (Number.isFinite(current) && current >= seq) seq = current + 1;
-    } catch {
-      // Read-only preview should never block invoice creation.
-    }
-  }
-
-  return `${prefix}/${branchCode}/${fyShort}${String(seq).padStart(4, '0')}`;
+  const next = Math.max(existingMax, Number(sequenceResult.rows[0]?.last_number || 0)) + 1;
+  const format = await resolveInvoiceNumberFormat({ query }, companyId, invoiceKind);
+  return formatGeneratedInvoiceNumber(next, format, financialYear.key, godownId);
 }
 
 function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclusive') {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
   const qty = Number(raw.quantity) || 0;
+  const taxComponents = Array.isArray(raw.tax_components)
+    ? raw.tax_components
+        .map((component: any) => ({
+          type: String(component?.type || '').trim().toUpperCase(),
+          rate: Number(component?.rate) || 0,
+        }))
+        .filter((component: any) => component.type && component.rate > 0)
+    : [];
   
   const isInclusive = raw.price_includes_tax === true;
 
   let base = 0;
   if (isInclusive) {
-    const divisor = 1 + ((Number(raw.gst_rate) || 0) + (Number(raw.cess_rate) || 0)) / 100;
+    const componentRate = taxComponents.reduce((sum: number, component: any) => sum + component.rate, 0);
+    const divisor = 1 + ((componentRate || Number(raw.gst_rate) || 0) + (Number(raw.cess_rate) || 0)) / 100;
     base = Math.round((unitPrice / divisor) * qty);
   } else {
     base = Math.round(unitPrice * qty);
@@ -274,6 +336,7 @@ function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclu
     discount_type: lineDisc > 0 ? ('flat' as const) : ('none' as const),
     discount_value: lineDisc,
     price_includes_tax: isInclusive,
+    tax_components: taxComponents,
   };
 }
 
@@ -291,8 +354,17 @@ function stateCodeFromGstin(value: unknown): string {
 
 async function resolveDefaultGodownId(db: Queryable, companyId: string, requested?: unknown, userGodownId?: string | null): Promise<string | null> {
   const requestedId = trimOrNull(requested);
-  if (requestedId) return requestedId;
-  if (userGodownId) return userGodownId;
+  const preferredId = requestedId || userGodownId;
+  if (preferredId) {
+    const preferred = await db.query(
+      `SELECT id
+       FROM godowns
+       WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true`,
+      [preferredId, companyId],
+    );
+    if (preferred.rows[0]?.id) return preferred.rows[0].id;
+    if (requestedId) throw new Error('Selected godown is unavailable');
+  }
   const res = await db.query(
     `SELECT id FROM godowns
      WHERE company_id = $1 AND is_deleted = false AND is_active = true
@@ -310,7 +382,7 @@ async function resolveDefaultGodownId(db: Queryable, companyId: string, requeste
   return created.rows[0]?.id || null;
 }
 
-async function deductSaleStockAllowNegative(
+export async function deductSaleStockAllowNegative(
   db: Queryable,
   args: {
     companyId: string;
@@ -319,6 +391,7 @@ async function deductSaleStockAllowNegative(
     invoiceId: string;
     quantity: number;
     userId: string;
+    allowNegative?: boolean;
   },
 ) {
   const qty = Number(args.quantity) || 0;
@@ -327,24 +400,50 @@ async function deductSaleStockAllowNegative(
     throw new Error('Create or select a godown before selling inventory-tracked items.');
   }
 
-  await db.query(
-    `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
-     VALUES ($1, $2, $3, 0, 0)
-     ON CONFLICT (item_id, godown_id) DO NOTHING`,
-    [args.companyId, args.itemId, args.godownId],
-  );
-
-  await db.query(
-    `UPDATE item_stock
-     SET quantity = quantity - $1::numeric
-     WHERE company_id = $2 AND item_id = $3 AND godown_id = $4`,
-    [qty, args.companyId, args.itemId, args.godownId],
-  );
-
-  const balRes = await db.query(
-    'SELECT quantity FROM item_stock WHERE item_id = $1 AND godown_id = $2 AND company_id = $3',
-    [args.itemId, args.godownId, args.companyId],
-  );
+  let balanceAfter: number;
+  if (args.allowNegative === false) {
+    const deducted = await db.query(
+      `UPDATE item_stock
+       SET quantity = quantity - $1::numeric,
+           updated_at = now()
+       WHERE company_id = $2
+         AND item_id = $3
+         AND godown_id = $4
+         AND quantity >= $1::numeric
+       RETURNING quantity`,
+      [qty, args.companyId, args.itemId, args.godownId],
+    );
+    if (!deducted.rows.length) {
+      const stock = await db.query(
+        `SELECT i.name, COALESCE(s.quantity, 0) AS quantity
+         FROM items i
+         LEFT JOIN item_stock s
+           ON s.item_id = i.id AND s.company_id = i.company_id AND s.godown_id = $3
+         WHERE i.id = $1 AND i.company_id = $2`,
+        [args.itemId, args.companyId, args.godownId],
+      );
+      const itemName = stock.rows[0]?.name || 'Item';
+      const available = Number(stock.rows[0]?.quantity || 0);
+      throw new Error(`${itemName} has only ${available} available in the selected godown`);
+    }
+    balanceAfter = Number(deducted.rows[0].quantity || 0);
+  } else {
+    await db.query(
+      `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
+       VALUES ($1, $2, $3, 0, 0)
+       ON CONFLICT (item_id, godown_id) DO NOTHING`,
+      [args.companyId, args.itemId, args.godownId],
+    );
+    const deducted = await db.query(
+      `UPDATE item_stock
+       SET quantity = quantity - $1::numeric,
+           updated_at = now()
+       WHERE company_id = $2 AND item_id = $3 AND godown_id = $4
+       RETURNING quantity`,
+      [qty, args.companyId, args.itemId, args.godownId],
+    );
+    balanceAfter = Number(deducted.rows[0]?.quantity || 0);
+  }
 
   await db.query(
     `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, reference_id, quantity, balance_after, notes, created_by)
@@ -355,8 +454,10 @@ async function deductSaleStockAllowNegative(
       args.godownId,
       args.invoiceId,
       -qty,
-      balRes.rows[0]?.quantity || 0,
-      'Sale invoice stock deduction; negative stock allowed',
+      balanceAfter,
+      args.allowNegative === false
+        ? 'POS sale invoice stock deduction'
+        : 'Sale invoice stock deduction; negative stock allowed',
       args.userId,
     ],
   );
@@ -455,13 +556,17 @@ async function backupInvoiceSnapshot(client: any, companyId: string, invoiceId: 
 // ── GET /api/invoices/search-items ──────────────────────────────
 export async function searchItems(req: Request, res: Response) {
   try {
-    const { q, godown_id } = req.body;
+    const { q, godown_id, party_id } = req.body;
     const companyId = req.user!.company_id;
 
     if (!q || String(q).length < 2) return res.json(success([]));
 
     let godownJoin = '';
-    let godownSelect = ', 0 as available_stock';
+    let godownSelect = `, COALESCE((
+      SELECT SUM(stock.quantity)
+      FROM item_stock stock
+      WHERE stock.company_id = i.company_id AND stock.item_id = i.id
+    ), 0) as available_stock`;
     const params: any[] = [companyId, `%${q}%`, q];
 
     if (godown_id) {
@@ -471,10 +576,38 @@ export async function searchItems(req: Request, res: Response) {
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate, i.cess_rate,
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.purchase_price, i.gst_rate, i.cess_rate,
               i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
-              i.item_type, i.track_inventory,
+              i.item_type, i.track_inventory, i.reorder_point,
+              CASE WHEN $${params.length + 1}::uuid IS NULL THEN NULL ELSE (
+                SELECT party_ii.unit_price
+                FROM invoice_items party_ii
+                JOIN invoices party_inv ON party_inv.id = party_ii.invoice_id
+                WHERE party_ii.item_id = i.id
+                  AND party_inv.company_id = $1
+                  AND party_inv.party_id = $${params.length + 1}::uuid
+                  AND party_inv.is_deleted = false
+                  AND party_inv.status <> 'cancelled'
+                ORDER BY party_inv.invoice_date DESC, party_inv.created_at DESC
+                LIMIT 1
+              ) END AS party_sale_price,
+              ARRAY(
+                SELECT ii.unit_price
+                FROM invoice_items ii
+                JOIN invoices inv ON inv.id = ii.invoice_id
+                WHERE ii.item_id = i.id AND inv.company_id = $1 AND inv.is_deleted = false AND inv.status <> 'cancelled'
+                ORDER BY inv.invoice_date DESC, inv.created_at DESC
+                LIMIT 5
+              ) AS last_sale_prices,
+              ARRAY(
+                SELECT pii.unit_price
+                FROM purchase_invoice_items pii
+                JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+                WHERE pii.item_id = i.id AND pi.company_id = $1 AND pi.is_deleted = false AND pi.status <> 'cancelled'
+                ORDER BY pi.bill_date DESC, pi.created_at DESC
+                LIMIT 5
+              ) AS last_purchase_prices,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i
@@ -492,7 +625,7 @@ export async function searchItems(req: Request, res: Response) {
          END ASC,
          i.name ASC
        LIMIT 20`,
-      params
+      [...params, party_id || null]
     );
 
     res.json(success(result.rows));
@@ -511,7 +644,11 @@ export async function scanBarcode(req: Request, res: Response) {
     if (!barcode) return res.status(400).json(error('Barcode required'));
 
     let godownJoin = '';
-    let godownSelect = ', 0 as available_stock';
+    let godownSelect = `, COALESCE((
+      SELECT SUM(stock.quantity)
+      FROM item_stock stock
+      WHERE stock.company_id = i.company_id AND stock.item_id = i.id
+    ), 0) as available_stock`;
     const params: any[] = [companyId, barcode];
 
     if (godown_id) {
@@ -521,17 +658,26 @@ export async function scanBarcode(req: Request, res: Response) {
     }
 
     const result = await query(
-      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.gst_rate, i.cess_rate,
+      `SELECT i.id, i.name, i.sku, i.barcode, i.hsn_code, i.selling_price as unit_price, i.purchase_price, i.gst_rate, i.cess_rate,
               i.selling_price_includes_tax, i.purchase_price_includes_tax,
               i.custom_fields,
-              i.item_type, i.track_inventory,
+              i.item_type, i.track_inventory, i.reorder_point,
               COALESCE(u.abbreviation, u.name, 'PCS') as unit
        ${godownSelect}
        FROM items i
        LEFT JOIN item_units u ON u.id = i.unit_id
        ${godownJoin}
        WHERE i.company_id = $1 AND i.is_deleted = false AND i.is_active = true
-       AND (i.barcode = $2 OR i.sku = $2 OR i.id = (SELECT item_id FROM barcode_registry WHERE barcode = $2 LIMIT 1))
+       AND (
+         i.barcode = $2
+         OR i.sku = $2
+         OR i.id = (
+           SELECT item_id
+           FROM barcode_registry
+           WHERE company_id = $1 AND barcode = $2
+           LIMIT 1
+         )
+       )
        LIMIT 1`,
       params
     );
@@ -600,6 +746,11 @@ export async function createInvoice(req: Request, res: Response) {
       const invoiceType = isPurchase ? 'purchase' : 'tax_invoice';
       const godownId = await resolveDefaultGodownId(client, companyId, d.godown_id, req.user!.godown_id);
       const currencyCode = await resolveCompanyCurrency(client, companyId, d.currency_code);
+      const transactionSettingsResult = await client.query(
+        `SELECT * FROM transaction_settings WHERE firm_id = $1`,
+        [companyId],
+      );
+      const transactionSettings = transactionSettingsResult.rows[0] || {};
 
       const requestedInvoiceNumber = trimOrNull(d.invoice_number);
       let invoiceNumber = '';
@@ -617,7 +768,9 @@ export async function createInvoice(req: Request, res: Response) {
 
       if (!invoiceNumber) {
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          invoiceNumber = validateInvoiceNumber(await generateInvoiceNumber(companyId, rawType, godownId));
+          invoiceNumber = validateInvoiceNumber(
+            await generateInvoiceNumber(client, companyId, rawType, godownId, d.invoice_date),
+          );
           try {
             await assertInvoiceNumberAvailable(client, companyId, invoiceNumber);
             break;
@@ -641,7 +794,13 @@ export async function createInvoice(req: Request, res: Response) {
         invDisc,
         0,
         roundOffEnabled,
-        pricingMode
+        pricingMode,
+        transactionSettings.round_off_type === 'FLOOR' || transactionSettings.round_off_type === 'CEIL'
+          ? transactionSettings.round_off_type
+          : 'NEAREST',
+        transactionSettings.round_off_to === 10 || transactionSettings.round_off_to === 100
+          ? transactionSettings.round_off_to
+          : 1,
       );
 
       if (!Number.isFinite(totalsInfo.totalAmount) || totalsInfo.totalAmount < 0) {
@@ -683,22 +842,20 @@ export async function createInvoice(req: Request, res: Response) {
       }
 
       const compEinv = await client.query(
-        `SELECT einvoice_enabled, einvoice_turnover_above_5cr FROM companies WHERE id = $1`,
+        `SELECT einvoice_enabled, einvoice_turnover_above_5cr, item_settings FROM companies WHERE id = $1`,
         [companyId]
       );
       const einvOn = compEinv.rows[0]?.einvoice_enabled && compEinv.rows[0]?.einvoice_turnover_above_5cr;
       const einvoiceStatus = einvOn ? 'pending' : 'not_applicable';
+      const companyItemSettings = objectSetting(compEinv.rows[0]?.item_settings);
+      const updateSalePriceFromTransaction = companyItemSettings.update_sale_price_from_transaction === true;
 
       const placeOfSupply = gstContext.placeOfSupply;
 
       const bankSnap = await resolveBankSnapshotsForInsert(client, companyId, d.company_bank_account_id);
       if (!bankSnap.upi_id_snapshot) {
-        const txnSettingsRes = await client.query(
-          `SELECT default_upi_id FROM transaction_settings WHERE firm_id = $1`,
-          [companyId]
-        );
-        if (txnSettingsRes.rows[0]?.default_upi_id) {
-          bankSnap.upi_id_snapshot = txnSettingsRes.rows[0].default_upi_id;
+        if (transactionSettings.default_upi_id) {
+          bankSnap.upi_id_snapshot = transactionSettings.default_upi_id;
         }
       }
 
@@ -778,7 +935,13 @@ export async function createInvoice(req: Request, res: Response) {
         const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
 
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
-        const half = gstRt / 2;
+        const taxComponents = isGstInvoice && Array.isArray(item.tax_components) ? item.tax_components : [];
+        const componentRates = resolveTaxComponentRates(
+          gstRt,
+          isGstInvoice ? Number(item.cess_rate) || 0 : 0,
+          taxComponents,
+          gstType,
+        );
 
         await client.query(
           `INSERT INTO invoice_items (
@@ -786,8 +949,9 @@ export async function createInvoice(req: Request, res: Response) {
             quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order, custom_fields, price_includes_tax
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+            total_amount, sort_order, custom_fields, price_includes_tax,
+            tax_option_id, tax_components
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
           [
             invoice.id, companyId, item.item_id || null,
             invoiceLineName(item),
@@ -800,9 +964,9 @@ export async function createInvoice(req: Request, res: Response) {
             taxInfo.totalDiscountLineLevel,
             taxInfo.totalTaxable,
             gstRt,
-            isInterstate ? 0 : half,
-            isInterstate ? 0 : half,
-            isInterstate ? gstRt : 0,
+            componentRates.cgstRate,
+            componentRates.sgstRate,
+            componentRates.igstRate,
             taxInfo.totalCgst,
             taxInfo.totalSgst,
             taxInfo.totalIgst,
@@ -811,6 +975,8 @@ export async function createInvoice(req: Request, res: Response) {
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
             item.price_includes_tax === true,
+            item.tax_option_id || null,
+            JSON.stringify(taxComponents),
           ]
         );
 
@@ -831,7 +997,16 @@ export async function createInvoice(req: Request, res: Response) {
               invoiceId: invoice.id,
               quantity: item.quantity,
               userId: req.user!.id,
+              allowNegative: d.transaction_source !== 'pos',
             });
+          }
+          if (updateSalePriceFromTransaction) {
+            await client.query(
+              `UPDATE items
+               SET selling_price = $1, selling_price_includes_tax = $2, updated_at = NOW()
+               WHERE id = $3 AND company_id = $4 AND is_deleted = false`,
+              [Math.round(Number(item.unit_price) || 0), item.price_includes_tax === true, item.item_id, companyId],
+            );
           }
         }
       }
@@ -1241,7 +1416,32 @@ export async function updateInvoice(req: Request, res: Response) {
       const gstType = isInterstate ? 'inter' : 'intra';
       const invDisc = Math.round(Number(d.discount_amount) || 0);
       const roundOffEnabled = d.round_off_enabled === true;
-      const totalsInfo = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled, pricingMode);
+      const transactionSettingsResult = await client.query(
+        `SELECT round_off_type, round_off_to FROM transaction_settings WHERE firm_id = $1`,
+        [companyId],
+      );
+      const transactionSettings = transactionSettingsResult.rows[0] || {};
+      const companySettingsResult = await client.query(
+        `SELECT item_settings FROM companies WHERE id = $1`,
+        [companyId],
+      );
+      const companyItemSettings = objectSetting(companySettingsResult.rows[0]?.item_settings);
+      const updateSalePriceFromTransaction = companyItemSettings.update_sale_price_from_transaction === true;
+      const totalsInfo = calculateInvoiceTotals(
+        mappedItems,
+        gstType,
+        invDisc > 0 ? 'flat' : 'none',
+        invDisc,
+        0,
+        roundOffEnabled,
+        pricingMode,
+        transactionSettings.round_off_type === 'FLOOR' || transactionSettings.round_off_type === 'CEIL'
+          ? transactionSettings.round_off_type
+          : 'NEAREST',
+        transactionSettings.round_off_to === 10 || transactionSettings.round_off_to === 100
+          ? transactionSettings.round_off_to
+          : 1,
+      );
       if (!Number.isFinite(totalsInfo.totalAmount) || totalsInfo.totalAmount < 0) {
         throw new Error('Invalid invoice total calculated');
       }
@@ -1416,7 +1616,13 @@ export async function updateInvoice(req: Request, res: Response) {
         }, pricingMode);
         const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
-        const half = gstRt / 2;
+        const taxComponents = isGstInvoice && Array.isArray(item.tax_components) ? item.tax_components : [];
+        const componentRates = resolveTaxComponentRates(
+          gstRt,
+          isGstInvoice ? Number(item.cess_rate) || 0 : 0,
+          taxComponents,
+          gstType,
+        );
 
         await client.query(
           `INSERT INTO invoice_items (
@@ -1424,8 +1630,9 @@ export async function updateInvoice(req: Request, res: Response) {
             quantity, unit_price, currency_code, discount_amount, taxable_amount,
             gst_rate, cgst_rate, sgst_rate, igst_rate,
             cgst_amount, sgst_amount, igst_amount, cess_amount,
-            total_amount, sort_order, custom_fields, price_includes_tax
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+            total_amount, sort_order, custom_fields, price_includes_tax,
+            tax_option_id, tax_components
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
           [
             id,
             companyId,
@@ -1440,9 +1647,9 @@ export async function updateInvoice(req: Request, res: Response) {
             taxInfo.totalDiscountLineLevel,
             taxInfo.totalTaxable,
             gstRt,
-            isInterstate ? 0 : half,
-            isInterstate ? 0 : half,
-            isInterstate ? gstRt : 0,
+            componentRates.cgstRate,
+            componentRates.sgstRate,
+            componentRates.igstRate,
             taxInfo.totalCgst,
             taxInfo.totalSgst,
             taxInfo.totalIgst,
@@ -1451,6 +1658,8 @@ export async function updateInvoice(req: Request, res: Response) {
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
             item.price_includes_tax === true,
+            item.tax_option_id || null,
+            JSON.stringify(taxComponents),
           ],
         );
 
@@ -1469,6 +1678,14 @@ export async function updateInvoice(req: Request, res: Response) {
               quantity: item.quantity,
               userId: req.user!.id,
             });
+          }
+          if (updateSalePriceFromTransaction) {
+            await client.query(
+              `UPDATE items
+               SET selling_price = $1, selling_price_includes_tax = $2, updated_at = NOW()
+               WHERE id = $3 AND company_id = $4 AND is_deleted = false`,
+              [Math.round(Number(item.unit_price) || 0), item.price_includes_tax === true, item.item_id, companyId],
+            );
           }
         }
       }
@@ -2021,7 +2238,10 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       return res.status(400).json(error('At least one line item is required'));
     }
 
-    const companyRes = await query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
+    const [companyRes, transactionSettingsRes] = await Promise.all([
+      query(`SELECT * FROM companies WHERE id = $1`, [companyId]),
+      query(`SELECT round_off_type, round_off_to FROM transaction_settings WHERE firm_id = $1`, [companyId]),
+    ]);
     if (!companyRes.rows.length) return res.status(400).json(error('Company not found'));
     const bankRes = await query(
       `SELECT * FROM company_bank_accounts
@@ -2091,7 +2311,22 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     }, pricingMode));
     const invDisc = Math.round(Number(d.discount_amount) || 0);
     const roundOffEnabled = d.round_off_enabled === true;
-    const totals = calculateInvoiceTotals(mappedItems, gstType, invDisc > 0 ? 'flat' : 'none', invDisc, 0, roundOffEnabled, pricingMode);
+    const roundSettings = transactionSettingsRes.rows[0] || {};
+    const totals = calculateInvoiceTotals(
+      mappedItems,
+      gstType,
+      invDisc > 0 ? 'flat' : 'none',
+      invDisc,
+      0,
+      roundOffEnabled,
+      pricingMode,
+      roundSettings.round_off_type === 'FLOOR' || roundSettings.round_off_type === 'CEIL'
+        ? roundSettings.round_off_type
+        : 'NEAREST',
+      roundSettings.round_off_to === 10 || roundSettings.round_off_to === 100
+        ? roundSettings.round_off_to
+        : 1,
+    );
     if (!Number.isFinite(totals.totalAmount) || totals.totalAmount < 0) {
       return res.status(400).json(error('Invalid invoice total calculated'));
     }
@@ -2691,12 +2926,14 @@ export async function recordPayment(req: Request, res: Response) {
         );
       }
 
+      await postPaymentAccounting(client, companyId, payRes.rows[0], req.user!.id);
       return { payment_id: payRes.rows[0].id, paid_amount: newPaid, balance_due: total - newPaid };
     });
 
     res.json(success({ message: 'Payment tracked', ...result }));
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    const message = err?.message || 'Failed to record payment';
+    res.status(/not found|cancelled/i.test(message) ? 404 : /invalid|exceeds|balance/i.test(message) ? 400 : 500).json(error(message));
   }
 }

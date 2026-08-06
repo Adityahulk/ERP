@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// SHARED TYPES FOR BIZFLOW FRONTEND
+// SHARED TYPES FOR MICROTECHNIQUE ACCOUNTS FRONTEND
 // ═══════════════════════════════════════════════════════════════
 
 export type { LabelConfig } from './labelConfig';

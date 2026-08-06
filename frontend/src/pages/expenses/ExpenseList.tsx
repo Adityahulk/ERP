@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Plus, Search, Receipt } from 'lucide-react';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = ['Rent', 'Salary', 'Utilities', 'Travel', 'Office Supplies', 'Marketing', 'Insurance', 'Maintenance', 'Professional Fees', 'Packaging', 'Courier', 'Other'];
@@ -58,13 +59,14 @@ export default function ExpenseList() {
   const u = (f: string, v: any) => setForm((p: any) => ({ ...p, [f]: v }));
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:expense',
+    STORAGE_KEYS.drafts.expense,
     { showForm, form },
     (draft: any) => {
       if (draft.form && typeof draft.form === 'object') setForm((prev: any) => ({ ...prev, ...draft.form }));
       if (draft.showForm || draft.form?.category || draft.form?.amount || draft.form?.vendor_name || draft.form?.description) setShowForm(true);
     },
     {
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.expense,
       shouldSave: (draft) => Boolean(
         draft.showForm || draft.form?.category || draft.form?.amount || draft.form?.vendor_name ||
         draft.form?.vendor_gstin || draft.form?.description

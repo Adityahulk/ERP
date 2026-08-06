@@ -26,12 +26,14 @@ export default function PaymentRowsEditor({
   defaultBankAccountId,
   disabled,
   currencyCode = 'INR',
+  showHeader = true,
 }: {
   rows: PaymentEditorRow[];
   onChange: (rows: PaymentEditorRow[]) => void;
   defaultBankAccountId?: string;
   disabled?: boolean;
   currencyCode?: string;
+  showHeader?: boolean;
 }) {
   const moneySymbol = currencySymbol(currencyCode);
   const update = (id: string, patch: Partial<PaymentEditorRow>) => {
@@ -45,7 +47,7 @@ export default function PaymentRowsEditor({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <Label>Payment</Label>
+        {showHeader ? <Label>Payment</Label> : <span />}
         <Button
           type="button"
           size="sm"

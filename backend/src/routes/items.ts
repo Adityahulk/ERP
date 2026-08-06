@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { verifyToken } from '../middleware/auth';
+import { requireMinRole } from '../middleware/role';
 import { validateBody } from '../middleware/validate';
 import { uploadImportFile } from '../services/fileUpload';
 import * as ctrl from '../controllers/itemController';
@@ -39,21 +40,22 @@ const createSchema = z.object({
 
 const scanSchema = z.object({
   barcode: z.string().min(1, 'Barcode is required'),
+  godown_id: z.string().uuid().optional(),
 });
 
 // Routes that must come BEFORE /:id to avoid param conflicts
 router.get('/import-template', ctrl.importTemplate);
-router.post('/bulk-import', uploadImportFile, ctrl.bulkImport);
+router.post('/bulk-import', requireMinRole('company_admin'), uploadImportFile, ctrl.bulkImport);
 router.post('/scan', validateBody(scanSchema), ctrl.scanBarcode);
 router.get('/barcode/:code', ctrl.getItemByBarcode);
 
 // CRUD
-router.post('/', validateBody(createSchema), ctrl.createItem);
+router.post('/', requireMinRole('staff'), validateBody(createSchema), ctrl.createItem);
 router.get('/', ctrl.listItems);
 router.get('/:id', ctrl.getItem);
-router.patch('/:id', ctrl.updateItem);
-router.delete('/:id', ctrl.deleteItem);
+router.patch('/:id', requireMinRole('manager'), ctrl.updateItem);
+router.delete('/:id', requireMinRole('company_admin'), ctrl.deleteItem);
 router.get('/:id/barcode-image', ctrl.barcodeImage);
-router.post('/:id/barcode', ctrl.getOrGenerateBarcode);
+router.post('/:id/barcode', requireMinRole('staff'), ctrl.getOrGenerateBarcode);
 
 export default router;

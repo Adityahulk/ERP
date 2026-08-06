@@ -15,6 +15,7 @@ import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/Vyapar
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 
 export default function QuotationForm() {
   const navigate = useNavigate();
@@ -97,7 +98,7 @@ export default function QuotationForm() {
   };
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:quotation',
+    STORAGE_KEYS.drafts.quotation,
     {
       partyId, partyName, godownId, quotationNumber, quotationDate, validUntil,
       partyNameOverride, partyPhoneOverride, partyEmailOverride,
@@ -125,6 +126,7 @@ export default function QuotationForm() {
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
     {
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.quotation,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.quotationNumber ||
         draft.customerNotes || draft.termsAndConditions || draft.internalNotes || draft.items.length

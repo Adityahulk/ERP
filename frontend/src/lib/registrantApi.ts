@@ -1,7 +1,9 @@
 import axios from 'axios';
 import { getApiBaseURL } from './api';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS } from './storageKeys';
 
-const REGISTRANT_TOKEN_KEY = 'bizflow_registrant_token';
+const REGISTRANT_TOKEN_KEY = STORAGE_KEYS.registrantToken;
+const LEGACY_REGISTRANT_TOKEN_KEY = LEGACY_STORAGE_KEYS.registrantToken;
 
 const registrantApi = axios.create({
   baseURL: getApiBaseURL(),
@@ -9,7 +11,7 @@ const registrantApi = axios.create({
 });
 
 registrantApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem(REGISTRANT_TOKEN_KEY);
+  const token = readStorageWithLegacy(REGISTRANT_TOKEN_KEY, LEGACY_REGISTRANT_TOKEN_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -20,7 +22,7 @@ registrantApi.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem(REGISTRANT_TOKEN_KEY);
+      removeStorageWithLegacy(REGISTRANT_TOKEN_KEY, LEGACY_REGISTRANT_TOKEN_KEY);
       if (window.location.pathname !== '/register/login') {
         const next = encodeURIComponent(window.location.pathname + window.location.search);
         window.location.href = `/register/login?next=${next}`;

@@ -319,7 +319,7 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
       .map((entry, index) => {
         if (!entry || typeof entry !== 'object') return null;
         const row = entry as Record<string, unknown>;
-        const type = ['IGST', 'CGST', 'SGST', 'CESS'].includes(String(row.type || '').toUpperCase())
+        const type = ['IGST', 'CGST', 'SGST', 'CESS', 'OTHER'].includes(String(row.type || '').toUpperCase())
           ? String(row.type).toUpperCase()
           : 'IGST';
         const rate = Math.max(0, Math.min(100, Number(row.rate ?? 0) || 0));
@@ -338,13 +338,12 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
       .map((entry, index) => {
         if (!entry || typeof entry !== 'object') return null;
         const row = entry as Record<string, unknown>;
-        const totalRate = Math.max(0, Math.min(100, Number(row.rate ?? row.total_rate ?? 0) || 0));
-        const label = String(row.label || `GST@${totalRate}%`).trim().slice(0, 80);
+        const configuredRate = Math.max(0, Math.min(100, Number(row.rate ?? row.totalRate ?? row.total_rate ?? 0) || 0));
         const components = asArrayPayload(row.components)
           .map((component) => {
             if (!component || typeof component !== 'object') return null;
             const part = component as Record<string, unknown>;
-            const type = ['CGST', 'SGST', 'IGST', 'CESS'].includes(String(part.type || '').toUpperCase())
+            const type = ['CGST', 'SGST', 'IGST', 'CESS', 'OTHER'].includes(String(part.type || '').toUpperCase())
               ? String(part.type).toUpperCase()
               : '';
             if (!type) return null;
@@ -354,6 +353,10 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
             };
           })
           .filter(Boolean);
+        const totalRate = components.length
+          ? Math.min(100, Number(components.reduce((sum, component: any) => sum + Number(component.rate || 0), 0).toFixed(3)))
+          : configuredRate;
+        const label = String(row.label || `GST@${totalRate}%`).trim().slice(0, 80);
         return {
           id: String(row.id || `tax_group_${index + 1}`).trim().slice(0, 80) || `tax_group_${index + 1}`,
           label,

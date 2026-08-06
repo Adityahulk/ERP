@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, ArrowDownLeft, UserPlus } from 'lucide-react';
+import { Plus, ArrowDownLeft, UserPlus, Trash2 } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import toast from 'react-hot-toast';
 
@@ -35,33 +35,29 @@ export default function PaymentOutTab() {
   const [refNumber, setRefNumber] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Fetch purchase payments from bills
+  // Payment-Out is a first-class payment record, not an expense or a derived bill total.
   const { data, isLoading } = useQuery({
     queryKey: ['payment-out'],
     queryFn: async () => {
-      // Get all paid/partial purchase invoices as proxy for payment-out
-      const res = await api.get('/purchases/invoices', { params: { limit: 50 } });
+      const res = await api.get('/payments', { params: { payment_type: 'outgoing', limit: 50 } });
       return res.data;
     },
   });
 
-  const bills = ((data as any)?.data?.data || []).filter((b: any) => (b.paid_amount || 0) > 0);
-  const totalPaid = bills.reduce((s: number, b: any) => s + (parseInt(b.paid_amount)||0), 0);
+  const payments = (data as any)?.data?.data || [];
+  const totalPaid = payments.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0);
 
   const createPaymentOut = useMutation({
     mutationFn: async (payload: any) => {
-      // For now, we create a standalone expense record tagged as "Payment-Out"
-      // In a full implementation this would go to a dedicated payments_out table
-      return api.post('/expenses', {
-        category: 'Payment-Out',
+      return api.post('/payments', {
+        payment_type: 'outgoing',
+        party_id: payload.party_id,
         amount: payload.amount,
-        expense_date: payload.pay_date,
+        payment_date: payload.pay_date,
         payment_mode: payload.pay_mode,
-        vendor_name: payload.party_name,
         reference_number: payload.ref_number || undefined,
         description: payload.notes || `Payment to ${payload.party_name}`,
-        amount_includes_gst: false,
-        gst_rate: 0,
+        notes: payload.notes || `Payment to ${payload.party_name}`,
       });
     },
     onSuccess: () => {
@@ -70,6 +66,16 @@ export default function PaymentOutTab() {
       resetForm(); setShowForm(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
+  });
+
+  const deletePaymentOut = useMutation({
+    mutationFn: async (id: string) => api.delete(`/payments/${id}`),
+    onSuccess: () => {
+      toast.success('Payment-Out deleted and balances reversed');
+      qc.invalidateQueries({ queryKey: ['payment-out'] });
+      qc.invalidateQueries({ queryKey: ['purchase-bills'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to delete payment'),
   });
 
   const searchSuppliers = async (q: string) => {
@@ -87,7 +93,7 @@ export default function PaymentOutTab() {
   const resetForm = () => { clearSupplier(); setAmount(''); setPayDate(new Date().toISOString().split('T')[0]); setPayMode('cash'); setRefNumber(''); setNotes(''); };
 
   const handleCreate = () => {
-    if (!partyName && !partyId) { toast.error('Select or enter a party'); return; }
+    if (!partyId) { toast.error('Select a saved party'); return; }
     if (!amount || parseFloat(amount) <= 0) { toast.error('Enter a valid amount'); return; }
     createPaymentOut.mutate({ party_id: partyId, party_name: partyName || partySearch, amount: Math.round(parseFloat(amount) * 100), pay_date: payDate, pay_mode: payMode, ref_number: refNumber, notes });
   };
@@ -103,7 +109,7 @@ export default function PaymentOutTab() {
           <div>
             <p className="text-xs text-muted-foreground">Total paid (to parties)</p>
             <p className="text-xl font-bold tabular-nums">{formatMoney(totalPaid)}</p>
-            <p className="text-xs text-muted-foreground">{bills.length} payment{bills.length !== 1 ? 's' : ''} recorded</p>
+            <p className="text-xs text-muted-foreground">{payments.length} payment{payments.length !== 1 ? 's' : ''} recorded</p>
           </div>
           <div className="ml-auto">
             <Button size="sm" className="gap-1.5" onClick={() => setShowForm(true)}>
@@ -121,27 +127,43 @@ export default function PaymentOutTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Ref No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party Name</th>
-              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total Amount</th>
-              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Paid</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Amount</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden sm:table-cell">Payment Type</th>
+              <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
-            {!isLoading && bills.length === 0 && (
+            {!isLoading && payments.length === 0 && (
               <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
                 <ArrowDownLeft className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 No payments out recorded yet.
               </td></tr>
             )}
-            {bills.map((b: any) => (
-              <tr key={b.id} className="border-b hover:bg-muted/20">
-                <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(b.bill_date)}</td>
-                <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{b.bill_number || '—'}</td>
-                <td className="px-4 py-2.5 font-medium">{b.party_name || '—'}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{formatMoney(parseInt(b.total_amount)||0)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-emerald-600">{formatMoney(parseInt(b.paid_amount)||0)}</td>
-                <td className="px-4 py-2.5 capitalize text-xs text-muted-foreground hidden sm:table-cell">{b.payment_mode || 'Cash'}</td>
+            {payments.map((payment: any) => (
+              <tr key={payment.id} className="border-b hover:bg-muted/20">
+                <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(payment.payment_date)}</td>
+                <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{payment.reference_number || payment.payment_number || '—'}</td>
+                <td className="px-4 py-2.5 font-medium">{payment.party_name || '—'}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-red-600">{formatMoney(Number(payment.amount) || 0)}</td>
+                <td className="px-4 py-2.5 capitalize text-xs text-muted-foreground hidden sm:table-cell">{String(payment.payment_mode || 'cash').replace('_', ' ')}</td>
+                <td className="px-4 py-2.5 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive"
+                    title="Delete and reverse payment"
+                    disabled={deletePaymentOut.isPending}
+                    onClick={() => {
+                      if (window.confirm('Delete this payment and reverse its bill, party, and accounting effects?')) {
+                        deletePaymentOut.mutate(payment.id);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>

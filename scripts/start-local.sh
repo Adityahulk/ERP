@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start BizFlow locally without Docker: Homebrew Postgres + Redis, then API + Vite.
+# Start Microtechnique Accounts locally without Docker: Homebrew Postgres + Redis, then API + Vite.
 #
 # Every run this script will:
 #   1) Start Redis + Postgres (Homebrew)
@@ -34,7 +34,7 @@ PGHOST="${PGHOST:-127.0.0.1}"
 PGPORT="${PGPORT:-5432}"
 SUPERUSER="${BOOTSTRAP_PG_USER:-$(whoami)}"
 
-echo "== BizFlow local start =="
+echo "== Microtechnique Accounts local start =="
 
 # --- Redis (Homebrew) -------------------------------------------------------
 if command -v brew >/dev/null 2>&1; then

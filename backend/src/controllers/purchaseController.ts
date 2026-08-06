@@ -6,7 +6,7 @@ import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
 import { calculateInvoiceTotals, determineGSTType } from '../services/gstService';
-import { postPurchaseInvoiceAccounting } from '../services/accountingService';
+import { postPaymentAccounting, postPurchaseInvoiceAccounting } from '../services/accountingService';
 import { normalizeInvoicePrintTheme } from '../lib/printThemes';
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -883,28 +883,122 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 export async function payPurchaseInvoice(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { amount } = req.body;
+    const amount = Math.round(Number(req.body.amount) || 0);
+    const paymentMode = String(req.body.payment_mode || 'cash').trim().toLowerCase();
     const companyId = req.user!.company_id;
 
-    const billRes = await query(
-      'SELECT total_amount, paid_amount FROM purchase_invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-      [id, companyId]
-    );
-    if (!billRes.rows.length) return res.status(404).json(error('Bill not found'));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json(error('Payment amount must be greater than zero'));
+    }
 
-    const bill = billRes.rows[0];
-    const newPaid = Number(bill.paid_amount || 0) + Number(amount);
-    const total = Number(bill.total_amount || 0);
-    const paymentStatus =
-      newPaid <= 0 ? 'unpaid' :
-      newPaid >= total ? 'paid' : 'partial';
+    const result = await withTransaction(async (client) => {
+      const billRes = await client.query(
+        `SELECT id, bill_number, party_id, total_amount, paid_amount
+         FROM purchase_invoices
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR UPDATE`,
+        [id, companyId],
+      );
+      if (!billRes.rows.length) throw new Error('Bill not found');
 
-    await query(
-      'UPDATE purchase_invoices SET paid_amount = $1, payment_status = $2 WHERE id = $3',
-      [newPaid, paymentStatus, id]
+      const bill = billRes.rows[0];
+      const total = Number(bill.total_amount || 0);
+      const newPaid = Number(bill.paid_amount || 0) + amount;
+      if (newPaid > total) throw new Error('Payment exceeds the bill balance');
+
+      const paymentStatus = newPaid >= total ? 'paid' : 'partial';
+      const paymentRes = await client.query(
+        `INSERT INTO payments (
+           company_id, payment_type, payment_number, payment_date, party_id, amount,
+           payment_mode, reference_number, company_bank_account_id, cheque_number,
+           instrument_date, notes, created_by
+         )
+         VALUES ($1,'outgoing',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         RETURNING *`,
+        [
+          companyId,
+          `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          req.body.payment_date || new Date().toISOString().split('T')[0],
+          bill.party_id,
+          amount,
+          paymentMode,
+          req.body.reference_number || null,
+          req.body.company_bank_account_id || null,
+          req.body.cheque_number || (paymentMode === 'cheque' ? req.body.reference_number || null : null),
+          req.body.instrument_date || null,
+          req.body.notes || `Payment against purchase bill ${bill.bill_number}`,
+          req.user!.id,
+        ],
+      );
+      const payment = paymentRes.rows[0];
+
+      await client.query(
+        `INSERT INTO payment_allocations (payment_id, invoice_id, purchase_invoice_id, amount)
+         VALUES ($1, NULL, $2, $3)`,
+        [payment.id, id, amount],
+      );
+      await client.query(
+        `UPDATE purchase_invoices
+         SET paid_amount = $1, payment_status = $2, updated_at = NOW()
+         WHERE id = $3 AND company_id = $4`,
+        [newPaid, paymentStatus, id, companyId],
+      );
+
+      if (bill.party_id) {
+        await client.query(
+          `UPDATE parties
+           SET balance = balance + $1, updated_at = NOW()
+           WHERE id = $2 AND company_id = $3`,
+          [amount, bill.party_id, companyId],
+        );
+        const balanceRes = await client.query(
+          `SELECT balance FROM parties WHERE id = $1 AND company_id = $2`,
+          [bill.party_id, companyId],
+        );
+        await client.query(
+          `INSERT INTO party_ledger (
+             company_id, party_id, type, amount, balance_after, reference_type,
+             reference_id, narration, created_by
+           )
+           VALUES ($1,$2,'debit',$3,$4,'payment',$5,$6,$7)`,
+          [
+            companyId,
+            bill.party_id,
+            amount,
+            balanceRes.rows[0].balance,
+            payment.id,
+            `Payment ${payment.payment_number} against purchase bill ${bill.bill_number}`,
+            req.user!.id,
+          ],
+        );
+      }
+
+      await postPaymentAccounting(client, companyId, payment, req.user!.id);
+      return { payment, payment_status: paymentStatus, paid_amount: newPaid };
+    });
+
+    await logAction(
+      req.user!.id,
+      companyId,
+      'create',
+      'payment',
+      result.payment.id,
+      null,
+      { purchase_invoice_id: id, amount },
+      req.ip,
+      req.get('User-Agent'),
     );
-    res.json(success({ message: 'Payment recorded', payment_status: paymentStatus }));
-  } catch(err:any){ res.status(500).json(error(err.message)); }
+    res.status(201).json(success({
+      message: 'Payment recorded',
+      payment: result.payment,
+      payment_status: result.payment_status,
+      paid_amount: result.paid_amount,
+    }));
+  } catch (err: any) {
+    const msg = err?.message || 'Payment failed';
+    const status = /not found/i.test(msg) ? 404 : /amount|exceeds|balance/i.test(msg) ? 400 : 500;
+    res.status(status).json(error(msg));
+  }
 }
 
 export async function getPurchaseInvoicePDF(req: Request, res: Response) {

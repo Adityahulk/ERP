@@ -14,6 +14,7 @@ import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/Vyapar
 import { useGodowns } from '@/hooks/useStock';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
@@ -81,7 +82,7 @@ export default function PurchaseBillsTab() {
   ];
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:purchase-bill',
+    STORAGE_KEYS.drafts.purchaseBill,
     { partyId, partyName, billDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
@@ -99,6 +100,7 @@ export default function PurchaseBillsTab() {
     },
     {
       enabled: !editingBillId,
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.purchaseBill,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.billNumber || draft.notes ||
         draft.companyBankAccountId || draft.items.length

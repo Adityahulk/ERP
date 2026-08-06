@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '@/store/authStore';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS, writeStorageWithLegacyCleanup } from '@/lib/storageKeys';
 
 /**
  * In `vite dev`, call the API on loopback instead of same-origin `/api`.
@@ -40,14 +41,14 @@ async function refreshTokens(): Promise<{ accessToken: string; refreshToken: str
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const refreshToken = localStorage.getItem('bizflow_refresh_token');
+    const refreshToken = readStorageWithLegacy(STORAGE_KEYS.refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
     if (!refreshToken) {
       throw new Error('No refresh token');
     }
     const { data } = await axios.post(`${apiBaseURL}/auth/refresh`, { refreshToken });
     const tokens = data?.data ?? data;
-    localStorage.setItem('bizflow_access_token', tokens.accessToken);
-    localStorage.setItem('bizflow_refresh_token', tokens.refreshToken);
+    writeStorageWithLegacyCleanup(STORAGE_KEYS.accessToken, tokens.accessToken, LEGACY_STORAGE_KEYS.accessToken);
+    writeStorageWithLegacyCleanup(STORAGE_KEYS.refreshToken, tokens.refreshToken, LEGACY_STORAGE_KEYS.refreshToken);
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   })().finally(() => {
     refreshInFlight = null;
@@ -66,7 +67,7 @@ const api = axios.create({
 
 // ── Request interceptor — attach access token ──────────────
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('bizflow_access_token');
+  const token = readStorageWithLegacy(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

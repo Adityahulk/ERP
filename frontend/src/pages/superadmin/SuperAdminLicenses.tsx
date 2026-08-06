@@ -14,7 +14,7 @@ import ManageLicensePlanModal from '@/components/superadmin/ManageLicensePlanMod
 const TABS: { id: LicenseStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'pending', label: 'Pending' },
-  { id: 'active', label: 'Active' },
+  { id: 'active', label: 'Sold / Active' },
   { id: 'expired', label: 'Expired' },
   { id: 'trial', label: 'Trials' },
   { id: 'expired_trial', label: 'Expired Trials' },
@@ -41,10 +41,10 @@ export default function SuperAdminLicenses() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Licenses</h1>
-          <p className="text-slate-500 text-sm mt-1">Search by registrant or company name.</p>
+          <p className="text-slate-500 text-sm mt-1">Sold licenses, pending requests, trials, renewals, and plan access.</p>
         </div>
         <input
-          placeholder="Search…"
+          placeholder="Name, phone, company, license key..."
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
@@ -96,6 +96,7 @@ export default function SuperAdminLicenses() {
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-800">{row.registrant_name}</div>
                         <div className="text-xs text-slate-500">{row.registrant_email}</div>
+                        <div className="text-xs text-slate-500">{row.registrant_phone || 'No phone provided'}</div>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.tier_display_name}</td>
                       <td className="px-4 py-3 text-slate-600">{row.company_name || '—'}</td>

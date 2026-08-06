@@ -123,10 +123,9 @@ function contactBlock(args: {
 function stockQuantity(value: unknown, itemName: string): number {
   const qty = Number(value);
   if (!Number.isFinite(qty) || qty <= 0) return 0;
-  if (!Number.isInteger(qty)) {
-    throw new Error(`Stock quantity for "${itemName}" must be a whole number. Enter ${Math.round(qty)} or update stock units before sending fractional quantities.`);
-  }
-  return qty;
+  const normalized = Math.round(qty * 10_000) / 10_000;
+  if (normalized <= 0) throw new Error(`Stock quantity for "${itemName}" must be greater than zero.`);
+  return normalized;
 }
 
 // ── POST /api/job-work/challans ───────────────────────────────

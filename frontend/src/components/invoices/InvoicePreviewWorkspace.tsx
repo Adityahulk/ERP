@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import toast from 'react-hot-toast';
 import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } from '@/components/settings/PrintLayoutPreview';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 
-const SKIP_PREVIEW_KEY = 'bizflow_skip_invoice_preview_after_save';
+const SKIP_PREVIEW_KEY = STORAGE_KEYS.skipInvoicePreview;
+const LEGACY_SKIP_PREVIEW_KEY = LEGACY_STORAGE_KEYS.skipInvoicePreview;
 
 export const INVOICE_PDF_TEMPLATES = PRINT_LAYOUT_OPTIONS.map((layout) => ({
   ...layout,
@@ -298,7 +300,7 @@ Thank you.
       toast.error('Save the invoice first to print a thermal receipt.');
       return;
     }
-    const w = localStorage.getItem('bizflow_printer_type') === 'thermal58' ? '58' : '80';
+    const w = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? '58' : '80';
     const t = toast.loading('Opening receipt…');
     try {
       const res = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
@@ -328,7 +330,7 @@ Thank you.
     try {
       await api.put('/settings/print', { invoiceTheme: template });
       setSavedTheme(template);
-      localStorage.removeItem(SKIP_PREVIEW_KEY);
+      removeStorageWithLegacy(SKIP_PREVIEW_KEY, LEGACY_SKIP_PREVIEW_KEY);
       toast.success('Default invoice theme saved');
       onClose();
     } catch (e: any) {

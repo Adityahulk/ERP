@@ -18,6 +18,7 @@ import axios from 'axios';
 import api, { getApiBaseURL } from '@/lib/api';
 import { launchRegistrantCompany } from '@/lib/registrantCompanyLaunch';
 import { normalizeRole } from '@/lib/roles';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
 import ChatWidget from '@/components/chat/ChatWidget';
 
@@ -273,7 +274,7 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
-    const registrantToken = localStorage.getItem('bizflow_registrant_token');
+    const registrantToken = readStorageWithLegacy(STORAGE_KEYS.registrantToken, LEGACY_STORAGE_KEYS.registrantToken);
     if (!registrantToken) {
       setOwnedCompanies([]);
       return;
@@ -402,7 +403,7 @@ export default function AppLayout() {
   }, [searchQ, cmdOpen]);
 
   return (
-    <div className="flex h-screen bg-[#F7F7F5]">
+    <div className="flex h-screen bg-[#F4F6F8]">
       {/* CMD+K Palette Modal Overlay */}
       {cmdOpen && (
          <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-start justify-center pt-[10vh] animate-in fade-in duration-200 p-4" onClick={() => setCmdOpen(false)}>
@@ -516,7 +517,7 @@ export default function AppLayout() {
       <aside
         id="app-sidebar"
         className={cn(
-          'hidden md:flex flex-col flex-shrink-0 bg-[#1E1B4B] shadow-xl z-20 overflow-hidden border-r border-black/20 transition-[width] duration-200 ease-out',
+          'hidden md:flex flex-col flex-shrink-0 bg-[#111827] shadow-lg z-20 overflow-hidden border-r border-black/20 transition-[width] duration-200 ease-out',
           sidebarCollapsed ? 'w-[72px]' : 'w-[248px]',
         )}
       >
@@ -558,7 +559,7 @@ export default function AppLayout() {
                        <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', companyMenuOpen && 'rotate-180')} />
                      </button>
                      {companyMenuOpen && (
-                       <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 rounded-lg border border-white/10 bg-[#24195a] p-1.5 shadow-2xl backdrop-blur-xl">
+                       <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-30 rounded-lg border border-white/10 bg-[#1F2937] p-1.5 shadow-2xl backdrop-blur-xl">
                          {ownedCompanies.map((entry) => {
                            const isCurrent = entry.company_id === user?.companyId;
                            return (
@@ -697,7 +698,7 @@ export default function AppLayout() {
       {mobileOpen && (
          <div className="fixed inset-0 z-40 flex md:hidden">
             <div className="fixed inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
-            <div className="w-[260px] bg-[#1E1B4B] h-full shadow-2xl relative flex flex-col pt-4">
+            <div className="relative flex h-full w-[260px] flex-col bg-[#111827] pt-4 shadow-2xl">
                <Button variant="ghost" className="absolute top-2 right-2 text-white/60" onClick={() => setMobileOpen(false)}><X className="w-5 h-5"/></Button>
                <div className="px-6 mb-4 flex items-start gap-2.5">
                  <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-16 h-16 shrink-0 drop-shadow" />
@@ -769,7 +770,7 @@ export default function AppLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto overflow-x-hidden bg-[#F7F7F5] relative px-4 sm:px-6 lg:px-8">
+        <main className="relative flex-1 overflow-auto overflow-x-hidden bg-[#F4F6F8] px-4 sm:px-6 lg:px-8">
           {license?.status === 'trial' && (license.trial_days_remaining ?? 1) <= 0 ? (
             <div className="flex flex-col items-center justify-center min-h-full p-8 text-center">
               <div className="w-20 h-20 rounded-2xl bg-red-100 flex items-center justify-center mb-6">

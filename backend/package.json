@@ -1,7 +1,7 @@
 {
-  "name": "bizflow-backend",
+  "name": "microtechnique-accounts-backend",
   "version": "1.0.0",
-  "description": "BizFlow Accounts — Backend API",
+  "description": "Microtechnique Accounts — Backend API",
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon",
@@ -14,6 +14,8 @@
     "seed:dev": "ts-node src/db/seed.ts",
     "migrate:seed": "npm run migrate && npm run seed",
     "migrate:seed:dev": "npm run migrate:dev && npm run seed:dev",
+    "test:smoke": "ts-node src/tests/gstService.smoke.ts",
+    "test:pos": "ts-node src/tests/posWorkflow.smoke.ts",
     "reset": "ts-node src/db/reset.ts && npm run migrate:dev && npm run seed:dev"
   },
   "dependencies": {

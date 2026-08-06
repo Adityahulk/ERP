@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { error, success } from '../lib/response';
 import { INVOICE_PRINT_THEMES, isInvoicePrintTheme, isRemovedDocumentTheme, normalizeInvoicePrintTheme } from '../lib/printThemes';
+import { isAdminRole } from '../lib/roles';
 
 const DEFAULT_PRINT_SETTINGS = {
   regular: {
@@ -86,6 +87,25 @@ const DEFAULT_PRINT_SETTINGS = {
     open_cash_drawer: false,
     extra_bottom_lines: 0,
     number_of_copies: 1,
+    show_seller_name: true,
+    seller_name: '',
+    show_seller_phone: true,
+    seller_phone: '',
+    show_seller_address: true,
+    seller_address: '',
+    show_date_time: true,
+    show_bill_no: true,
+    show_logo: true,
+    show_tax_columns: false,
+    show_payment_details: true,
+    card_auth_code_override: '',
+    card_last_four_override: '',
+    barcode_or_qr: 'barcode',
+    return_policy: '',
+    show_footer_thank_you: true,
+    enable_refund_layout: true,
+    enable_deposit_layout: false,
+    deposit_account_details: '',
   },
 };
 
@@ -129,6 +149,15 @@ function normalizeSettings(rawValue: unknown) {
       },
     },
     thermal: {
+      make_default: (thermal as any).make_default === true,
+      page_size: ['2_inch', '3_inch', '4_inch', 'custom'].includes(String((thermal as any).page_size)) ? (thermal as any).page_size : '3_inch',
+      custom_page_size: Math.max(10, Math.min(100, Number((thermal as any).custom_page_size ?? 48) || 48)),
+      printing_type: ['text', 'image'].includes(String((thermal as any).printing_type)) ? (thermal as any).printing_type : 'text',
+      text_styling_bold: (thermal as any).text_styling_bold !== false,
+      auto_cut_paper: (thermal as any).auto_cut_paper === true,
+      open_cash_drawer: (thermal as any).open_cash_drawer === true,
+      extra_bottom_lines: Math.max(0, Math.min(20, Number((thermal as any).extra_bottom_lines ?? 0) || 0)),
+      number_of_copies: Math.max(1, Math.min(10, Number((thermal as any).number_of_copies ?? 1) || 1)),
       show_seller_name: (thermal as any).show_seller_name !== false,
       seller_name: String((thermal as any).seller_name ?? '').trim().slice(0, 100),
       show_seller_phone: (thermal as any).show_seller_phone !== false,
@@ -179,6 +208,11 @@ export async function getPrintSettings(req: Request, res: Response) {
 
 export async function updatePrintSettings(req: Request, res: Response) {
   try {
+    const incomingKeys = Object.keys(parseObject(req.body));
+    const isThemeOnlyUpdate = incomingKeys.length > 0 && incomingKeys.every((key) => ['invoiceTheme', 'invoice_theme'].includes(key));
+    if (!isThemeOnlyUpdate && !isAdminRole(req.user!.role)) {
+      return res.status(403).json(error('Only company administrators can change full print settings.'));
+    }
     const bodyTheme = req.body?.invoiceTheme ?? req.body?.invoice_theme ?? req.body?.regular?.layout;
     if (bodyTheme !== undefined && !isInvoicePrintTheme(bodyTheme)) {
       const message = isRemovedDocumentTheme(bodyTheme)
@@ -208,6 +242,7 @@ export async function updatePrintSettings(req: Request, res: Response) {
           ...parseObject(parseObject(incoming.reference_invoice).fields),
         },
       },
+      thermal: { ...existing.thermal, ...parseObject(incoming.thermal) },
       invoiceTheme,
     };
     await query(

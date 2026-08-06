@@ -485,6 +485,68 @@ export function getConvertedPrice(
   return Number.isFinite(converted) ? Math.round(converted) : Math.round(price);
 }
 
+export type TaxComponent = {
+  type: 'CGST' | 'SGST' | 'IGST' | 'CESS' | 'OTHER' | string;
+  rate: number;
+};
+
+export function resolveTaxComponentRates(
+  itemGstRate: number,
+  itemCessRate: number,
+  components: TaxComponent[] | undefined,
+  gstType: 'intra' | 'inter',
+) {
+  const valid = (Array.isArray(components) ? components : [])
+    .map((component) => ({
+      type: String(component?.type || '').trim().toUpperCase(),
+      rate: Math.max(0, Number(component?.rate) || 0),
+    }))
+    .filter((component) => component.type && component.rate > 0);
+
+  if (!valid.length) {
+    return gstType === 'inter'
+      ? { cgstRate: 0, sgstRate: 0, igstRate: itemGstRate, cessRate: itemCessRate }
+      : {
+          cgstRate: itemGstRate / 2,
+          sgstRate: itemGstRate - itemGstRate / 2,
+          igstRate: 0,
+          cessRate: itemCessRate,
+        };
+  }
+
+  const sum = (types: string[]) =>
+    valid
+      .filter((component) => types.includes(component.type))
+      .reduce((total, component) => total + component.rate, 0);
+  const cgstRate = sum(['CGST']);
+  const sgstRate = sum(['SGST']);
+  const igstRate = sum(['IGST']);
+  const otherTaxRate = sum(['OTHER']);
+  const cessRate = itemCessRate + sum(['CESS']) + otherTaxRate;
+  const componentGstRate = cgstRate + sgstRate + igstRate;
+  const fallbackGstRate = componentGstRate || itemGstRate;
+
+  if (gstType === 'inter') {
+    return {
+      cgstRate: 0,
+      sgstRate: 0,
+      igstRate: igstRate > 0 ? igstRate : fallbackGstRate,
+      cessRate,
+    };
+  }
+
+  if (cgstRate > 0 || sgstRate > 0) {
+    return { cgstRate, sgstRate, igstRate: 0, cessRate };
+  }
+
+  return {
+    cgstRate: fallbackGstRate / 2,
+    sgstRate: fallbackGstRate - fallbackGstRate / 2,
+    igstRate: 0,
+    cessRate,
+  };
+}
+
 export function calculateInvoiceTotals(
   items: Array<{
     unit_price: number;
@@ -494,20 +556,29 @@ export function calculateInvoiceTotals(
     gst_rate: number;
     cess_rate?: number;
     price_includes_tax?: boolean;
+    tax_components?: TaxComponent[];
   }>,
   gstType: 'intra' | 'inter',
   invoiceDiscountType: 'percent' | 'flat' | 'none' = 'none',
   invoiceDiscountValue: number = 0,
   tcsRate: number = 0,
   roundOffEnabled: boolean = true,
-  pricingMode: 'inclusive' | 'exclusive' = 'exclusive'
+  pricingMode: 'inclusive' | 'exclusive' = 'exclusive',
+  roundOffType: 'NEAREST' | 'FLOOR' | 'CEIL' = 'NEAREST',
+  roundOffTo: 1 | 10 | 100 = 1,
 ) {
   let subtotal = 0;
   let totalDiscountLineLevel = 0;
 
   const processedItems = items.map((item) => {
-    const gstRate = Number(item.gst_rate) || 0;
-    const cessRate = Number(item.cess_rate) || 0;
+    const rates = resolveTaxComponentRates(
+      Number(item.gst_rate) || 0,
+      Number(item.cess_rate) || 0,
+      item.tax_components,
+      gstType,
+    );
+    const gstRate = rates.cgstRate + rates.sgstRate + rates.igstRate;
+    const cessRate = rates.cessRate;
     const totalRate = gstRate + cessRate;
     const qty = Number(item.quantity) || 0;
 
@@ -545,8 +616,8 @@ export function calculateInvoiceTotals(
       subtotal_row,
       lineDiscount_row,
       gstRate,
-      cessRate,
-      totalRate
+      totalRate,
+      ...rates,
     };
   });
 
@@ -579,20 +650,10 @@ export function calculateInvoiceTotals(
       baseTax_row = taxableAfterDiscount_row * (item.totalRate / 100);
     }
 
-    const cess_share = item.totalRate > 0 ? item.cessRate / item.totalRate : 0;
-    const baseCess_row = baseTax_row * cess_share;
-    const baseGst_row = baseTax_row - baseCess_row;
-
-    let baseCgst_row = 0;
-    let baseSgst_row = 0;
-    let baseIgst_row = 0;
-
-    if (gstType === 'inter') {
-      baseIgst_row = baseGst_row;
-    } else {
-      baseCgst_row = baseGst_row / 2;
-      baseSgst_row = baseGst_row - baseCgst_row;
-    }
+    const baseCgst_row = item.totalRate > 0 ? baseTax_row * item.cgstRate / item.totalRate : 0;
+    const baseSgst_row = item.totalRate > 0 ? baseTax_row * item.sgstRate / item.totalRate : 0;
+    const baseIgst_row = item.totalRate > 0 ? baseTax_row * item.igstRate / item.totalRate : 0;
+    const baseCess_row = item.totalRate > 0 ? baseTax_row * item.cessRate / item.totalRate : 0;
 
     totalCgst += baseCgst_row;
     totalSgst += baseSgst_row;
@@ -614,7 +675,15 @@ export function calculateInvoiceTotals(
   const tcsAmount = (finalTotal * (Number(tcsRate) || 0)) / 100;
   const finalTotalWithTcs = finalTotal + tcsAmount;
 
-  const roundedAmountPaise = roundOffEnabled ? Math.round(finalTotalWithTcs / 100) * 100 : finalTotalWithTcs;
+  const roundUnitPaise = Math.max(1, Number(roundOffTo) || 1) * 100;
+  const roundOperation = roundOffType === 'FLOOR'
+    ? Math.floor
+    : roundOffType === 'CEIL'
+      ? Math.ceil
+      : Math.round;
+  const roundedAmountPaise = roundOffEnabled
+    ? roundOperation(finalTotalWithTcs / roundUnitPaise) * roundUnitPaise
+    : finalTotalWithTcs;
   const roundOff = roundOffEnabled ? roundedAmountPaise - finalTotalWithTcs : 0;
 
   const safeVal = (v: number) => (Number.isFinite(v) && !Number.isNaN(v) ? Math.round(v) : 0);
@@ -635,4 +704,3 @@ export function calculateInvoiceTotals(
     totalAmount: safeVal(roundedAmountPaise),
   };
 }
-

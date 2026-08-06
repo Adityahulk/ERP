@@ -7,11 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Building2, MapPin, Users, FileText, Package, Database, AlertCircle, AlertTriangle, Upload, Power, Plus, Search, Trash2, UserRound, Download, Pencil, X, Printer, ReceiptText, Calculator, ChevronLeft, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import api, { getApiBaseURL } from '@/lib/api';
 import { normalizeRole, roleLabel } from '@/lib/roles';
 import { normalizeCurrencyCode, SUPPORTED_CURRENCIES, type CurrencyCode } from '@/lib/formatters';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS, writeStorageWithLegacyCleanup } from '@/lib/storageKeys';
 import { normalizeInvoiceThemeId } from '@/components/invoices/InvoicePreviewWorkspace';
 import {
   DEFAULT_PRINT_LAYOUT_COLORS,
@@ -23,6 +24,8 @@ import {
   PrintLayoutPicker,
   type PrintLayoutId,
 } from '@/components/settings/PrintLayoutPreview';
+import { DirectPrinterSettings } from '@/components/settings/DirectPrinterSettings';
+import { printPdfBlob } from '@/lib/printPdf';
 
 type SalesCustomFieldDef = {
   id: string;
@@ -138,11 +141,26 @@ type PrintSettingsState = {
     open_cash_drawer: boolean;
     extra_bottom_lines: number;
     number_of_copies: number;
+    show_seller_name: boolean;
+    seller_name: string;
+    show_seller_phone: boolean;
+    seller_phone: string;
+    show_seller_address: boolean;
+    seller_address: string;
+    show_date_time: boolean;
+    show_bill_no: boolean;
+    show_logo: boolean;
+    show_tax_columns: boolean;
+    show_payment_details: boolean;
+    barcode_or_qr: 'none' | 'barcode' | 'qr';
+    return_policy: string;
+    show_footer_thank_you: boolean;
   };
 };
 
-type TaxRateRow = { id: string; label: string; type: 'IGST' | 'CGST' | 'SGST' | 'CESS'; rate: number; active: boolean };
-type TaxGroupRow = { id: string; label: string; rate: number; components: Array<{ type: 'CGST' | 'SGST' | 'IGST' | 'CESS'; rate: number }>; active: boolean };
+type TaxComponentType = 'CGST' | 'SGST' | 'IGST' | 'CESS' | 'OTHER';
+type TaxRateRow = { id: string; label: string; type: TaxComponentType; rate: number; active: boolean };
+type TaxGroupRow = { id: string; label: string; rate: number; components: Array<{ type: TaxComponentType; rate: number }>; active: boolean };
 type CustomTaxRateRow = { id: string; name: string; rate: number; isActive: boolean };
 type TaxSettingsState = {
   enable_gst: boolean;
@@ -377,6 +395,20 @@ const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
     open_cash_drawer: false,
     extra_bottom_lines: 0,
     number_of_copies: 1,
+    show_seller_name: true,
+    seller_name: '',
+    show_seller_phone: true,
+    seller_phone: '',
+    show_seller_address: true,
+    seller_address: '',
+    show_date_time: true,
+    show_bill_no: true,
+    show_logo: true,
+    show_tax_columns: false,
+    show_payment_details: true,
+    barcode_or_qr: 'barcode',
+    return_policy: 'Items can be returned within 7 days in original condition.',
+    show_footer_thank_you: true,
   },
 };
 
@@ -668,6 +700,20 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
       open_cash_drawer: thermal.open_cash_drawer === true,
       extra_bottom_lines: Math.max(0, Math.min(20, Number(thermal.extra_bottom_lines ?? 0) || 0)),
       number_of_copies: Math.max(1, Math.min(10, Number(thermal.number_of_copies ?? 1) || 1)),
+      show_seller_name: thermal.show_seller_name !== false,
+      seller_name: String(thermal.seller_name ?? ''),
+      show_seller_phone: thermal.show_seller_phone !== false,
+      seller_phone: String(thermal.seller_phone ?? ''),
+      show_seller_address: thermal.show_seller_address !== false,
+      seller_address: String(thermal.seller_address ?? ''),
+      show_date_time: thermal.show_date_time !== false,
+      show_bill_no: thermal.show_bill_no !== false,
+      show_logo: thermal.show_logo !== false,
+      show_tax_columns: thermal.show_tax_columns === true,
+      show_payment_details: thermal.show_payment_details !== false,
+      barcode_or_qr: ['none', 'barcode', 'qr'].includes(String(thermal.barcode_or_qr)) ? thermal.barcode_or_qr as 'none' | 'barcode' | 'qr' : 'barcode',
+      return_policy: String(thermal.return_policy ?? DEFAULT_PRINT_SETTINGS.thermal.return_policy),
+      show_footer_thank_you: thermal.show_footer_thank_you !== false,
     },
   };
 }
@@ -676,7 +722,7 @@ function normalizeTaxSettings(value: unknown): TaxSettingsState {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<TaxSettingsState> : {};
   const rates = Array.isArray(raw.rates)
     ? raw.rates.map((row: any, index): TaxRateRow | null => {
-        const type = ['IGST', 'CGST', 'SGST', 'CESS'].includes(String(row?.type || '').toUpperCase())
+        const type = ['IGST', 'CGST', 'SGST', 'CESS', 'OTHER'].includes(String(row?.type || '').toUpperCase())
           ? String(row.type).toUpperCase() as TaxRateRow['type']
           : 'IGST';
         const rate = Math.max(0, Math.min(100, Number(row?.rate ?? 0) || 0));
@@ -691,16 +737,19 @@ function normalizeTaxSettings(value: unknown): TaxSettingsState {
     : DEFAULT_TAX_SETTINGS.rates;
   const groups = Array.isArray(raw.groups)
     ? raw.groups.map((row: any, index): TaxGroupRow | null => {
-        const rate = Math.max(0, Math.min(100, Number(row?.rate ?? 0) || 0));
-        const half = Number((rate / 2).toFixed(3));
+        const configuredRate = Math.max(0, Math.min(100, Number(row?.rate ?? row?.totalRate ?? row?.total_rate ?? 0) || 0));
+        const half = Number((configuredRate / 2).toFixed(3));
         const components = Array.isArray(row?.components) && row.components.length
           ? row.components.map((part: any) => ({
-              type: ['CGST', 'SGST', 'IGST', 'CESS'].includes(String(part?.type || '').toUpperCase())
+              type: ['CGST', 'SGST', 'IGST', 'CESS', 'OTHER'].includes(String(part?.type || '').toUpperCase())
                 ? String(part.type).toUpperCase() as TaxGroupRow['components'][number]['type']
                 : 'CGST',
               rate: Math.max(0, Math.min(100, Number(part?.rate ?? 0) || 0)),
             }))
           : [{ type: 'SGST' as const, rate: half }, { type: 'CGST' as const, rate: half }];
+        const rate = components.length
+          ? Number(Math.min(100, components.reduce((sum: number, component: { rate: number }) => sum + component.rate, 0)).toFixed(3))
+          : configuredRate;
         return {
           id: String(row?.id || `tax_group_${index + 1}`),
           label: String(row?.label || `GST@${rate}%`),
@@ -739,6 +788,7 @@ function normalizeTaxSettings(value: unknown): TaxSettingsState {
 }
 
 export default function Settings() {
+  const [searchParams] = useSearchParams();
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -793,7 +843,7 @@ export default function Settings() {
   const [editingCustomTaxRate, setEditingCustomTaxRate] = useState<CustomTaxRateRow | null>(null);
   const [transactionSettings, setTransactionSettings] = useState<TransactionSettingsState>(DEFAULT_TRANSACTION_SETTINGS);
   const [customUpiQr, setCustomUpiQr] = useState<string>(() => {
-    return localStorage.getItem('bizflow_custom_upi_qr') || '';
+    return readStorageWithLegacy(STORAGE_KEYS.customUpiQr, LEGACY_STORAGE_KEYS.customUpiQr) || '';
   });
   const [transactionPrefixes, setTransactionPrefixes] = useState<TransactionPrefixesState>(DEFAULT_PREFIXES);
   const [termsGrouped, setTermsGrouped] = useState<Record<string, TermsEntry[]>>({});
@@ -845,7 +895,8 @@ export default function Settings() {
       ? company.signature_url
       : `${uploadsBase()}${company.signature_url}`);
 
-  const [tab, setTab] = useState('company');
+  const requestedSection = searchParams.get('section');
+  const [tab, setTab] = useState(requestedSection || 'company');
   const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(() => localStorage.getItem('settings_sidebar_collapsed') !== 'false');
 
   const [deleteConf, setDeleteConf] = useState('');
@@ -858,6 +909,10 @@ export default function Settings() {
   useEffect(() => {
     localStorage.setItem('settings_sidebar_collapsed', settingsSidebarCollapsed ? 'true' : 'false');
   }, [settingsSidebarCollapsed]);
+
+  useEffect(() => {
+    if (requestedSection) setTab(requestedSection);
+  }, [requestedSection]);
 
   const { data: usersPage, isLoading: usersLoading } = useQuery({
     queryKey: ['settings-users'],
@@ -1120,7 +1175,7 @@ export default function Settings() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `bizflow-data-dump-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `microtechnique-accounts-data-dump-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       window.URL.revokeObjectURL(url);
       toast.success('Data dump downloaded', { id: t });
@@ -1138,7 +1193,7 @@ export default function Settings() {
     setEinvSandbox(company.einvoice_sandbox !== false);
     setEinvUser(company.einvoice_gsp_username || '');
     setEwayBillOnlyAbove50k(!!company.eway_bill_only_above_50k);
-    const saved = localStorage.getItem('bizflow_printer_type') as 'a4' | 'thermal80' | 'thermal58' | null;
+    const saved = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) as 'a4' | 'thermal80' | 'thermal58' | null;
     if (saved === 'thermal80' || saved === 'thermal58' || saved === 'a4') setPrinterType(saved);
     setLegalName(company.legal_name || company.name || '');
     setGstin(company.gstin || '');
@@ -1279,17 +1334,19 @@ export default function Settings() {
         invoice_pdf_template: selectedLayout,
         document_theme: selectedLayout,
         document_primary_color: selectedColor,
-        print_settings: nextPrintSettings,
         enabled_currencies: enabledCurrencies,
         default_currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         currency: enabledCurrencies.includes(defaultCurrency) ? defaultCurrency : enabledCurrencies[0],
         delivery_challan_show_pricing: deliveryChallanShowPricing,
         sales_invoice_custom_fields: prepareSalesCustomFields(salesCustomFields),
       });
+      const printResponse = await api.put('/settings/print', nextPrintSettings);
+      const savedPrintSettings = normalizePrintSettings(printResponse.data?.data ?? printResponse.data);
       setInvoiceTemplate(selectedLayout);
       setDocumentTheme(selectedLayout);
       setDocumentPrimaryColor(selectedColor);
-      setPrintSettings(nextPrintSettings);
+      setPrintSettings(savedPrintSettings);
+      await qc.invalidateQueries({ queryKey: ['company'] });
       toast.success('Invoice preferences saved');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Save failed');
@@ -1368,7 +1425,9 @@ export default function Settings() {
 
   const savePrintSettings = async () => {
     try {
-      await updateCompany.mutateAsync({ print_settings: printSettings });
+      const response = await api.put('/settings/print', printSettings);
+      setPrintSettings(normalizePrintSettings(response.data?.data ?? response.data));
+      await qc.invalidateQueries({ queryKey: ['company'] });
       toast.success('Print settings saved');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Save failed');
@@ -1437,13 +1496,29 @@ export default function Settings() {
 
   const saveTaxGroupRow = () => {
     if (!editingTaxGroup) return;
-    const rate = Math.max(0, Math.min(100, Number(editingTaxGroup.rate) || 0));
-    const half = Number((rate / 2).toFixed(3));
+    const label = editingTaxGroup.label.trim().slice(0, 50);
+    const components = editingTaxGroup.components.map((component) => ({
+      type: component.type,
+      rate: Number(Math.max(0, Math.min(100, Number(component.rate) || 0)).toFixed(3)),
+    }));
+    const rate = Number(components.reduce((sum, component) => sum + component.rate, 0).toFixed(3));
+    if (!label) {
+      toast.error('Tax group name is required');
+      return;
+    }
+    if (!components.length) {
+      toast.error('Add at least one tax component');
+      return;
+    }
+    if (rate > 100) {
+      toast.error('Tax group components cannot total more than 100%');
+      return;
+    }
     const row = {
       ...editingTaxGroup,
       rate,
-      label: editingTaxGroup.label.trim() || `GST@${rate}%`,
-      components: editingTaxGroup.components.length ? editingTaxGroup.components : [{ type: 'SGST' as const, rate: half }, { type: 'CGST' as const, rate: half }],
+      label,
+      components,
     };
     setTaxSettings((prev) => ({
       ...prev,
@@ -1623,7 +1698,7 @@ export default function Settings() {
   };
 
   const savePrinter = () => {
-    localStorage.setItem('bizflow_printer_type', printerType);
+    writeStorageWithLegacyCleanup(STORAGE_KEYS.printerType, printerType, LEGACY_STORAGE_KEYS.printerType);
     toast.success('Printer preference saved');
   };
 
@@ -1651,9 +1726,8 @@ export default function Settings() {
       }
       const w = printerType === 'thermal58' ? '58' : '80';
       const pdfRes = await api.get(`/print/receipt/${first.id}`, { params: { width: w }, responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
-      window.open(url, '_blank');
-      toast.success('Opening sample receipt…', { id: t });
+      const mode = await printPdfBlob(new Blob([pdfRes.data], { type: 'application/pdf' }));
+      toast.success(mode === 'direct' ? 'Sample sent to printer' : 'Opening sample receipt…', { id: t });
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Test print failed', { id: t });
     } finally {
@@ -2493,6 +2567,12 @@ export default function Settings() {
                                         <label className="text-sm font-medium text-slate-700">Extra space on Top of PDF
                                            <Input type="number" min={0} max={80} className="mt-1" value={printSettings.regular.extra_top_space} onChange={(e) => updatePrintSetting('regular', 'extra_top_space', Number(e.target.value) as never)} />
                                         </label>
+                                        <label className="text-sm font-medium text-slate-700">Blank lines after invoice
+                                           <Input type="number" min={0} max={20} className="mt-1" value={printSettings.regular.extra_bottom_lines} onChange={(e) => updatePrintSetting('regular', 'extra_bottom_lines', Number(e.target.value) as never)} />
+                                        </label>
+                                        <label className="text-sm font-medium text-slate-700">Number of copies
+                                           <Input type="number" min={1} max={10} className="mt-1" value={printSettings.regular.number_of_copies} onChange={(e) => updatePrintSetting('regular', 'number_of_copies', Number(e.target.value) as never)} />
+                                        </label>
                                         
                                      </section>
 
@@ -2585,7 +2665,7 @@ export default function Settings() {
                                         <h3 className="font-bold text-slate-900">{selectedPrintLayout.label}</h3>
                                      </div>
                                      <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                        {printSettings.regular.paper_size} · {printSettings.regular.orientation}
+                                        {printSettings.regular.paper_size} · {printSettings.regular.orientation} · {printSettings.regular.number_of_copies} {printSettings.regular.number_of_copies === 1 ? 'copy' : 'copies'}
                                      </span>
                                   </div>
                                   <PrintInvoiceLayoutPreview
@@ -2595,7 +2675,7 @@ export default function Settings() {
                                      getCellValue={previewValueForColumn}
                                      data={{
                                        firm: {
-                                         name: printSettings.header.company_name ? savedCompanyName : 'Firm Name',
+                                         name: printSettings.header.company_name ? savedCompanyName : '',
                                          address: printSettings.header.address ? savedCompanyAddress : '',
                                          phone: printSettings.header.phone ? savedCompanyPhone : '',
                                          email: printSettings.header.email ? savedCompanyEmail : '',
@@ -2635,11 +2715,171 @@ export default function Settings() {
                                      showReceivedBy={printSettings.footer.print_received_by}
                                      showDeliveredBy={printSettings.footer.print_delivered_by}
                                      showSignature={printSettings.footer.signature_enabled}
+                                     showOriginalDuplicate={printSettings.regular.print_original_duplicate}
+                                     showCurrentBalance={printSettings.totals.current_balance_of_party}
+                                     showTotalItemQuantity={printSettings.totals.total_item_quantity}
+                                     amountWithDecimal={printSettings.totals.amount_with_decimal}
+                                     printAmountWithGrouping={printSettings.totals.print_amount_with_grouping}
+                                     minItemRows={printSettings.regular.min_item_rows}
+                                     extraTopSpace={printSettings.regular.extra_top_space}
+                                     extraBottomLines={printSettings.regular.extra_bottom_lines}
+                                     paperSize={printSettings.regular.paper_size}
+                                     orientation={printSettings.regular.orientation}
+                                     companyNameTextSize={printSettings.regular.company_name_text_size}
+                                     invoiceTextSize={printSettings.regular.invoice_text_size}
                                   />
                                </div>
                             </aside>
                          </div>
                       ) : (
+                         <>
+                         <div className="grid gap-0 xl:grid-cols-[420px_minmax(0,1fr)]">
+                            <div className="max-h-[calc(100vh-220px)] space-y-6 overflow-auto border-r bg-white/70 p-5">
+                               <section className="space-y-4">
+                                  <div>
+                                     <h3 className="text-base font-bold text-slate-900">Printer and paper</h3>
+                                     <p className="mt-1 text-xs leading-5 text-slate-500">These options are used by POS thermal receipts and direct printing.</p>
+                                  </div>
+                                  <label className="flex items-center justify-between gap-4 rounded-md border bg-white p-3 text-sm font-medium text-slate-700">
+                                     <span>Make thermal printer default</span>
+                                     <Switch checked={printSettings.thermal.make_default} onCheckedChange={(value) => updatePrintSetting('thermal', 'make_default', value)} />
+                                  </label>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                     <label className="text-sm font-medium text-slate-700">Paper width
+                                        <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.thermal.page_size} onChange={(event) => updatePrintSetting('thermal', 'page_size', event.target.value as PrintSettingsState['thermal']['page_size'])}>
+                                           <option value="2_inch">2 inch / 58 mm</option>
+                                           <option value="3_inch">3 inch / 80 mm</option>
+                                           <option value="4_inch">4 inch / 100 mm</option>
+                                           <option value="custom">Custom</option>
+                                        </select>
+                                     </label>
+                                     {printSettings.thermal.page_size === 'custom' && (
+                                        <label className="text-sm font-medium text-slate-700">Custom width (mm)
+                                           <Input type="number" min={10} max={100} className="mt-1" value={printSettings.thermal.custom_page_size} onChange={(event) => updatePrintSetting('thermal', 'custom_page_size', Number(event.target.value) as never)} />
+                                        </label>
+                                     )}
+                                     <label className="text-sm font-medium text-slate-700">Printing mode
+                                        <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.thermal.printing_type} onChange={(event) => updatePrintSetting('thermal', 'printing_type', event.target.value as PrintSettingsState['thermal']['printing_type'])}>
+                                           <option value="text">Fast text</option>
+                                           <option value="image">Image receipt</option>
+                                        </select>
+                                     </label>
+                                     <label className="text-sm font-medium text-slate-700">Copies
+                                        <Input type="number" min={1} max={10} className="mt-1" value={printSettings.thermal.number_of_copies} onChange={(event) => updatePrintSetting('thermal', 'number_of_copies', Number(event.target.value) as never)} />
+                                     </label>
+                                     <label className="text-sm font-medium text-slate-700">Blank lines after receipt
+                                        <Input type="number" min={0} max={20} className="mt-1" value={printSettings.thermal.extra_bottom_lines} onChange={(event) => updatePrintSetting('thermal', 'extra_bottom_lines', Number(event.target.value) as never)} />
+                                     </label>
+                                  </div>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                     {([
+                                       ['text_styling_bold', 'Use bold text'],
+                                       ['auto_cut_paper', 'Auto cut paper'],
+                                       ['open_cash_drawer', 'Open cash drawer'],
+                                     ] as const).map(([key, label]) => (
+                                        <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                           <Switch checked={printSettings.thermal[key]} onCheckedChange={(value) => updatePrintSetting('thermal', key, value)} />
+                                           <span>{label}</span>
+                                        </label>
+                                     ))}
+                                  </div>
+                               </section>
+
+                               <section className="space-y-4 border-t pt-5">
+                                  <div>
+                                     <h3 className="text-base font-bold text-slate-900">Receipt content</h3>
+                                     <p className="mt-1 text-xs leading-5 text-slate-500">Every switch updates the sample receipt immediately.</p>
+                                  </div>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                     {([
+                                       ['show_seller_name', 'Seller name'],
+                                       ['show_seller_phone', 'Seller phone'],
+                                       ['show_seller_address', 'Seller address'],
+                                       ['show_date_time', 'Date and time'],
+                                       ['show_bill_no', 'Bill number'],
+                                       ['show_logo', 'Company logo'],
+                                       ['show_tax_columns', 'Tax details'],
+                                       ['show_payment_details', 'Payment details'],
+                                       ['show_footer_thank_you', 'Thank-you footer'],
+                                     ] as const).map(([key, label]) => (
+                                        <label key={key} className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                                           <Switch checked={printSettings.thermal[key]} onCheckedChange={(value) => updatePrintSetting('thermal', key, value)} />
+                                           <span>{label}</span>
+                                        </label>
+                                     ))}
+                                  </div>
+                                  {printSettings.thermal.show_seller_name && (
+                                     <label className="block text-sm font-medium text-slate-700">Seller name override
+                                        <Input className="mt-1" placeholder={savedCompanyName} value={printSettings.thermal.seller_name} onChange={(event) => updatePrintSetting('thermal', 'seller_name', event.target.value)} />
+                                     </label>
+                                  )}
+                                  {printSettings.thermal.show_seller_phone && (
+                                     <label className="block text-sm font-medium text-slate-700">Seller phone override
+                                        <Input className="mt-1" placeholder={savedCompanyPhone} value={printSettings.thermal.seller_phone} onChange={(event) => updatePrintSetting('thermal', 'seller_phone', event.target.value)} />
+                                     </label>
+                                  )}
+                                  {printSettings.thermal.show_seller_address && (
+                                     <label className="block text-sm font-medium text-slate-700">Seller address override
+                                        <Input className="mt-1" placeholder={savedCompanyAddress} value={printSettings.thermal.seller_address} onChange={(event) => updatePrintSetting('thermal', 'seller_address', event.target.value)} />
+                                     </label>
+                                  )}
+                                  <label className="block text-sm font-medium text-slate-700">Code at receipt bottom
+                                     <select className="mt-1 h-10 w-full rounded-md border bg-white px-3" value={printSettings.thermal.barcode_or_qr} onChange={(event) => updatePrintSetting('thermal', 'barcode_or_qr', event.target.value as PrintSettingsState['thermal']['barcode_or_qr'])}>
+                                        <option value="none">None</option>
+                                        <option value="barcode">Barcode</option>
+                                        <option value="qr">QR code</option>
+                                     </select>
+                                  </label>
+                                  <label className="block text-sm font-medium text-slate-700">Return policy
+                                     <textarea className="mt-1 min-h-20 w-full rounded-md border bg-white p-3 text-sm" value={printSettings.thermal.return_policy} onChange={(event) => updatePrintSetting('thermal', 'return_policy', event.target.value)} />
+                                  </label>
+                               </section>
+
+                               <section className="border-t pt-5">
+                                  <DirectPrinterSettings />
+                               </section>
+                            </div>
+
+                            <aside className="border-t bg-slate-100/80 p-5 xl:border-l xl:border-t-0">
+                               <div className="xl:sticky xl:top-4">
+                                  <div className="mb-3 flex items-center justify-between gap-3">
+                                     <div>
+                                        <p className="text-xs font-semibold uppercase text-slate-500">Live thermal sample</p>
+                                        <h3 className="font-bold text-slate-900">POS receipt</h3>
+                                     </div>
+                                     <span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                                        {printSettings.thermal.page_size === 'custom' ? `${printSettings.thermal.custom_page_size} mm` : printSettings.thermal.page_size.replace('_', ' ')}
+                                     </span>
+                                  </div>
+                                  <div className="mx-auto max-w-[420px] overflow-hidden bg-white p-5 font-mono text-[12px] leading-5 text-slate-950 shadow-lg" style={{ fontWeight: printSettings.thermal.text_styling_bold ? 600 : 400 }}>
+                                     {printSettings.thermal.show_logo && logoSrc && <img src={logoSrc} alt="" className="mx-auto mb-2 max-h-12 max-w-24 object-contain" />}
+                                     {printSettings.thermal.show_seller_name && <div className="text-center text-base font-bold">{printSettings.thermal.seller_name || savedCompanyName}</div>}
+                                     {printSettings.thermal.show_seller_address && <div className="text-center">{printSettings.thermal.seller_address || savedCompanyAddress}</div>}
+                                     {printSettings.thermal.show_seller_phone && <div className="text-center">Ph: {printSettings.thermal.seller_phone || savedCompanyPhone}</div>}
+                                     <div className="my-2 border-t border-dashed border-slate-700" />
+                                     {printSettings.thermal.show_bill_no && <div className="flex justify-between gap-3"><span>INVOICE</span><span>INV-101</span></div>}
+                                     {printSettings.thermal.show_date_time && <><div className="flex justify-between gap-3"><span>Date</span><span>27-05-2026</span></div><div className="flex justify-between gap-3"><span>Time</span><span>12:30 PM</span></div></>}
+                                     <div className="flex justify-between gap-3"><span>Party</span><span>Classic enterprises</span></div>
+                                     <div className="my-2 border-t border-dashed border-slate-700" />
+                                     <div className={`grid gap-2 ${printSettings.thermal.show_tax_columns ? 'grid-cols-[1fr_38px_62px_54px]' : 'grid-cols-[1fr_42px_72px]'}`}>
+                                        <strong>Item</strong><strong className="text-right">Qty</strong>{printSettings.thermal.show_tax_columns && <strong className="text-right">Tax</strong>}<strong className="text-right">Amount</strong>
+                                        <span>Premium Service</span><span className="text-right">1</span>{printSettings.thermal.show_tax_columns && <span className="text-right">18%</span>}<span className="text-right">590.00</span>
+                                        <span>Implementation</span><span className="text-right">2</span>{printSettings.thermal.show_tax_columns && <span className="text-right">18%</span>}<span className="text-right">826.00</span>
+                                     </div>
+                                     <div className="my-2 border-t border-dashed border-slate-700" />
+                                     {printSettings.thermal.show_tax_columns && <><div className="flex justify-between"><span>Taxable</span><span>1,200.00</span></div><div className="flex justify-between"><span>GST</span><span>216.00</span></div></>}
+                                     <div className="flex justify-between text-sm font-bold"><span>TOTAL</span><span>1,416.00</span></div>
+                                     {printSettings.thermal.show_payment_details && <><div className="my-2 border-t border-dashed border-slate-700" /><div className="flex justify-between"><span>Payment</span><span>Cash</span></div><div className="flex justify-between"><span>Paid</span><span>1,416.00</span></div></>}
+                                     {printSettings.thermal.return_policy.trim() && <><div className="my-2 border-t border-dashed border-slate-700" /><p className="text-center">{printSettings.thermal.return_policy}</p></>}
+                                     {printSettings.thermal.show_footer_thank_you && <p className="mt-2 text-center font-bold">Thank you for your business!</p>}
+                                     {printSettings.thermal.barcode_or_qr === 'barcode' && <div className="mt-3 h-10 bg-[repeating-linear-gradient(90deg,#111_0,#111_2px,transparent_2px,transparent_5px,#111_5px,#111_6px,transparent_6px,transparent_9px)]" />}
+                                     {printSettings.thermal.barcode_or_qr === 'qr' && <div className="mx-auto mt-3 grid h-16 w-16 grid-cols-5 gap-px bg-white p-1 outline outline-1 outline-slate-900">{Array.from({ length: 25 }, (_, index) => <span key={index} className={(index * 7 + index % 3) % 4 === 0 ? 'bg-white' : 'bg-slate-950'} />)}</div>}
+                                     {Array.from({ length: printSettings.thermal.extra_bottom_lines }, (_, index) => <div key={index} className="h-5" />)}
+                                  </div>
+                               </div>
+                            </aside>
+                         </div>
+                         <div className="hidden">
                          <div className="grid gap-0 xl:grid-cols-[360px_minmax(0,1fr)]">
                             <div className="max-h-[calc(100vh-220px)] overflow-auto border-r bg-white/60 backdrop-blur-xl p-5">
                                <div className="mb-5 flex border-b">
@@ -2862,7 +3102,7 @@ export default function Settings() {
                                      </section>
 
                                      <section className="space-y-4 border-t pt-5">
-                                        <h3 className="text-lg font-bold">BizFlow Printer Setup</h3>
+                                        <h3 className="text-lg font-bold">Microtechnique Printer Setup</h3>
                                         <div className="grid gap-3">
                                            <div className="flex items-center justify-between rounded-lg border bg-white px-4 py-3 shadow-sm">
                                               <span className="text-sm font-bold text-slate-700">2 Inch (VYPRTP2001)</span>
@@ -2901,7 +3141,7 @@ export default function Settings() {
                                      getCellValue={previewValueForColumn}
                                      data={{
                                        firm: {
-                                         name: printSettings.header.company_name ? savedCompanyName : 'Firm Name',
+                                         name: printSettings.header.company_name ? savedCompanyName : '',
                                          address: printSettings.header.address ? savedCompanyAddress : '',
                                          phone: printSettings.header.phone ? savedCompanyPhone : '',
                                          email: printSettings.header.email ? savedCompanyEmail : '',
@@ -2941,10 +3181,24 @@ export default function Settings() {
                                      showReceivedBy={printSettings.footer.print_received_by}
                                      showDeliveredBy={printSettings.footer.print_delivered_by}
                                      showSignature={printSettings.footer.signature_enabled}
+                                     showOriginalDuplicate={printSettings.regular.print_original_duplicate}
+                                     showCurrentBalance={printSettings.totals.current_balance_of_party}
+                                     showTotalItemQuantity={printSettings.totals.total_item_quantity}
+                                     amountWithDecimal={printSettings.totals.amount_with_decimal}
+                                     printAmountWithGrouping={printSettings.totals.print_amount_with_grouping}
+                                     minItemRows={printSettings.regular.min_item_rows}
+                                     extraTopSpace={printSettings.regular.extra_top_space}
+                                     extraBottomLines={printSettings.regular.extra_bottom_lines}
+                                     paperSize={printSettings.regular.paper_size}
+                                     orientation={printSettings.regular.orientation}
+                                     companyNameTextSize={printSettings.regular.company_name_text_size}
+                                     invoiceTextSize={printSettings.regular.invoice_text_size}
                                   />
                                </div>
                             </aside>
                          </div>
+                         </div>
+                         </>
                       )}
 
                      {transactionNamesOpen && (
@@ -3193,7 +3447,7 @@ export default function Settings() {
                                              if (event.target?.result) {
                                                 const base64Str = event.target.result as string;
                                                 setCustomUpiQr(base64Str);
-                                                localStorage.setItem('bizflow_custom_upi_qr', base64Str);
+                                                writeStorageWithLegacyCleanup(STORAGE_KEYS.customUpiQr, base64Str, LEGACY_STORAGE_KEYS.customUpiQr);
                                                 toast.success("Custom QR code image uploaded!");
                                              }
                                           };
@@ -3213,7 +3467,7 @@ export default function Settings() {
                                                 className="flex-1 h-8 text-[11px] rounded" 
                                                 onClick={() => {
                                                    setCustomUpiQr('');
-                                                   localStorage.removeItem('bizflow_custom_upi_qr');
+                                                   removeStorageWithLegacy(STORAGE_KEYS.customUpiQr, LEGACY_STORAGE_KEYS.customUpiQr);
                                                    toast.success("Custom QR image removed.");
                                                 }}
                                              >
@@ -3545,7 +3799,7 @@ export default function Settings() {
                               <div className="space-y-3">
                                  <Input value={editingTaxRate.label} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, label: e.target.value })} placeholder="IGST@18%" />
                                  <select className="h-10 w-full rounded-md border bg-white px-3 text-sm" value={editingTaxRate.type} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, type: e.target.value as TaxRateRow['type'] })}>
-                                    <option value="IGST">IGST</option><option value="CGST">CGST</option><option value="SGST">SGST</option><option value="CESS">CESS</option>
+                                    <option value="IGST">IGST</option><option value="CGST">CGST</option><option value="SGST">SGST</option><option value="CESS">CESS</option><option value="OTHER">Other</option>
                                  </select>
                                  <Input type="number" step="0.001" value={editingTaxRate.rate} onChange={(e) => setEditingTaxRate({ ...editingTaxRate, rate: Number(e.target.value) })} />
                               </div>
@@ -3556,17 +3810,99 @@ export default function Settings() {
 
                      {editingTaxGroup && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-                           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                           <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl">
                               <h3 className="mb-4 text-lg font-bold">Tax Group</h3>
-                              <div className="space-y-3">
-                                 <Input value={editingTaxGroup.label} onChange={(e) => setEditingTaxGroup({ ...editingTaxGroup, label: e.target.value })} placeholder="GST@18%" />
-                                 <Input type="number" step="0.001" value={editingTaxGroup.rate} onChange={(e) => {
-                                    const rate = Number(e.target.value) || 0;
-                                    const half = Number((rate / 2).toFixed(3));
-                                    setEditingTaxGroup({ ...editingTaxGroup, rate, components: [{ type: 'SGST', rate: half }, { type: 'CGST', rate: half }] });
-                                 }} />
-                                 <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
-                                    Components: {editingTaxGroup.components.map((part) => `${part.type}@${part.rate}%`).join(' + ')}
+                              <div className="space-y-4">
+                                 <label className="block text-sm font-medium">
+                                    Group name
+                                    <Input
+                                       className="mt-1"
+                                       maxLength={50}
+                                       value={editingTaxGroup.label}
+                                       onChange={(e) => setEditingTaxGroup({ ...editingTaxGroup, label: e.target.value })}
+                                       placeholder="GST 18%"
+                                    />
+                                 </label>
+                                 <div>
+                                    <div className="mb-2 flex items-center justify-between">
+                                       <span className="text-sm font-medium">Components</span>
+                                       <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => setEditingTaxGroup({
+                                             ...editingTaxGroup,
+                                             components: [...editingTaxGroup.components, { type: 'CGST', rate: 0 }],
+                                          })}
+                                       >
+                                          <Plus className="mr-1 h-4 w-4" /> Add component
+                                       </Button>
+                                    </div>
+                                    <div className="space-y-2">
+                                       {editingTaxGroup.components.map((component, index) => (
+                                          <div key={`${index}-${component.type}`} className="grid grid-cols-[minmax(0,1fr)_140px_36px] items-center gap-2">
+                                             <select
+                                                aria-label={`Tax component ${index + 1} type`}
+                                                className="h-10 min-w-0 rounded-md border bg-white px-3 text-sm"
+                                                value={component.type}
+                                                onChange={(e) => {
+                                                   const components = editingTaxGroup.components.map((part, partIndex) => partIndex === index
+                                                      ? { ...part, type: e.target.value as TaxComponentType }
+                                                      : part);
+                                                   setEditingTaxGroup({ ...editingTaxGroup, components });
+                                                }}
+                                             >
+                                                <option value="CGST">CGST</option>
+                                                <option value="SGST">SGST</option>
+                                                <option value="IGST">IGST</option>
+                                                <option value="CESS">Cess</option>
+                                                <option value="OTHER">Other</option>
+                                             </select>
+                                             <div className="relative">
+                                                <Input
+                                                   aria-label={`Tax component ${index + 1} rate`}
+                                                   type="number"
+                                                   min={0}
+                                                   max={100}
+                                                   step="0.001"
+                                                   className="pr-8"
+                                                   value={component.rate}
+                                                   onChange={(e) => {
+                                                      const components = editingTaxGroup.components.map((part, partIndex) => partIndex === index
+                                                         ? { ...part, rate: Number(e.target.value) }
+                                                         : part);
+                                                      setEditingTaxGroup({ ...editingTaxGroup, components });
+                                                   }}
+                                                />
+                                                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">%</span>
+                                             </div>
+                                             <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                aria-label={`Remove tax component ${index + 1}`}
+                                                className="text-slate-400 hover:text-red-600"
+                                                onClick={() => setEditingTaxGroup({
+                                                   ...editingTaxGroup,
+                                                   components: editingTaxGroup.components.filter((_, partIndex) => partIndex !== index),
+                                                })}
+                                             >
+                                                <Trash2 className="h-4 w-4" />
+                                             </Button>
+                                          </div>
+                                       ))}
+                                       {!editingTaxGroup.components.length && (
+                                          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-slate-500">
+                                             Add at least one tax component.
+                                          </div>
+                                       )}
+                                    </div>
+                                 </div>
+                                 <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2 text-sm">
+                                    <span className="text-slate-600">Total rate</span>
+                                    <strong>
+                                       {Number(editingTaxGroup.components.reduce((sum, component) => sum + (Number(component.rate) || 0), 0).toFixed(3))}%
+                                    </strong>
                                  </div>
                               </div>
                               <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setEditingTaxGroup(null)}>Cancel</Button><Button onClick={saveTaxGroupRow}>Save</Button></div>
@@ -3791,6 +4127,7 @@ export default function Settings() {
                               <Button type="button" variant="secondary" onClick={testPrint} loading={testPrintRunning}>Test print</Button>
                            </div>
                            <p className="text-xs text-slate-500">Saved in this browser (localStorage). POS uses it after checkout.</p>
+                           <DirectPrinterSettings />
                         </div>
                        <Button onClick={saveInvoicePreferences} loading={updateCompany.isPending}>Save Preferences</Button>
                      </div>

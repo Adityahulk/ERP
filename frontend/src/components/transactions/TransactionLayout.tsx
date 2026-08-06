@@ -9,7 +9,7 @@ export function TransactionPageShell({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn('mx-auto w-full max-w-[1440px] px-4 sm:px-6 py-4 sm:py-6 space-y-5', className)}>{children}</div>;
+  return <div className={cn('mx-auto w-full max-w-[1600px] space-y-4 px-3 py-3 sm:px-5 sm:py-5', className)}>{children}</div>;
 }
 
 export function TransactionHeader({
@@ -42,11 +42,15 @@ export function TransactionGrid({
   sidebar,
 }: {
   children: ReactNode;
-  sidebar: ReactNode;
+  sidebar?: ReactNode;
 }) {
+  if (!sidebar) {
+    return <div className="min-w-0 space-y-4">{children}</div>;
+  }
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
-      <div className="min-w-0 space-y-5">{children}</div>
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="min-w-0 space-y-4">{children}</div>
       <aside className="min-w-0 xl:sticky xl:top-4 xl:self-start">{sidebar}</aside>
     </div>
   );
@@ -68,7 +72,7 @@ export function TransactionSection({
   className?: string;
 }) {
   return (
-    <section className={cn('rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md', className)}>
+    <section className={cn('rounded-lg border bg-card', className)}>
       <div className={cn('flex items-start justify-between gap-3 border-b', compact ? 'px-4 py-2.5' : 'px-5 py-3.5')}>
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-slate-950">{title}</h2>
@@ -93,10 +97,10 @@ export function CollapsibleTransactionSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+    <section className="rounded-lg border bg-card">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left text-sm font-semibold hover:bg-muted/30 transition-colors rounded-xl"
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-5 py-3.5 text-left text-sm font-semibold transition-colors hover:bg-muted/30"
         onClick={() => onOpenChange(!open)}
       >
         {title}
@@ -115,7 +119,7 @@ export function CollapsibleTransactionSection({
 }
 
 export function StickySummaryCard({ children }: { children: ReactNode }) {
-  return <div className="rounded-xl border bg-muted/40 p-5 shadow-md">{children}</div>;
+  return <div className="rounded-lg border bg-slate-50 p-4">{children}</div>;
 }
 
 export function MobileActionBar({ children }: { children: ReactNode }) {

@@ -11,11 +11,11 @@ router.post('/search-items', ctrl.searchItems);
 router.post('/scan-barcode', ctrl.scanBarcode);
 router.get('/', ctrl.listInvoices);
 router.get('/next-number', ctrl.getNextInvoiceNumber);
-router.post('/', ctrl.createInvoice);
+router.post('/', requireMinRole('staff'), ctrl.createInvoice);
 router.post('/preview-pdf', ctrl.previewInvoicePdf);
 router.post('/bulk-sales-pdf', ctrl.getBulkSalesInvoicePDF);
 router.get('/bulk-sales', ctrl.listBulkSalesInvoices);
-router.post('/bulk-sales', ctrl.createBulkSalesInvoicePDF);
+router.post('/bulk-sales', requireMinRole('staff'), ctrl.createBulkSalesInvoicePDF);
 router.get('/bulk-sales/:id/pdf', ctrl.getSavedBulkSalesInvoicePDF);
 
 router.get('/:id/pdf', ctrl.getInvoicePDF);
@@ -27,8 +27,8 @@ router.post('/:id/einvoice/cancel', requireMinRole('company_admin'), ctrl.cancel
 router.get('/:id/einvoice/pdf', ctrl.getEinvoicePdf);
 router.post('/:id/ewaybill/generate', requireMinRole('accountant'), ctrl.generateEwayBill);
 router.post('/:id/ewaybill/cancel', requireMinRole('company_admin'), ctrl.cancelEwayBill);
-router.post('/:id/payment', ctrl.recordPayment);
-router.post('/:id/attachments', uploadInvoiceAttachment, ctrl.addInvoiceAttachment);
+router.post('/:id/payment', requireMinRole('manager'), ctrl.recordPayment);
+router.post('/:id/attachments', requireMinRole('staff'), uploadInvoiceAttachment, ctrl.addInvoiceAttachment);
 
 router.patch('/:id', requireMinRole('manager'), ctrl.updateInvoice);
 router.get('/:id', ctrl.getInvoice);

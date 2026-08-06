@@ -31,6 +31,9 @@ interface OcrItemCandidate {
   unit: string | null;
   rate_paise: number | null;
   amount_paise: number | null;
+  discount_paise?: number | null;
+  gst_rate?: number | null;
+  cess_rate?: number | null;
   confidence: number;
   source: string;
 }
@@ -42,6 +45,22 @@ export interface OcrResult {
   supplier_gstin: string | null;
   buyer_gstin: string | null;
   total_amount_paise: number | null;
+  due_date?: string | null;
+  party_address?: string | null;
+  shipping_address?: string | null;
+  party_phone?: string | null;
+  place_of_supply?: string | null;
+  tax_summary?: {
+    taxable_amount_paise?: number | null;
+    cgst_paise?: number | null;
+    sgst_paise?: number | null;
+    igst_paise?: number | null;
+    cess_paise?: number | null;
+    discount_paise?: number | null;
+    round_off_paise?: number | null;
+    gst_rate?: number | null;
+  };
+  reference_invoice?: Record<string, string | null>;
   raw_lines: string[];
   matched_party_id?: string | null;
   matched_party_name?: string | null;
@@ -73,6 +92,11 @@ interface FieldState {
   party_name: string;
   supplier_gstin: string;
   total_amount_rupees: string;
+  due_date: string;
+  party_phone: string;
+  party_address: string;
+  shipping_address: string;
+  place_of_supply: string;
 }
 
 interface Props {
@@ -97,6 +121,11 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
     party_name: '',
     supplier_gstin: '',
     total_amount_rupees: '',
+    due_date: '',
+    party_phone: '',
+    party_address: '',
+    shipping_address: '',
+    place_of_supply: '',
   });
   const [previewFile, setPreviewFile] = useState<{ name: string; isImage: boolean } | null>(null);
 
@@ -119,7 +148,10 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
     setResult(null);
     setPreviewFile(null);
     setSelectedItems([]);
-    setFields({ invoice_number: '', bill_date: '', party_name: '', supplier_gstin: '', total_amount_rupees: '' });
+    setFields({
+      invoice_number: '', bill_date: '', party_name: '', supplier_gstin: '', total_amount_rupees: '',
+      due_date: '', party_phone: '', party_address: '', shipping_address: '', place_of_supply: '',
+    });
   };
 
   const processFile = async (file: File) => {
@@ -149,6 +181,11 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
         total_amount_rupees: data.total_amount_paise != null
           ? paiseToRupees(data.total_amount_paise).toFixed(2)
           : '',
+        due_date: data.due_date ?? '',
+        party_phone: data.party_phone ?? '',
+        party_address: data.party_address ?? '',
+        shipping_address: data.shipping_address ?? '',
+        place_of_supply: data.place_of_supply ?? '',
       });
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'OCR failed — try a clearer image or text-based PDF');
@@ -184,6 +221,11 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
       party_name: fields.party_name || result.party_name,
       supplier_gstin: fields.supplier_gstin || result.supplier_gstin,
       total_amount_paise: totalPaise,
+      due_date: fields.due_date || result.due_date,
+      party_phone: fields.party_phone || result.party_phone,
+      party_address: fields.party_address || result.party_address,
+      shipping_address: fields.shipping_address || result.shipping_address,
+      place_of_supply: fields.place_of_supply || result.place_of_supply,
       items: selectedItems,
       overrides: fields,
     };
@@ -348,6 +390,29 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
                 <Input className="mt-1" type="number" step="0.01" value={fields.total_amount_rupees} onChange={e => upd('total_amount_rupees', e.target.value)} placeholder="0.00" />
                 {fieldSource('total_amount_paise') && <p className="mt-1 text-[11px] text-muted-foreground truncate">Source: {fieldSource('total_amount_paise')}</p>}
               </div>
+
+              <div className="grid gap-3 border-t pt-3 sm:grid-cols-2">
+                <div>
+                  <Label className="text-xs">Due Date</Label>
+                  <Input className="mt-1" type="date" value={fields.due_date} onChange={e => upd('due_date', e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Party Phone</Label>
+                  <Input className="mt-1" value={fields.party_phone} onChange={e => upd('party_phone', e.target.value)} placeholder="Not detected" />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Billing Address</Label>
+                  <Input className="mt-1" value={fields.party_address} onChange={e => upd('party_address', e.target.value)} placeholder="Not detected" />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Shipping Address</Label>
+                  <Input className="mt-1" value={fields.shipping_address} onChange={e => upd('shipping_address', e.target.value)} placeholder="Not detected" />
+                </div>
+                <div>
+                  <Label className="text-xs">Place of Supply / State Code</Label>
+                  <Input className="mt-1" value={fields.place_of_supply} onChange={e => upd('place_of_supply', e.target.value)} placeholder="e.g. 24 or Gujarat" />
+                </div>
+              </div>
             </div>
             {result.items && result.items.length > 0 && (
               <div className="space-y-2.5 rounded-lg border p-3 bg-muted/10">
@@ -391,7 +456,9 @@ export default function OcrBillSheet({ open, onOpenChange, onConfirm, context = 
                         <div className="flex-1 min-w-0">
                           <div className="font-semibold text-slate-800 break-all">{item.description}</div>
                           <div className="text-muted-foreground mt-0.5">
-                            Qty {item.quantity || 1} {item.unit || 'PCS'} · Rate ₹{rate.toFixed(2)} · Amount ₹{amount.toFixed(2)}
+                            Qty {item.quantity || 1} {item.unit || 'PCS'} · Rate ₹{rate.toFixed(2)}
+                            {item.gst_rate != null && <> · GST {item.gst_rate}%</>}
+                            {' · '}Amount ₹{amount.toFixed(2)}
                           </div>
                         </div>
                       </label>

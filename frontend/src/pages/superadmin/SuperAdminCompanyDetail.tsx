@@ -1,8 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import { useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { fetchSuperAdminCompanyDetail, addSuperAdminCompanyUser, toggleSuperAdminUser } from '@/lib/superAdminApi';
+import {
+  fetchSuperAdminCompanyDetail,
+  addSuperAdminCompanyUser,
+  deleteSuperAdminCompanyUser,
+  toggleSuperAdminUser,
+} from '@/lib/superAdminApi';
 
 const ROLE_OPTIONS = [
   'company_admin',
@@ -190,21 +196,41 @@ export default function SuperAdminCompanyDetail() {
                 <td className="px-4 py-2">{u.is_active ? 'Yes' : 'No'}</td>
                 <td className="px-4 py-2 text-right">
                   {String(u.role) !== 'super_admin' && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await toggleSuperAdminUser(String(u.id));
-                          toast.success('Updated');
-                          void qc.invalidateQueries({ queryKey: ['superadmin', 'company', id] });
-                        } catch (err: unknown) {
-                          toast.error((err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed');
-                        }
-                      }}
-                      className="text-violet-600 font-medium hover:underline"
-                    >
-                      Toggle active
-                    </button>
+                    <div className="inline-flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await toggleSuperAdminUser(String(u.id));
+                            toast.success('User access updated');
+                            void qc.invalidateQueries({ queryKey: ['superadmin', 'company', id] });
+                          } catch (err: unknown) {
+                            toast.error((err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed');
+                          }
+                        }}
+                        className="text-violet-600 font-medium hover:underline"
+                      >
+                        {u.is_active ? 'Disable' : 'Enable'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm(`Delete ${String(u.name)}? Their historical transactions and audit records will be retained.`)) return;
+                          try {
+                            await deleteSuperAdminCompanyUser(String(u.id));
+                            toast.success('User deleted');
+                            void qc.invalidateQueries({ queryKey: ['superadmin', 'company', id] });
+                          } catch (err: unknown) {
+                            toast.error((err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed');
+                          }
+                        }}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded text-red-600 hover:bg-red-50"
+                        title="Delete user"
+                        aria-label={`Delete ${String(u.name)}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>

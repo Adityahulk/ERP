@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
--- BizFlow Accounts — Licensing System
+-- Microtechnique Accounts — Licensing System
 -- Migration: 010_licensing_system.sql
 -- Adds: registrants, license_tiers, licenses tables
 -- Registrants are external license buyers, separate from internal users.

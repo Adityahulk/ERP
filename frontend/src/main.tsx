@@ -5,13 +5,14 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import App from './App';
 import { useAuthStore } from './store/authStore';
+import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from './lib/storageKeys';
 import './index.css';
 import toast from 'react-hot-toast';
 
 // After persist rehydrates: if shell says logged-in but tokens are gone, clear store (avoids redirect loops).
 useAuthStore.persist.onFinishHydration(() => {
   const { isAuthenticated, logout } = useAuthStore.getState();
-  if (isAuthenticated && !localStorage.getItem('bizflow_access_token')) {
+  if (isAuthenticated && !readStorageWithLegacy(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken)) {
     logout();
   }
 });

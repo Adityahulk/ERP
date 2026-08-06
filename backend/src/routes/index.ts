@@ -97,7 +97,7 @@ router.use('/ocr', verifyToken, moduleGuard('ocr'), ocrRoutes);
 // API info
 router.get('/', (_req, res) => {
   res.json({
-    name: 'BizFlow API',
+    name: 'Microtechnique Accounts API',
     version: '2.0.0',
     description: 'Indian Manufacturing Business API',
     modules: {

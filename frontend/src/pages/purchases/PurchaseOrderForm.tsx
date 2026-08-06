@@ -15,6 +15,7 @@ import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/Vyapar
 import { TransactionHeader, TransactionPageShell } from '@/components/transactions/TransactionLayout';
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 
 export default function PurchaseOrderForm() {
   const navigate = useNavigate();
@@ -121,7 +122,7 @@ export default function PurchaseOrderForm() {
   }, [location.state]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:purchase-order',
+    STORAGE_KEYS.drafts.purchaseOrder,
     { partyId, partyName, godownId, expectedDate, notes, items },
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
@@ -132,6 +133,7 @@ export default function PurchaseOrderForm() {
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
     {
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.purchaseOrder,
       shouldSave: (draft) => Boolean(draft.partyId || draft.partyName || draft.notes || draft.items.length),
     },
   );

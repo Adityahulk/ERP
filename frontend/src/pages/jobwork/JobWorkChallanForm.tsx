@@ -14,6 +14,7 @@ import { TransactionHeader, TransactionPageShell } from '@/components/transactio
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
 
 export default function JobWorkChallanForm() {
@@ -55,7 +56,7 @@ export default function JobWorkChallanForm() {
   const godowns = (godownsData as any) ?? [];
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    'bizflow:draft:job-work-challan',
+    STORAGE_KEYS.drafts.jobWorkChallan,
     { form, items },
     (draft: any) => {
       if (draft.form && typeof draft.form === 'object') {
@@ -64,6 +65,7 @@ export default function JobWorkChallanForm() {
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
     {
+      legacyKey: LEGACY_STORAGE_KEYS.drafts.jobWorkChallan,
       shouldSave: (draft) => Boolean(
         draft.form?.party_id || draft.form?.godown_id || draft.form?.transport_details ||
         draft.form?.vehicle_number || draft.form?.notes || draft.form?.service_only ||

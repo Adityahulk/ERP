@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
--- BizFlow Accounts — Manufacturing, Wholesale & Job Work Extension
+-- Microtechnique Accounts — Manufacturing, Wholesale & Job Work Extension
 -- Migration: 005_manufacturing_wholesale_jobwork.sql
 -- ═══════════════════════════════════════════════════════════════
 

@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'bizflow-api',
+      name: 'microtechnique-accounts-api',
       script: 'backend/dist/server.js',
       cwd: __dirname,
       instances: 2,
@@ -9,7 +9,7 @@ module.exports = {
       env_production: { NODE_ENV: 'production', PORT: 5000 },
     },
     {
-      name: 'bizflow-worker',
+      name: 'microtechnique-accounts-worker',
       script: 'backend/dist/worker.js',
       cwd: __dirname,
       instances: 1,
