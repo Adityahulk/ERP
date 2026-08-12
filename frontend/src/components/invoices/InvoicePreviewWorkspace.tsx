@@ -6,6 +6,7 @@ import { formatMoney, formatDate } from '@/lib/formatters';
 import toast from 'react-hot-toast';
 import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } from '@/components/settings/PrintLayoutPreview';
 import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
+import { apiErrorMessage } from '@/lib/blobError';
 
 const SKIP_PREVIEW_KEY = STORAGE_KEYS.skipInvoicePreview;
 const LEGACY_SKIP_PREVIEW_KEY = LEGACY_STORAGE_KEYS.skipInvoicePreview;
@@ -175,7 +176,7 @@ export function InvoicePreviewWorkspace({
       });
     } catch (e: any) {
       if (seq === previewRequestSeq.current) {
-        toast.error(e.response?.data?.error || e.message || 'Could not load preview');
+        toast.error(await apiErrorMessage(e, 'Could not load preview'));
       }
     } finally {
       if (seq === previewRequestSeq.current) setLoading(false);
@@ -285,7 +286,7 @@ Thank you.
       window.URL.revokeObjectURL(url);
       toast.success('Download started', { id: t });
     } catch (e: any) {
-      toast.error(e?.message || 'Download failed', { id: t });
+      toast.error(await apiErrorMessage(e, 'Download failed'), { id: t });
     }
   };
 
@@ -308,7 +309,7 @@ Thank you.
       window.open(url, '_blank');
       toast.success('Receipt opened', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Print failed', { id: t });
+      toast.error(await apiErrorMessage(e, 'Print failed'), { id: t });
     }
   };
 

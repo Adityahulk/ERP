@@ -14,6 +14,7 @@ import { FileText, Search, Plus, Download, Loader2, Eye, Pencil, FileCheck, Truc
 import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
+import { apiErrorMessage } from '@/lib/blobError';
 
 const BULK_COLUMN_OPTIONS = [
   { id: 'serial_no', label: '#' },
@@ -192,8 +193,8 @@ export default function InvoiceList() {
       link.remove();
       window.URL.revokeObjectURL(url);
       toast.success('Download started', { id: t });
-    } catch {
-      toast.error('Failed to download PDF', { id: t });
+    } catch (error: any) {
+      toast.error(await apiErrorMessage(error, 'Failed to download PDF'), { id: t });
     } finally {
       setPdfLoadingId(null);
     }
@@ -426,7 +427,12 @@ export default function InvoiceList() {
   const activeMenuInvoice = menuInvoiceId ? invoices.find((inv: any) => inv.id === menuInvoiceId) : null;
   const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
   const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
-  const activeMenuCanIRN = activeMenuCanEdit;
+  const activeMenuCanIRN = activeMenuCanEdit
+    && company?.einvoice_enabled === true
+    && company?.einvoice_turnover_above_5cr === true
+    && activeMenuInvoice?.invoice_type === 'tax_invoice'
+    && activeMenuInvoice?.is_gst_invoice !== false
+    && /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/.test(String(activeMenuInvoice?.party_gstin_snapshot || '').toUpperCase());
   const activeMenuCanEWB = !!activeMenuInvoice && activeMenuHasIrn && !activeMenuInvoice.ewb_no && activeMenuInvoice.status !== 'cancelled';
   const activeMenuCanDelete = activeMenuCanEdit;
   const activeMenuCanCancel = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled' && Number(activeMenuInvoice.paid_amount || 0) === 0;

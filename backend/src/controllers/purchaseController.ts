@@ -616,7 +616,7 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const { page, limit, offset } = parsePagination(req.query);
-    const { payment_status, party_id, search } = req.query;
+    const { payment_status, party_id, search, outstanding } = req.query;
 
     let where = 'pi.company_id = $1 AND pi.is_deleted = false';
     const params: any[] = [companyId];
@@ -624,6 +624,7 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
     if (payment_status) { where += ` AND pi.payment_status = $${idx++}`; params.push(payment_status); }
     if (party_id) { where += ` AND pi.party_id = $${idx++}`; params.push(party_id); }
     if (search) { where += ` AND (pi.bill_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
+    if (outstanding === 'true') { where += ` AND pi.status != 'cancelled' AND pi.total_amount > pi.paid_amount`; }
 
     const countRes = await query(`SELECT COUNT(*) FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id WHERE ${where}`, params);
     const result = await query(

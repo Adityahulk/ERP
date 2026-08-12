@@ -636,6 +636,18 @@ export function calculateInvoiceTotals(
   let totalSgst = 0;
   let totalIgst = 0;
   let totalCess = 0;
+  const lineBreakdown: Array<{
+    subtotal: number;
+    lineDiscount: number;
+    invoiceDiscount: number;
+    totalDiscount: number;
+    taxableAmount: number;
+    cgstAmount: number;
+    sgstAmount: number;
+    igstAmount: number;
+    cessAmount: number;
+    totalAmount: number;
+  }> = [];
 
   for (const item of processedItems) {
     const invoiceDiscount_row = taxableBeforeInvoiceDiscount > 0
@@ -659,6 +671,23 @@ export function calculateInvoiceTotals(
     totalSgst += baseSgst_row;
     totalIgst += baseIgst_row;
     totalCess += baseCess_row;
+
+    const lineTax = baseCgst_row + baseSgst_row + baseIgst_row + baseCess_row;
+    const lineTaxable = pricingMode === 'inclusive'
+      ? taxableAfterDiscount_row - lineTax
+      : taxableAfterDiscount_row;
+    lineBreakdown.push({
+      subtotal: item.subtotal_row,
+      lineDiscount: item.lineDiscount_row,
+      invoiceDiscount: invoiceDiscount_row,
+      totalDiscount: item.lineDiscount_row + invoiceDiscount_row,
+      taxableAmount: lineTaxable,
+      cgstAmount: baseCgst_row,
+      sgstAmount: baseSgst_row,
+      igstAmount: baseIgst_row,
+      cessAmount: baseCess_row,
+      totalAmount: lineTaxable + lineTax,
+    });
   }
 
   let finalTaxable = 0;
@@ -688,6 +717,35 @@ export function calculateInvoiceTotals(
 
   const safeVal = (v: number) => (Number.isFinite(v) && !Number.isNaN(v) ? Math.round(v) : 0);
 
+  const lines = lineBreakdown.map((line) => ({
+    subtotal: safeVal(line.subtotal),
+    lineDiscount: safeVal(line.lineDiscount),
+    invoiceDiscount: safeVal(line.invoiceDiscount),
+    totalDiscount: safeVal(line.totalDiscount),
+    taxableAmount: safeVal(line.taxableAmount),
+    cgstAmount: safeVal(line.cgstAmount),
+    sgstAmount: safeVal(line.sgstAmount),
+    igstAmount: safeVal(line.igstAmount),
+    cessAmount: safeVal(line.cessAmount),
+    totalAmount: safeVal(line.totalAmount),
+  }));
+
+  const reconcile = (key: keyof typeof lines[number], target: number) => {
+    if (!lines.length) return;
+    const current = lines.reduce((sum, line) => sum + Number(line[key] || 0), 0);
+    lines[lines.length - 1][key] += target - current;
+  };
+  reconcile('subtotal', safeVal(subtotal));
+  reconcile('lineDiscount', safeVal(totalDiscountLineLevel));
+  reconcile('invoiceDiscount', safeVal(globalDiscountAmount));
+  reconcile('totalDiscount', safeVal(totalDiscountLineLevel + globalDiscountAmount));
+  reconcile('taxableAmount', safeVal(finalTaxable));
+  reconcile('cgstAmount', safeVal(totalCgst));
+  reconcile('sgstAmount', safeVal(totalSgst));
+  reconcile('igstAmount', safeVal(totalIgst));
+  reconcile('cessAmount', safeVal(totalCess));
+  reconcile('totalAmount', safeVal(finalTotal));
+
   return {
     subtotal: safeVal(subtotal),
     totalDiscountLineLevel: safeVal(totalDiscountLineLevel),
@@ -702,5 +760,6 @@ export function calculateInvoiceTotals(
     tcsAmount: safeVal(tcsAmount),
     roundOff: safeVal(roundOff),
     totalAmount: safeVal(roundedAmountPaise),
+    lines,
   };
 }

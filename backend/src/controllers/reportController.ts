@@ -387,6 +387,36 @@ export async function salesRegister(req: Request, res: Response) {
   }
 }
 
+export async function einvoiceRegister(req: Request, res: Response) {
+  try {
+    const { from, to } = parseRange(req);
+    const result = await query(
+      `SELECT i.invoice_date,
+              i.invoice_number,
+              COALESCE(i.party_name_snapshot, p.name) AS party_name,
+              COALESCE(i.party_gstin_snapshot, p.gstin) AS buyer_gstin,
+              i.total_amount,
+              i.einvoice_status,
+              i.irn,
+              i.ack_number,
+              i.ack_date,
+              i.einvoice_last_attempt_at,
+              i.einvoice_error
+       FROM invoices i
+       LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id
+       WHERE i.company_id = $1
+         AND i.invoice_type = 'tax_invoice'
+         AND i.is_deleted = false
+         AND i.invoice_date >= $2 AND i.invoice_date <= $3
+       ORDER BY i.invoice_date DESC, i.created_at DESC`,
+      [req.user!.company_id, from, to],
+    );
+    res.json(success(result.rows));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+}
+
 export async function purchaseRegister(req: Request, res: Response) {
   try {
     const { from, to } = parseRange(req);

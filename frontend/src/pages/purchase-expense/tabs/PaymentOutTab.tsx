@@ -34,6 +34,14 @@ export default function PaymentOutTab() {
   const [payMode, setPayMode] = useState('cash');
   const [refNumber, setRefNumber] = useState('');
   const [notes, setNotes] = useState('');
+  const [selectedBillId, setSelectedBillId] = useState('');
+
+  const { data: partyBills } = useQuery({
+    queryKey: ['party-outstanding-purchase-bills', partyId],
+    queryFn: () => api.get('/purchases/invoices', { params: { party_id: partyId, outstanding: true, limit: 100 } })
+      .then((response) => response.data?.data?.data || []),
+    enabled: !!partyId,
+  });
 
   // Payment-Out is a first-class payment record, not an expense or a derived bill total.
   const { data, isLoading } = useQuery({
@@ -58,11 +66,16 @@ export default function PaymentOutTab() {
         reference_number: payload.ref_number || undefined,
         description: payload.notes || `Payment to ${payload.party_name}`,
         notes: payload.notes || `Payment to ${payload.party_name}`,
+        allocations: payload.purchase_invoice_id
+          ? [{ purchase_invoice_id: payload.purchase_invoice_id, amount: payload.amount }]
+          : undefined,
       });
     },
     onSuccess: () => {
       toast.success('Payment-Out recorded');
       qc.invalidateQueries({ queryKey: ['payment-out'] });
+      qc.invalidateQueries({ queryKey: ['party-outstanding-purchase-bills'] });
+      qc.invalidateQueries({ queryKey: ['purchase-bills'] });
       resetForm(); setShowForm(false);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed'),
@@ -88,14 +101,30 @@ export default function PaymentOutTab() {
     } catch { setPartyResults([]); }
   };
 
-  const selectSupplier = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
-  const clearSupplier = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
+  const selectSupplier = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); setSelectedBillId(''); };
+  const clearSupplier = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); setSelectedBillId(''); };
   const resetForm = () => { clearSupplier(); setAmount(''); setPayDate(new Date().toISOString().split('T')[0]); setPayMode('cash'); setRefNumber(''); setNotes(''); };
 
   const handleCreate = () => {
     if (!partyId) { toast.error('Select a saved party'); return; }
     if (!amount || parseFloat(amount) <= 0) { toast.error('Enter a valid amount'); return; }
-    createPaymentOut.mutate({ party_id: partyId, party_name: partyName || partySearch, amount: Math.round(parseFloat(amount) * 100), pay_date: payDate, pay_mode: payMode, ref_number: refNumber, notes });
+    const paymentPaise = Math.round(parseFloat(amount) * 100);
+    const selectedBill = (partyBills as any[] | undefined)?.find((bill) => bill.id === selectedBillId);
+    const balance = selectedBill ? Number(selectedBill.total_amount || 0) - Number(selectedBill.paid_amount || 0) : 0;
+    if (selectedBill && paymentPaise > balance) {
+      toast.error(`Amount cannot exceed ${formatMoney(balance)}, the selected purchase bill balance`);
+      return;
+    }
+    createPaymentOut.mutate({
+      party_id: partyId,
+      party_name: partyName || partySearch,
+      purchase_invoice_id: selectedBillId || undefined,
+      amount: paymentPaise,
+      pay_date: payDate,
+      pay_mode: payMode,
+      ref_number: refNumber,
+      notes,
+    });
   };
 
   return (
@@ -202,6 +231,32 @@ export default function PaymentOutTab() {
                 </div>
               )}
             </div>
+
+            {partyId && (partyBills as any[])?.length > 0 && (
+              <div>
+                <Label className="text-xs">Apply to Purchase Bill (optional)</Label>
+                <select
+                  className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={selectedBillId}
+                  onChange={(event) => {
+                    const id = event.target.value;
+                    setSelectedBillId(id);
+                    const bill = (partyBills as any[]).find((entry: any) => entry.id === id);
+                    if (bill) {
+                      const balance = Number(bill.total_amount || 0) - Number(bill.paid_amount || 0);
+                      setAmount((balance / 100).toFixed(2));
+                    }
+                  }}
+                >
+                  <option value="">— Unallocated payment —</option>
+                  {(partyBills as any[]).map((bill: any) => (
+                    <option key={bill.id} value={bill.id}>
+                      {bill.bill_number} · {formatMoney(Number(bill.total_amount || 0) - Number(bill.paid_amount || 0))} due
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <Label className="text-xs">Amount (₹) *</Label>

@@ -88,6 +88,9 @@ export default function QuotationForm() {
     }
     setPartyId(id);
     setPartyName(String(p.name ?? ''));
+    setPartyNameOverride(String(p.name ?? ''));
+    setPartyPhoneOverride(String(p.phone ?? ''));
+    setPartyEmailOverride(String(p.email ?? ''));
     setPartySearch('');
     setPartyResults([]);
   };
@@ -95,6 +98,7 @@ export default function QuotationForm() {
   const clearParty = () => {
     setPartyId(''); setPartyName('');
     setPartySearch(''); setPartyResults([]);
+    setPartyNameOverride(''); setPartyPhoneOverride(''); setPartyEmailOverride('');
   };
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(

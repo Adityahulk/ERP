@@ -926,13 +926,7 @@ export async function createInvoice(req: Request, res: Response) {
 
       for (let i = 0; i < d.items.length; i++) {
         const item = d.items[i];
-        const lineGst = mapLineForGst({
-          ...item,
-          item_name: item.item_name || item.name,
-          gst_rate: isGstInvoice ? item.gst_rate : 0,
-          cess_rate: isGstInvoice ? item.cess_rate : 0,
-        }, pricingMode);
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
+        const taxInfo = totalsInfo.lines[i];
 
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const taxComponents = isGstInvoice && Array.isArray(item.tax_components) ? item.tax_components : [];
@@ -961,16 +955,16 @@ export async function createInvoice(req: Request, res: Response) {
             item.quantity,
             Math.round(Number(item.unit_price) || 0),
             currencyCode,
-            taxInfo.totalDiscountLineLevel,
-            taxInfo.totalTaxable,
+            taxInfo.totalDiscount,
+            taxInfo.taxableAmount,
             gstRt,
             componentRates.cgstRate,
             componentRates.sgstRate,
             componentRates.igstRate,
-            taxInfo.totalCgst,
-            taxInfo.totalSgst,
-            taxInfo.totalIgst,
-            taxInfo.totalCess,
+            taxInfo.cgstAmount,
+            taxInfo.sgstAmount,
+            taxInfo.igstAmount,
+            taxInfo.cessAmount,
             taxInfo.totalAmount,
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
@@ -1088,7 +1082,7 @@ export async function listInvoices(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const { page, limit, offset } = parsePagination(req.query);
-    const { search, status, party_id, invoice_type, overdue } = req.query;
+    const { search, status, payment_status, party_id, invoice_type, overdue, outstanding } = req.query;
 
     let where = `i.company_id = $1 AND i.is_deleted = false
       AND i.invoice_type IN ('sale', 'tax_invoice')`;
@@ -1096,13 +1090,14 @@ export async function listInvoices(req: Request, res: Response) {
     let idx = 2;
 
     if (search) { where += ` AND (i.invoice_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
-    if (status) {
-      if (['paid', 'partial', 'unpaid'].includes(String(status))) {
+    const requestedStatus = status || payment_status;
+    if (requestedStatus) {
+      if (['paid', 'partial', 'unpaid'].includes(String(requestedStatus))) {
         where += ` AND i.payment_status = $${idx}`;
       } else {
         where += ` AND i.status = $${idx}`;
       }
-      params.push(status);
+      params.push(requestedStatus);
       idx++;
     }
     if (party_id) { where += ` AND i.party_id = $${idx}`; params.push(party_id); idx++; }
@@ -1113,6 +1108,9 @@ export async function listInvoices(req: Request, res: Response) {
     }
     if (overdue === 'true') {
       where += ` AND i.status != 'cancelled' AND i.balance_due > 0 AND i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE`;
+    }
+    if (outstanding === 'true') {
+      where += ` AND i.status != 'cancelled' AND i.balance_due > 0`;
     }
 
     const countRes = await query(`SELECT COUNT(*) FROM invoices i LEFT JOIN parties p ON i.party_id = p.id WHERE ${where}`, params);
@@ -1608,13 +1606,7 @@ export async function updateInvoice(req: Request, res: Response) {
       const godownId = updatedGodownId;
       for (let i = 0; i < d.items.length; i++) {
         const item = d.items[i];
-        const lineGst = mapLineForGst({
-          ...item,
-          item_name: item.item_name || item.name,
-          gst_rate: isGstInvoice ? item.gst_rate : 0,
-          cess_rate: isGstInvoice ? item.cess_rate : 0,
-        }, pricingMode);
-        const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
+        const taxInfo = totalsInfo.lines[i];
         const gstRt = isGstInvoice ? Number(item.gst_rate) || 0 : 0;
         const taxComponents = isGstInvoice && Array.isArray(item.tax_components) ? item.tax_components : [];
         const componentRates = resolveTaxComponentRates(
@@ -1644,16 +1636,16 @@ export async function updateInvoice(req: Request, res: Response) {
             item.quantity,
             Math.round(Number(item.unit_price) || 0),
             currencyCode,
-            taxInfo.totalDiscountLineLevel,
-            taxInfo.totalTaxable,
+            taxInfo.totalDiscount,
+            taxInfo.taxableAmount,
             gstRt,
             componentRates.cgstRate,
             componentRates.sgstRate,
             componentRates.igstRate,
-            taxInfo.totalCgst,
-            taxInfo.totalSgst,
-            taxInfo.totalIgst,
-            taxInfo.totalCess,
+            taxInfo.cgstAmount,
+            taxInfo.sgstAmount,
+            taxInfo.igstAmount,
+            taxInfo.cessAmount,
             taxInfo.totalAmount,
             i + 1,
             JSON.stringify(item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {}),
@@ -1977,9 +1969,13 @@ export async function getInvoicePDF(req: Request, res: Response) {
     });
 
     const inline = String(req.query.inline || '') === '1';
-    const fn = `${invRes.rows[0].invoice_number}.pdf`;
+    const safeInvoiceNumber = String(invRes.rows[0].invoice_number || 'invoice')
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'invoice';
+    const fn = `${safeInvoiceNumber}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${fn}`);
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${fn}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
     res.send(pdfBuffer);
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
@@ -2360,7 +2356,7 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     for (let i = 0; i < d.items.length; i++) {
       const item = d.items[i];
       const lineGst = mappedItems[i];
-      const taxInfo = calculateInvoiceTotals([lineGst], gstType, 'none', 0, 0, false, pricingMode);
+      const taxInfo = totals.lines[i];
       pdfRows.push({
         item_name: invoiceLineName(item),
         item_description: item.item_description || item.description || null,
@@ -2368,12 +2364,12 @@ export async function previewInvoicePdf(req: Request, res: Response) {
         quantity: lineGst.quantity,
         unit: item.unit || 'PCS',
         unit_price: lineGst.unit_price,
-        discount_amount: taxInfo.totalDiscountLineLevel,
-        taxable_amount: taxInfo.totalTaxable,
+        discount_amount: taxInfo.totalDiscount,
+        taxable_amount: taxInfo.taxableAmount,
         gst_rate: lineGst.gst_rate,
-        cgst_amount: taxInfo.totalCgst,
-        sgst_amount: taxInfo.totalSgst,
-        igst_amount: taxInfo.totalIgst,
+        cgst_amount: taxInfo.cgstAmount,
+        sgst_amount: taxInfo.sgstAmount,
+        igst_amount: taxInfo.igstAmount,
         total_amount: taxInfo.totalAmount,
         custom_fields: item.custom_fields && typeof item.custom_fields === 'object' ? item.custom_fields : {},
         price_includes_tax: lineGst.price_includes_tax,
@@ -2492,10 +2488,9 @@ export async function sendWhatsApp(req: Request, res: Response) {
 }
 
 export async function generateEinvoice(req: Request, res: Response) {
+  const { id } = req.params;
+  const companyId = req.user!.company_id;
   try {
-    const { id } = req.params;
-    const companyId = req.user!.company_id;
-
     const comp = await query(
       `SELECT * FROM companies WHERE id = $1 AND is_deleted = false`,
       [companyId]
@@ -2505,11 +2500,21 @@ export async function generateEinvoice(req: Request, res: Response) {
     if (!company.einvoice_enabled) {
       return res.status(400).json(error('Enable e-invoice in company settings first'));
     }
+    if (!company.einvoice_turnover_above_5cr) {
+      return res.status(400).json(error('Confirm e-invoice applicability in company settings before generating an IRN'));
+    }
 
     const invRes = await query(`SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`, [id, companyId]);
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
 
     const inv = invRes.rows[0];
+    if (inv.status === 'cancelled') return res.status(400).json(error('Cannot generate an IRN for a cancelled invoice'));
+    if (inv.irn && inv.einvoice_status === 'generated') {
+      return res.status(409).json(error('An active IRN already exists for this invoice'));
+    }
+    if (inv.invoice_type !== 'tax_invoice' || inv.is_gst_invoice === false) {
+      return res.status(400).json(error('IRN generation is available only for GST tax invoices'));
+    }
     if (normalizeCurrencyCode(inv.currency_code) !== 'INR') {
       return res.status(400).json(error('E-invoice/IRN generation is supported only for INR GST invoices. Create USD invoices as normal commercial invoices without IRN.'));
     }
@@ -2521,6 +2526,7 @@ export async function generateEinvoice(req: Request, res: Response) {
        ORDER BY ii.sort_order, ii.id`,
       [id, companyId]
     );
+    if (!itemsRes.rows.length) return res.status(400).json(error('Add at least one item before generating an IRN'));
 
     let party: any = {
       gstin: inv.party_gstin_snapshot,
@@ -2546,12 +2552,37 @@ export async function generateEinvoice(req: Request, res: Response) {
       }
     }
 
+    const gstinPattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/;
+    const sellerGstin = String(company.gstin || '').replace(/\s+/g, '').toUpperCase();
+    const buyerGstin = String(party.gstin || '').replace(/\s+/g, '').toUpperCase();
+    if (!gstinPattern.test(sellerGstin)) {
+      return res.status(400).json(error('Add a valid company GSTIN before generating an IRN'));
+    }
+    if (!gstinPattern.test(buyerGstin)) {
+      return res.status(400).json(error('E-invoice requires a valid registered buyer GSTIN (B2B invoice)'));
+    }
+    const invalidItem = itemsRes.rows.find((item: any) => {
+      const hsn = String(item.hsn_code || '').replace(/\D/g, '');
+      return Number(item.quantity || 0) <= 0 || Number(item.taxable_amount || 0) < 0 || hsn.length < 4;
+    });
+    if (invalidItem) {
+      return res.status(400).json(error(`Item "${invalidItem.item_name || 'Item'}" needs a valid quantity and HSN/SAC code for e-invoice`));
+    }
+
+    await query(
+      `UPDATE invoices
+       SET einvoice_status = 'pending', einvoice_error = NULL, einvoice_last_attempt_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND company_id = $2`,
+      [id, companyId],
+    );
+
     const payload = buildEinvoicePayload(inv, company, party, itemsRes.rows as EinvoiceItemRow[]);
     const irnData = await generateIRN(payload, company);
     const qrUrl = await generateEinvoiceQR(irnData.irn, inv, env.EINVOICE_MODE, payload, irnData.signed_qr_code);
 
     await query(
-      `UPDATE invoices SET irn = $1, ack_number = $2, ack_date = $3, einvoice_status = $4, qr_code_url = $5, updated_at = now()
+      `UPDATE invoices SET irn = $1, ack_number = $2, ack_date = $3, einvoice_status = $4, qr_code_url = $5,
+                           einvoice_error = NULL, einvoice_last_attempt_at = NOW(), updated_at = now()
        WHERE id = $6 AND company_id = $7`,
       [irnData.irn, irnData.ack_number, irnData.ack_date, 'generated', qrUrl, id, companyId]
     );
@@ -2559,6 +2590,16 @@ export async function generateEinvoice(req: Request, res: Response) {
     res.json(success({ irn: irnData.irn, ack_number: irnData.ack_number, ack_date: irnData.ack_date, qr_code_url: qrUrl }));
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
+    try {
+      await query(
+        `UPDATE invoices
+         SET einvoice_status = 'failed', einvoice_error = $1, einvoice_last_attempt_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND company_id = $3 AND is_deleted = false`,
+        [String(err?.message || 'IRN generation failed').slice(0, 2000), id, companyId],
+      );
+    } catch (statusError: any) {
+      console.error('Failed to persist e-invoice error:', statusError?.message);
+    }
     res.status(externalTaxErrorStatus(err.message)).json(error(err.message));
   }
 }
@@ -2922,7 +2963,7 @@ export async function recordPayment(req: Request, res: Response) {
         await client.query(
           `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
            VALUES ($1, $2, 'credit', $3, (SELECT balance FROM parties WHERE id = $2), 'payment', $4, $5, $6)`,
-          [companyId, inv.party_id, amt, id, `Payment for ${inv.invoice_number}`, req.user!.id]
+          [companyId, inv.party_id, amt, payRes.rows[0].id, `Payment for ${inv.invoice_number}`, req.user!.id]
         );
       }
 

@@ -321,6 +321,9 @@ export async function generateIRN(
   const mode = env.EINVOICE_MODE;
 
   if (mode === 'mock') {
+    if (env.NODE_ENV === 'production') {
+      throw new Error('E-invoice is in mock mode on the production server. Configure EINVOICE_MODE=sandbox or production and valid GSP credentials before generating IRNs.');
+    }
     const doc = payload.DocDtls as { No?: string; Dt?: string };
     const irn = fakeIrn(company.id, String(doc?.No || ''), String(doc?.Dt || ''));
     const ack_number = `ACK${Date.now()}`;

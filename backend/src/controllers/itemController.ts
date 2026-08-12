@@ -393,6 +393,10 @@ export async function createItem(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const data = req.body;
+    data.name = String(data.name || '').trim();
+    data.sku = String(data.sku || '').trim() || null;
+    data.barcode = String(data.barcode || '').trim() || null;
+    if (!data.name) return res.status(400).json(error('Item name is required'));
     const itemType = String(data.item_type || 'product').toLowerCase();
     const isService = itemType === 'service';
     const trackInventory = isService ? false : data.track_inventory !== false;
@@ -402,13 +406,13 @@ export async function createItem(req: Request, res: Response) {
     // SKU uniqueness
     if (data.sku) {
       const dup = await query(
-        'SELECT id FROM items WHERE company_id = $1 AND sku = $2 AND is_deleted = false', [companyId, data.sku]
+        'SELECT id FROM items WHERE company_id = $1 AND LOWER(TRIM(sku)) = LOWER(TRIM($2)) AND is_deleted = false', [companyId, data.sku]
       );
       if (dup.rows.length) return res.status(400).json(error('An item with this SKU already exists'));
     }
     if (data.barcode) {
       const dup = await query(
-        'SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false', [companyId, data.barcode]
+        'SELECT id FROM items WHERE company_id = $1 AND LOWER(TRIM(barcode)) = LOWER(TRIM($2)) AND is_deleted = false', [companyId, data.barcode]
       );
       if (dup.rows.length) return res.status(400).json(error('An item with this barcode already exists'));
     }
@@ -530,6 +534,7 @@ export async function createItem(req: Request, res: Response) {
     res.status(201).json(success(result));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
+    if (err?.code === '23505') return res.status(409).json(error('An item with this SKU or barcode already exists'));
     res.status(500).json(error(err.message));
   }
 }
@@ -683,6 +688,12 @@ export async function updateItem(req: Request, res: Response) {
     const { id } = req.params;
     const companyId = req.user!.company_id;
     const data = req.body;
+    if (data.name !== undefined) {
+      data.name = String(data.name || '').trim();
+      if (!data.name) return res.status(400).json(error('Item name is required'));
+    }
+    if (data.sku !== undefined) data.sku = String(data.sku || '').trim() || null;
+    if (data.barcode !== undefined) data.barcode = String(data.barcode || '').trim() || null;
 
     const oldRes = await query('SELECT * FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false', [id, companyId]);
     if (!oldRes.rows.length) return res.status(404).json(error('Item not found'));
@@ -690,11 +701,11 @@ export async function updateItem(req: Request, res: Response) {
 
     // SKU uniqueness check
     if (data.sku && data.sku !== old.sku) {
-      const dup = await query('SELECT id FROM items WHERE company_id = $1 AND sku = $2 AND is_deleted = false AND id != $3', [companyId, data.sku, id]);
+      const dup = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(TRIM(sku)) = LOWER(TRIM($2)) AND is_deleted = false AND id != $3', [companyId, data.sku, id]);
       if (dup.rows.length) return res.status(400).json(error('An item with this SKU already exists'));
     }
     if (data.barcode && data.barcode !== old.barcode) {
-      const dup = await query('SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false AND id != $3', [companyId, data.barcode, id]);
+      const dup = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(TRIM(barcode)) = LOWER(TRIM($2)) AND is_deleted = false AND id != $3', [companyId, data.barcode, id]);
       if (dup.rows.length) return res.status(400).json(error('An item with this barcode already exists'));
     }
 
@@ -807,6 +818,7 @@ export async function updateItem(req: Request, res: Response) {
     res.json(success(result));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
+    if (err?.code === '23505') return res.status(409).json(error('An item with this SKU or barcode already exists'));
     const status = /No fields|Opening stock|Select a godown|Enable inventory/i.test(err.message) ? 400 : 500;
     res.status(status).json(error(err.message));
   }

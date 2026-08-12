@@ -138,6 +138,8 @@ export default function InvoiceDetail() {
           ? 'Generated'
           : einvStatus === 'cancelled'
             ? 'Cancelled'
+            : einvStatus === 'failed'
+              ? 'Failed'
             : einvStatus;
 
   const einvBadgeClass =
@@ -145,6 +147,8 @@ export default function InvoiceDetail() {
       ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
       : einvStatus === 'cancelled'
         ? 'bg-red-100 text-red-800 border-red-200'
+        : einvStatus === 'failed'
+          ? 'bg-red-100 text-red-800 border-red-200'
         : 'bg-slate-100 text-slate-700 border-slate-200';
 
   const handleGenerateEInvoice = async () => {
@@ -708,6 +712,12 @@ Thank you.
                 </div>
               ) : (
                 <div className="text-center space-y-4">
+                  {einvStatus === 'failed' && inv.einvoice_error && (
+                    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-left text-xs text-red-800">
+                      <p className="font-semibold mb-1">Last IRN attempt failed</p>
+                      <p>{inv.einvoice_error}</p>
+                    </div>
+                  )}
                   {!canGenEinv ? (
                     <div className="text-sm text-muted-foreground space-y-2 text-left">
                       {!company?.einvoice_enabled ? (

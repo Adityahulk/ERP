@@ -35,19 +35,45 @@ export async function listCategories(req: Request, res: Response) {
 export async function createCategory(req: Request, res: Response) {
   try {
     const { name, parent_id, description } = req.body;
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return res.status(400).json(error('Category name is required'));
+    if (parent_id) {
+      const parent = await query(
+        `SELECT id FROM item_categories
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+        [parent_id, req.user!.company_id],
+      );
+      if (!parent.rows.length) return res.status(400).json(error('Parent category was not found'));
+    }
     const result = await query(
       `INSERT INTO item_categories (company_id, name, parent_id, description) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [req.user!.company_id, name, parent_id || null, description]
+      [req.user!.company_id, cleanName, parent_id || null, description]
     );
     await logAction(req.user!.id, req.user!.company_id, 'create', 'item_category', result.rows[0].id);
     res.status(201).json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json(error('A category with this name already exists'));
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── PATCH /api/item-categories/:id ────────────────────────────
 export async function updateCategory(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    if (req.body.name !== undefined) {
+      req.body.name = String(req.body.name || '').trim();
+      if (!req.body.name) return res.status(400).json(error('Category name is required'));
+    }
+    if (req.body.parent_id === id) return res.status(400).json(error('A category cannot be its own parent'));
+    if (req.body.parent_id) {
+      const parent = await query(
+        `SELECT id FROM item_categories
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+        [req.body.parent_id, req.user!.company_id],
+      );
+      if (!parent.rows.length) return res.status(400).json(error('Parent category was not found'));
+    }
     const fields = ['name','parent_id','description','is_active'];
     const updates: string[] = []; const values: any[] = []; let idx = 1;
     for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = $${idx++}`); values.push(req.body[f]); } }
@@ -60,7 +86,10 @@ export async function updateCategory(req: Request, res: Response) {
     );
     if (!result.rows.length) return res.status(404).json(error('Category not found'));
     res.json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json(error('A category with this name already exists'));
+    res.status(500).json(error(err.message));
+  }
 }
 
 // ── DELETE /api/item-categories/:id ───────────────────────────

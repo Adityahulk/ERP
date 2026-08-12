@@ -138,15 +138,21 @@ export async function createQuotation(req: Request, res: Response) {
       const customNo = trimOrNull(d.quotation_number);
       const qn = customNo || (await generateQuotationNumber(companyId, godownId));
 
+      const partyRes = await client.query(
+        `SELECT id, name, phone, email, billing_state_code
+         FROM parties
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false
+         FOR SHARE`,
+        [d.party_id, companyId],
+      );
+      if (!partyRes.rows.length) throw new Error('Party not found for this company');
+      const party = partyRes.rows[0];
+
       let isInterstate = Boolean(d.is_interstate);
       const isGstQuote = d.is_gst_quote !== false;
       if (d.is_interstate === undefined && d.party_id) {
-        const pRes = await client.query(
-          'SELECT billing_state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-          [d.party_id, companyId]
-        );
         const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        const partyState = String(pRes.rows[0]?.billing_state_code || '');
+        const partyState = String(party.billing_state_code || '');
         const companyState = String(cRes.rows[0]?.state_code || '');
         isInterstate = !!(partyState && companyState && partyState !== companyState);
       }
@@ -188,9 +194,9 @@ export async function createQuotation(req: Request, res: Response) {
           d.quotation_date,
           d.valid_until || null,
           d.party_id,
-          trimOrNull(d.party_name_override),
-          trimOrNull(d.party_phone_override),
-          trimOrNull(d.party_email_override),
+          trimOrNull(d.party_name_override) || trimOrNull(party.name),
+          trimOrNull(d.party_phone_override) || trimOrNull(party.phone),
+          trimOrNull(d.party_email_override) || trimOrNull(party.email),
           subtotal,
           discount,
           taxable,
@@ -249,7 +255,8 @@ export async function createQuotation(req: Request, res: Response) {
 
     res.status(201).json(success(created));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    const message = err?.message || 'Failed to create quotation';
+    res.status(/required|not found|at least|invalid/i.test(message) ? 400 : 500).json(error(message));
   }
 }
 
@@ -265,9 +272,12 @@ export async function listQuotations(req: Request, res: Response) {
     const total = parseInt(countRes.rows[0].c, 10);
 
     const result = await query(
-      `SELECT q.*, p.name AS party_name
+      `SELECT q.*,
+              COALESCE(q.party_name_override, p.name) AS party_name,
+              COALESCE(q.party_phone_override, p.phone) AS party_phone,
+              COALESCE(q.party_email_override, p.email) AS party_email
        FROM quotations q
-       LEFT JOIN parties p ON q.party_id = p.id
+       LEFT JOIN parties p ON q.party_id = p.id AND p.company_id = q.company_id AND p.is_deleted = false
        WHERE q.company_id = $1 AND q.is_deleted = false
        ORDER BY q.created_at DESC
        LIMIT $2 OFFSET $3`,
@@ -283,7 +293,17 @@ export async function listQuotations(req: Request, res: Response) {
 export async function getQuotation(req: Request, res: Response) {
   try {
     const result = await query(
-      `SELECT * FROM quotations WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      `SELECT q.*,
+              COALESCE(q.party_name_override, p.name) AS party_name,
+              COALESCE(q.party_phone_override, p.phone) AS party_phone,
+              COALESCE(q.party_email_override, p.email) AS party_email,
+              p.gstin AS party_gstin,
+              p.billing_address AS party_address,
+              p.billing_state AS party_state,
+              p.billing_state_code AS party_state_code
+       FROM quotations q
+       LEFT JOIN parties p ON p.id = q.party_id AND p.company_id = q.company_id AND p.is_deleted = false
+       WHERE q.id = $1 AND q.company_id = $2 AND q.is_deleted = false`,
       [req.params.id, req.user!.company_id]
     );
     if (!result.rows.length) return res.status(404).json(error('Quotation not found'));

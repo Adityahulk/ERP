@@ -11,6 +11,7 @@ router.get('/profit-loss', ctrl.profitLoss);
 router.get('/gst', ctrl.gstReport);
 router.get('/party-statement', ctrl.partyStatement);
 router.get('/sales-register', ctrl.salesRegister);
+router.get('/einvoice-register', ctrl.einvoiceRegister);
 router.get('/purchase-register', ctrl.purchaseRegister);
 router.get('/stock-summary', ctrl.stockSummary);
 router.get('/outstanding-receivables', ctrl.outstandingReceivables);

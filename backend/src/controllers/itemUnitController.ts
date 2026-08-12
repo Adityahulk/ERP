@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { seedDefaultItemMasters } from '../services/onboardingService';
 
@@ -77,34 +77,56 @@ export async function deleteConversion(req: Request, res: Response) {
 export async function createUnit(req: Request, res: Response) {
   try {
     const { name, abbreviation, is_default } = req.body;
-    if (is_default) {
-      await query('UPDATE item_units SET is_default = false WHERE company_id = $1', [req.user!.company_id]);
-    }
-    const result = await query(
-      'INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,$4) RETURNING *',
-      [req.user!.company_id, name, abbreviation, is_default || false]
-    );
-    res.status(201).json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    const cleanName = String(name || '').trim();
+    const cleanAbbreviation = String(abbreviation || '').trim() || null;
+    if (!cleanName) return res.status(400).json(error('Unit name is required'));
+    const unit = await withTransaction(async (client) => {
+      if (is_default) {
+        await client.query('UPDATE item_units SET is_default = false WHERE company_id = $1', [req.user!.company_id]);
+      }
+      const result = await client.query(
+        'INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,$4) RETURNING *',
+        [req.user!.company_id, cleanName, cleanAbbreviation, is_default || false],
+      );
+      return result.rows[0];
+    });
+    res.status(201).json(success(unit));
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json(error('A unit with this name or abbreviation already exists'));
+    res.status(500).json(error(err.message));
+  }
 }
 
 export async function updateUnit(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    if (req.body.name !== undefined) {
+      req.body.name = String(req.body.name || '').trim();
+      if (!req.body.name) return res.status(400).json(error('Unit name is required'));
+    }
+    if (req.body.abbreviation !== undefined) {
+      req.body.abbreviation = String(req.body.abbreviation || '').trim() || null;
+    }
     const fields = ['name', 'abbreviation', 'is_default'];
     const updates: string[] = []; const values: any[] = []; let idx = 1;
     for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = $${idx++}`); values.push(req.body[f]); } }
     if (!updates.length) return res.status(400).json(error('No fields to update'));
 
-    if (req.body.is_default) {
-      await query('UPDATE item_units SET is_default = false WHERE company_id = $1', [req.user!.company_id]);
-    }
-
     values.push(id, req.user!.company_id);
-    const result = await query(
-      `UPDATE item_units SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING *`, values
-    );
-    if (!result.rows.length) return res.status(404).json(error('Unit not found'));
-    res.json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+    const unit = await withTransaction(async (client) => {
+      if (req.body.is_default) {
+        await client.query('UPDATE item_units SET is_default = false WHERE company_id = $1', [req.user!.company_id]);
+      }
+      const result = await client.query(
+        `UPDATE item_units SET ${updates.join(', ')} WHERE id = $${idx++} AND company_id = $${idx} RETURNING *`, values,
+      );
+      if (!result.rows.length) throw new Error('Unit not found');
+      return result.rows[0];
+    });
+    res.json(success(unit));
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json(error('A unit with this name or abbreviation already exists'));
+    if (/Unit not found/i.test(err?.message || '')) return res.status(404).json(error('Unit not found'));
+    res.status(500).json(error(err.message));
+  }
 }

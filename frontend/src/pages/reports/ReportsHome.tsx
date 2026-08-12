@@ -18,6 +18,7 @@ type ReportName =
   | 'Input Tax Credit'
   | 'GST Out/In summary'
   | 'Sales Register'
+  | 'E-Invoice Register'
   | 'Item-wise Sales'
   | 'Party-wise Sales'
   | 'Outstanding Receivables'
@@ -37,7 +38,7 @@ type ReportName =
 
 const reportCategories = [
   { id: 'gst', title: 'GST Reports', reports: ['GSTR-1 Data', 'GSTR-3B Summary', 'HSN Summary', 'Input Tax Credit', 'GST Out/In summary'] as const },
-  { id: 'sales', title: 'Sales Reports', reports: ['Sales Register', 'Item-wise Sales', 'Party-wise Sales', 'Outstanding Receivables'] as const },
+  { id: 'sales', title: 'Sales Reports', reports: ['Sales Register', 'E-Invoice Register', 'Item-wise Sales', 'Party-wise Sales', 'Outstanding Receivables'] as const },
   { id: 'purchase', title: 'Purchase Reports', reports: ['Purchase Register', 'Party-wise Purchase', 'Outstanding Payables'] as const },
   { id: 'inventory', title: 'Inventory Reports', reports: ['Stock Summary', 'Stock Movement', 'Low Stock Alert'] as const },
   { id: 'financial', title: 'Financial Reports', reports: ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Day Book', 'Expense Summary', 'Payment Collection', 'TCS / TDS'] as const },
@@ -94,6 +95,8 @@ export default function ReportsHome() {
       switch (activeReport) {
         case 'Sales Register':
           return unwrap(await api.get('/reports/sales-register', { params }));
+        case 'E-Invoice Register':
+          return unwrap(await api.get('/reports/einvoice-register', { params }));
         case 'Purchase Register':
           return unwrap(await api.get('/reports/purchase-register', { params }));
         case 'Stock Summary':

@@ -33,7 +33,7 @@ async function applyAllocation(
     const invoiceId = String(allocation.invoice_id || '').trim();
     if (!invoiceId) throw new Error('Sales invoice id is required for an incoming payment allocation');
     const invoiceRes = await client.query(
-      `SELECT id, total_amount, paid_amount
+      `SELECT id, party_id, total_amount, paid_amount
        FROM invoices
        WHERE id = $1 AND company_id = $2 AND is_deleted = false
        FOR UPDATE`,
@@ -41,6 +41,9 @@ async function applyAllocation(
     );
     if (!invoiceRes.rows.length) throw new Error('Sales invoice not found for this company');
     const invoice = invoiceRes.rows[0];
+    if (payment.party_id && invoice.party_id && String(payment.party_id) !== String(invoice.party_id)) {
+      throw new Error('The selected sales invoice belongs to a different party');
+    }
     const nextPaid = Number(invoice.paid_amount || 0) + amount;
     if (nextPaid > Number(invoice.total_amount || 0)) throw new Error('Allocation exceeds the sales invoice balance');
 
@@ -63,7 +66,7 @@ async function applyAllocation(
   const purchaseInvoiceId = String(allocation.purchase_invoice_id || allocation.invoice_id || '').trim();
   if (!purchaseInvoiceId) throw new Error('Purchase invoice id is required for an outgoing payment allocation');
   const purchaseRes = await client.query(
-    `SELECT id, total_amount, paid_amount
+    `SELECT id, party_id, total_amount, paid_amount
      FROM purchase_invoices
      WHERE id = $1 AND company_id = $2 AND is_deleted = false
      FOR UPDATE`,
@@ -71,6 +74,9 @@ async function applyAllocation(
   );
   if (!purchaseRes.rows.length) throw new Error('Purchase invoice not found for this company');
   const purchase = purchaseRes.rows[0];
+  if (payment.party_id && purchase.party_id && String(payment.party_id) !== String(purchase.party_id)) {
+    throw new Error('The selected purchase invoice belongs to a different party');
+  }
   const nextPaid = Number(purchase.paid_amount || 0) + amount;
   if (nextPaid > Number(purchase.total_amount || 0)) throw new Error('Allocation exceeds the purchase invoice balance');
 
@@ -117,9 +123,25 @@ export async function listPayments(req: Request, res: Response) {
       params.push(String(req.query.to_date));
     }
     const result = await query(
-      `SELECT p.*, pt.name as party_name, ba.account_label as bank_label, ba.bank_name, ba.account_number
+      `SELECT p.*, pt.name as party_name, ba.account_label as bank_label, ba.bank_name, ba.account_number,
+              COALESCE(pa.allocated_amount, 0)::bigint AS allocated_amount,
+              (p.amount - COALESCE(pa.allocated_amount, 0))::bigint AS unallocated_amount,
+              COALESCE(pa.linked_documents, '[]'::json) AS linked_documents
        FROM payments p LEFT JOIN parties pt ON p.party_id = pt.id
        LEFT JOIN company_bank_accounts ba ON ba.id = p.company_bank_account_id AND ba.company_id = p.company_id
+       LEFT JOIN LATERAL (
+         SELECT SUM(a.amount) AS allocated_amount,
+                json_agg(json_build_object(
+                  'invoice_id', a.invoice_id,
+                  'purchase_invoice_id', a.purchase_invoice_id,
+                  'amount', a.amount,
+                  'number', COALESCE(i.invoice_number, pi.bill_number)
+                ) ORDER BY a.created_at) AS linked_documents
+         FROM payment_allocations a
+         LEFT JOIN invoices i ON i.id = a.invoice_id AND i.company_id = p.company_id
+         LEFT JOIN purchase_invoices pi ON pi.id = a.purchase_invoice_id AND pi.company_id = p.company_id
+         WHERE a.payment_id = p.id
+       ) pa ON true
        WHERE ${where.join(' AND ')}
        ORDER BY p.payment_date DESC, p.created_at DESC LIMIT $${idx++} OFFSET $${idx}`, [...params, limit, offset]
     );
@@ -177,6 +199,10 @@ export async function createPayment(req: Request, res: Response) {
         ]
       );
       const payment = pRes.rows[0];
+
+      if (!payment.party_id) {
+        throw new Error('Select a party before allocating this payment');
+      }
 
       // 2. Validate & Process Allocations
       if (d.allocations && d.allocations.length > 0) {
@@ -239,7 +265,7 @@ export async function allocatePayment(req: Request, res: Response) {
       const alreadyAllocated = Number(sumRes.rows[0]?.s || 0);
       let add = 0;
       for (const a of allocations) {
-        add += Number(a.amount) || 0;
+        add += positivePaise(a.amount, 'Allocation amount');
       }
       if (add <= 0) throw new Error('Allocation amounts must be positive');
       if (alreadyAllocated + add > Number(payment.amount)) {

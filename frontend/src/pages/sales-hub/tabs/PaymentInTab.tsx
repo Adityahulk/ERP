@@ -34,10 +34,10 @@ export default function PaymentInTab() {
   const [refNumber, setRefNumber] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Unpaid invoices for the selected party
+  // Outstanding invoices include both unpaid and partially paid bills.
   const { data: partyInvoices } = useQuery({
-    queryKey: ['party-unpaid-invoices', partyId],
-    queryFn: () => api.get('/invoices', { params: { party_id: partyId, payment_status: 'unpaid', limit: 20 } }).then(r => r.data?.data?.data || []),
+    queryKey: ['party-outstanding-invoices', partyId],
+    queryFn: () => api.get('/invoices', { params: { party_id: partyId, outstanding: true, limit: 100 } }).then(r => r.data?.data?.data || []),
     enabled: !!partyId,
   });
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
@@ -67,7 +67,7 @@ export default function PaymentInTab() {
       toast.success('Payment-In deleted');
       qc.invalidateQueries({ queryKey: ['payments-in'] });
       qc.invalidateQueries({ queryKey: ['salesInvoices'] });
-      qc.invalidateQueries({ queryKey: ['party-unpaid-invoices'] });
+      qc.invalidateQueries({ queryKey: ['party-outstanding-invoices'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to delete payment'),
   });
@@ -88,17 +88,23 @@ export default function PaymentInTab() {
   const handleCreate = () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (!amount || parseFloat(amount) <= 0) { toast.error('Enter a valid amount'); return; }
+    const paymentPaise = Math.round(parseFloat(amount) * 100);
+    const selectedInvoice = (partyInvoices as any[] | undefined)?.find((invoice) => invoice.id === selectedInvoiceId);
+    if (selectedInvoice && paymentPaise > Number(selectedInvoice.balance_due || 0)) {
+      toast.error(`Amount cannot exceed ${formatMoney(Number(selectedInvoice.balance_due || 0))}, the selected invoice balance`);
+      return;
+    }
     const payload: any = {
       party_id: partyId,
       payment_type: 'incoming',
-      amount: Math.round(parseFloat(amount) * 100),
+      amount: paymentPaise,
       payment_date: payDate,
       payment_mode: payMode,
       reference_number: refNumber || undefined,
       notes: notes || `Payment from ${partyName}`,
     };
     if (selectedInvoiceId) {
-      payload.allocations = [{ invoice_id: selectedInvoiceId, amount: Math.round(parseFloat(amount) * 100) }];
+      payload.allocations = [{ invoice_id: selectedInvoiceId, amount: paymentPaise }];
     }
     createMut.mutate(payload);
   };
@@ -210,7 +216,16 @@ export default function PaymentInTab() {
             {partyId && (partyInvoices as any[])?.length > 0 && (
               <div>
                 <Label className="text-xs">Apply to Invoice (optional)</Label>
-                <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={selectedInvoiceId} onChange={e => setSelectedInvoiceId(e.target.value)}>
+                <select
+                  className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  value={selectedInvoiceId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedInvoiceId(id);
+                    const invoice = (partyInvoices as any[]).find((entry: any) => entry.id === id);
+                    if (invoice) setAmount((Number(invoice.balance_due || 0) / 100).toFixed(2));
+                  }}
+                >
                   <option value="">— Unallocated payment —</option>
                   {(partyInvoices as any[]).map((inv: any) => (
                     <option key={inv.id} value={inv.id}>
