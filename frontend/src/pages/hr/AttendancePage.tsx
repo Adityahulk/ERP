@@ -18,8 +18,9 @@ export default function AttendancePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const role = normalizeRole(user?.role);
+  const rawRole = String(user?.role || '').trim();
   const canManage = ['manager', 'admin', 'super_admin'].includes(role);
-  const isAdmin = role === 'admin' || role === 'super_admin';
+  const isAdmin = ['admin', 'company_admin', 'super_admin'].includes(rawRole);
   const canPunch = !isAdmin;
   const [tab, setTab] = useState(canManage ? 'team_today' : 'my_attendance');
 

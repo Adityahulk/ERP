@@ -65,7 +65,7 @@ export async function getEmployees(req: Request, res: Response) {
         LEFT JOIN godowns g ON g.id = ep.godown_id AND g.is_deleted = false
         WHERE u.company_id = $1
           AND u.is_deleted = false
-          AND u.role NOT IN ('admin', 'company_admin', 'accountant', 'super_admin')
+          AND u.role NOT IN ('admin', 'company_admin', 'super_admin')
         ORDER BY u.name ASC`, [req.user!.company_id]
      );
      res.json(success(result.rows));

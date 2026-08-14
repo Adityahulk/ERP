@@ -60,9 +60,11 @@ export async function getBalance(req: Request, res: Response) {
      
      const apps = await query(
        `SELECT leave_type_id, status, SUM(total_days) as total 
-        FROM leave_applications WHERE user_id = $1 AND EXTRACT(YEAR FROM from_date)= $2 AND status IN ('approved', 'pending')
+        FROM leave_applications
+        WHERE user_id = $1 AND company_id = $2 AND EXTRACT(YEAR FROM from_date)= $3
+          AND is_deleted = false AND status IN ('approved', 'pending')
         GROUP BY leave_type_id, status`, 
-       [userId, targetYear]
+       [userId, req.user!.company_id, targetYear]
      );
 
      apps.rows.forEach(r => {

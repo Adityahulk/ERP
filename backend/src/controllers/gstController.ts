@@ -154,6 +154,8 @@ export async function exportGSTR1(req: Request, res: Response) {
      const b2b = gstr1.rows.filter((r: any) => String(r.gstin).length >= 15);
      const b2cs = gstr1.rows.filter((r: any) => String(r.gstin).length < 15);
      const retPeriod = fp;
+     res.setHeader('Content-Type', 'application/json; charset=utf-8');
+     res.setHeader('Content-Disposition', `attachment; filename="gstr1-${retPeriod || 'all'}.json"`);
      res.json(success({
        meta: {
          schema: 'microtechnique_accounts.gstr1.export',
@@ -335,6 +337,8 @@ export async function exportGSTR3B(req: Request, res: Response) {
       igst: Number(itcPi.rows[0]?.igst || 0) + Number(itcEx.rows[0]?.igst || 0),
     };
     const retPeriod = fp;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="gstr3b-${retPeriod || 'all'}.json"`);
     res.json(success({
       meta: {
         schema: 'microtechnique_accounts.gstr3b.export',

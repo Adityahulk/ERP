@@ -66,7 +66,7 @@ export async function createUser(req: Request, res: Response) {
 
     // Auto-create an employee profile for every non-admin user so HR attendance
     // and leave tracking work immediately — no manual HR setup required.
-    const nonAdminRoles = ['staff', 'manager'];
+    const nonAdminRoles = ['staff', 'manager', 'accountant', 'cashier', 'warehouse', 'sales', 'purchase'];
     if (nonAdminRoles.includes(newUser.role)) {
       const countRes = await query(
         'SELECT COUNT(*) FROM employee_profiles WHERE company_id = $1', [companyId]
@@ -130,7 +130,7 @@ export async function updateUser(req: Request, res: Response) {
 export async function syncEmployeeProfiles(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
-    const nonAdminRoles = ['staff', 'manager'];
+    const nonAdminRoles = ['staff', 'manager', 'accountant', 'cashier', 'warehouse', 'sales', 'purchase'];
 
     const usersRes = await query(
       `SELECT u.id, u.role

@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { query } from '../config/db';
 import { success, error } from '../lib/response';
-import { isAdminRole } from '../lib/roles';
-
 function canPunch(role: string): boolean {
-  return !isAdminRole(role);
+  return !['admin', 'company_admin', 'super_admin'].includes(String(role || '').trim());
 }
 
 export async function clockIn(req: Request, res: Response) {
@@ -90,7 +88,7 @@ export async function getCompanyToday(req: Request, res: Response) {
        WHERE u.company_id = $1
          AND u.is_deleted = false
          AND u.is_active = true
-         AND u.role NOT IN ('admin', 'company_admin', 'accountant', 'super_admin')
+         AND u.role NOT IN ('admin', 'company_admin', 'super_admin')
        ORDER BY u.name ASC`,
       [req.user!.company_id]
     );
@@ -103,13 +101,23 @@ export async function getCompanyToday(req: Request, res: Response) {
 export async function regularize(req: Request, res: Response) {
    try {
      const { user_id, date, clock_in, clock_out, note } = req.body;
+     if (!user_id || !date || !clock_in) {
+       return res.status(400).json(error('Employee, date and clock-in time are required'));
+     }
+     const employee = await query(
+       `SELECT id FROM users
+        WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true`,
+       [user_id, req.user!.company_id],
+     );
+     if (!employee.rows.length) return res.status(404).json(error('Employee not found'));
      const result = await query(
-       `INSERT INTO attendance (user_id, company_id, date, clock_in, clock_out, status, is_regularized, regularization_note)
-        VALUES ($1, $2, $3, $4, $5, 'present', true, $6)
+       `INSERT INTO attendance (user_id, company_id, date, clock_in, clock_out, status, is_regularized, regularized_by, notes)
+        VALUES ($1, $2, $3, $4, $5, 'present', true, $6, $7)
         ON CONFLICT (user_id, date) DO UPDATE 
-        SET clock_in = EXCLUDED.clock_in, clock_out = EXCLUDED.clock_out, status = 'present', is_regularized = true, regularization_note = EXCLUDED.regularization_note
+        SET clock_in = EXCLUDED.clock_in, clock_out = EXCLUDED.clock_out, status = 'present', is_regularized = true,
+            regularized_by = EXCLUDED.regularized_by, notes = EXCLUDED.notes
         RETURNING *`,
-       [user_id, req.user!.company_id, date, clock_in, clock_out, note]
+       [user_id, req.user!.company_id, date, clock_in, clock_out, req.user!.id, note]
      );
      res.json(success(result.rows[0]));
    } catch(err:any){ res.status(500).json(error(err.message)); }

@@ -85,6 +85,19 @@ assert.equal(discounted.lines.reduce((sum, line) => sum + line.taxableAmount, 0)
 assert.equal(discounted.lines.reduce((sum, line) => sum + line.cgstAmount, 0), discounted.totalCgst);
 assert.equal(discounted.lines.reduce((sum, line) => sum + line.sgstAmount, 0), discounted.totalSgst);
 
+const lineDiscountWithFractionalQuantity = calculateInvoiceTotals(
+  [{ unit_price: 20_000, quantity: 1.5, discount_type: 'flat', discount_value: 3_000, gst_rate: 5 }],
+  'intra',
+  'none',
+  0,
+  0,
+  false,
+  'exclusive',
+);
+assert.equal(lineDiscountWithFractionalQuantity.totalDiscount, 3_000);
+assert.equal(lineDiscountWithFractionalQuantity.totalTaxable, 27_000);
+assert.equal(lineDiscountWithFractionalQuantity.totalAmount, 28_350);
+
 const inclusiveDiscounted = calculateInvoiceTotals(
   [
     { unit_price: 11_800, quantity: 1, gst_rate: 18, price_includes_tax: true },

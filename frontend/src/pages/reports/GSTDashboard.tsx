@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Cloud } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { apiErrorMessage } from '@/lib/blobError';
 
 export default function GSTDashboard() {
   const now = new Date();
@@ -19,18 +20,22 @@ export default function GSTDashboard() {
   const downloadJson = async (path: string, filename: string) => {
     const t = toast.loading('Preparing export…');
     try {
-      const res = await api.get(path);
-      const payload = res.data?.data ?? res.data;
+      const res = await api.get(path, { responseType: 'blob' });
+      const responseBlob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/json' });
+      const parsed = JSON.parse(await responseBlob.text());
+      const payload = parsed?.data ?? parsed;
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
+      document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
       toast.success('Download started', { id: t });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Download failed', { id: t });
+      toast.error(await apiErrorMessage(e, 'Download failed'), { id: t });
     }
   };
 

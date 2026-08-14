@@ -194,6 +194,7 @@ export default function VyaparLineItems({
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<number, string>>({});
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddDefaultName, setQuickAddDefaultName] = useState('');
   const [rowSearch, setRowSearch] = useState<{ index: number; query: string; results: any[]; searching: boolean } | null>(null);
@@ -420,6 +421,26 @@ export default function VyaparLineItems({
     const discountAmount = (subtotal_row * safePct) / 100;
     update(idx, {
       discount_amount: Math.round(discountAmount),
+    });
+  };
+
+  const updateQuantity = (idx: number, value: number) => {
+    const current = items[idx];
+    const pct = discountPercent(current);
+    const quantity = Number.isFinite(value) ? Math.max(0, value) : 0;
+    update(idx, {
+      quantity,
+      discount_amount: Math.round((Number(current.unit_price) || 0) * quantity * pct / 100),
+    });
+  };
+
+  const updateUnitPrice = (idx: number, value: number) => {
+    const current = items[idx];
+    const pct = discountPercent(current);
+    const unitPrice = Number.isFinite(value) ? Math.max(0, value) : 0;
+    update(idx, {
+      unit_price: unitPrice,
+      discount_amount: Math.round(unitPrice * (Number(current.quantity) || 0) * pct / 100),
     });
   };
 
@@ -663,15 +684,31 @@ export default function VyaparLineItems({
                       )}
                       <td className="px-2 py-1.5">
                         <Input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           className="h-8 w-full text-right tabular-nums"
-                          min={0}
-                          step={quantityDecimalPlaces > 0 ? (1 / (10 ** quantityDecimalPlaces)).toFixed(quantityDecimalPlaces) : '1'}
-                          value={item.quantity}
-                          onChange={(e) => update(idx, { quantity: parseFloat(e.target.value) || 0 })}
-                          onBlur={() => update(idx, {
-                            quantity: Number((Number(item.quantity) || 0).toFixed(Math.max(0, Math.min(4, quantityDecimalPlaces)))),
-                          })}
+                          value={quantityDrafts[idx] ?? String(item.quantity)}
+                          onFocus={() => setQuantityDrafts((current) => ({ ...current, [idx]: String(item.quantity) }))}
+                          onChange={(e) => {
+                            const decimalPlaces = Math.max(0, Math.min(4, quantityDecimalPlaces));
+                            const next = e.target.value.replace(/[^\d.]/g, '');
+                            const pattern = decimalPlaces > 0
+                              ? new RegExp(`^\\d*(?:\\.\\d{0,${decimalPlaces}})?$`)
+                              : /^\d*$/;
+                            if (!pattern.test(next)) return;
+                            setQuantityDrafts((current) => ({ ...current, [idx]: next }));
+                            if (next !== '' && next !== '.') updateQuantity(idx, Number(next));
+                          }}
+                          onBlur={() => {
+                            const decimalPlaces = Math.max(0, Math.min(4, quantityDecimalPlaces));
+                            const parsed = Number(quantityDrafts[idx] ?? item.quantity);
+                            updateQuantity(idx, Number((Number.isFinite(parsed) ? parsed : 0).toFixed(decimalPlaces)));
+                            setQuantityDrafts((current) => {
+                              const next = { ...current };
+                              delete next[idx];
+                              return next;
+                            });
+                          }}
                         />
                       </td>
                       {showUnit && (
@@ -690,7 +727,7 @@ export default function VyaparLineItems({
                             className="h-7 flex-1 min-w-0 text-right text-xs tabular-nums"
                             placeholder="0"
                             value={item.unit_price}
-                            onChange={(value) => update(idx, { unit_price: value })}
+                            onChange={(value) => updateUnitPrice(idx, value)}
                           />
                           {isGst && (
                             <DropdownMenu.Root>

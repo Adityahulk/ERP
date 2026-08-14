@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useCreateInvoice, useCompany, useInvoice, useUpdateInvoice } from '@/hooks/useBusiness';
@@ -231,6 +231,7 @@ export default function InvoiceCreate() {
   const [externalDescription, setExternalDescription] = useState('');
   const [customFields, setCustomFields] = useState<Record<string, any>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentEditorRow[]>([newPaymentEditorRow()]);
+  const [autoFillCashPayment, setAutoFillCashPayment] = useState(false);
   const [invoiceFiles, setInvoiceFiles] = useState<File[]>([]);
   const [items, setItems] = useState<VyaparLineItem[]>([]);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
@@ -372,14 +373,16 @@ export default function InvoiceCreate() {
       setNotes((current) => current || String(defaultSaleTerms.content));
       setSelectedTermsId(String(defaultSaleTerms.id || ''));
     }
+    const cashSaleByDefault = transactionSettings.cashSaleByDefault === true;
     setPaymentRows((current) => {
       const first = current[0] || newPaymentEditorRow();
       return [{
         ...first,
-        payment_mode: transactionSettings.cashSaleByDefault === true ? 'cash' : 'credit',
+        payment_mode: cashSaleByDefault ? 'cash' : 'credit',
         amount: 0,
       }, ...current.slice(1)];
     });
+    setAutoFillCashPayment(cashSaleByDefault);
     transactionDefaultsHydratedRef.current = true;
   }, [duplicateInvoiceId, editInvoiceId, transactionConfig, transactionSettings]);
 
@@ -695,7 +698,7 @@ export default function InvoiceCreate() {
       roundOffEnabled,
       pricingMode,
       invoiceDiscountType,
-      invoiceDiscountValue,
+      invoiceDiscountType === 'flat' ? Math.round(invoiceDiscountValue * 100) : invoiceDiscountValue,
       isInterstate,
       transactionSettings.roundOffType === 'FLOOR' || transactionSettings.roundOffType === 'CEIL'
         ? transactionSettings.roundOffType
@@ -724,6 +727,15 @@ export default function InvoiceCreate() {
     .filter((row) => row.payment_mode !== 'credit')
     .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
   const balanceDue = totals.total - amountPaid;
+  useEffect(() => {
+    if (!autoFillCashPayment) return;
+    setPaymentRows((current) => {
+      const first = current[0] || newPaymentEditorRow();
+      if (first.payment_mode !== 'cash') return current;
+      return [{ ...first, amount: totals.total }, ...current.slice(1)];
+    });
+  }, [autoFillCashPayment, totals.total]);
+
   const quickPaymentMode = paymentRows[0]?.payment_mode === 'credit' ? 'credit' : 'cash';
   const setQuickPaymentMode = (mode: 'credit' | 'cash') => {
     const first = paymentRows[0] || newPaymentEditorRow();
@@ -732,7 +744,24 @@ export default function InvoiceCreate() {
       payment_mode: mode,
       amount: mode === 'credit' ? 0 : totals.total,
     };
+    setAutoFillCashPayment(mode === 'cash');
     setPaymentRows([nextFirst, ...paymentRows.slice(1)]);
+  };
+
+  const handleEnterNavigation = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' || event.defaultPrevented || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target as HTMLElement;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || target.getAttribute('role') === 'button') return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.offsetParent !== null && element.getAttribute('aria-hidden') !== 'true');
+    const index = focusable.indexOf(target);
+    if (index < 0) return;
+    const next = focusable.slice(index + 1).find((element) => element.tagName !== 'BUTTON');
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+    if (next instanceof HTMLInputElement && !['date', 'checkbox', 'radio'].includes(next.type)) next.select();
   };
 
   const itemPayload = () => items.map((i) => ({
@@ -831,6 +860,7 @@ export default function InvoiceCreate() {
       setExternalDescription(String(draft.externalDescription || ''));
       setCustomFields(draft.customFields && typeof draft.customFields === 'object' ? draft.customFields : {});
       setPaymentRows(Array.isArray(draft.paymentRows) && draft.paymentRows.length ? draft.paymentRows : [newPaymentEditorRow()]);
+      setAutoFillCashPayment(false);
       setItems(Array.isArray(draft.items) ? draft.items : []);
       setPricingMode(draft.pricingMode === 'inclusive' ? 'inclusive' : 'exclusive');
       setInvoiceDiscountType(draft.invoiceDiscountType === 'percent' ? 'percent' : draft.invoiceDiscountType === 'flat' ? 'flat' : 'none');
@@ -867,6 +897,14 @@ export default function InvoiceCreate() {
     if (!effectivePartyName) { toast.error('Enter or select a party name'); return false; }
     if (items.length === 0) { toast.error('Add at least one item'); return false; }
     if (items.some((item) => !String(item.name || '').trim())) { toast.error('Every line needs an item name'); return false; }
+    if (items.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
+      toast.error('Every item quantity must be greater than zero');
+      return false;
+    }
+    if (paymentRows.some((row) => !Number.isFinite(Number(row.amount)) || Number(row.amount) < 0)) {
+      toast.error('Payment amounts cannot be negative');
+      return false;
+    }
     for (const field of invoiceCustomFieldDefs) {
       if (field.required && !String(customFields[field.id] || '').trim()) {
         toast.error(`${field.label} is required`);
@@ -1222,6 +1260,7 @@ export default function InvoiceCreate() {
   );
 
   return (
+    <div onKeyDown={handleEnterNavigation}>
     <TransactionPageShell>
       <TransactionHeader
         title={editInvoiceId ? 'Edit Sale Invoice' : duplicateInvoiceId ? 'Duplicate Sale Invoice' : 'New Sale Invoice'}
@@ -1545,11 +1584,20 @@ export default function InvoiceCreate() {
                 <TransactionSection title="Payment" compact className="rounded-none border-x-0 border-t-0">
                   <PaymentRowsEditor
                     rows={paymentRows}
-                    onChange={setPaymentRows}
+                    onChange={(rows) => {
+                      setAutoFillCashPayment(false);
+                      setPaymentRows(rows);
+                    }}
                     defaultBankAccountId={companyBankAccountId}
                     currencyCode={currencyCode}
                     showHeader={false}
                   />
+                  <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-sm">
+                    <span className="text-muted-foreground">Applied payment</span>
+                    <span className="text-right font-medium tabular-nums">{formatMoney(amountPaid, currencyCode)}</span>
+                    <span className="text-muted-foreground">Remaining balance</span>
+                    <span className={`text-right font-semibold tabular-nums ${balanceDue < 0 ? 'text-destructive' : ''}`}>{formatMoney(balanceDue, currencyCode)}</span>
+                  </div>
                 </TransactionSection>
               )}
 
@@ -1755,5 +1803,6 @@ export default function InvoiceCreate() {
         />
       )}
     </TransactionPageShell>
+    </div>
   );
 }
