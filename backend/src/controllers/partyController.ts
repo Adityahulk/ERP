@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
@@ -117,81 +117,98 @@ export async function getParty(req: Request, res: Response) {
 
 // ── POST /api/parties ─────────────────────────────────────────
 export async function createParty(req: Request, res: Response) {
+  const companyId = req.user!.company_id;
   try {
-    const companyId = req.user!.company_id;
     const d = req.body;
-
     const gstin =
       d.gstin && String(d.gstin).trim().length === 15 ? String(d.gstin).trim().toUpperCase() : null;
-    if (gstin) {
-      const dupGst = await query(
-        'SELECT id FROM parties WHERE company_id = $1 AND gstin = $2 AND is_deleted = false',
-        [companyId, gstin],
-      );
-      if (dupGst.rows.length) return res.status(400).json(error('A party with this GSTIN already exists'));
-    }
-
-    // Phone uniqueness check
-    if (d.phone) {
-      const dup = await query(
-        'SELECT id FROM parties WHERE company_id = $1 AND phone = $2 AND is_deleted = false', [companyId, d.phone]
-      );
-      if (dup.rows.length) return res.status(400).json(error('A party with this phone number already exists'));
-    }
-
     const opening = moneyInt(d.opening_balance, 0);
-    const result = await query(
-      `INSERT INTO parties (
-        company_id, name, party_type, phone, email, gstin, pan,
-        billing_address, shipping_address,
-        billing_city, billing_state, billing_pincode, billing_state_code,
-        city, state, pincode, state_code,
-        credit_limit, credit_days, payment_terms,
-        opening_balance, balance,
-        contact_person, notes, custom_fields
-      ) VALUES (
-        $1, $2, 'party', $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12,
-        $9, $10, $11, $12,
-        $13, $14, $14,
-        $15, $15,
-        $16, $17, $18
-      ) RETURNING *`,
-      [
-        companyId,
-        d.name,
-        blankToNull(d.phone),
-        blankToNull(d.email),
-        gstin,
-        blankToNull(d.pan),
-        blankToNull(d.billing_address),
-        blankToNull(d.shipping_address),
-        blankToNull(d.city || d.billing_city),
-        blankToNull(d.state || d.billing_state),
-        blankToNull(d.pincode || d.billing_pincode),
-        blankToNull(d.state_code || d.billing_state_code),
-        moneyInt(d.credit_limit, 0),
-        dayInt(d.payment_terms ?? d.credit_days, 30),
-        opening,
-        blankToNull(d.contact_person),
-        blankToNull(d.notes),
-        d.custom_fields ? JSON.stringify(d.custom_fields) : '{}',
-      ]
-    );
+    const party = await withTransaction(async (client) => {
+      if (gstin) {
+        const dupGst = await client.query(
+          'SELECT id FROM parties WHERE company_id = $1 AND gstin = $2 AND is_deleted = false',
+          [companyId, gstin],
+        );
+        if (dupGst.rows.length) throw new Error('A party with this GSTIN already exists');
+      }
+      if (d.phone) {
+        const dupPhone = await client.query(
+          'SELECT id FROM parties WHERE company_id = $1 AND phone = $2 AND is_deleted = false',
+          [companyId, String(d.phone).trim()],
+        );
+        if (dupPhone.rows.length) throw new Error('A party with this phone number already exists');
+      }
 
-    // If opening balance, create ledger entry
-    if (opening !== 0) {
-      const type = opening > 0 ? 'debit' : 'credit';
-      await query(
-        `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, narration, created_by)
-         VALUES ($1, $2, $3, $4, $5, 'Opening Balance', $6)`,
-        [companyId, result.rows[0].id, type, Math.abs(opening), opening, req.user!.id]
+      const result = await client.query(
+        `INSERT INTO parties (
+          company_id, name, party_type, phone, email, gstin, pan,
+          billing_address, shipping_address,
+          billing_city, billing_state, billing_pincode, billing_state_code,
+          city, state, pincode, state_code,
+          credit_limit, credit_days, payment_terms,
+          opening_balance, balance,
+          contact_person, notes, custom_fields
+        ) VALUES (
+          $1, $2, 'party', $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12,
+          $9, $10, $11, $12,
+          $13, $14, $14,
+          $15, $15,
+          $16, $17, $18
+        ) RETURNING *`,
+        [
+          companyId,
+          String(d.name).trim(),
+          blankToNull(typeof d.phone === 'string' ? d.phone.trim() : d.phone),
+          blankToNull(typeof d.email === 'string' ? d.email.trim().toLowerCase() : d.email),
+          gstin,
+          blankToNull(typeof d.pan === 'string' ? d.pan.trim().toUpperCase() : d.pan),
+          blankToNull(d.billing_address),
+          blankToNull(d.shipping_address),
+          blankToNull(d.city || d.billing_city),
+          blankToNull(d.state || d.billing_state),
+          blankToNull(d.pincode || d.billing_pincode),
+          blankToNull(d.state_code || d.billing_state_code),
+          moneyInt(d.credit_limit, 0),
+          dayInt(d.payment_terms ?? d.credit_days, 30),
+          opening,
+          blankToNull(d.contact_person),
+          blankToNull(d.notes),
+          d.custom_fields ? JSON.stringify(d.custom_fields) : '{}',
+        ],
       );
-    }
 
-    await logAction(req.user!.id, companyId, 'create', 'party', result.rows[0].id, null, { name: d.name, gstin: gstin ?? undefined }, req.ip);
-    res.status(201).json(success(result.rows[0]));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+      if (opening !== 0) {
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, narration, created_by)
+           VALUES ($1, $2, $3, $4, $5, 'Opening Balance', $6)`,
+          [
+            companyId,
+            result.rows[0].id,
+            opening > 0 ? 'debit' : 'credit',
+            Math.abs(opening),
+            opening,
+            req.user!.id,
+          ],
+        );
+      }
+      return result.rows[0];
+    });
+
+    await logAction(req.user!.id, companyId, 'create', 'party', party.id, null, { name: d.name, gstin: gstin ?? undefined }, req.ip);
+    res.status(201).json(success(party));
+  } catch (err: any) {
+    const message = err?.code === '23505'
+      ? 'A party with the same GSTIN or phone number already exists'
+      : err?.message || 'Failed to create party';
+    console.error('createParty error:', {
+      companyId,
+      code: err?.code,
+      constraint: err?.constraint,
+      message: err?.message,
+    });
+    res.status(/already exists/i.test(message) ? 409 : 500).json(error(message));
+  }
 }
 
 // ── PATCH /api/parties/:id ────────────────────────────────────

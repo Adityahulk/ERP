@@ -90,7 +90,7 @@ const navGroups = [
      items: [
         { to: '/accounting', icon: Receipt, label: 'Accounting' },
         { to: '/cash-bank', icon: Landmark, label: 'Cash & Bank' },
-        { to: '/reports', icon: BarChart3, label: 'Business Reports' },
+        { to: '/reports', icon: BarChart3, label: 'Reports' },
      ]
   },
   {

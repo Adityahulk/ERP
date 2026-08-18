@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import puppeteer from 'puppeteer';
+import puppeteer, { Page } from 'puppeteer';
 import QRCode from 'qrcode';
 import bwipjs from 'bwip-js';
 import { env } from '../config/env';
@@ -129,6 +129,18 @@ async function launchBrowser() {
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     executablePath: env.PUPPETEER_EXECUTABLE_PATH || undefined,
   });
+}
+
+async function withBrowserPage<T>(render: (page: Page) => Promise<T>): Promise<T> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    return await render(page);
+  } finally {
+    await browser.close().catch((err: unknown) => {
+      console.error('Failed to close PDF browser:', err instanceof Error ? err.message : err);
+    });
+  }
 }
 
 function escapeHtml(s: string): string {
@@ -1280,60 +1292,58 @@ export async function generateInvoicePDF(
       }), { width: 180, margin: 1 });
     }
     const html = buildReferenceTaxInvoiceHtml({ invoice, company, party, items: convertedItems, printSettings: effectivePrintSettings });
-    const browser = await launchBrowser();
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    return withBrowserPage(async (page) => {
+      await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
+      if (copyCount > 1) {
+        await page.evaluate((copies) => {
+          const doc = (globalThis as any).document;
+          const originals = (Array.from(doc.body.children || []) as any[]).map((node) => node.cloneNode(true));
+          for (let copy = 1; copy < copies; copy += 1) {
+            originals.forEach((original, index) => {
+              const clone = original.cloneNode(true);
+              if (index === 0) clone.style.pageBreakBefore = 'always';
+              doc.body.appendChild(clone);
+            });
+          }
+        }, copyCount);
+      }
+      const pdf = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      });
+      return Buffer.from(pdf);
+    });
+  }
+
+  const tpl = buildInvoiceHtml({ invoice, company, party, items: convertedItems, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
+  return withBrowserPage(async (page) => {
+    await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
     if (copyCount > 1) {
       await page.evaluate((copies) => {
         const doc = (globalThis as any).document;
-        const originals = (Array.from(doc.body.children || []) as any[]).map((node) => node.cloneNode(true));
+        const original = doc.body.firstElementChild?.cloneNode(true);
+        if (!original) return;
         for (let copy = 1; copy < copies; copy += 1) {
-          originals.forEach((original, index) => {
-            const clone = original.cloneNode(true);
-            if (index === 0) clone.style.pageBreakBefore = 'always';
-            doc.body.appendChild(clone);
-          });
+          const clone = original.cloneNode(true);
+          clone.style.pageBreakBefore = 'always';
+          doc.body.appendChild(clone);
         }
       }, copyCount);
     }
+    const requestedPaperSize = ['A1', 'A2', 'A3', 'A4', 'A5', 'Letter', 'Legal'].includes(String(effectivePrintSettings.regular.paper_size))
+      ? effectivePrintSettings.regular.paper_size
+      : 'A4';
     const pdf = await page.pdf({
-      format: 'A4',
+      format: requestedPaperSize as any,
+      landscape: effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
       printBackground: true,
-      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+      margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
     });
-    await browser.close();
     return Buffer.from(pdf);
-  }
-
-  const tpl = buildInvoiceHtml({ invoice, company, party, items: convertedItems, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
-  if (copyCount > 1) {
-    await page.evaluate((copies) => {
-      const doc = (globalThis as any).document;
-      const original = doc.body.firstElementChild?.cloneNode(true);
-      if (!original) return;
-      for (let copy = 1; copy < copies; copy += 1) {
-        const clone = original.cloneNode(true);
-        clone.style.pageBreakBefore = 'always';
-        doc.body.appendChild(clone);
-      }
-    }, copyCount);
-  }
-  const requestedPaperSize = ['A1', 'A2', 'A3', 'A4', 'A5', 'Letter', 'Legal'].includes(String(effectivePrintSettings.regular.paper_size))
-    ? effectivePrintSettings.regular.paper_size
-    : 'A4';
-  const pdf = await page.pdf({
-    format: requestedPaperSize as any,
-    landscape: effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
-    printBackground: true,
-    margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
   });
-  await browser.close();
-  return Buffer.from(pdf);
 }
 
 export const BULK_SALES_INVOICE_DEFAULT_COLUMNS = [
@@ -1619,12 +1629,11 @@ export async function generateBulkSalesInvoicePDF(args: {
     </section>
   </body></html>`;
 
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
-  await browser.close();
-  return Buffer.from(pdf);
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+    return Buffer.from(pdf);
+  });
 }
 
 export async function generateThermalReceipt(
@@ -1747,25 +1756,24 @@ export async function generateThermalReceipt(
       ${lookupCode ? `<img class="lookup" src="${lookupCode}" alt="Invoice lookup code"/><div class="center small">${escapeHtml(String(invoice.invoice_number || ''))}</div>` : ''}
     </main></body></html>`;
 
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  const viewportWidth = Math.ceil((width / 25.4) * 96);
-  await page.setViewport({ width: viewportWidth, height: 100, deviceScaleFactor: 1 });
-  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.evaluate(() => (globalThis as any).document.fonts?.ready);
-  const contentHeight = await page.evaluate(() => {
-    const doc = (globalThis as any).document;
-    const receipt = doc.querySelector('main');
-    return receipt ? Math.ceil(receipt.getBoundingClientRect().height) : doc.body.scrollHeight;
+  return withBrowserPage(async (page) => {
+    const viewportWidth = Math.ceil((width / 25.4) * 96);
+    await page.setViewport({ width: viewportWidth, height: 100, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.evaluate(() => (globalThis as any).document.fonts?.ready);
+    const contentHeight = await page.evaluate(() => {
+      const doc = (globalThis as any).document;
+      const receipt = doc.querySelector('main');
+      return receipt ? Math.ceil(receipt.getBoundingClientRect().height) : doc.body.scrollHeight;
+    });
+    const pdf = await page.pdf({
+      printBackground: true,
+      width: thermalWidth,
+      height: `${Math.max(80, Math.ceil(contentHeight + 2))}px`,
+      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+    });
+    return Buffer.from(pdf);
   });
-  const pdf = await page.pdf({
-    printBackground: true,
-    width: thermalWidth,
-    height: `${Math.max(80, Math.ceil(contentHeight + 2))}px`,
-    margin: { top: '0', bottom: '0', left: '0', right: '0' },
-  });
-  await browser.close();
-  return Buffer.from(pdf);
 }
 
 export async function generateEinvoicePdf(
@@ -1837,12 +1845,11 @@ export async function generateEinvoicePdf(
     <div class="footer">This document is generated from IRN details stored in Microtechnique Accounts.</div>
   </body></html>`;
 
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const pdf = await page.pdf({ format: 'A4', printBackground: true });
-  await browser.close();
-  return Buffer.from(pdf);
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true });
+    return Buffer.from(pdf);
+  });
 }
 
 export async function generateQuotationPDF(
@@ -1953,12 +1960,11 @@ export async function generateQuotationPDF(
     html = html.replace('</head>', `${replaceAll(extraThemeStyle, { PRIMARY_COLOR: primaryColor })}</head>`);
   }
 
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
-  await browser.close();
-  return Buffer.from(pdf);
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
+    return Buffer.from(pdf);
+  });
 }
 
 export async function generateDeliveryChallanPDF(
@@ -2052,10 +2058,9 @@ export async function generateDeliveryChallanPDF(
     <section class="declaration">${showPricing ? 'This delivery challan is issued for movement/delivery of goods only. Pricing is shown only as reference value and this document is not a tax invoice.' : 'This delivery challan is issued for movement/delivery of goods only. It is not a tax invoice and does not contain pricing or taxable value.'}</section>
     <section class="footer"><div class="note"><b>Notes</b><br/>${escapeHtml(challan.notes || 'Goods received in good condition.')}</div><div class="sign">Received By<br/><br/><br/>Name / Signature</div><div class="sign">For <b>${escapeHtml(legalCompanyName)}</b><br/>${signature}<br/>Authorised Signatory</div></section>
   </body></html>`;
-  const browser = await launchBrowser();
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-  const pdf = await page.pdf({ format: 'A4', printBackground: true });
-  await browser.close();
-  return Buffer.from(pdf);
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true });
+    return Buffer.from(pdf);
+  });
 }

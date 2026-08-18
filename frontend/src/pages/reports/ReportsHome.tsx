@@ -11,38 +11,69 @@ import { formatMoney, formatDate } from '@/lib/formatters';
 import { downloadCsv, downloadXlsx, keyValueRows } from '@/lib/reportExport';
 import toast from 'react-hot-toast';
 
-type ReportName =
-  | 'GSTR-1 Data'
-  | 'GSTR-3B Summary'
-  | 'HSN Summary'
-  | 'Input Tax Credit'
-  | 'GST Out/In summary'
-  | 'Sales Register'
-  | 'E-Invoice Register'
-  | 'Item-wise Sales'
-  | 'Party-wise Sales'
-  | 'Outstanding Receivables'
-  | 'Purchase Register'
-  | 'Party-wise Purchase'
-  | 'Outstanding Payables'
-  | 'Stock Summary'
-  | 'Stock Movement'
-  | 'Low Stock Alert'
-  | 'Profit & Loss'
-  | 'Balance Sheet'
-  | 'Trial Balance'
-  | 'Day Book'
-  | 'Expense Summary'
-  | 'Payment Collection'
-  | 'TCS / TDS';
+type ReportName = string;
+type ReportLink = { name: ReportName; endpoint: string; monthBased?: boolean };
 
-const reportCategories = [
-  { id: 'gst', title: 'GST Reports', reports: ['GSTR-1 Data', 'GSTR-3B Summary', 'HSN Summary', 'Input Tax Credit', 'GST Out/In summary'] as const },
-  { id: 'sales', title: 'Sales Reports', reports: ['Sales Register', 'E-Invoice Register', 'Item-wise Sales', 'Party-wise Sales', 'Outstanding Receivables'] as const },
-  { id: 'purchase', title: 'Purchase Reports', reports: ['Purchase Register', 'Party-wise Purchase', 'Outstanding Payables'] as const },
-  { id: 'inventory', title: 'Inventory Reports', reports: ['Stock Summary', 'Stock Movement', 'Low Stock Alert'] as const },
-  { id: 'financial', title: 'Financial Reports', reports: ['Profit & Loss', 'Balance Sheet', 'Trial Balance', 'Day Book', 'Expense Summary', 'Payment Collection', 'TCS / TDS'] as const },
+const catalog = (name: string, key: string): ReportLink => ({ name, endpoint: `/reports/catalog/${key}` });
+const direct = (name: string, endpoint: string, monthBased = false): ReportLink => ({ name, endpoint, monthBased });
+
+const reportCategories: { id: string; title: string; reports: ReportLink[] }[] = [
+  {
+    id: 'transaction', title: 'Transaction Report', reports: [
+      direct('Sale', '/reports/sales-register'), direct('Purchase', '/reports/purchase-register'), direct('Day Book', '/reports/day-book'),
+      catalog('All Transactions', 'all-transactions'), direct('Profit And Loss', '/reports/profit-loss'),
+      catalog('Bill Wise Profit', 'bill-wise-profit'), catalog('Sale Aging', 'sale-aging'), catalog('Cash Flow', 'cash-flow'),
+      direct('Trial Balance Report', '/reports/trial-balance'), direct('Balance Sheet', '/reports/balance-sheet'),
+    ],
+  },
+  {
+    id: 'party', title: 'Party Report', reports: [
+      catalog('Party Statement', 'party-statement'), catalog('Party Wise Profit & Loss', 'party-wise-profit-loss'),
+      catalog('All Parties', 'all-parties'), catalog('Party Report By Item', 'party-report-by-item'),
+      catalog('Sale Purchase By Party', 'sale-purchase-by-party'),
+    ],
+  },
+  {
+    id: 'stock', title: 'Stock / Item Report', reports: [
+      catalog('Sale Summary By HSN', 'sale-summary-hsn'), catalog('SAC Report', 'sac-report'),
+    ],
+  },
+  {
+    id: 'item-stock', title: 'Item / Stock Report', reports: [
+      direct('Stock Summary', '/reports/stock-summary'), catalog('Item Report By Party', 'item-report-by-party'),
+      direct('Item Wise Profit And Loss', '/reports/item-wise-profit'), catalog('Item Category Wise Profit And Loss', 'item-category-profit-loss'),
+      direct('Low Stock Summary', '/reports/low-stock'), catalog('Stock Detail', 'stock-detail'), catalog('Item Detail', 'item-detail'),
+      catalog('Sale / Purchase Report By Item Category', 'sale-purchase-by-item-category'),
+      catalog('Stock Summary Report By Item Category', 'stock-summary-by-item-category'), catalog('Item Wise Discount', 'item-wise-discount'),
+    ],
+  },
+  {
+    id: 'business', title: 'Business / Bank / Tax Reports', reports: [
+      catalog('Business Status', 'business-status'), catalog('Bank Statement', 'bank-statement'), catalog('Taxes', 'taxes'),
+      direct('GST Report', '/reports/gst'), catalog('GST Rate Report', 'gst-rate-report'), catalog('Form No. 27EQ', 'form-27eq'),
+      catalog('TCS Receivable', 'tcs-receivable'), catalog('TDS Payable', 'tds-payable'), catalog('TDS Receivable', 'tds-receivable'),
+    ],
+  },
+  {
+    id: 'expense', title: 'Expense Report', reports: [
+      catalog('Expense', 'expense'), catalog('Expense Category Report', 'expense-category'), catalog('Expense Item Report', 'expense-item'),
+    ],
+  },
+  {
+    id: 'orders', title: 'Sale / Purchase Order Report', reports: [
+      catalog('Sale / Purchase Orders', 'sale-purchase-orders'), catalog('Sale / Purchase Order Item', 'sale-purchase-order-item'),
+    ],
+  },
+  {
+    id: 'income', title: 'Other Income Report', reports: [
+      catalog('Other Income', 'other-income'), catalog('Other Income Category Report', 'other-income-category'),
+      catalog('Other Income Item Report', 'other-income-item'),
+    ],
+  },
+  { id: 'loans', title: 'Loan Accounts', reports: [catalog('Loan Statement', 'loan-statement')] },
 ];
+
+const reportLinks = reportCategories.flatMap((category) => category.reports);
 
 function monthYearFromDate(isoDate: string): { month: string; year: string } {
   const d = new Date(isoDate + 'T12:00:00');
@@ -67,7 +98,7 @@ export default function ReportsHome() {
   const [toDate, setToDate] = useState(defaultTo);
   const [appliedFrom, setAppliedFrom] = useState(defaultFrom);
   const [appliedTo, setAppliedTo] = useState(defaultTo);
-  const [activeReport, setActiveReport] = useState<ReportName>('Sales Register');
+  const [activeReport, setActiveReport] = useState<ReportName>('Sale');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -87,61 +118,13 @@ export default function ReportsHome() {
   };
 
   const { month, year } = monthYearFromDate(appliedFrom);
+  const activeLink = reportLinks.find((report) => report.name === activeReport) ?? reportLinks[0];
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['business-report', activeReport, appliedFrom, appliedTo, month, year],
     queryFn: async () => {
-      const params = { from_date: appliedFrom, to_date: appliedTo };
-      switch (activeReport) {
-        case 'Sales Register':
-          return unwrap(await api.get('/reports/sales-register', { params }));
-        case 'E-Invoice Register':
-          return unwrap(await api.get('/reports/einvoice-register', { params }));
-        case 'Purchase Register':
-          return unwrap(await api.get('/reports/purchase-register', { params }));
-        case 'Stock Summary':
-          return unwrap(await api.get('/reports/stock-summary'));
-        case 'Stock Movement':
-          return unwrap(await api.get('/reports/stock-movement', { params }));
-        case 'Low Stock Alert':
-          return unwrap(await api.get('/reports/low-stock'));
-        case 'Outstanding Receivables':
-          return unwrap(await api.get('/reports/outstanding-receivables'));
-        case 'Outstanding Payables':
-          return unwrap(await api.get('/reports/outstanding-payables'));
-        case 'Item-wise Sales':
-          return unwrap(await api.get('/reports/item-wise-profit', { params }));
-        case 'Party-wise Sales':
-          return unwrap(await api.get('/reports/party-wise-sales', { params }));
-        case 'Party-wise Purchase':
-          return unwrap(await api.get('/reports/party-wise-purchase', { params }));
-        case 'Profit & Loss':
-          return unwrap(await api.get('/reports/profit-loss', { params }));
-        case 'GSTR-1 Data':
-          return unwrap(await api.get('/gst/gstr1', { params: { month, year } }));
-        case 'GSTR-3B Summary':
-          return unwrap(await api.get('/gst/gstr3b', { params: { month, year } }));
-        case 'HSN Summary':
-          return unwrap(await api.get('/gst/hsn-summary', { params: { month, year } }));
-        case 'Input Tax Credit':
-          return unwrap(await api.get('/gst/input-credit', { params }));
-        case 'GST Out/In summary':
-          return unwrap(await api.get('/reports/gst', { params }));
-        case 'Trial Balance':
-          return unwrap(await api.get('/reports/trial-balance', { params }));
-        case 'Balance Sheet':
-          return unwrap(await api.get('/reports/balance-sheet', { params }));
-        case 'Day Book':
-          return unwrap(await api.get('/reports/day-book', { params }));
-        case 'Expense Summary':
-          return unwrap(await api.get('/reports/expense-summary', { params }));
-        case 'Payment Collection':
-          return unwrap(await api.get('/reports/payment-collection', { params }));
-        case 'TCS / TDS':
-          return unwrap(await api.get('/reports/tcs-tds', { params }));
-        default:
-          throw new Error('Unknown report');
-      }
+      const params = activeLink.monthBased ? { month, year } : { from_date: appliedFrom, to_date: appliedTo };
+      return unwrap(await api.get(activeLink.endpoint, { params }));
     },
   });
 
@@ -154,7 +137,7 @@ export default function ReportsHome() {
       const b2cs = (d.b2cs || []).map((r) => ({ ...r, segment: 'B2CS', gstin: (r as { gstin?: string }).gstin ?? '' }));
       return [...b2b, ...b2cs];
     }
-    if (activeReport === 'Trial Balance' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
+    if (activeReport === 'Trial Balance Report' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
       return (data as { rows: Record<string, unknown>[] }).rows;
     }
     return [];
@@ -175,7 +158,7 @@ export default function ReportsHome() {
       ];
       return { filename: base, rows };
     }
-    if (activeReport === 'Trial Balance' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
+    if (activeReport === 'Trial Balance Report' && data && typeof data === 'object' && 'rows' in data && Array.isArray((data as { rows: unknown }).rows)) {
       return { filename: base, rows: (data as { rows: Record<string, unknown>[] }).rows };
     }
     if (data && typeof data === 'object') {
@@ -439,7 +422,7 @@ export default function ReportsHome() {
   );
 
   const renderDataTable = () => {
-    if (activeReport === 'Profit & Loss' && data && typeof data === 'object' && !Array.isArray(data)) {
+    if (activeReport === 'Profit And Loss' && data && typeof data === 'object' && !Array.isArray(data)) {
       return renderProfitLoss(data as Record<string, unknown>);
     }
     if (activeReport === 'Balance Sheet' && data && typeof data === 'object') {
@@ -457,7 +440,7 @@ export default function ReportsHome() {
 
     const rows = tableRows;
     if (!rows.length) {
-      if (data && typeof data === 'object' && !Array.isArray(data) && activeReport !== 'Profit & Loss' && activeReport !== 'Balance Sheet') {
+      if (data && typeof data === 'object' && !Array.isArray(data) && activeReport !== 'Profit And Loss' && activeReport !== 'Balance Sheet') {
         if (activeReport === 'TCS / TDS' || activeReport === 'GSTR-3B Summary' || activeReport === 'Input Tax Credit') return null;
         return renderGstSummary(data as Record<string, unknown>);
       }
@@ -509,15 +492,15 @@ export default function ReportsHome() {
                 <div className="space-y-1">
                   {cat.reports.map((r) => (
                     <button
-                      key={r}
+                      key={r.name}
                       type="button"
                       onClick={() => {
-                        setActiveReport(r as ReportName);
+                        setActiveReport(r.name);
                         setMobileMenuOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm rounded-md ${activeReport === r ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-100'}`}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-md ${activeReport === r.name ? 'bg-indigo-50 text-indigo-700 font-medium' : 'hover:bg-slate-100'}`}
                     >
-                      {r}
+                      {r.name}
                     </button>
                   ))}
                 </div>
@@ -535,12 +518,12 @@ export default function ReportsHome() {
             <div className="space-y-1">
               {cat.reports.map((r) => (
                 <button
-                  key={r}
+                  key={r.name}
                   type="button"
-                  onClick={() => setActiveReport(r as ReportName)}
-                  className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${activeReport === r ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
+                  onClick={() => setActiveReport(r.name)}
+                  className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${activeReport === r.name ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
                 >
-                  {r}
+                  {r.name}
                 </button>
               ))}
             </div>

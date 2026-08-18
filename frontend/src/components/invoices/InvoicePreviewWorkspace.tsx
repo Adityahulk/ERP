@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } from '@/components/settings/PrintLayoutPreview';
 import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import { apiErrorMessage } from '@/lib/blobError';
+import { printPdfBlob } from '@/lib/printPdf';
 
 const SKIP_PREVIEW_KEY = STORAGE_KEYS.skipInvoicePreview;
 const LEGACY_SKIP_PREVIEW_KEY = LEGACY_STORAGE_KEYS.skipInvoicePreview;
@@ -98,6 +99,7 @@ export function InvoicePreviewWorkspace({
   const [printSettingsLoaded, setPrintSettingsLoaded] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [loading, setLoading] = useState(false);
   const [waSending, setWaSending] = useState(false);
   const [sharePhone, setSharePhone] = useState(partyPhone || '');
@@ -151,6 +153,7 @@ export function InvoicePreviewWorkspace({
     previewRequestSeq.current = seq;
     const previewKey = `${Date.now()}-${seq}`;
     setLoading(true);
+    setPdfBlob(null);
     setPdfUrl((prev) => {
       revoke(prev);
       return null;
@@ -170,6 +173,7 @@ export function InvoicePreviewWorkspace({
         return;
       }
       if (seq !== previewRequestSeq.current) return;
+      setPdfBlob(blob);
       setPdfUrl((prev) => {
         revoke(prev);
         return window.URL.createObjectURL(blob);
@@ -195,6 +199,7 @@ export function InvoicePreviewWorkspace({
         revoke(prev);
         return null;
       });
+      setPdfBlob(null);
     };
   }, [revoke]);
 
@@ -290,9 +295,18 @@ Thank you.
     }
   };
 
-  const printA4 = () => {
-    if (!pdfUrl) return;
-    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+  const printA4 = async () => {
+    if (!pdfBlob) {
+      toast.error('The invoice preview is still loading.');
+      return;
+    }
+    const t = toast.loading('Opening print dialog…');
+    try {
+      await printPdfBlob(pdfBlob, { direct: false });
+      toast.success('Print dialog opened', { id: t });
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not print invoice', { id: t });
+    }
   };
 
   const printThermal = async () => {
@@ -305,9 +319,14 @@ Thank you.
     const t = toast.loading('Opening receipt…');
     try {
       const res = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-      window.open(url, '_blank');
-      toast.success('Receipt opened', { id: t });
+      const receipt = new Blob([res.data], { type: 'application/pdf' });
+      try {
+        const mode = await printPdfBlob(receipt);
+        toast.success(mode === 'direct' ? 'Receipt sent to printer' : 'Print dialog opened', { id: t });
+      } catch {
+        await printPdfBlob(receipt, { direct: false });
+        toast.success('Print dialog opened', { id: t });
+      }
     } catch (e: any) {
       toast.error(await apiErrorMessage(e, 'Print failed'), { id: t });
     }
