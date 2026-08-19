@@ -17,7 +17,9 @@ import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 
-export default function QuotationForm() {
+type QuoteDocumentType = 'quotation' | 'proforma';
+
+export default function QuotationForm({ documentType = 'quotation' }: { documentType?: QuoteDocumentType }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: godownRes } = useGodowns();
@@ -52,6 +54,8 @@ export default function QuotationForm() {
   const [documentTheme, setDocumentTheme] = useState<DocumentThemeId>('business-theme-1');
   const [customerNotes, setCustomerNotes] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [paymentTerms, setPaymentTerms] = useState('');
+  const [deliveryTerms, setDeliveryTerms] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [showExtras, setShowExtras] = useState(false);
 
@@ -102,12 +106,12 @@ export default function QuotationForm() {
   };
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
-    STORAGE_KEYS.drafts.quotation,
+    documentType === 'proforma' ? 'microtechnique:draft:proforma-invoice' : STORAGE_KEYS.drafts.quotation,
     {
       partyId, partyName, godownId, quotationNumber, quotationDate, validUntil,
       partyNameOverride, partyPhoneOverride, partyEmailOverride,
       isGstQuote, isInterstate, pdfTemplate, documentTheme,
-      customerNotes, termsAndConditions, internalNotes, showExtras, items,
+      customerNotes, termsAndConditions, paymentTerms, deliveryTerms, internalNotes, showExtras, items,
     },
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
@@ -125,22 +129,24 @@ export default function QuotationForm() {
       setDocumentTheme(normalizeInvoiceThemeId(draft.documentTheme));
       setCustomerNotes(String(draft.customerNotes || ''));
       setTermsAndConditions(String(draft.termsAndConditions || ''));
+      setPaymentTerms(String(draft.paymentTerms || ''));
+      setDeliveryTerms(String(draft.deliveryTerms || ''));
       setInternalNotes(String(draft.internalNotes || ''));
       setShowExtras(Boolean(draft.showExtras));
       setItems(Array.isArray(draft.items) ? draft.items : []);
     },
     {
-      legacyKey: LEGACY_STORAGE_KEYS.drafts.quotation,
+      legacyKey: documentType === 'quotation' ? LEGACY_STORAGE_KEYS.drafts.quotation : undefined,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.quotationNumber ||
-        draft.customerNotes || draft.termsAndConditions || draft.internalNotes || draft.items.length
+        draft.customerNotes || draft.termsAndConditions || draft.paymentTerms || draft.deliveryTerms || draft.internalNotes || draft.items.length
       ),
     },
   );
 
   const saveCurrentDraft = () => {
     if (saveDraft()) toast.success('Draft saved');
-    else toast.error('Add some quotation details before saving a draft');
+    else toast.error(`Add some ${documentType === 'proforma' ? 'proforma invoice' : 'quotation'} details before saving a draft`);
   };
 
   const loadSavedDraft = () => {
@@ -156,6 +162,7 @@ export default function QuotationForm() {
   const create = useMutation({
     mutationFn: async () => {
       const payload = {
+        document_type: documentType,
         party_id: partyId || undefined,
         godown_id: godownId || undefined,
         quotation_number: quotationNumber.trim() || undefined,
@@ -170,6 +177,8 @@ export default function QuotationForm() {
         customer_notes: customerNotes.trim() || undefined,
         internal_notes: internalNotes.trim() || undefined,
         terms_and_conditions: termsAndConditions.trim() || undefined,
+        payment_terms: paymentTerms.trim() || undefined,
+        delivery_terms: deliveryTerms.trim() || undefined,
         items: items.map((item) => ({
           item_id: item.item_id,
           item_name: item.name,
@@ -185,13 +194,14 @@ export default function QuotationForm() {
       return api.post('/quotations', payload);
     },
     onSuccess: (res) => {
-      toast.success('Quotation created');
+      toast.success(documentType === 'proforma' ? 'Proforma Invoice created' : 'Quotation created');
       clearDraft();
       qc.invalidateQueries({ queryKey: ['quotations'] });
       const id = (res.data?.data?.id ?? res.data?.id);
-      navigate(id ? `/quotations/${id}` : '/quotations');
+      const basePath = documentType === 'proforma' ? '/proforma-invoices' : '/quotations';
+      navigate(id ? `${basePath}/${id}` : basePath);
     },
-    onError: (e: any) => toast.error(e.response?.data?.error || e.message || 'Failed to create quotation'),
+    onError: (e: any) => toast.error(e.response?.data?.error || e.message || `Failed to create ${documentType === 'proforma' ? 'Proforma Invoice' : 'quotation'}`),
   });
 
   const canSave = items.length > 0 && !!quotationDate;
@@ -200,9 +210,9 @@ export default function QuotationForm() {
     <TransactionPageShell className="max-w-5xl">
       {/* Header */}
       <TransactionHeader
-        title="New Quotation"
-        description="Send a price offer before raising an invoice."
-        left={<Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}><ArrowLeft className="w-5 h-5" /></Button>}
+        title={documentType === 'proforma' ? 'New Proforma Invoice' : 'New Quotation'}
+        description={documentType === 'proforma' ? 'Prepare a tax-ready offer for customer confirmation before creating a sales invoice.' : 'Send a price offer before raising an invoice.'}
+        left={<Button variant="ghost" size="icon" onClick={() => navigate(documentType === 'proforma' ? '/sales-hub/proforma' : '/sales-hub/quotations')}><ArrowLeft className="w-5 h-5" /></Button>}
         actions={(
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button type="button" variant="outline" size="sm" onClick={saveCurrentDraft}>Save draft</Button>
@@ -263,11 +273,11 @@ export default function QuotationForm() {
 
         {/* Doc Info */}
         <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm">Quotation Details</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-sm">{documentType === 'proforma' ? 'Proforma Invoice Details' : 'Quotation Details'}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs">Quote Date</Label>
+                <Label className="text-xs">{documentType === 'proforma' ? 'Proforma Date' : 'Quote Date'}</Label>
                 <Input type="date" className="mt-1 h-9" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
               </div>
               <div>
@@ -277,7 +287,7 @@ export default function QuotationForm() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs">Quote No. (optional)</Label>
+                <Label className="text-xs">{documentType === 'proforma' ? 'Proforma No.' : 'Quote No.'} (optional)</Label>
                 <Input className="mt-1 h-9 font-mono text-xs" placeholder="Auto-generated" value={quotationNumber} onChange={(e) => setQuotationNumber(e.target.value)} />
               </div>
               <div>
@@ -291,7 +301,7 @@ export default function QuotationForm() {
             <div className="flex items-center gap-3 flex-wrap">
               <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border px-3 h-8">
                 <input type="checkbox" checked={isGstQuote} onChange={(e) => setIsGstQuote(e.target.checked)} />
-                GST quotation
+                GST {documentType === 'proforma' ? 'Proforma Invoice' : 'quotation'}
               </label>
               {isGstQuote && (
                 <label className="flex items-center gap-2 text-sm cursor-pointer rounded-md border px-3 h-8">
@@ -376,6 +386,18 @@ export default function QuotationForm() {
               <Label className="text-xs">Terms & Conditions</Label>
               <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={3} value={termsAndConditions} onChange={(e) => setTermsAndConditions(e.target.value)} placeholder="Payment terms, warranty, validity, exclusions…" />
             </div>
+            {documentType === 'proforma' && (
+              <div className="grid md:grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">Payment Terms</Label>
+                  <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={3} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. 50% advance, balance before dispatch" />
+                </div>
+                <div>
+                  <Label className="text-xs">Delivery Terms</Label>
+                  <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={3} value={deliveryTerms} onChange={(e) => setDeliveryTerms(e.target.value)} placeholder="e.g. Delivery within 7 working days" />
+                </div>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Internal Notes <span className="text-muted-foreground">(not on PDF)</span></Label>
               <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Margin details, follow-up reminders…" />
@@ -387,11 +409,11 @@ export default function QuotationForm() {
       {/* Actions */}
       <div className="sticky bottom-0 z-20 -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur">
         <DocumentActionsBar
-          onCancel={() => navigate('/quotations')}
+          onCancel={() => navigate(documentType === 'proforma' ? '/sales-hub/proforma' : '/sales-hub/quotations')}
           onSave={() => create.mutate()}
           canSave={canSave}
           saving={create.isPending}
-          saveLabel="Save Quotation"
+          saveLabel={documentType === 'proforma' ? 'Save Proforma Invoice' : 'Save Quotation'}
         />
       </div>
 

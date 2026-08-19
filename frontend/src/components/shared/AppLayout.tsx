@@ -9,7 +9,7 @@ import {
   Warehouse, BarChart3, Cloud, UserCheck, Barcode,
   Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
   Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight, Landmark,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FileCheck
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Command } from 'cmdk';
@@ -68,6 +68,7 @@ const navGroups = [
      items: [
         { to: '/sales-hub/invoices',   icon: FileText,      label: 'Sale Invoices' },
         { to: '/sales-hub/quotations', icon: ClipboardList, label: 'Estimate / Quotation' },
+        { to: '/sales-hub/proforma',   icon: FileCheck,     label: 'Proforma Invoices' },
         { to: '/sales-hub/orders',     icon: ShoppingBag,   label: 'Sale Orders' },
         { to: '/sales-hub/challans',   icon: Truck,         label: 'Delivery Challan' },
         { to: '/sales-hub/payment-in', icon: ArrowUpRight,  label: 'Payment-In' },

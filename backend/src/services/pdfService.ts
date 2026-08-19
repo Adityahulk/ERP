@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import puppeteer, { Page } from 'puppeteer';
+import puppeteer, { Browser, Page } from 'puppeteer';
 import QRCode from 'qrcode';
 import bwipjs from 'bwip-js';
 import { env } from '../config/env';
@@ -124,22 +124,99 @@ function themeStyle(theme: string): string {
 }
 
 async function launchBrowser() {
-  return puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    executablePath: env.PUPPETEER_EXECUTABLE_PATH || undefined,
-  });
+  const configured = String(env.PUPPETEER_EXECUTABLE_PATH || '').trim();
+  const candidates = [
+    configured,
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/snap/bin/chromium',
+  ].filter(Boolean);
+  let executablePath = candidates.find((candidate) => fs.existsSync(candidate));
+
+  if (!executablePath) {
+    try {
+      const bundled = puppeteer.executablePath();
+      if (bundled && fs.existsSync(bundled)) executablePath = bundled;
+    } catch {
+      // The deployment may intentionally use a system Chromium installation.
+    }
+  }
+
+  if (configured && !fs.existsSync(configured)) {
+    throw new Error(`Configured Chromium executable does not exist: ${configured}`);
+  }
+  if (!executablePath) {
+    throw new Error(
+      'PDF renderer could not find Chromium. Install chromium and set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium.',
+    );
+  }
+
+  try {
+    return await puppeteer.launch({
+      headless: true,
+      executablePath,
+      timeout: 30000,
+      protocolTimeout: 60000,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--no-first-run',
+        '--no-default-browser-check',
+      ],
+    });
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`PDF renderer failed to start Chromium at ${executablePath}: ${reason}`);
+  }
+}
+
+let sharedBrowserPromise: Promise<Browser> | null = null;
+let pdfRenderQueue: Promise<void> = Promise.resolve();
+
+async function getSharedBrowser(): Promise<Browser> {
+  if (!sharedBrowserPromise) {
+    sharedBrowserPromise = launchBrowser()
+      .then((browser) => {
+        browser.once('disconnected', () => {
+          sharedBrowserPromise = null;
+        });
+        return browser;
+      })
+      .catch((err) => {
+        sharedBrowserPromise = null;
+        throw err;
+      });
+  }
+  return sharedBrowserPromise;
 }
 
 async function withBrowserPage<T>(render: (page: Page) => Promise<T>): Promise<T> {
-  const browser = await launchBrowser();
+  // Chromium is memory-heavy. Serializing renders and reusing one process keeps
+  // PDF generation reliable on the 1 GB production host.
+  let releaseQueue!: () => void;
+  const previousRender = pdfRenderQueue;
+  pdfRenderQueue = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  await previousRender;
+
+  let page: Page | null = null;
   try {
-    const page = await browser.newPage();
+    const browser = await getSharedBrowser();
+    page = await browser.newPage();
     return await render(page);
   } finally {
-    await browser.close().catch((err: unknown) => {
-      console.error('Failed to close PDF browser:', err instanceof Error ? err.message : err);
-    });
+    if (page) {
+      await page.close().catch((err: unknown) => {
+        console.error('Failed to close PDF page:', err instanceof Error ? err.message : err);
+      });
+    }
+    releaseQueue();
   }
 }
 
@@ -1858,6 +1935,9 @@ export async function generateQuotationPDF(
   party: any | null,
   items: any[],
 ): Promise<Buffer> {
+  const isProforma = String(quotation.document_type || '').toLowerCase() === 'proforma';
+  const documentTitle = isProforma ? 'Proforma Invoice' : 'Quotation';
+  const numberLabel = isProforma ? 'Proforma No' : 'Quote No';
   const buyerAddr = buyerAddress(party);
   const rows = items
     .map(
@@ -1918,11 +1998,11 @@ export async function generateQuotationPDF(
     <div class="row header">
       <div>
         ${logoBlock}
-        <h1>Quotation</h1>
+        <h1>${documentTitle}</h1>
         <div class="muted">${companyContactBlock(company)}</div>
       </div>
       <div style="text-align:right">
-        <p><b>Quote No:</b> ${escapeHtml(quotation.quotation_number || '')}</p>
+        <p><b>${numberLabel}:</b> ${escapeHtml(quotation.quotation_number || '')}</p>
         <p><b>Date:</b> ${escapeHtml(String(quotation.quotation_date || ''))}</p>
         <p><b>Valid Until:</b> ${escapeHtml(String(quotation.valid_until || '—'))}</p>
       </div>
@@ -1951,6 +2031,8 @@ export async function generateQuotationPDF(
       </table>
     </div>
     <p><b>Customer notes:</b> ${escapeHtml(quotation.customer_notes || '—')}</p>
+    ${isProforma ? `<p><b>Payment Terms:</b> ${multilineHtml(quotation.payment_terms || '—')}</p>
+    <p><b>Delivery Terms:</b> ${multilineHtml(quotation.delivery_terms || '—')}</p>` : ''}
     <p><b>Terms:</b> ${escapeHtml(quotation.terms_and_conditions || company.terms_and_conditions || '—')}</p>
     ${signatureBlock}
   </body></html>`;

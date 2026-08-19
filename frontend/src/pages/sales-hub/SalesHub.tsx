@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import SaleInvoicesTab from './tabs/SaleInvoicesTab';
 import QuotationsTab from './tabs/QuotationsTab';
+import ProformaInvoicesTab from './tabs/ProformaInvoicesTab';
 import SaleOrdersTab from './tabs/SaleOrdersTab';
 import DeliveryChallansTab from './tabs/DeliveryChallansTab';
 import PaymentInTab from './tabs/PaymentInTab';
@@ -9,6 +10,7 @@ import SaleReturnTab from './tabs/SaleReturnTab';
 const TABS = [
   { key: 'invoices',   label: 'Sale Invoices' },
   { key: 'quotations', label: 'Estimate / Quotation' },
+  { key: 'proforma',   label: 'Proforma Invoices' },
   { key: 'orders',     label: 'Sale Orders' },
   { key: 'challans',   label: 'Delivery Challan' },
   { key: 'payment-in', label: 'Payment-In' },
@@ -47,6 +49,7 @@ export default function SalesHub() {
       <div className="flex-1 overflow-auto p-4 md:p-6">
         {activeTab === 'invoices'   && <SaleInvoicesTab />}
         {activeTab === 'quotations' && <QuotationsTab />}
+        {activeTab === 'proforma'   && <ProformaInvoicesTab />}
         {activeTab === 'orders'     && <SaleOrdersTab />}
         {activeTab === 'challans'   && <DeliveryChallansTab />}
         {activeTab === 'payment-in' && <PaymentInTab />}

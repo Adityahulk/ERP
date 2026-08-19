@@ -51,7 +51,8 @@ export async function getQuotationPdf(req: Request, res: Response) {
     );
     const pdf = await generateQuotationPDF(quotation, companyRes.rows[0], partyRes.rows[0] || null, itemsRes.rows);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename=quotation-${quotation.quotation_number}.pdf`);
+    const filenamePrefix = quotation.document_type === 'proforma' ? 'proforma-invoice' : 'quotation';
+    res.setHeader('Content-Disposition', `inline; filename=${filenamePrefix}-${quotation.quotation_number}.pdf`);
     res.send(pdf);
   } catch (err: any) {
     res.status(500).json(error(err.message));

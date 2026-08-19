@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye, MessageCircle, Mail } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye, MessageCircle, Mail, Send } from 'lucide-react';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +40,19 @@ export default function QuotationDetail() {
 
   const quote = data as any;
   const items = quote?.items || [];
+  const isProforma = quote?.document_type === 'proforma';
+  const documentLabel = isProforma ? 'Proforma Invoice' : 'Quotation';
+  const listPath = isProforma ? '/sales-hub/proforma' : '/sales-hub/quotations';
+
+  const updateStatus = useMutation({
+    mutationFn: (status: string) => api.patch(`/quotations/${id}`, { status }),
+    onSuccess: (_res, status) => {
+      qc.invalidateQueries({ queryKey: ['quotations', isProforma ? 'proforma' : 'quotation'] });
+      refetch();
+      toast.success(status === 'accepted' ? 'Customer confirmation recorded' : `${documentLabel} updated`);
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || 'Could not update status'),
+  });
 
   const previewPdf = async () => {
     if (!id) return;
@@ -86,7 +99,7 @@ export default function QuotationDetail() {
     try {
       const res = await api.post(`/quotations/${id}/convert`);
       const invoiceId = res.data?.data?.invoice_id ?? res.data?.invoice_id;
-      toast.success('Quotation converted to invoice!', { id: t });
+      toast.success(`${documentLabel} converted to Sales Invoice!`, { id: t });
       qc.invalidateQueries({ queryKey: ['quotations'] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
       if (invoiceId) {
@@ -126,16 +139,16 @@ export default function QuotationDetail() {
     );
   }
 
-  if (!quote) return <div className="p-6 text-sm text-muted-foreground">Quotation not found.</div>;
+  if (!quote) return <div className="p-6 text-sm text-muted-foreground">Document not found.</div>;
 
-  const canConvert = quote.status !== 'converted' && quote.status !== 'rejected' && quote.status !== 'cancelled';
+  const canConvert = quote.status !== 'converted' && quote.status !== 'rejected' && quote.status !== 'cancelled' && (!isProforma || quote.status === 'accepted');
   const alreadyConverted = quote.status === 'converted';
 
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(listPath)}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
@@ -166,6 +179,18 @@ export default function QuotationDetail() {
             <Mail className="w-4 h-4" />
             Email
           </Button>
+          {isProforma && quote.status === 'draft' && (
+            <Button variant="outline" size="sm" loading={updateStatus.isPending} onClick={() => updateStatus.mutate('sent')} className="gap-1.5">
+              <Send className="w-4 h-4" />
+              Mark sent
+            </Button>
+          )}
+          {isProforma && quote.status === 'sent' && (
+            <Button size="sm" loading={updateStatus.isPending} onClick={() => updateStatus.mutate('accepted')} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              <CheckCircle2 className="w-4 h-4" />
+              Customer confirmed
+            </Button>
+          )}
           {alreadyConverted && quote.converted_to_invoice_id && (
             <Button size="sm" variant="outline" className="gap-1.5 text-violet-600 border-violet-200" onClick={() => navigate(`/sales/${quote.converted_to_invoice_id}`)}>
               <FileText className="w-4 h-4" />
@@ -184,7 +209,7 @@ export default function QuotationDetail() {
       {alreadyConverted && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-700 flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          This quotation has been converted to an invoice.
+          This {documentLabel.toLowerCase()} has been converted to a Sales Invoice.
           {quote.converted_to_invoice_id && (
             <button className="ml-1 font-semibold underline" onClick={() => navigate(`/sales/${quote.converted_to_invoice_id}`)}>
               Open invoice
@@ -280,12 +305,25 @@ export default function QuotationDetail() {
         </Card>
       )}
 
+      {isProforma && (quote.payment_terms || quote.delivery_terms) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Payment Terms</CardTitle></CardHeader>
+            <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">{quote.payment_terms || '—'}</CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Delivery Terms</CardTitle></CardHeader>
+            <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">{quote.delivery_terms || '—'}</CardContent>
+          </Card>
+        </div>
+      )}
+
       <ConfirmDialog
         open={convertConfirmOpen}
         onOpenChange={setConvertConfirmOpen}
-        title="Convert to Invoice?"
-        description={`This will create a new tax invoice from quotation ${quote.quotation_number}. The quotation status will change to "converted". This action cannot be undone.`}
-        confirmLabel="Convert to Invoice"
+        title="Create Sales Invoice?"
+        description={`This will create a new Sales Invoice from ${documentLabel.toLowerCase()} ${quote.quotation_number}. The source document will be marked converted. This action cannot be undone.`}
+        confirmLabel="Create Sales Invoice"
         variant="default"
         isPending={converting}
         onConfirm={handleConvertToInvoice}

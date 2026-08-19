@@ -439,7 +439,8 @@ export async function purchaseRegister(req: Request, res: Response) {
 export async function stockSummary(req: Request, res: Response) {
   try {
     const result = await query(
-      `SELECT i.id, i.name, i.sku,
+      `WITH stock_rows AS (
+       SELECT i.name, i.sku,
               COALESCE(SUM(s.quantity), 0) AS total_qty,
               COALESCE(i.purchase_price, 0)::bigint AS purchase_price_paise,
               COALESCE(
@@ -455,7 +456,11 @@ export async function stockSummary(req: Request, res: Response) {
        WHERE i.company_id = $1 AND i.is_deleted = false
        GROUP BY i.id, i.name, i.sku, i.purchase_price
        HAVING COALESCE(SUM(s.quantity), 0) > 0
-       ORDER BY i.name ASC`,
+       )
+       SELECT LPAD(ROW_NUMBER() OVER (ORDER BY name, sku NULLS LAST)::text, 3, '0') AS serial_id,
+              name, sku, total_qty, purchase_price_paise, total_value_paise
+       FROM stock_rows
+       ORDER BY name ASC`,
       [req.user!.company_id]
     );
     res.json(success(result.rows));
@@ -545,7 +550,8 @@ export async function itemWiseProfit(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
     const result = await query(
-      `SELECT COALESCE(it.id::text, md5(ii.item_name)) AS item_key,
+      `WITH profit_rows AS (
+       SELECT
               COALESCE(it.name, ii.item_name) AS item_name,
               COALESCE(it.sku, '') AS sku,
               SUM(ii.quantity)::numeric AS qty_sold,
@@ -559,7 +565,11 @@ export async function itemWiseProfit(req: Request, res: Response) {
          AND inv.status != 'cancelled' AND inv.is_deleted = false
          AND inv.invoice_date >= $2 AND inv.invoice_date <= $3
        GROUP BY COALESCE(it.id::text, md5(ii.item_name::text)), COALESCE(it.name, ii.item_name), COALESCE(it.sku, '')
-       ORDER BY gross_profit_paise DESC`,
+       )
+       SELECT LPAD(ROW_NUMBER() OVER (ORDER BY gross_profit_paise DESC, item_name)::text, 3, '0') AS serial_id,
+              item_name, sku, qty_sold, sales_taxable_paise, cogs_paise, gross_profit_paise
+       FROM profit_rows
+       ORDER BY gross_profit_paise DESC, item_name`,
       [companyId, from, to]
     );
     res.json(success(result.rows));
@@ -748,7 +758,8 @@ export async function trialBalance(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const { from, to } = parseRange(req);
     const result = await query(
-      `SELECT a.id, a.code, a.name, a.account_type,
+      `WITH balance_rows AS (
+       SELECT a.code, a.name, a.account_type,
               COALESCE(a.opening_balance, 0)::bigint AS opening_balance_paise,
               COALESCE(SUM(
                 CASE
@@ -771,7 +782,11 @@ export async function trialBalance(req: Request, res: Response) {
          AND je.entry_date >= $2::date AND je.entry_date <= $3::date
        WHERE a.company_id = $1 AND a.is_deleted = false AND a.is_active = true
        GROUP BY a.id, a.code, a.name, a.account_type, a.opening_balance
-       ORDER BY a.account_type, a.code NULLS LAST, a.name`,
+       )
+       SELECT LPAD(ROW_NUMBER() OVER (ORDER BY account_type, code NULLS LAST, name)::text, 3, '0') AS serial_id,
+              code, name, account_type, opening_balance_paise, period_net_paise, closing_balance_paise
+       FROM balance_rows
+       ORDER BY account_type, code NULLS LAST, name`,
       [companyId, from, to]
     );
     res.json(success({ period: { from, to }, rows: result.rows }));

@@ -7,14 +7,18 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, Loader2, Send, FileCheck, Eye, Download, MessageCircle, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export default function QuotationList() {
+type QuoteDocumentType = 'quotation' | 'proforma';
+
+export default function QuotationList({ documentType = 'quotation' }: { documentType?: QuoteDocumentType }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const isProforma = documentType === 'proforma';
+  const queryKey = ['quotations', documentType];
 
   const { data, isLoading } = useQuery({
-    queryKey: ['quotations'],
+    queryKey,
     queryFn: async () => {
-      const res = await api.get('/quotations', { params: { limit: 50 } });
+      const res = await api.get('/quotations', { params: { limit: 50, document_type: documentType } });
       return res.data?.data ?? res.data;
     },
   });
@@ -25,8 +29,8 @@ export default function QuotationList() {
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       api.patch(`/quotations/${id}`, { status }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['quotations'] });
-      toast.success('Quotation updated');
+      qc.invalidateQueries({ queryKey });
+      toast.success(isProforma ? 'Proforma Invoice updated' : 'Quotation updated');
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Update failed'),
   });
@@ -34,8 +38,10 @@ export default function QuotationList() {
   const convert = useMutation({
     mutationFn: (id: string) => api.post(`/quotations/${id}/convert`),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['quotations'] });
-      toast.success(res.data?.data?.message || 'Convert requested');
+      qc.invalidateQueries({ queryKey });
+      toast.success(res.data?.data?.message || 'Sales Invoice created');
+      const invoiceId = res.data?.data?.invoice_id;
+      if (invoiceId) navigate(`/sales/${invoiceId}`);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Convert failed'),
   });
@@ -95,15 +101,16 @@ export default function QuotationList() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Quotations</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{isProforma ? 'Proforma Invoices' : 'Quotations'}</h1>
           <p className="text-muted-foreground text-sm">
-            Formal price offers to customers. Each row shows the quote reference (quotation number), validity, and
-            amount.
+            {isProforma
+              ? 'Create customer-ready offers, record confirmation, then convert them into Sales Invoices.'
+              : 'Formal price offers to customers. Each row shows the quote reference, validity, and amount.'}
           </p>
         </div>
-        <Button onClick={() => navigate('/quotations/new')} className="gap-2">
+        <Button onClick={() => navigate(isProforma ? '/proforma-invoices/new' : '/quotations/new')} className="gap-2">
           <Plus className="w-4 h-4" />
-          New quotation
+          New {isProforma ? 'Proforma Invoice' : 'quotation'}
         </Button>
       </div>
 
@@ -117,8 +124,8 @@ export default function QuotationList() {
             <table className="w-full text-sm text-left">
               <thead className="bg-muted/50 border-b font-medium">
                 <tr>
-                  <th className="px-4 py-3">Quote ref.</th>
-                  <th className="px-4 py-3">Quote date</th>
+                  <th className="px-4 py-3">{isProforma ? 'Proforma No.' : 'Quote ref.'}</th>
+                  <th className="px-4 py-3">{isProforma ? 'Date' : 'Quote date'}</th>
                   <th className="px-4 py-3">Valid until</th>
                   <th className="px-4 py-3">Customer</th>
                   <th className="px-4 py-3 text-right">Amount</th>
@@ -129,7 +136,15 @@ export default function QuotationList() {
               <tbody className="divide-y">
                 {rows.map((q: any) => (
                   <tr key={q.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-medium">{q.quotation_number}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <button
+                        type="button"
+                        className="text-primary hover:underline"
+                        onClick={() => navigate(`${isProforma ? '/proforma-invoices' : '/quotations'}/${q.id}`)}
+                      >
+                        {q.quotation_number}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {q.quotation_date ? new Date(q.quotation_date).toLocaleDateString() : '—'}
                     </td>
@@ -178,23 +193,37 @@ export default function QuotationList() {
                           Mark sent
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8"
-                        loading={convert.isPending && convert.variables === q.id}
-                        onClick={() => convert.mutate(q.id)}
-                      >
-                        <FileCheck className="w-3.5 h-3.5 mr-1" />
-                        Convert
-                      </Button>
+                      {isProforma && q.status === 'sent' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-emerald-700"
+                          loading={patchStatus.isPending && patchStatus.variables?.id === q.id}
+                          onClick={() => patchStatus.mutate({ id: q.id, status: 'accepted' })}
+                        >
+                          <FileCheck className="w-3.5 h-3.5 mr-1" />
+                          Confirmed
+                        </Button>
+                      )}
+                      {(!isProforma || q.status === 'accepted') && q.status !== 'converted' && q.status !== 'rejected' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8"
+                          loading={convert.isPending && convert.variables === q.id}
+                          onClick={() => convert.mutate(q.id)}
+                        >
+                          <FileCheck className="w-3.5 h-3.5 mr-1" />
+                          Convert to Sale
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {!rows.length && (
                   <tr>
                     <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
-                      No quotations yet. Create one to get started.
+                      No {isProforma ? 'Proforma Invoices' : 'quotations'} yet. Create one to get started.
                     </td>
                   </tr>
                 )}

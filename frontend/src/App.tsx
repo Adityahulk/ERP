@@ -177,6 +177,9 @@ export default function App() {
         <Route path="/sales/:id" element={<RoleGate allowed={['admin', 'manager']}><InvoiceDetail /></RoleGate>} />
         <Route path="/quotations/new" element={<RoleGate allowed={['admin', 'manager']}><QuotationForm /></RoleGate>} />
         <Route path="/quotations/:id" element={<RoleGate allowed={['admin', 'manager']}><QuotationDetail /></RoleGate>} />
+        <Route path="/proforma-invoices" element={<Navigate to="/sales-hub/proforma" replace />} />
+        <Route path="/proforma-invoices/new" element={<RoleGate allowed={['admin', 'manager']}><QuotationForm documentType="proforma" /></RoleGate>} />
+        <Route path="/proforma-invoices/:id" element={<RoleGate allowed={['admin', 'manager']}><QuotationDetail /></RoleGate>} />
 
         {/* Purchase & Expense Hub */}
         <Route path="/purchase-expense" element={<Navigate to="/purchase-expense/bills" replace />} />

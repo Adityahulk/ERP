@@ -71,6 +71,14 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  const requestUrl = String(config.url || '');
+  if (
+    requestUrl.includes('/pdf') ||
+    requestUrl.includes('/print/') ||
+    requestUrl.includes('/labels/bulk')
+  ) {
+    config.timeout = Math.max(Number(config.timeout) || 0, 120_000);
+  }
   // FormData: never send Content-Type manually (missing boundary breaks multer / proxies).
   // Also clear the instance default `application/json` so the runtime sets multipart with boundary.
   if (config.data instanceof FormData) {
@@ -92,10 +100,18 @@ api.interceptors.response.use(
   async (error) => {
     // When responseType is 'blob' the server's JSON error body arrives as a Blob.
     // Parse it back to a plain object so callers can read error.response.data.error.
-    if (error.response?.data instanceof Blob && error.response.data.type === 'application/json') {
+    if (error.response?.data instanceof Blob) {
       try {
         const text = await error.response.data.text();
-        error.response.data = JSON.parse(text);
+        if (error.response.data.type === 'application/json' || text.trim().startsWith('{')) {
+          error.response.data = JSON.parse(text);
+        } else if (/502 Bad Gateway|504 Gateway Time-out/i.test(text)) {
+          error.response.data = {
+            error: 'The PDF service is temporarily unavailable. Please retry after the server PDF renderer restarts.',
+          };
+        } else if (/<html[\s>]/i.test(text)) {
+          error.response.data = { error: 'The server returned an HTML error instead of a PDF.' };
+        }
       } catch {
         // leave as-is if parsing fails
       }
