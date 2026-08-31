@@ -209,6 +209,7 @@ export default function InvoiceCreate() {
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('INR');
   const [isInterstate, setIsInterstate] = useState(false);
   const [placeOfSupply, setPlaceOfSupply] = useState('');
+  const [billingAddress, setBillingAddress] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
   const [isGstInvoice, setIsGstInvoice] = useState(true);
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
@@ -436,6 +437,7 @@ export default function InvoiceCreate() {
     setDueDate(inv.due_date ? String(inv.due_date).slice(0, 10) : '');
     setIsInterstate(Boolean(inv.is_interstate));
     setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
+    setBillingAddress(String(inv.billing_address_snapshot || ''));
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setExternalDescription(String(inv.external_description || ''));
@@ -492,6 +494,7 @@ export default function InvoiceCreate() {
     setDueDate('');
     setIsInterstate(Boolean(inv.is_interstate));
     setPlaceOfSupply(inv.place_of_supply ? String(inv.place_of_supply) : '');
+    setBillingAddress(String(inv.billing_address_snapshot || ''));
     setShippingAddress(String(inv.shipping_address_snapshot || ''));
     setNotes(String(inv.notes || ''));
     setExternalDescription(String(inv.external_description || ''));
@@ -562,6 +565,9 @@ export default function InvoiceCreate() {
     if (data.bill_date) setInvoiceDate(data.bill_date);
     if (data.due_date) setDueDate(data.due_date);
     if (data.party_phone) setPartyPhone(String(data.party_phone));
+    if (data.billing_address || data.party_address) {
+      setBillingAddress(String(data.billing_address || data.party_address || ''));
+    }
     if (data.shipping_address || data.party_address) {
       setShippingAddress(String(data.shipping_address || data.party_address || ''));
     }
@@ -634,6 +640,7 @@ export default function InvoiceCreate() {
     setPartyPhone('');
     setPartySearch('');
     setPartyResults([]);
+    setBillingAddress('');
     setShippingAddress('');
   };
 
@@ -665,7 +672,9 @@ export default function InvoiceCreate() {
     setPartyId(id);
     setPartyName(String(p.name ?? ''));
     setPartyPhone(p.phone || '');
-    setShippingAddress(partyFullAddress(p, 'shipping') || partyFullAddress(p, 'billing'));
+    const selectedBillingAddress = partyFullAddress(p, 'billing');
+    setBillingAddress(selectedBillingAddress);
+    setShippingAddress(partyFullAddress(p, 'shipping') || selectedBillingAddress);
     setPartySearch('');
     setPartyResults([]);
     const companyStateCode = gstStateFromGstin((company as any)?.gstin) || String((company as any)?.state_code || '').trim();
@@ -810,6 +819,7 @@ export default function InvoiceCreate() {
       due_date: dueDate || undefined,
       is_interstate: isInterstate,
       place_of_supply: placeOfSupply || undefined,
+      billing_address: billingAddress.trim() || undefined,
       shipping_address: shippingAddress.trim() || undefined,
       party_phone: partyPhone || undefined,
       currency_code: currencyCode,
@@ -823,15 +833,15 @@ export default function InvoiceCreate() {
       pricing_mode: pricingMode,
       discount_amount: totals.invoiceDiscount || undefined,
     }),
-    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, notes, externalDescription, customFieldsForPayload, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId, pricingMode, totals.invoiceDiscount],
+    [partyId, effectivePartyName, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, billingAddress, shippingAddress, notes, externalDescription, customFieldsForPayload, amountPaid, paymentRows, items, isGstInvoice, roundOffEnabled, pdfTemplate, documentTheme, companyBankAccountId, pricingMode, totals.invoiceDiscount],
   );
 
   const draftState = useMemo(() => ({
     partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode,
-    isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor,
+    isInterstate, placeOfSupply, billingAddress, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor,
     documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items,
     pricingMode, invoiceDiscountType, invoiceDiscountValue,
-  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items, pricingMode, invoiceDiscountType, invoiceDiscountValue]);
+  }), [partyId, partyName, partySearch, partyPhone, godownId, invoiceNumber, invoiceDate, dueDate, currencyCode, isInterstate, placeOfSupply, billingAddress, shippingAddress, isGstInvoice, roundOffEnabled, pdfTemplate, invoiceLayoutColor, documentTheme, companyBankAccountId, notes, externalDescription, customFields, paymentRows, items, pricingMode, invoiceDiscountType, invoiceDiscountValue]);
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     STORAGE_KEYS.drafts.salesInvoice,
@@ -849,6 +859,7 @@ export default function InvoiceCreate() {
       setCurrencyCode(normalizeCurrencyCode(draft.currencyCode || (company as any)?.default_currency || (company as any)?.currency || 'INR'));
       setIsInterstate(Boolean(draft.isInterstate));
       setPlaceOfSupply(String(draft.placeOfSupply || ''));
+      setBillingAddress(String(draft.billingAddress || ''));
       setShippingAddress(String(draft.shippingAddress || ''));
       setIsGstInvoice(draft.isGstInvoice !== false);
       setRoundOffEnabled(Boolean(draft.roundOffEnabled));
@@ -871,7 +882,7 @@ export default function InvoiceCreate() {
       legacyKey: LEGACY_STORAGE_KEYS.drafts.salesInvoice,
       shouldSave: (draft) => Boolean(
         draft.partyId || draft.partyName || draft.partySearch || draft.invoiceNumber || draft.dueDate ||
-        draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
+        draft.billingAddress || draft.shippingAddress || draft.notes || draft.externalDescription || draft.items.length ||
         draft.paymentRows.some((row) => row.amount > 0 || row.payment_mode !== 'cash')
       ),
     },
@@ -993,6 +1004,7 @@ export default function InvoiceCreate() {
       due_date: dueDate || undefined,
       is_interstate: isInterstate,
       place_of_supply: placeOfSupply || undefined,
+      billing_address: billingAddress.trim() || undefined,
       shipping_address: shippingAddress.trim() || undefined,
       party_phone: partyPhone || undefined,
       notes,
@@ -1378,6 +1390,16 @@ export default function InvoiceCreate() {
                 <Label className="text-xs">Phone No. on this invoice</Label>
                 <Input className="mt-1 h-9" value={partyPhone} inputMode="tel" onChange={(e) => setPartyPhone(e.target.value)} placeholder="Mobile number for this invoice" />
               </div>
+              <div>
+                <Label className="text-xs font-semibold">Bill To Address</Label>
+                <textarea
+                  className="mt-1 min-h-[72px] w-full resize-y rounded-md border bg-background px-3 py-2 text-sm leading-5 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={billingAddress}
+                  onChange={(event) => setBillingAddress(event.target.value)}
+                  placeholder="Billing address printed in the Bill To column"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">Loaded from the party and editable for this invoice only.</p>
+              </div>
             </div>
           </TransactionSection>
 
@@ -1435,8 +1457,24 @@ export default function InvoiceCreate() {
                 )}
               </div>
               <div className="col-span-2">
-                <Label className="text-xs">Ship To / Place of Supply Address</Label>
-                <Input className="mt-1 h-9" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} placeholder="Leave blank to use party shipping or billing address" />
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="text-xs font-semibold">Ship To / Place of Supply Address</Label>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground"
+                    disabled={!billingAddress.trim()}
+                    onClick={() => setShippingAddress(billingAddress)}
+                  >
+                    Same as Bill To
+                  </button>
+                </div>
+                <textarea
+                  className="mt-1 min-h-[72px] w-full resize-y rounded-md border bg-background px-3 py-2 text-sm leading-5 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={shippingAddress}
+                  onChange={(event) => setShippingAddress(event.target.value)}
+                  placeholder="Shipping address printed in the Ship To / Place of Supply column"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">Use “Same as Bill To” when both addresses are identical.</p>
               </div>
             </div>
           </TransactionSection>}
@@ -1456,7 +1494,7 @@ export default function InvoiceCreate() {
             partyId={partyId}
             showHsn={isGstInvoice && taxSettings.enable_hsn_sac !== false}
             showUnit={itemSettings.items_unit !== false}
-            showDescription={itemSettings.description === true}
+            showDescription={true}
             showCess={isGstInvoice && taxSettings.additional_cess_on_item === true}
             showDiscount={itemSettings.item_wise_discount !== false}
             showTax={itemSettings.item_wise_tax !== false}

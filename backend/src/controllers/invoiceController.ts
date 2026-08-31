@@ -824,8 +824,8 @@ export async function createInvoice(req: Request, res: Response) {
             gstin: pr.rows[0].gstin,
             phone: trimOrNull(d.party_phone) || pr.rows[0].phone || null,
             email: trimOrNull(d.party_email) || pr.rows[0].email || null,
-            bill: pr.rows[0].billing_address,
-            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
+            bill: trimOrNull(d.billing_address) || pr.rows[0].billing_address,
+            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || trimOrNull(d.billing_address) || pr.rows[0].billing_address,
           };
         }
       } else {
@@ -1515,8 +1515,8 @@ export async function updateInvoice(req: Request, res: Response) {
             gstin: pr.rows[0].gstin,
             phone: trimOrNull(d.party_phone) || pr.rows[0].phone || null,
             email: trimOrNull(d.party_email) || pr.rows[0].email || null,
-            bill: pr.rows[0].billing_address,
-            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || pr.rows[0].billing_address,
+            bill: trimOrNull(d.billing_address) || pr.rows[0].billing_address,
+            ship: trimOrNull(d.shipping_address) || pr.rows[0].shipping_address || trimOrNull(d.billing_address) || pr.rows[0].billing_address,
           };
         }
       } else {
@@ -2342,14 +2342,14 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       ? {
           name: party.name as string,
           gstin: party.gstin as string | null,
-          bill: party.billing_address as string | null,
-          ship: trimOrNull(d.shipping_address) || party.shipping_address || party.billing_address || null,
+          bill: trimOrNull(d.billing_address) || party.billing_address || null,
+          ship: trimOrNull(d.shipping_address) || party.shipping_address || trimOrNull(d.billing_address) || party.billing_address || null,
         }
       : {
           name: String(d.party_name || 'Walk-in Customer'),
           gstin: null as string | null,
-          bill: null as string | null,
-          ship: trimOrNull(d.shipping_address),
+          bill: trimOrNull(d.billing_address),
+          ship: trimOrNull(d.shipping_address) || trimOrNull(d.billing_address),
         };
 
     const pdfRows: any[] = [];

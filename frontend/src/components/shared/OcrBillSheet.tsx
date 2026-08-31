@@ -47,6 +47,7 @@ export interface OcrResult {
   total_amount_paise: number | null;
   due_date?: string | null;
   party_address?: string | null;
+  billing_address?: string | null;
   shipping_address?: string | null;
   party_phone?: string | null;
   place_of_supply?: string | null;

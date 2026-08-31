@@ -627,7 +627,7 @@ export default function VyaparLineItems({
                             type="button"
                             className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                             onClick={() => toggleExpand(idx)}
-                            title={expanded ? 'Collapse' : 'More options'}
+                            title={expanded ? 'Hide item description and options' : 'Add item description and more options'}
                           >
                             {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                           </button>
@@ -669,6 +669,11 @@ export default function VyaparLineItems({
                                 </button>
                               ))}
                             </div>
+                          )}
+                          {item.description && (
+                            <p className="mt-1 whitespace-pre-line text-[11px] leading-4 text-muted-foreground">
+                              {item.description}
+                            </p>
                           )}
                         </div>
                       </td>
