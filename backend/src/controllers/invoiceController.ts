@@ -304,7 +304,7 @@ async function previewNextInvoiceNumber(companyId: string, invoiceKind: string, 
 
 function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclusive') {
   const unitPrice = Math.round(Number(raw.unit_price) || 0);
-  const qty = Number(raw.quantity) || 0;
+  const qty = Math.round((Number(raw.quantity) || 0) * 10_000) / 10_000;
   const taxComponents = Array.isArray(raw.tax_components)
     ? raw.tax_components
         .map((component: any) => ({
@@ -316,17 +316,10 @@ function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclu
   
   const isInclusive = raw.price_includes_tax === true;
 
-  let base = 0;
-  if (isInclusive) {
-    const componentRate = taxComponents.reduce((sum: number, component: any) => sum + component.rate, 0);
-    const divisor = 1 + ((componentRate || Number(raw.gst_rate) || 0) + (Number(raw.cess_rate) || 0)) / 100;
-    base = Math.round((unitPrice / divisor) * qty);
-  } else {
-    base = Math.round(unitPrice * qty);
-  }
-
   const pct = Number(raw.discount_percent) || 0;
-  const flatFromPct = pct > 0 ? Math.round((base * pct) / 100) : 0;
+  // Keep the derived discount in the same inclusive/exclusive domain as the
+  // entered unit price. calculateInvoiceTotals converts both together.
+  const flatFromPct = pct > 0 ? Math.round((unitPrice * qty * pct) / 100) : 0;
   const lineDisc = Math.round(Number(raw.discount_amount) || 0) || flatFromPct;
   return {
     unit_price: unitPrice,
@@ -952,7 +945,7 @@ export async function createInvoice(req: Request, res: Response) {
             item.description || item.item_description || null,
             item.hsn_code || null,
             item.unit || 'PCS',
-            item.quantity,
+            mappedItems[i].quantity,
             Math.round(Number(item.unit_price) || 0),
             currencyCode,
             taxInfo.totalDiscount,
@@ -989,7 +982,7 @@ export async function createInvoice(req: Request, res: Response) {
               itemId: item.item_id,
               godownId,
               invoiceId: invoice.id,
-              quantity: item.quantity,
+              quantity: mappedItems[i].quantity,
               userId: req.user!.id,
               allowNegative: d.transaction_source !== 'pos',
             });
@@ -1633,7 +1626,7 @@ export async function updateInvoice(req: Request, res: Response) {
             item.description || item.item_description || null,
             item.hsn_code || null,
             item.unit || 'PCS',
-            item.quantity,
+            mappedItems[i].quantity,
             Math.round(Number(item.unit_price) || 0),
             currencyCode,
             taxInfo.totalDiscount,
@@ -1667,7 +1660,7 @@ export async function updateInvoice(req: Request, res: Response) {
               itemId: item.item_id,
               godownId,
               invoiceId: id,
-              quantity: item.quantity,
+              quantity: mappedItems[i].quantity,
               userId: req.user!.id,
             });
           }
@@ -2002,7 +1995,7 @@ export async function listBulkSalesInvoices(req: Request, res: Response) {
     );
     res.json(success(buildPaginatedResponse(result.rows, Number(countRes.rows[0]?.count || 0), page, limit)));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    res.status(500).json(error(err?.message || 'Failed to list bulk sales invoices'));
   }
 }
 
@@ -2156,7 +2149,9 @@ export async function getSavedBulkSalesInvoicePDF(req: Request, res: Response) {
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename=${filename}`);
     res.send(pdfBuffer);
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    const message = err?.message || 'Failed to generate invoice preview';
+    const status = /quantity|rate|discount|invalid|at least one/i.test(message) ? 400 : 500;
+    res.status(status).json(error(message));
   }
 }
 

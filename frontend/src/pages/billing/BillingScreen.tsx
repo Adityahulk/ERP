@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, CSSProperties } from 'react';
+import { useState, useRef, useEffect, useMemo, CSSProperties } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api, { getApiBaseURL } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -31,9 +31,13 @@ interface BillItem {
   quantity: number;
   unit_price: number;
   gst_rate: number;
+  cess_rate: number;
+  price_includes_tax: boolean;
   discount_amount: number;
   // Computed for display
   taxable: number;
+  tax: number;
+  cess: number;
   total: number;
 }
 
@@ -69,6 +73,8 @@ export default function BillingScreen() {
   const [selectedGodownId, setSelectedGodownId] = useState('');
   const lastProcessedScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
   const lookupBarcodeRef = useRef<(code: string, source?: string) => Promise<void>>(async () => undefined);
+  const checkoutActionRef = useRef<() => void>(() => undefined);
+  const confirmUpiActionRef = useRef<() => void>(() => undefined);
   
   const getQrUrl = () => {
     const hostname = window.location.hostname;
@@ -141,7 +147,7 @@ export default function BillingScreen() {
 
   const { data: companyData } = useCompany();
   const { data: godownResponse } = useGodowns();
-  const godowns = godownResponse?.data ?? [];
+  const godowns = useMemo(() => godownResponse?.data ?? [], [godownResponse?.data]);
 
   useEffect(() => {
     if (selectedGodownId || !godowns.length) return;
@@ -237,6 +243,7 @@ export default function BillingScreen() {
     }
     createInvoiceMut.mutate();
   };
+  confirmUpiActionRef.current = () => { void handleConfirmUpiPayment(); };
 
   // Hotkeys & Scan Interception
   useEffect(() => {
@@ -250,14 +257,14 @@ export default function BillingScreen() {
       // Enter to simulate success when QR Modal is open
       if (e.key === 'Enter' && showQrModal) {
         e.preventDefault();
-        handleConfirmUpiPayment();
+        confirmUpiActionRef.current();
         return;
       }
       
       // Ctrl + Enter or F10 to Checkout
       if ((e.ctrlKey && e.key === 'Enter') || e.key === 'F10') {
         e.preventDefault();
-        handleCheckout();
+        checkoutActionRef.current();
         return;
       }
       
@@ -296,9 +303,7 @@ export default function BillingScreen() {
 
   // Ref to always access the latest addItem function in event listeners
   const addItemRef = useRef<any>(null);
-  useEffect(() => {
-    addItemRef.current = addItem;
-  }, [addItem]);
+  addItemRef.current = addItem;
 
   useEffect(() => {
     lookupBarcodeRef.current = async (rawCode: string, source = 'Scanner') => {
@@ -458,6 +463,13 @@ export default function BillingScreen() {
         toast.error(`${item.name} is out of stock in the selected godown`);
         return prev;
       }
+      const gstRate = Math.max(0, Number(item.gst_rate) || 0);
+      const cessRate = Math.max(0, Number(item.cess_rate) || 0);
+      const priceIncludesTax = item.selling_price_includes_tax === true;
+      const storedExclusivePrice = Math.max(0, Number(item.unit_price ?? item.selling_price) || 0);
+      const displayUnitPrice = priceIncludesTax
+        ? Math.round(storedExclusivePrice * (1 + (gstRate + cessRate) / 100))
+        : storedExclusivePrice;
       return [...prev, updateCommputed({
         item_id: item.id,
         name: item.name,
@@ -468,10 +480,14 @@ export default function BillingScreen() {
         unit: item.unit || item.unit_name || 'PCS',
         available_stock: available,
         quantity: 1,
-        unit_price: item.unit_price || item.selling_price || 0,
-        gst_rate: item.gst_rate || 0,
+        unit_price: displayUnitPrice,
+        gst_rate: gstRate,
+        cess_rate: cessRate,
+        price_includes_tax: priceIncludesTax,
         discount_amount: 0,
         taxable: 0,
+        tax: 0,
+        cess: 0,
         total: 0
       })];
     });
@@ -487,15 +503,32 @@ export default function BillingScreen() {
         changes = { ...changes, quantity: current.available_stock };
       }
     }
+    if (changes.unit_price != null) changes = { ...changes, unit_price: Math.max(0, Number(changes.unit_price) || 0) };
+    if (changes.discount_amount != null) {
+      const quantity = Number(changes.quantity ?? current.quantity) || 0;
+      const unitPrice = Number(changes.unit_price ?? current.unit_price) || 0;
+      changes = {
+        ...changes,
+        discount_amount: Math.min(unitPrice * quantity, Math.max(0, Number(changes.discount_amount) || 0)),
+      };
+    }
     newItems[index] = updateCommputed({ ...newItems[index], ...changes });
     setBillItems(newItems);
   };
 
   const updateCommputed = (item: BillItem) => {
     const base = item.unit_price * item.quantity;
-    item.taxable = Math.max(0, base - item.discount_amount);
-    const tax = Math.round(item.taxable * item.gst_rate / 100);
-    item.total = item.taxable + tax;
+    const afterDiscount = Math.max(0, base - item.discount_amount);
+    const totalRate = item.gst_rate + item.cess_rate;
+    item.taxable = item.price_includes_tax && totalRate > 0
+      ? Math.round(afterDiscount / (1 + totalRate / 100))
+      : afterDiscount;
+    const combinedTax = item.price_includes_tax
+      ? afterDiscount - item.taxable
+      : Math.round(item.taxable * totalRate / 100);
+    item.tax = totalRate > 0 ? Math.round(combinedTax * item.gst_rate / totalRate) : 0;
+    item.cess = combinedTax - item.tax;
+    item.total = item.taxable + item.tax + item.cess;
     return item;
   };
 
@@ -505,8 +538,9 @@ export default function BillingScreen() {
   const taxable = billItems.reduce((acc, i) => acc + i.taxable, 0);
   
   // Note: POS often strictly considers CGST/SGST by default. Interstate can be toggled by party selection. We assume Intra.
-  const totalTax = billItems.reduce((acc, i) => acc + Math.round(i.taxable * i.gst_rate / 100), 0);
-  const rawTotal = taxable + totalTax - discountTotal;
+  const totalTax = billItems.reduce((acc, i) => acc + i.tax, 0);
+  const totalCess = billItems.reduce((acc, i) => acc + i.cess, 0);
+  const rawTotal = taxable + totalTax + totalCess - discountTotal;
   const roundOffEnabled = transactionConfig?.settings?.roundOffTotal !== false;
   const roundToPaise = [1, 10, 100].includes(Number(transactionConfig?.settings?.roundOffTo))
     ? Number(transactionConfig.settings.roundOffTo) * 100
@@ -531,6 +565,8 @@ export default function BillingScreen() {
         quantity: b.quantity,
         unit_price: b.unit_price,
         gst_rate: b.gst_rate,
+        cess_rate: b.cess_rate,
+        price_includes_tax: b.price_includes_tax,
         discount_amount: b.discount_amount,
       }));
       const tenderPaise =
@@ -585,6 +621,8 @@ export default function BillingScreen() {
         total_amount: b.total,
         total: b.total,
         gst_rate: b.gst_rate,
+        cess_rate: b.cess_rate,
+        price_includes_tax: b.price_includes_tax,
         hsn_code: b.hsn_code,
       }));
 
@@ -633,6 +671,7 @@ export default function BillingScreen() {
       createInvoiceMut.mutate();
     }
   };
+  checkoutActionRef.current = handleCheckout;
 
   return (
     <div className="h-[calc(100vh-7.5rem)] overflow-hidden flex flex-col gap-3">
@@ -947,6 +986,12 @@ export default function BillingScreen() {
               <span className="text-muted-foreground">SGST</span>
               <span className="tabular-nums">{formatMoney(Math.floor(totalTax / 2))}</span>
             </div>
+            {totalCess > 0 && (
+              <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
+                <span className="text-muted-foreground">Cess</span>
+                <span className="tabular-nums">{formatMoney(totalCess)}</span>
+              </div>
+            )}
 
             <div className="flex justify-between text-muted-foreground">
               <span>Round Off</span>
@@ -1031,6 +1076,8 @@ export default function BillingScreen() {
             track_inventory: row.track_inventory !== false,
             unit_price: Number(row.selling_price ?? 0),
             gst_rate: Number(row.gst_rate ?? 0),
+            cess_rate: Number(row.cess_rate ?? 0),
+            selling_price_includes_tax: row.selling_price_includes_tax === true,
             unit: String(row.unit ?? row.unit_name ?? 'PCS'),
             available_stock: row.track_inventory === false
               ? undefined

@@ -881,10 +881,6 @@ export default function Settings() {
     invalid?: number;
   } | null>(null);
 
-  if (!isAdmin) {
-     return <Navigate to="/dashboard" replace />;
-  }
-
   const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
   const logoSrc =
     company?.logo_url &&
@@ -1834,6 +1830,10 @@ export default function Settings() {
      { id: 'data', label: 'Data Management', icon: Database },
      { id: 'danger', label: 'Danger Zone', icon: AlertTriangle, error: true },
   ];
+
+  if (!isAdmin) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div className="w-full p-4 md:p-6 animate-in slide-in-from-bottom-4 duration-500">

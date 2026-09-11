@@ -1,63 +1,72 @@
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useRegistrantStore } from '@/store/registrantStore';
 import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
-import AppLayout from '@/components/shared/AppLayout';
-import RegisterPage from '@/pages/register/RegisterPage';
-import UnifiedLoginPage from '@/pages/auth/UnifiedLoginPage';
-import RegisterDashboard from '@/pages/register/RegisterDashboard';
-import LicenseTiersPage from '@/pages/register/LicenseTiersPage';
-import LicenseDetailPage from '@/pages/register/LicenseDetailPage';
-import VerifyEmailPage from '@/pages/register/VerifyEmailPage';
-import ForgotPasswordPage from '@/pages/register/ForgotPasswordPage';
-import ResetPasswordPage from '@/pages/register/ResetPasswordPage';
 import ModuleGate from '@/components/shared/ModuleGate';
-
-// Pages
-import ItemList from '@/pages/items/ItemList';
-import ItemDetail from '@/pages/items/ItemDetail';
-import BarcodeGeneratePage from '@/pages/barcode/BarcodeGeneratePage';
-import StockList from '@/pages/inventory/StockList';
-import StockTransfer from '@/pages/inventory/StockTransfer';
-import StockAdjustment from '@/pages/inventory/StockAdjustment';
-import InvoiceCreate from '@/pages/invoices/InvoiceCreate';
-import InvoiceDetail from '@/pages/sales/InvoiceDetail';
-import GRNScreen from '@/pages/purchases/GRNScreen';
-import QuotationForm from '@/pages/quotations/QuotationForm';
-import QuotationDetail from '@/pages/quotations/QuotationDetail';
-import GSTDashboard from '@/pages/reports/GSTDashboard';
-import AttendancePage from '@/pages/hr/AttendancePage';
-import ProfilePage from '@/pages/hr/ProfilePage';
-import Dashboard from '@/pages/dashboard/Dashboard';
-import Onboarding from '@/pages/onboarding/Onboarding';
-import BillingScreen from '@/pages/billing/BillingScreen';
-import MobileScannerScreen from '@/pages/billing/MobileScannerScreen';
-import ReportsHome from '@/pages/reports/ReportsHome';
-import AccountingDashboard from '@/pages/accounting/AccountingDashboard';
-import CashBankPage from '@/pages/accounting/CashBankPage';
-import Settings from '@/pages/settings/Settings';
-import LandingPage from '@/pages/landing/LandingPage';
-
-import PartyList from '@/pages/parties/PartyList';
-import PartyDetail from '@/pages/parties/PartyDetail';
-import PurchaseExpenseHub from '@/pages/purchase-expense/PurchaseExpenseHub';
-import EmployeeListPage from '@/pages/hr/EmployeeListPage';
-import EmployeeDetailPage from '@/pages/hr/EmployeeDetailPage';
-import SalesHub from '@/pages/sales-hub/SalesHub';
-
-import JobWorkChallanList from '@/pages/jobwork/JobWorkChallanList';
-import JobWorkChallanForm from '@/pages/jobwork/JobWorkChallanForm';
-import JobWorkChallanDetail from '@/pages/jobwork/JobWorkChallanDetail';
-
-import SuperAdminLayout from '@/components/superadmin/SuperAdminLayout';
-import SuperAdminDashboard from '@/pages/superadmin/SuperAdminDashboard';
-import SuperAdminLicenses from '@/pages/superadmin/SuperAdminLicenses';
-import SuperAdminLicenseDetail from '@/pages/superadmin/SuperAdminLicenseDetail';
-import SuperAdminCompanies from '@/pages/superadmin/SuperAdminCompanies';
-import SuperAdminCompanyDetail from '@/pages/superadmin/SuperAdminCompanyDetail';
-import SuperAdminRegistrants from '@/pages/superadmin/SuperAdminRegistrants';
-import { useEffect } from 'react';
 import { canAccessRole, normalizeRole, type NormalizedRole } from '@/lib/roles';
+
+// Route-level splitting keeps the first screen small. Large features such as
+// reports, settings, PDF preview, and barcode tooling load only when opened.
+const AppLayout = lazy(() => import('@/components/shared/AppLayout'));
+const RegisterPage = lazy(() => import('@/pages/register/RegisterPage'));
+const UnifiedLoginPage = lazy(() => import('@/pages/auth/UnifiedLoginPage'));
+const RegisterDashboard = lazy(() => import('@/pages/register/RegisterDashboard'));
+const LicenseTiersPage = lazy(() => import('@/pages/register/LicenseTiersPage'));
+const LicenseDetailPage = lazy(() => import('@/pages/register/LicenseDetailPage'));
+const VerifyEmailPage = lazy(() => import('@/pages/register/VerifyEmailPage'));
+const ForgotPasswordPage = lazy(() => import('@/pages/register/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('@/pages/register/ResetPasswordPage'));
+const ItemList = lazy(() => import('@/pages/items/ItemList'));
+const ItemDetail = lazy(() => import('@/pages/items/ItemDetail'));
+const BarcodeGeneratePage = lazy(() => import('@/pages/barcode/BarcodeGeneratePage'));
+const StockList = lazy(() => import('@/pages/inventory/StockList'));
+const StockTransfer = lazy(() => import('@/pages/inventory/StockTransfer'));
+const StockAdjustment = lazy(() => import('@/pages/inventory/StockAdjustment'));
+const InvoiceCreate = lazy(() => import('@/pages/invoices/InvoiceCreate'));
+const InvoiceDetail = lazy(() => import('@/pages/sales/InvoiceDetail'));
+const GRNScreen = lazy(() => import('@/pages/purchases/GRNScreen'));
+const QuotationForm = lazy(() => import('@/pages/quotations/QuotationForm'));
+const QuotationDetail = lazy(() => import('@/pages/quotations/QuotationDetail'));
+const GSTDashboard = lazy(() => import('@/pages/reports/GSTDashboard'));
+const AttendancePage = lazy(() => import('@/pages/hr/AttendancePage'));
+const ProfilePage = lazy(() => import('@/pages/hr/ProfilePage'));
+const Dashboard = lazy(() => import('@/pages/dashboard/Dashboard'));
+const Onboarding = lazy(() => import('@/pages/onboarding/Onboarding'));
+const BillingScreen = lazy(() => import('@/pages/billing/BillingScreen'));
+const MobileScannerScreen = lazy(() => import('@/pages/billing/MobileScannerScreen'));
+const ReportsHome = lazy(() => import('@/pages/reports/ReportsHome'));
+const AccountingDashboard = lazy(() => import('@/pages/accounting/AccountingDashboard'));
+const CashBankPage = lazy(() => import('@/pages/accounting/CashBankPage'));
+const Settings = lazy(() => import('@/pages/settings/Settings'));
+const LandingPage = lazy(() => import('@/pages/landing/LandingPage'));
+const PartyList = lazy(() => import('@/pages/parties/PartyList'));
+const PartyDetail = lazy(() => import('@/pages/parties/PartyDetail'));
+const PurchaseExpenseHub = lazy(() => import('@/pages/purchase-expense/PurchaseExpenseHub'));
+const EmployeeListPage = lazy(() => import('@/pages/hr/EmployeeListPage'));
+const EmployeeDetailPage = lazy(() => import('@/pages/hr/EmployeeDetailPage'));
+const SalesHub = lazy(() => import('@/pages/sales-hub/SalesHub'));
+const JobWorkChallanList = lazy(() => import('@/pages/jobwork/JobWorkChallanList'));
+const JobWorkChallanForm = lazy(() => import('@/pages/jobwork/JobWorkChallanForm'));
+const JobWorkChallanDetail = lazy(() => import('@/pages/jobwork/JobWorkChallanDetail'));
+const SuperAdminLayout = lazy(() => import('@/components/superadmin/SuperAdminLayout'));
+const SuperAdminDashboard = lazy(() => import('@/pages/superadmin/SuperAdminDashboard'));
+const SuperAdminLicenses = lazy(() => import('@/pages/superadmin/SuperAdminLicenses'));
+const SuperAdminLicenseDetail = lazy(() => import('@/pages/superadmin/SuperAdminLicenseDetail'));
+const SuperAdminCompanies = lazy(() => import('@/pages/superadmin/SuperAdminCompanies'));
+const SuperAdminCompanyDetail = lazy(() => import('@/pages/superadmin/SuperAdminCompanyDetail'));
+const SuperAdminRegistrants = lazy(() => import('@/pages/superadmin/SuperAdminRegistrants'));
+
+function RouteLoadingState() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50" role="status" aria-live="polite">
+      <div className="flex items-center gap-3 text-sm font-medium text-slate-600">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" aria-hidden />
+        Loading workspace...
+      </div>
+    </div>
+  );
+}
 
 // ── Protected Route ───────────────────────────────────────────
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -127,9 +136,10 @@ export default function App() {
     if (isAuthenticated && !readStorageWithLegacy(STORAGE_KEYS.accessToken, LEGACY_STORAGE_KEYS.accessToken)) {
       logout();
     }
-  }, []);
+  }, [isAuthenticated, logout]);
 
   return (
+    <Suspense fallback={<RouteLoadingState />}>
     <Routes>
       <Route path="/" element={<AuthHomeRedirect />} />
       <Route path="/login" element={<LoginEntry />} />
@@ -240,5 +250,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }

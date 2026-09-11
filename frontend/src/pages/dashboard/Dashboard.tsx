@@ -18,25 +18,29 @@ function getGreeting() {
 export default function Dashboard() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
-  
-  if (normalizeRole(user?.role) === 'staff') {
-      return <Navigate to="/attendance" replace />;
-  }
+  const isStaff = normalizeRole(user?.role) === 'staff';
 
   const { data: rawData } = useQuery({
      queryKey: ['dashboard_hub'],
-     queryFn: async () => (await api.get('/reports/dashboard')).data?.data
+     queryFn: async () => (await api.get('/reports/dashboard')).data?.data,
+     enabled: !isStaff,
   });
 
   const { data: wsStats } = useQuery({
     queryKey: ['dashboard-ws-stats'],
     queryFn: () => api.get('/wholesale', { params: { page: 1, limit: 1 } }).then(r => r.data?.meta),
+    enabled: !isStaff,
   });
 
   const { data: jwOverdue } = useQuery({
     queryKey: ['dashboard-jw-overdue'],
     queryFn: () => api.get('/job-work/overdue').then(r => r.data?.data ?? []),
+    enabled: !isStaff,
   });
+
+  if (isStaff) {
+    return <Navigate to="/attendance" replace />;
+  }
 
   const todaySales = rawData?.today?.sales?.total || 0;
   const totalReceivable = rawData?.balances?.total_receivable || 0;

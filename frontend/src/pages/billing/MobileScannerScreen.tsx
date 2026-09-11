@@ -57,23 +57,14 @@ export default function MobileScannerScreen() {
 
   // Keep track of scans for cooldown (avoid duplicate scanning of the same barcode)
   const lastScanned = useRef<{ code: string; time: number }>({ code: '', time: 0 });
+  const startCameraRef = useRef<() => Promise<void>>(async () => undefined);
+  const handleBarcodeScannedRef = useRef<(barcode: string) => Promise<void>>(async () => undefined);
 
   // API Client config
   const apiBase = getApiBaseURL();
 
-  // Test connection to verify desktop session is active
-  const checkDesktopSession = async () => {
-    if (!sessionId) return;
-    try {
-      // Send a dummy connection ping to see if backend responds
-      setDeviceConnected(true);
-    } catch {
-      setDeviceConnected(false);
-    }
-  };
-
   useEffect(() => {
-    checkDesktopSession();
+    setDeviceConnected(sessionId ? true : null);
   }, [sessionId]);
 
   // Start continuous barcode scanning
@@ -99,7 +90,7 @@ export default function MobileScannerScreen() {
             // 2 seconds cooldown for the same code, or scan if code is different
             if (code !== lastScanned.current.code || now - lastScanned.current.time > 2000) {
               lastScanned.current = { code, time: now };
-              handleBarcodeScanned(code);
+              void handleBarcodeScannedRef.current(code);
             }
           }
           if (err && !(err instanceof NotFoundException)) {
@@ -119,6 +110,7 @@ export default function MobileScannerScreen() {
       setIsScanning(false);
     }
   };
+  startCameraRef.current = startCamera;
 
   // Stop camera
   const stopCamera = () => {
@@ -128,11 +120,12 @@ export default function MobileScannerScreen() {
 
   // Auto-start camera when screen loads
   useEffect(() => {
+    const reader = codeReader.current;
     if (sessionId) {
-      startCamera();
+      void startCameraRef.current();
     }
     return () => {
-      codeReader.current.reset();
+      reader.reset();
     };
   }, [sessionId]);
 
@@ -176,6 +169,7 @@ export default function MobileScannerScreen() {
       toast.error(`Failed to send ${barcode}: ${msg}`);
     }
   };
+  handleBarcodeScannedRef.current = handleBarcodeScanned;
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

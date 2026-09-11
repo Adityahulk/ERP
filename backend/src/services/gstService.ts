@@ -571,6 +571,16 @@ export function calculateInvoiceTotals(
   let totalDiscountLineLevel = 0;
 
   const processedItems = items.map((item) => {
+    const rawQuantity = Number(item.quantity);
+    const rawUnitPrice = Number(item.unit_price);
+    if (!Number.isFinite(rawQuantity) || rawQuantity <= 0) {
+      throw new Error('Item quantity must be greater than zero');
+    }
+    if (!Number.isFinite(rawUnitPrice) || rawUnitPrice < 0) {
+      throw new Error('Item rate cannot be negative');
+    }
+    const qty = Math.round(rawQuantity * 10_000) / 10_000;
+    const unitPrice = Math.round(rawUnitPrice);
     const rates = resolveTaxComponentRates(
       Number(item.gst_rate) || 0,
       Number(item.cess_rate) || 0,
@@ -580,10 +590,9 @@ export function calculateInvoiceTotals(
     const gstRate = rates.cgstRate + rates.sgstRate + rates.igstRate;
     const cessRate = rates.cessRate;
     const totalRate = gstRate + cessRate;
-    const qty = Number(item.quantity) || 0;
 
     const convertedPrice = convertPrice(
-      Number(item.unit_price) || 0,
+      unitPrice,
       gstRate,
       item.price_includes_tax === true,
       pricingMode,
@@ -592,10 +601,20 @@ export function calculateInvoiceTotals(
 
     let rawDiscount = 0;
     if (item.discount_type === 'percent') {
-      const storedBase = item.price_includes_tax === true ? (item.unit_price / (1 + totalRate / 100)) : item.unit_price;
-      rawDiscount = ((storedBase * qty) * (item.discount_value || 0)) / 100;
+      const discountPercent = Number(item.discount_value) || 0;
+      if (discountPercent < 0 || discountPercent > 100) {
+        throw new Error('Item discount percentage must be between 0 and 100');
+      }
+      // A percentage applies to the rate as entered by the user. convertPrice()
+      // below then moves both rate and discount into the invoice pricing mode.
+      // Deriving an exclusive base here as well would remove tax twice for an
+      // inclusive-priced line.
+      rawDiscount = (unitPrice * qty * discountPercent) / 100;
     } else if (item.discount_type === 'flat') {
-      rawDiscount = item.discount_value || 0;
+      rawDiscount = Number(item.discount_value) || 0;
+      if (rawDiscount < 0 || rawDiscount > unitPrice * qty) {
+        throw new Error('Item discount cannot be negative or exceed the line amount');
+      }
     }
 
     const convertedDiscount = convertPrice(

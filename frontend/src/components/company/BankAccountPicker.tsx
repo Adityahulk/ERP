@@ -1,11 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Building2 } from 'lucide-react';
 import { QuickAddBankAccountSheet } from './QuickAddBankAccountSheet';
-import { useState } from 'react';
 
 type BankRow = {
   id: string;
@@ -49,7 +48,7 @@ export function BankAccountPicker({
     queryKey: ['company-bank-accounts'],
     queryFn: () => api.get('/company/bank-accounts').then((r) => (r.data as any)?.data ?? r.data ?? []),
   });
-  const accounts = (Array.isArray(raw) ? raw : []) as BankRow[];
+  const accounts = useMemo(() => (Array.isArray(raw) ? raw : []) as BankRow[], [raw]);
 
   const initRef = useRef(false);
   useEffect(() => {

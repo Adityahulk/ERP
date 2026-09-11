@@ -1,7 +1,32 @@
 import assert from 'node:assert/strict';
+import '../middleware/auth';
 import { pool } from '../config/db';
 import { INVOICE_PRINT_THEMES } from '../lib/printThemes';
 import { generateInvoicePDF } from '../services/pdfService';
+import { normalizePurchaseItems } from '../controllers/purchaseController';
+
+function verifyPurchaseValidation(): void {
+  const [line] = normalizePurchaseItems(
+    [{ item_name: 'Fractional item', quantity: 1.123456, unit_price: 10_000.4, gst_rate: 18 }],
+    true,
+  );
+  assert.equal(line.quantity, 1.1235);
+  assert.equal(line.unit_price, 10_000);
+  assert.equal(line.gst_rate, 18);
+
+  assert.throws(
+    () => normalizePurchaseItems([{ quantity: 0, unit_price: 100, gst_rate: 0 }], true),
+    /quantity must be greater than zero/,
+  );
+  assert.throws(
+    () => normalizePurchaseItems([{ quantity: 1, unit_price: -1, gst_rate: 0 }], true),
+    /rate cannot be negative/,
+  );
+  assert.throws(
+    () => normalizePurchaseItems([{ quantity: 1, unit_price: 100, gst_rate: 101 }], true),
+    /GST rate must be between 0 and 100/,
+  );
+}
 
 async function verifyPartyCreation(): Promise<void> {
   const client = await pool.connect();
@@ -122,10 +147,12 @@ async function verifyInvoicePdfs(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  verifyPurchaseValidation();
   await verifyPartyCreation();
   await verifyInvoicePdfs();
   await pool.end();
-  console.log('Party creation and all invoice PDF themes passed.');
+  console.log('Purchase validation, party creation, and all invoice PDF themes passed.');
+  process.exit(0);
 }
 
 main().catch(async (err) => {

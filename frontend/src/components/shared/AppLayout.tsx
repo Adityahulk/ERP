@@ -256,7 +256,7 @@ export default function AppLayout() {
         setLicense(data.license);
       }
     }).catch(() => { /* non-blocking — license info is supplemental */ });
-  }, []);
+  }, [setLicense]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [ownedCompanies, setOwnedCompanies] = useState<OwnedCompanyLicense[]>([]);

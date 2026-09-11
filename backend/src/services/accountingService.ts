@@ -347,10 +347,31 @@ export async function postJournalEntry(db: Queryable, input: JournalInput) {
     }
   }
 
-  const seqRes = await db.query(`SELECT COUNT(*)::int AS c FROM journal_entries WHERE company_id = $1`, [input.companyId]);
   const prefix = input.voucherType === 'reversal' ? 'JV-REV' : input.voucherType === 'payment' ? 'PAY-JV' : input.voucherType === 'sale' ? 'SALE-JV' : input.voucherType === 'purchase' ? 'PUR-JV' : 'JV';
-  const generatedNo = `${prefix}/${new Date().getFullYear().toString().slice(-2)}/${String(Number(seqRes.rows[0]?.c || 0) + 1).padStart(4, '0')}`;
-  const voucherNumber = input.voucherNumber || generatedNo;
+  let voucherNumber = input.voucherNumber;
+  if (!voucherNumber) {
+    const entryYear = toSqlDate(input.entryDate).slice(0, 4);
+    const sequence = await db.query(
+      `INSERT INTO document_sequences (
+         company_id, document_type, financial_year, last_number, updated_at
+       )
+       VALUES (
+         $1, 'journal', $2,
+         (SELECT COUNT(*)::int + 1 FROM journal_entries WHERE company_id = $1),
+         NOW()
+       )
+       ON CONFLICT (company_id, document_type, financial_year)
+       DO UPDATE SET
+         last_number = GREATEST(
+           document_sequences.last_number,
+           (SELECT COUNT(*)::int FROM journal_entries WHERE company_id = $1)
+         ) + 1,
+         updated_at = NOW()
+       RETURNING last_number`,
+      [input.companyId, entryYear],
+    );
+    voucherNumber = `${prefix}/${entryYear.slice(-2)}/${String(Number(sequence.rows[0].last_number)).padStart(4, '0')}`;
+  }
 
   const je = await db.query(
     `INSERT INTO journal_entries (

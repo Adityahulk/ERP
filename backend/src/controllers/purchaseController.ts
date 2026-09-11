@@ -14,6 +14,69 @@ const PURCHASE_BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
 const PURCHASE_BILL_NUMBER_MESSAGE =
   'Bill number must be 1-16 characters, start with A-Z or 1-9, and only contain letters, numbers, / or -.';
 
+type PurchaseInputLine = Record<string, any> & {
+  quantity: number;
+  unit_price: number;
+  gst_rate: number;
+};
+
+export function normalizePurchaseItems(items: unknown, isGstInvoice: boolean): PurchaseInputLine[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('items are required');
+  }
+
+  return items.map((raw: any, index) => {
+    const quantity = Math.round(Number(raw?.quantity) * 10_000) / 10_000;
+    const unitPrice = Math.round(Number(raw?.unit_price));
+    const gstRate = isGstInvoice ? Number(raw?.gst_rate || 0) : 0;
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error(`Item ${index + 1} quantity must be greater than zero`);
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      throw new Error(`Item ${index + 1} rate cannot be negative`);
+    }
+    if (!Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100) {
+      throw new Error(`Item ${index + 1} GST rate must be between 0 and 100`);
+    }
+
+    return { ...raw, quantity, unit_price: unitPrice, gst_rate: gstRate };
+  });
+}
+
+function calendarYearKey(dateValue?: unknown) {
+  const parsed = dateValue ? new Date(String(dateValue)) : new Date();
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return String(date.getUTCFullYear());
+}
+
+async function nextPurchaseSequence(
+  db: Queryable,
+  companyId: string,
+  documentType: 'purchase_order' | 'purchase_bill',
+  year: string,
+  existingTable: 'purchase_orders' | 'purchase_invoices',
+  numberColumn: 'po_number' | 'bill_number',
+) {
+  const maxResult = await db.query(
+    `SELECT COALESCE(MAX((substring(${numberColumn} FROM '([0-9]+)$'))::bigint), 0)::bigint AS last_number
+     FROM ${existingTable}
+     WHERE company_id = $1 AND EXTRACT(YEAR FROM created_at)::text = $2`,
+    [companyId, year],
+  );
+  const existingMax = Number(maxResult.rows[0]?.last_number || 0);
+  const sequence = await db.query(
+    `INSERT INTO document_sequences (company_id, document_type, financial_year, last_number)
+     VALUES ($1,$2,$3,$4 + 1)
+     ON CONFLICT (company_id, document_type, financial_year)
+     DO UPDATE SET last_number = GREATEST(document_sequences.last_number, $4) + 1,
+                   updated_at = NOW()
+     RETURNING last_number`,
+    [companyId, documentType, year, existingMax],
+  );
+  return Number(sequence.rows[0].last_number);
+}
+
 function validatePurchaseBillNumber(value: unknown): string {
   const s = String(value ?? '').trim();
   if (!PURCHASE_BILL_NUMBER_PATTERN.test(s)) {
@@ -58,36 +121,31 @@ async function resolvePurchaseBillNumber(
     return billNumber;
   }
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const cntRes = await db.query(
-      `SELECT COUNT(*) FROM purchase_invoices WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
-      [companyId],
-    );
-    const seq = parseInt(cntRes.rows[0].count) + 1 + attempt;
-    const yr = new Date().getFullYear().toString().slice(-2);
-    const billNumber = validatePurchaseBillNumber(`BILL/${yr}/${String(seq).padStart(4, '0')}`);
-    try {
-      await assertPurchaseBillNumberAvailable(db, companyId, billNumber, excludeBillId);
-      return billNumber;
-    } catch (err: any) {
-      if (attempt === 4 || !/already used/i.test(err?.message || '')) throw err;
-    }
-  }
-
-  throw new Error('Could not generate a unique bill number');
+  const year = calendarYearKey();
+  const seq = await nextPurchaseSequence(
+    db,
+    companyId,
+    'purchase_bill',
+    year,
+    'purchase_invoices',
+    'bill_number',
+  );
+  return validatePurchaseBillNumber(`BILL/${year.slice(-2)}/${String(seq).padStart(4, '0')}`);
 }
 
-async function generatePONumber(companyId: string): Promise<string> {
-  const prefixRes = await query('SELECT po_prefix FROM companies WHERE id = $1', [companyId]);
+async function generatePONumber(db: Queryable, companyId: string, poDate?: unknown): Promise<string> {
+  const prefixRes = await db.query('SELECT po_prefix FROM companies WHERE id = $1', [companyId]);
   const prefix = prefixRes.rows[0]?.po_prefix || 'PO';
-
-  const countRes = await query(
-    `SELECT COUNT(*) as count FROM purchase_orders WHERE company_id = $1 AND created_at >= date_trunc('year', now())`,
-    [companyId]
+  const year = calendarYearKey(poDate);
+  const nextSeq = await nextPurchaseSequence(
+    db,
+    companyId,
+    'purchase_order',
+    year,
+    'purchase_orders',
+    'po_number',
   );
-  const nextSeq = parseInt(countRes.rows[0].count) + 1;
-  const yearStr = new Date().getFullYear().toString().slice(-2);
-  
+  const yearStr = year.slice(-2);
   return `${prefix}/${yearStr}/${String(nextSeq).padStart(4, '0')}`;
 }
 
@@ -98,18 +156,19 @@ export async function createPurchaseOrder(req: Request, res: Response) {
     const d = req.body;
 
     const result = await withTransaction(async (client) => {
-      const poNumber = await generatePONumber(companyId);
+      const poNumber = await generatePONumber(client, companyId, d.po_date);
 
-      const pRes = await client.query('SELECT state_code, name FROM parties WHERE id = $1', [d.party_id]);
+      const pRes = await client.query(
+        'SELECT state_code, name FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+        [d.party_id, companyId],
+      );
       if (!pRes.rows.length) throw new Error('Supplier not found');
 
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
       const isGstInvoice = d.is_gst_invoice !== false;
 
-      const itemsForTotals = Array.isArray(d.items)
-        ? d.items.map((item: any) => ({ ...item, gst_rate: isGstInvoice ? item.gst_rate : 0 }))
-        : [];
+      const itemsForTotals = normalizePurchaseItems(d.items, isGstInvoice);
       const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
       const poRes = await client.query(
@@ -129,9 +188,8 @@ export async function createPurchaseOrder(req: Request, res: Response) {
 
       const poId = poRes.rows[0].id;
 
-      for (const item of d.items) {
-        const itemForTax = { ...item, gst_rate: isGstInvoice ? item.gst_rate : 0 };
-        const itemTax = calculateInvoiceTotals([itemForTax], gstType, 'none', 0);
+      for (const item of itemsForTotals) {
+        const itemTax = calculateInvoiceTotals([item], gstType, 'none', 0);
         await client.query(
           `INSERT INTO purchase_order_items (
             po_id, item_id, item_name, hsn_code, quantity_ordered, unit_price,
@@ -140,7 +198,7 @@ export async function createPurchaseOrder(req: Request, res: Response) {
           [
             poId, item.item_id, item.item_name || 'Item', item.hsn_code,
             item.quantity, item.unit_price, itemTax.totalDiscountLineLevel,
-            isGstInvoice ? item.gst_rate || 0 : 0, itemTax.totalCgst, itemTax.totalSgst, itemTax.totalIgst,
+            item.gst_rate, itemTax.totalCgst, itemTax.totalSgst, itemTax.totalIgst,
             itemTax.totalAmount
           ]
         );
@@ -153,7 +211,8 @@ export async function createPurchaseOrder(req: Request, res: Response) {
     res.status(201).json(success(result));
   } catch (err: any) {
     console.error('purchaseController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    const status = /items are required|quantity|rate|discount|GST rate|Supplier not found/i.test(err?.message || '') ? 400 : 500;
+    res.status(status).json(error(err.message));
   }
 }
 
@@ -204,12 +263,17 @@ export async function updatePurchaseOrder(req: Request, res: Response) {
       if (!statusRes.rows.length) throw new Error('PO not found');
       if (statusRes.rows[0].status !== 'draft') throw new Error('Only draft POs can be edited');
 
-      const pRes = await client.query('SELECT state_code, name FROM parties WHERE id = $1', [d.party_id]);
+      const pRes = await client.query(
+        'SELECT state_code, name FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+        [d.party_id, companyId],
+      );
       if (!pRes.rows.length) throw new Error('Supplier not found');
 
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
-      const totals = calculateInvoiceTotals(d.items, gstType, 'none', 0);
+      const isGstInvoice = d.is_gst_invoice !== false;
+      const normalizedItems = normalizePurchaseItems(d.items, isGstInvoice);
+      const totals = calculateInvoiceTotals(normalizedItems, gstType, 'none', 0);
 
       await client.query(
         `UPDATE purchase_orders SET
@@ -238,7 +302,7 @@ export async function updatePurchaseOrder(req: Request, res: Response) {
 
       await client.query('DELETE FROM purchase_order_items WHERE po_id = $1', [poId]);
 
-      for (const item of d.items) {
+      for (const item of normalizedItems) {
         const itemTax = calculateInvoiceTotals([item], gstType, 'none', 0);
         await client.query(
           `INSERT INTO purchase_order_items (
@@ -276,7 +340,11 @@ export async function updatePurchaseOrder(req: Request, res: Response) {
 
 export async function confirmPurchaseOrder(req: Request, res: Response) {
   try {
-    await query("UPDATE purchase_orders SET status = 'confirmed' WHERE id = $1 AND status = 'draft'", [req.params.id]);
+    const result = await query(
+      "UPDATE purchase_orders SET status = 'confirmed' WHERE id = $1 AND company_id = $2 AND status = 'draft' RETURNING id",
+      [req.params.id, req.user!.company_id],
+    );
+    if (!result.rows.length) return res.status(409).json(error('Purchase order not found or is not in draft status'));
     res.json(success({ message: 'PO Confirmed' }));
   } catch (err: any) {
     console.error('purchaseController error:', err.message, err.detail, err.position);
@@ -286,7 +354,11 @@ export async function confirmPurchaseOrder(req: Request, res: Response) {
 
 export async function cancelPurchaseOrder(req: Request, res: Response) {
   try {
-    await query("UPDATE purchase_orders SET status = 'cancelled' WHERE id = $1 AND status IN ('draft','confirmed')", [req.params.id]);
+    const result = await query(
+      "UPDATE purchase_orders SET status = 'cancelled' WHERE id = $1 AND company_id = $2 AND status IN ('draft','confirmed') RETURNING id",
+      [req.params.id, req.user!.company_id],
+    );
+    if (!result.rows.length) return res.status(409).json(error('Purchase order not found or cannot be cancelled'));
     res.json(success({ message: 'PO Cancelled' }));
   } catch (err: any) {
     console.error('purchaseController error:', err.message, err.detail, err.position);
@@ -300,6 +372,9 @@ export async function receiveStock(req: Request, res: Response) {
     const companyId = req.user!.company_id;
     const { id } = req.params;
     const d = req.body; // { bill_number, bill_date, items: [{ po_item_id, quantity_received, unit_price, ...}]}
+    if (!Array.isArray(d.items) || d.items.length === 0) {
+      return res.status(400).json(error('items are required'));
+    }
 
     const result = await withTransaction(async (client) => {
       const poRes = await client.query('SELECT * FROM purchase_orders WHERE id = $1 AND company_id = $2 FOR UPDATE', [id, companyId]);
@@ -319,6 +394,8 @@ export async function receiveStock(req: Request, res: Response) {
         poItemsRes.rows.map((r: Record<string, unknown>) => [String(r.id), r]),
       );
 
+      const receivedItems: Array<Record<string, any>> = [];
+
       const itemsForTotals: Array<{
         unit_price: number;
         quantity: number;
@@ -327,16 +404,30 @@ export async function receiveStock(req: Request, res: Response) {
         discount_value: number;
       }> = [];
       for (const reqItem of d.items as Array<Record<string, unknown>>) {
-        const qty = Number(reqItem.quantity_received);
-        if (!qty || qty <= 0) continue;
+        const rawQty = Number(reqItem.quantity_received);
+        if (!Number.isFinite(rawQty) || rawQty < 0) {
+          throw new Error('Received quantity cannot be negative');
+        }
+        const qty = Math.round(rawQty * 10_000) / 10_000;
+        if (qty === 0) continue;
         const poItem = poItemById.get(String(reqItem.po_item_id));
         if (!poItem) throw new Error('PO line not found for one or more items');
-        const unitPricePaise =
-          Number(reqItem.unit_price) > 0 ? Number(reqItem.unit_price) : Number(poItem.unit_price) || 0;
+        const requestedPrice = String(reqItem.unit_price ?? '').trim();
+        const unitPricePaise = requestedPrice
+          ? Math.round(Number(requestedPrice))
+          : Math.round(Number(poItem.unit_price) || 0);
+        const gstRate = isGstInvoice ? Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0) : 0;
+        if (!Number.isFinite(unitPricePaise) || unitPricePaise < 0) {
+          throw new Error('Received item rate cannot be negative');
+        }
+        if (!Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100) {
+          throw new Error('Received item GST rate must be between 0 and 100');
+        }
+        receivedItems.push({ ...reqItem, quantity_received: qty, unit_price: unitPricePaise, gst_rate: gstRate });
         itemsForTotals.push({
           unit_price: unitPricePaise,
           quantity: qty,
-          gst_rate: isGstInvoice ? Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0) : 0,
+          gst_rate: gstRate,
           discount_type: 'none',
           discount_value: 0,
         });
@@ -379,9 +470,7 @@ export async function receiveStock(req: Request, res: Response) {
       // 3. Process each received item
       let fullyReceived = true;
 
-      for (const reqItem of d.items) {
-        if (!reqItem.quantity_received || reqItem.quantity_received <= 0) continue;
-
+      for (const reqItem of receivedItems) {
         const poItem = poItemById.get(String(reqItem.po_item_id));
         if (!poItem) throw new Error('PO Item reference missing');
 
@@ -395,12 +484,11 @@ export async function receiveStock(req: Request, res: Response) {
         }
         if (newReceived < ordered) fullyReceived = false;
 
-        const unitPricePaise =
-          Number(reqItem.unit_price) > 0 ? Number(reqItem.unit_price) : Number(poItem.unit_price) || 0;
+        const unitPricePaise = reqItem.unit_price;
         const lineForTax = {
           unit_price: unitPricePaise,
           quantity: Number(reqItem.quantity_received),
-          gst_rate: isGstInvoice ? Number(reqItem.gst_rate ?? poItem.gst_rate ?? 0) : 0,
+          gst_rate: reqItem.gst_rate,
           discount_type: 'none' as const,
           discount_value: 0,
         };
@@ -495,7 +583,7 @@ export async function receiveStock(req: Request, res: Response) {
   } catch (err: any) {
     console.error('purchaseController error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to receive stock';
-    const status = /Bill number|PO not found|Cannot receive|No quantities|not found/i.test(msg) ? 400 : 500;
+    const status = /Bill number|PO not found|Cannot receive|No quantities|not found|items are required|quantity|rate|GST rate/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -512,16 +600,18 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
     const result = await withTransaction(async (client) => {
       const billNumber = await resolvePurchaseBillNumber(client, companyId, d.bill_number);
 
-      const pRes = await client.query('SELECT state_code FROM parties WHERE id = $1', [d.party_id]);
+      const pRes = await client.query(
+        'SELECT state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+        [d.party_id, companyId],
+      );
       if (!pRes.rows.length) throw new Error('Party not found');
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
       const isGst = d.is_gst_invoice !== false;
 
-      const itemsForTotals = d.items.map((it: any) => ({
-        unit_price: Number(it.unit_price) || 0,
-        quantity: Number(it.quantity) || 0,
-        gst_rate: isGst ? Number(it.gst_rate) || 0 : 0,
+      const normalizedItems = normalizePurchaseItems(d.items, isGst);
+      const itemsForTotals = normalizedItems.map((it) => ({
+        ...it,
         discount_type: 'none' as const,
         discount_value: 0,
       }));
@@ -554,9 +644,9 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       );
       const inv = invRes.rows[0];
 
-      for (const item of d.items) {
+      for (const item of normalizedItems) {
         const lineTotals = calculateInvoiceTotals(
-          [{ unit_price: Number(item.unit_price)||0, quantity: Number(item.quantity)||0, gst_rate: isGst ? Number(item.gst_rate)||0 : 0, discount_type: 'none' as const, discount_value: 0 }],
+          [{ unit_price: item.unit_price, quantity: item.quantity, gst_rate: item.gst_rate, discount_type: 'none' as const, discount_value: 0 }],
           gstType, 'none', 0,
         );
         await client.query(
@@ -567,8 +657,8 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
           [
             inv.id, item.item_id || null, item.item_name || 'Item',
             item.hsn_code || null, item.unit || 'PCS',
-            Number(item.quantity)||0, Number(item.unit_price)||0,
-            isGst ? Number(item.gst_rate)||0 : 0,
+            item.quantity, item.unit_price,
+            item.gst_rate,
             lineTotals.totalCgst, lineTotals.totalSgst, lineTotals.totalIgst, lineTotals.totalAmount,
           ],
         );
@@ -583,7 +673,7 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
                avg_cost_price = CASE WHEN item_stock.quantity + EXCLUDED.quantity > 0
                  THEN ROUND(((item_stock.quantity * item_stock.avg_cost_price) + (EXCLUDED.quantity * EXCLUDED.avg_cost_price)) / (item_stock.quantity + EXCLUDED.quantity))
                  ELSE EXCLUDED.avg_cost_price END`,
-            [companyId, item.item_id, d.godown_id, Number(item.quantity)||0, Number(item.unit_price)||0],
+            [companyId, item.item_id, d.godown_id, item.quantity, item.unit_price],
           );
         }
       }
@@ -606,7 +696,7 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
   } catch (err: any) {
     console.error('createPurchaseInvoiceDirect error:', err.message);
     const msg = err?.message || 'Failed to create bill';
-    const status = /Bill number|party_id|bill_date|items are required|Party not found/i.test(msg) ? 400 : 500;
+    const status = /Bill number|party_id|bill_date|items are required|Party not found|quantity|rate|GST rate/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -738,10 +828,9 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
       const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
       const isGst = d.is_gst_invoice !== false;
 
-      const itemsForTotals = d.items.map((it: any) => ({
-        unit_price: Number(it.unit_price) || 0,
-        quantity: Number(it.quantity) || 0,
-        gst_rate: isGst ? Number(it.gst_rate) || 0 : 0,
+      const normalizedItems = normalizePurchaseItems(d.items, isGst);
+      const itemsForTotals = normalizedItems.map((it) => ({
+        ...it,
         discount_type: 'none' as const,
         discount_value: 0,
       }));
@@ -795,13 +884,13 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
       );
 
       const godownId = d.godown_id || null;
-      for (const item of d.items) {
+      for (const item of normalizedItems) {
         const lineTotals = calculateInvoiceTotals(
           [
             {
-              unit_price: Number(item.unit_price) || 0,
-              quantity: Number(item.quantity) || 0,
-              gst_rate: isGst ? Number(item.gst_rate) || 0 : 0,
+              unit_price: item.unit_price,
+              quantity: item.quantity,
+              gst_rate: item.gst_rate,
               discount_type: 'none' as const,
               discount_value: 0,
             },
@@ -821,9 +910,9 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
             item.item_name || item.name || 'Item',
             item.hsn_code || null,
             item.unit || 'PCS',
-            Number(item.quantity) || 0,
-            Number(item.unit_price) || 0,
-            isGst ? Number(item.gst_rate) || 0 : 0,
+            item.quantity,
+            item.unit_price,
+            item.gst_rate,
             lineTotals.totalCgst,
             lineTotals.totalSgst,
             lineTotals.totalIgst,
@@ -840,7 +929,7 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
                avg_cost_price = CASE WHEN item_stock.quantity + EXCLUDED.quantity > 0
                  THEN ROUND(((item_stock.quantity * item_stock.avg_cost_price) + (EXCLUDED.quantity * EXCLUDED.avg_cost_price)) / (item_stock.quantity + EXCLUDED.quantity))
                  ELSE EXCLUDED.avg_cost_price END`,
-            [companyId, item.item_id, godownId, Number(item.quantity) || 0, Number(item.unit_price) || 0],
+            [companyId, item.item_id, godownId, item.quantity, item.unit_price],
           );
         }
       }
@@ -876,7 +965,7 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('updatePurchaseInvoice error:', err.message);
     const msg = err?.message || 'Failed to update bill';
-    const status = /not found|Cannot edit|No stock|Party not found|items are required|Bill number/i.test(msg) ? 400 : 500;
+    const status = /not found|Cannot edit|No stock|Party not found|items are required|Bill number|quantity|rate|GST rate/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }

@@ -80,44 +80,27 @@ interface Props {
   showTotals?: boolean;
 }
 
-function calcLine(item: VyaparLineItem, isGst: boolean) {
-  const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
-  const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;
-  const totalRate = gstRate + cessRate;
-  const qty = Number(item.quantity) || 0;
-  const unitPrice = Number(item.unit_price) || 0;
-  const discountAmount = Number(item.discount_amount) || 0;
-
-  const isInclusive = item.price_includes_tax === true;
-
-  let gross = 0;
-  let taxable = 0;
-  let total = 0;
-  let totalTax = 0;
-
-  if (isInclusive) {
-    const subtotal_row = unitPrice * qty;
-    total = Math.max(0, subtotal_row - discountAmount);
-    taxable = total / (1 + totalRate / 100);
-    totalTax = total - taxable;
-    gross = subtotal_row / (1 + totalRate / 100);
-  } else {
-    const subtotal_row = unitPrice * qty;
-    gross = subtotal_row;
-    taxable = Math.max(0, subtotal_row - discountAmount);
-    totalTax = (taxable * totalRate) / 100;
-    total = taxable + totalTax;
-  }
-
-  const adjustedCess = totalTax * (cessRate / (totalRate || 1));
-  const adjustedGst = totalTax - adjustedCess;
-
+function calcLine(
+  item: VyaparLineItem,
+  isGst: boolean,
+  pricingMode: 'inclusive' | 'exclusive',
+  isInterstate: boolean,
+) {
+  const totals = computeTotals(
+    [item],
+    isGst,
+    false,
+    pricingMode,
+    'none',
+    0,
+    isInterstate,
+  );
   return {
-    gross: Math.round(gross),
-    taxable: Math.round(taxable),
-    gst: Math.round(adjustedGst),
-    cess: Math.round(adjustedCess),
-    total: Math.round(total)
+    gross: totals.subtotal,
+    taxable: totals.taxable,
+    gst: totals.tax,
+    cess: totals.cess,
+    total: totals.total,
   };
 }
 
@@ -184,7 +167,7 @@ export default function VyaparLineItems({
   quantityDecimalPlaces = 2,
   currencyCode = 'INR',
   customFields = [],
-  pricingMode: _pricingMode = 'exclusive',
+  pricingMode = 'exclusive',
   showTotals = true,
 }: Props) {
   const { options: taxOptions, usingFallback: usingDefaultTaxOptions } = useTaxOptions();
@@ -457,7 +440,7 @@ export default function VyaparLineItems({
   // Totals
   const totals = items.reduce(
     (acc, item) => {
-      const c = calcLine(item, isGst);
+      const c = calcLine(item, isGst, pricingMode, isInterstate);
       acc.subtotal += c.taxable;
       acc.tax += c.gst;
       acc.cess += c.cess;
@@ -610,7 +593,7 @@ export default function VyaparLineItems({
             </thead>
             <tbody>
               {items.map((item, idx) => {
-                const c = calcLine(item, isGst);
+                const c = calcLine(item, isGst, pricingMode, isInterstate);
                 const expanded = expandedRows.has(idx);
                 const gstRate = isGst ? Number(item.gst_rate) || 0 : 0;
                 const cessRate = isGst ? Number(item.cess_rate) || 0 : 0;

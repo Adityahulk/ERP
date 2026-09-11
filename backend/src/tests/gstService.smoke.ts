@@ -114,4 +114,52 @@ assert.equal(inclusiveDiscounted.lines.reduce((sum, line) => sum + line.totalDis
 assert.equal(inclusiveDiscounted.lines.reduce((sum, line) => sum + line.taxableAmount, 0), inclusiveDiscounted.totalTaxable);
 assert.equal(inclusiveDiscounted.lines.reduce((sum, line) => sum + line.totalAmount, 0), inclusiveDiscounted.totalAmount);
 
-console.log('GST components, decimal quantities, global discounts, and configurable round-off passed.');
+const inclusivePercentDiscountInExclusiveInvoice = calculateInvoiceTotals(
+  [{
+    unit_price: 11_800,
+    quantity: 2,
+    discount_type: 'percent',
+    discount_value: 10,
+    gst_rate: 18,
+    price_includes_tax: true,
+  }],
+  'intra',
+  'none',
+  0,
+  0,
+  false,
+  'exclusive',
+);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.subtotal, 20_000);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.totalDiscount, 2_000);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.totalTaxable, 18_000);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.totalCgst, 1_620);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.totalSgst, 1_620);
+assert.equal(inclusivePercentDiscountInExclusiveInvoice.totalAmount, 21_240);
+
+const roundedQuantity = calculateInvoiceTotals(
+  [{ unit_price: 10_000, quantity: 1.123456, gst_rate: 0 }],
+  'intra',
+  'none',
+  0,
+  0,
+  false,
+  'exclusive',
+);
+assert.equal(roundedQuantity.subtotal, 11_235);
+assert.throws(
+  () => calculateInvoiceTotals([{ unit_price: 10_000, quantity: 0, gst_rate: 0 }], 'intra'),
+  /quantity must be greater than zero/,
+);
+assert.throws(
+  () => calculateInvoiceTotals([{
+    unit_price: 10_000,
+    quantity: 1,
+    discount_type: 'flat',
+    discount_value: 10_001,
+    gst_rate: 0,
+  }], 'intra'),
+  /discount cannot be negative or exceed/,
+);
+
+console.log('GST components, decimal quantities, discounts, and configurable round-off passed.');

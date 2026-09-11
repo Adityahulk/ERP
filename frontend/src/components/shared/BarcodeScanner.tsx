@@ -48,6 +48,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan }: BarcodeScannerProps)
     if (!isOpen) return;
 
     let cancelled = false;
+    const reader = codeReader.current;
 
     const openCamera = (video: HTMLVideoElement) => {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -66,12 +67,12 @@ export function BarcodeScanner({ isOpen, onClose, onScan }: BarcodeScannerProps)
         return;
       }
 
-      void codeReader.current
+      void reader
         .decodeFromVideoDevice(null, video, (result, err) => {
           if (cancelled) return;
           if (result) {
             onScanRef.current(result.getText());
-            void codeReader.current.reset();
+            void reader.reset();
             onCloseRef.current();
           }
           if (err && !(err instanceof NotFoundException)) {
@@ -97,7 +98,7 @@ export function BarcodeScanner({ isOpen, onClose, onScan }: BarcodeScannerProps)
     return () => {
       cancelled = true;
       window.clearTimeout(t);
-      codeReader.current.reset();
+      reader.reset();
     };
   }, [isOpen]);
 

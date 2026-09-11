@@ -26,7 +26,7 @@ async function applyOpeningStock(
     notes?: string;
   }
 ) {
-  const qty = Number(args.quantity || 0);
+  const qty = Math.round(Number(args.quantity || 0) * 10_000) / 10_000;
   if (qty <= 0) return;
   const unitCost = Number(args.unitCost || 0);
 
@@ -70,7 +70,7 @@ async function adjustOpeningStock(
     notes?: string;
   }
 ) {
-  const delta = Math.trunc(Number(args.delta || 0));
+  const delta = Math.round(Number(args.delta || 0) * 10_000) / 10_000;
   if (delta === 0) return;
   const unitCost = Number(args.unitCost || 0);
 
@@ -694,6 +694,25 @@ export async function updateItem(req: Request, res: Response) {
     }
     if (data.sku !== undefined) data.sku = String(data.sku || '').trim() || null;
     if (data.barcode !== undefined) data.barcode = String(data.barcode || '').trim() || null;
+    if (data.gst_rate !== undefined && !isValidGstRate(data.gst_rate)) {
+      return res.status(400).json(error('GST rate must be between 0 and 100 with at most three decimal places'));
+    }
+    if (data.cess_rate !== undefined && !isValidGstRate(data.cess_rate)) {
+      return res.status(400).json(error('Cess rate must be between 0 and 100 with at most three decimal places'));
+    }
+    for (const field of ['purchase_price', 'selling_price', 'opening_stock_value'] as const) {
+      if (data[field] !== undefined && (!Number.isFinite(Number(data[field])) || Number(data[field]) < 0 || !Number.isInteger(Number(data[field])))) {
+        return res.status(400).json(error(`${field.replaceAll('_', ' ')} must be a non-negative amount in paise`));
+      }
+    }
+    for (const field of ['opening_stock', 'reorder_point', 'max_stock_level'] as const) {
+      if (data[field] !== undefined && (!Number.isFinite(Number(data[field])) || Number(data[field]) < 0)) {
+        return res.status(400).json(error(`${field.replaceAll('_', ' ')} cannot be negative`));
+      }
+    }
+    if (data.opening_stock !== undefined) {
+      data.opening_stock = Math.round(Number(data.opening_stock) * 10_000) / 10_000;
+    }
 
     const oldRes = await query('SELECT * FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false', [id, companyId]);
     if (!oldRes.rows.length) return res.status(404).json(error('Item not found'));

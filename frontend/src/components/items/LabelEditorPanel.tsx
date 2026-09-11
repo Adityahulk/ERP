@@ -18,6 +18,12 @@ import {
 import { TEMPLATES } from '@/templates/labelTemplates';
 import { LabelRenderer } from './LabelRenderer';
 import * as qz from 'qz-tray';
+import {
+  LEGACY_STORAGE_KEYS,
+  readStorageWithLegacy,
+  STORAGE_KEYS,
+  writeStorageWithLegacyCleanup,
+} from '@/lib/storageKeys';
 
 import type { LabelField } from '@/types/label';
 
@@ -178,6 +184,13 @@ export function LabelEditorPanel() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setSelectedPrinter(readStorageWithLegacy(
+      STORAGE_KEYS.directPrinterName,
+      LEGACY_STORAGE_KEYS.directPrinterName,
+    ) || '');
+  }, []);
+
+  useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
@@ -234,11 +247,27 @@ export function LabelEditorPanel() {
       setQzConnected(true);
       const list = await qz.printers.find();
       setPrinters(list);
-      if (list.length > 0) setSelectedPrinter((prev) => prev || list[0]);
-      toast.success('Connected to QZ Tray!');
+      const systemDefault = await qz.printers.getDefault().catch(() => '');
+      const savedPrinter = readStorageWithLegacy(
+        STORAGE_KEYS.directPrinterName,
+        LEGACY_STORAGE_KEYS.directPrinterName,
+      ) || '';
+      const printer = [selectedPrinter, savedPrinter, systemDefault, list[0]]
+        .find((candidate) => candidate && list.includes(candidate)) || '';
+      setSelectedPrinter(printer);
+      if (printer) {
+        writeStorageWithLegacyCleanup(
+          STORAGE_KEYS.directPrinterName,
+          printer,
+          LEGACY_STORAGE_KEYS.directPrinterName,
+        );
+      }
+      if (printer) toast.success(`Printer ready: ${printer}`);
+      return printer;
     } catch (err: any) {
       toast.error('Failed to connect to QZ Tray. Is it installed and running?');
       setQzConnected(false);
+      return '';
     } finally {
       setQzLoading(false);
     }
@@ -256,16 +285,21 @@ export function LabelEditorPanel() {
     });
 
   const handleDirectPrint = async () => {
-    if (!selectedPrinter) { toast.error('Select a printer first.'); return; }
     try {
       setDirectPrinting(true);
-      if (!qz.websocket.isActive()) { await qz.websocket.connect(); setQzConnected(true); }
+      const printer = qzConnected && qz.websocket.isActive() && selectedPrinter
+        ? selectedPrinter
+        : await handleConnectQz();
+      if (!printer) {
+        toast.error('No physical printer was found. Install its driver, then start QZ Tray.');
+        return;
+      }
       const res = await api.post('/labels/bulk', buildPayload(), { responseType: 'blob' });
       const base64Pdf = await blobToBase64(res.data);
-      await qz.print(qz.configs.create(selectedPrinter), [{ type: 'pixel', format: 'pdf', flavor: 'base64', data: base64Pdf }]);
-      toast.success(`Sent to ${selectedPrinter}!`);
+      await qz.print(qz.configs.create(printer), [{ type: 'pixel', format: 'pdf', flavor: 'base64', data: base64Pdf }]);
+      toast.success(`Sent directly to ${printer}`);
     } catch (err: any) {
-      toast.error('Direct print failed: ' + (err.message || err));
+      toast.error(`Direct print failed: ${err.message || err}. Check that QZ Tray and the printer are online.`);
     } finally {
       setDirectPrinting(false);
     }
@@ -474,36 +508,38 @@ export function LabelEditorPanel() {
               : <><Download className="w-3 h-3" /> Download PDF</>}
           </button>
 
-          {qzConnected ? (
+          {qzConnected && printers.length > 0 && (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
               <select
                 value={selectedPrinter}
-                onChange={(e) => setSelectedPrinter(e.target.value)}
+                onChange={(e) => {
+                  const printer = e.target.value;
+                  setSelectedPrinter(printer);
+                  writeStorageWithLegacyCleanup(
+                    STORAGE_KEYS.directPrinterName,
+                    printer,
+                    LEGACY_STORAGE_KEYS.directPrinterName,
+                  );
+                }}
                 className="h-6 bg-transparent border-0 text-xs text-emerald-800 font-medium focus:outline-none min-w-[120px]"
                 aria-label="Select printer"
               >
                 {printers.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
-              <button
-                onClick={handleDirectPrint}
-                disabled={directPrinting}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-60"
-              >
-                <Printer className="w-3 h-3" />
-                {directPrinting ? '…' : 'Print'}
-              </button>
             </div>
-          ) : (
-            <div className="flex flex-col items-end gap-1">
-              <button
-                onClick={handleConnectQz}
-                disabled={qzLoading}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 transition-colors disabled:opacity-60"
-              >
-                <Printer className="w-3 h-3" />
-                {qzLoading ? 'Connecting…' : 'Connect Printer'}
-              </button>
+          )}
+          <div className="flex flex-col items-end gap-1">
+            <button
+              onClick={handleDirectPrint}
+              disabled={directPrinting || qzLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60"
+              title="Send this label directly to the saved or default system printer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              {directPrinting || qzLoading ? 'Printing…' : 'Print'}
+            </button>
+            {!qzConnected && (
               <a
                 href="https://qz.io/download/"
                 target="_blank"
@@ -513,8 +549,8 @@ export function LabelEditorPanel() {
               >
                 🖨 Download QZ Tray driver (required for direct print)
               </a>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -839,7 +875,7 @@ export function LabelEditorPanel() {
                   <Download className="w-3 h-3" /> Download
                 </button>
               </div>
-              <iframe title="Label PDF preview" src={previewUrl} className="w-full bg-white" style={{ height: '300px' }} />
+              <iframe title="Label PDF preview" src={`${previewUrl}#toolbar=0&navpanes=0`} className="w-full bg-white" style={{ height: '300px' }} />
             </div>
           )}
 

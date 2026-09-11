@@ -912,6 +912,35 @@ export default function InvoiceCreate() {
       toast.error('Every item quantity must be greater than zero');
       return false;
     }
+    if (items.some((item) => !Number.isFinite(Number(item.unit_price)) || Number(item.unit_price) < 0)) {
+      toast.error('Item rates cannot be negative');
+      return false;
+    }
+    if (items.some((item) => {
+      const discount = Number(item.discount_amount);
+      const lineAmount = Number(item.unit_price) * Number(item.quantity);
+      return !Number.isFinite(discount) || discount < 0 || discount > lineAmount;
+    })) {
+      toast.error('Item discount cannot be negative or exceed the line amount');
+      return false;
+    }
+    if (isGstInvoice && items.some((item) => {
+      const gstRate = Number(item.gst_rate || 0);
+      const cessRate = Number(item.cess_rate || 0);
+      return !Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100 ||
+        !Number.isFinite(cessRate) || cessRate < 0 || cessRate > 100;
+    })) {
+      toast.error('GST and cess rates must be between 0 and 100');
+      return false;
+    }
+    if (invoiceDiscountType === 'percent' && (!Number.isFinite(invoiceDiscountValue) || invoiceDiscountValue < 0 || invoiceDiscountValue > 100)) {
+      toast.error('Invoice discount percentage must be between 0 and 100');
+      return false;
+    }
+    if (invoiceDiscountType === 'flat' && (!Number.isFinite(invoiceDiscountValue) || invoiceDiscountValue < 0)) {
+      toast.error('Invoice discount cannot be negative');
+      return false;
+    }
     if (paymentRows.some((row) => !Number.isFinite(Number(row.amount)) || Number(row.amount) < 0)) {
       toast.error('Payment amounts cannot be negative');
       return false;
