@@ -610,13 +610,25 @@ const DEFAULT_PRINT_SETTINGS = {
     show_date_time: true,
     show_bill_no: true,
     show_logo: true,
+    show_party: true,
+    show_item_amount: true,
+    show_item_rate: false,
+    show_subtotal: true,
+    show_discount: true,
     show_tax_columns: false,
+    show_round_off: true,
     show_payment_details: true,
     card_auth_code_override: '',
     card_last_four_override: '',
     barcode_or_qr: 'barcode',
     return_policy: 'Items can be returned within 7 days in original condition.',
     show_footer_thank_you: true,
+    cashier_show_rate: true,
+    cashier_show_discount: true,
+    cashier_show_tax: true,
+    cashier_show_stock: true,
+    cashier_show_line_total: true,
+    cashier_show_bill_breakdown: true,
     enable_refund_layout: true,
     enable_deposit_layout: false,
     deposit_account_details: '',
@@ -1717,7 +1729,7 @@ export async function generateThermalReceipt(
   invoice: any,
   company: any,
   items: any[],
-  width: 58 | 80 | 100 = 80,
+  width = 80,
   logoSrc?: string,
   signatureSrc?: string,
   upiQr?: string,
@@ -1727,7 +1739,8 @@ export async function generateThermalReceipt(
     : null;
   const party = partyRes?.rows[0] || null;
 
-  const thermalWidth = width === 58 ? '58mm' : width === 100 ? '100mm' : '80mm';
+  const safeWidth = Math.max(40, Math.min(100, Number(width) || 80));
+  const thermalWidth = `${safeWidth}mm`;
   const rawPrintSettings = parseObject(company?.print_settings);
   const thermal = parseObject(rawPrintSettings.thermal);
   const customFields = parseObject(invoice?.custom_fields);
@@ -1746,6 +1759,12 @@ export async function generateThermalReceipt(
     ? ''
     : String(thermal.seller_address || company.registered_address || company.address || '');
   const showTaxColumns = thermal.show_tax_columns === true;
+  const showParty = thermal.show_party !== false;
+  const showItemAmount = thermal.show_item_amount !== false;
+  const showItemRate = thermal.show_item_rate === true;
+  const showSubtotal = thermal.show_subtotal !== false;
+  const showDiscount = thermal.show_discount !== false;
+  const showRoundOff = thermal.show_round_off !== false;
   const showPaymentDetails = thermal.show_payment_details !== false;
   const returnPolicy = String(thermal.return_policy ?? company.receipt_footer_message ?? 'Items can be returned within 7 days in original condition.');
   const showThankYou = thermal.show_footer_thank_you !== false;
@@ -1778,40 +1797,44 @@ export async function generateThermalReceipt(
   const rows = items.map((item) => {
     const quantity = Number(item.quantity || 0);
     const total = Number(item.total_amount ?? item.line_total ?? (Number(item.unit_price || 0) * quantity));
-    const meta = showTaxColumns
-      ? [item.hsn_code ? `HSN: ${escapeHtml(String(item.hsn_code))}` : '', item.gst_rate != null ? `GST: ${Number(item.gst_rate)}%` : ''].filter(Boolean).join(' | ')
-      : '';
+    const meta = [
+      showItemRate ? `Rate: ${fmtMoney(Number(item.unit_price || 0), currency)}` : '',
+      showTaxColumns && item.hsn_code ? `HSN: ${escapeHtml(String(item.hsn_code))}` : '',
+      showTaxColumns && item.gst_rate != null ? `GST: ${Number(item.gst_rate)}%` : '',
+    ].filter(Boolean).join(' | ');
     return `<div class="item-row">
-      <div class="item-main"><span>${escapeHtml(String(item.item_name || item.name || 'Item'))}</span><span>${quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}</span><span>${fmtMoney(total, currency)}</span></div>
+      <div class="item-main ${showItemAmount ? '' : 'without-amount'}"><span>${escapeHtml(String(item.item_name || item.name || 'Item'))}</span><span>${quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}</span>${showItemAmount ? `<span>${fmtMoney(total, currency)}</span>` : ''}</div>
       ${meta ? `<div class="item-meta">${meta}</div>` : ''}
     </div>`;
   }).join('');
-  const taxRows = [
+  const taxRows = showTaxColumns ? [
     ['CGST', Number(invoice.cgst_amount || 0)],
     ['SGST', Number(invoice.sgst_amount || 0)],
     ['IGST', Number(invoice.igst_amount || 0)],
     ['Cess', Number(invoice.cess_amount || 0)],
-    ['Round Off', Number(invoice.round_off_amount || 0)],
   ].filter(([, amount]) => Number(amount) !== 0)
     .map(([label, amount]) => `<div class="money-row"><span>${label}</span><span>${fmtMoney(Number(amount), currency)}</span></div>`)
-    .join('');
+    .join('') : '';
+  const roundOff = Number(invoice.round_off_amount ?? invoice.round_off ?? 0);
   const paymentMode = String(invoice.payment_mode || invoice.payment_type || 'cash');
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
     <style>
       @page{size:${thermalWidth} auto;margin:0}
       *{box-sizing:border-box}
       html,body{margin:0;width:${thermalWidth};min-width:${thermalWidth};background:#fff;color:#000}
-      body{font-family:"Courier New",ui-monospace,monospace;font-size:${width === 58 ? '9px' : '11px'};line-height:1.28}
-      main{width:100%;padding:${width === 58 ? '2mm' : '3mm'}}
-      .center{text-align:center}.strong{font-weight:700}.seller{font-size:${width === 58 ? '12px' : '14px'};font-weight:800;text-transform:uppercase}
+      body{font-family:"Courier New",ui-monospace,monospace;font-size:${safeWidth <= 58 ? '9px' : '11px'};line-height:1.28;font-weight:${thermal.text_styling_bold === false ? 400 : 600}}
+      main{width:100%;padding:${safeWidth <= 58 ? '2mm' : '3mm'}}
+      .center{text-align:center}.strong{font-weight:700}.seller{font-size:${safeWidth <= 58 ? '12px' : '14px'};font-weight:800;text-transform:uppercase}
       .small{font-size:.88em}.rule{border-top:1px dashed #000;margin:6px 0}
       .kv,.money-row{display:flex;justify-content:space-between;gap:8px}.kv span:last-child,.money-row span:last-child{text-align:right}
       .item-head,.item-main{display:grid;grid-template-columns:minmax(0,1fr) 20% 31%;gap:3px}
+      .item-head.without-amount,.item-main.without-amount{grid-template-columns:minmax(0,1fr) 25%}
       .item-head{font-weight:700}.item-head span:nth-child(2),.item-main span:nth-child(2){text-align:center}
       .item-head span:last-child,.item-main span:last-child{text-align:right}.item-row{margin:4px 0}
+      .item-head.without-amount span:last-child,.item-main.without-amount span:last-child{text-align:center}
       .item-main span:first-child{overflow-wrap:anywhere}.item-meta{font-size:.8em;padding-left:3px}
       .total{font-size:1.2em;font-weight:800;padding:2px 0}.footer{font-size:.85em;text-align:center}
-      .logo{display:block;max-width:${width === 58 ? '34mm' : '44mm'};max-height:15mm;margin:0 auto 4px;object-fit:contain;filter:grayscale(1) contrast(1.5)}
+      .logo{display:block;max-width:${safeWidth <= 58 ? '34mm' : '44mm'};max-height:15mm;margin:0 auto 4px;object-fit:contain;filter:grayscale(1) contrast(1.5)}
       .lookup{display:block;max-width:90%;max-height:${barcodeMode === 'qr' ? '24mm' : '13mm'};margin:7px auto 2px;object-fit:contain}
     </style></head><body><main>
       ${thermal.show_logo !== false && effectiveLogoSrc ? `<img class="logo" src="${effectiveLogoSrc}" alt="Logo"/>` : ''}
@@ -1819,22 +1842,23 @@ export async function generateThermalReceipt(
       <div class="rule"></div>
       ${thermal.show_bill_no === false ? '' : `<div class="kv"><span>INVOICE:</span><span class="strong">${escapeHtml(String(invoice.invoice_number || ''))}</span></div>`}
       ${thermal.show_date_time === false ? '' : `<div class="kv"><span>Date:</span><span>${escapeHtml(invoiceDate)}</span></div><div class="kv"><span>Time:</span><span>${escapeHtml(invoiceTime)}</span></div>`}
-      <div class="kv"><span>Party:</span><span>${escapeHtml(partyName)}</span></div>
+      ${showParty ? `<div class="kv"><span>Party:</span><span>${escapeHtml(partyName)}</span></div>` : ''}
       <div class="rule"></div>
-      <div class="item-head"><span>Item</span><span>Qty</span><span>Price</span></div>
+      <div class="item-head ${showItemAmount ? '' : 'without-amount'}"><span>Item</span><span>Qty</span>${showItemAmount ? '<span>Amount</span>' : ''}</div>
       <div class="rule"></div>${rows || '<div class="center">No items</div>'}<div class="rule"></div>
-      <div class="money-row"><span>Subtotal</span><span>${fmtMoney(Number(invoice.subtotal || 0), currency)}</span></div>
-      ${Number(invoice.discount_amount || 0) ? `<div class="money-row"><span>Discount</span><span>-${fmtMoney(Number(invoice.discount_amount), currency)}</span></div>` : ''}
-      ${taxRows}<div class="rule"></div>
+      ${showSubtotal ? `<div class="money-row"><span>Subtotal</span><span>${fmtMoney(Number(invoice.subtotal || 0), currency)}</span></div>` : ''}
+      ${showDiscount && Number(invoice.discount_amount || 0) ? `<div class="money-row"><span>Discount</span><span>-${fmtMoney(Number(invoice.discount_amount), currency)}</span></div>` : ''}
+      ${taxRows}${showRoundOff && roundOff !== 0 ? `<div class="money-row"><span>Round Off</span><span>${fmtMoney(roundOff, currency)}</span></div>` : ''}<div class="rule"></div>
       <div class="money-row total"><span>TOTAL</span><span>${fmtMoney(Number(invoice.total_amount || 0), currency)}</span></div>
       ${showPaymentDetails ? `<div class="rule"></div><div class="money-row"><span>Payment</span><span>${escapeHtml(paymentMode)}</span></div><div class="money-row"><span>Paid</span><span>${fmtMoney(paid, currency)}</span></div>${paymentMode.toLowerCase() === 'cash' ? `<div class="money-row"><span>Tendered</span><span>${fmtMoney(tendered, currency)}</span></div><div class="money-row"><span>Change</span><span>${fmtMoney(change, currency)}</span></div>` : ''}` : ''}
       ${returnPolicy ? `<div class="rule"></div><div class="footer">${escapeHtml(returnPolicy)}</div>` : ''}
       ${showThankYou ? '<div class="center strong" style="margin-top:6px">Thank you for your business!</div>' : ''}
       ${lookupCode ? `<img class="lookup" src="${lookupCode}" alt="Invoice lookup code"/><div class="center small">${escapeHtml(String(invoice.invoice_number || ''))}</div>` : ''}
+      ${Array.from({ length: Math.max(0, Math.min(20, Number(thermal.extra_bottom_lines || 0))) }, () => '<div style="height:5mm"></div>').join('')}
     </main></body></html>`;
 
   return withBrowserPage(async (page) => {
-    const viewportWidth = Math.ceil((width / 25.4) * 96);
+    const viewportWidth = Math.ceil((safeWidth / 25.4) * 96);
     await page.setViewport({ width: viewportWidth, height: 100, deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.evaluate(() => (globalThis as any).document.fonts?.ready);

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { formatMoney, formatDate } from '@/lib/formatters';
 import toast from 'react-hot-toast';
 import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } from '@/components/settings/PrintLayoutPreview';
-import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
+import { LEGACY_STORAGE_KEYS, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import { apiErrorMessage } from '@/lib/blobError';
 import { printPdfBlob } from '@/lib/printPdf';
 
@@ -315,10 +315,9 @@ Thank you.
       toast.error('Save the invoice first to print a thermal receipt.');
       return;
     }
-    const w = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? '58' : '80';
     const t = toast.loading('Opening receipt…');
     try {
-      const res = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
+      const res = await api.get(`/print/receipt/${id}`, { responseType: 'blob' });
       const receipt = new Blob([res.data], { type: 'application/pdf' });
       try {
         const mode = await printPdfBlob(receipt);

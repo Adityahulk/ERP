@@ -285,6 +285,10 @@ export function LabelEditorPanel() {
     });
 
   const handleDirectPrint = async () => {
+    if (!selectedItemId) {
+      toast.error('Select an item before printing its barcode label');
+      return;
+    }
     try {
       setDirectPrinting(true);
       const printer = qzConnected && qz.websocket.isActive() && selectedPrinter
@@ -508,49 +512,64 @@ export function LabelEditorPanel() {
               : <><Download className="w-3 h-3" /> Download PDF</>}
           </button>
 
-          {qzConnected && printers.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-              <select
-                value={selectedPrinter}
-                onChange={(e) => {
-                  const printer = e.target.value;
-                  setSelectedPrinter(printer);
-                  writeStorageWithLegacyCleanup(
-                    STORAGE_KEYS.directPrinterName,
-                    printer,
-                    LEGACY_STORAGE_KEYS.directPrinterName,
-                  );
-                }}
-                className="h-6 bg-transparent border-0 text-xs text-emerald-800 font-medium focus:outline-none min-w-[120px]"
-                aria-label="Select printer"
-              >
-                {printers.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-          )}
-          <div className="flex flex-col items-end gap-1">
-            <button
-              onClick={handleDirectPrint}
-              disabled={directPrinting || qzLoading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-60"
-              title="Send this label directly to the saved or default system printer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              {directPrinting || qzLoading ? 'Printing…' : 'Print'}
-            </button>
-            {!qzConnected && (
-              <a
-                href="https://qz.io/download/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-indigo-500 hover:text-indigo-700 underline underline-offset-2 leading-tight"
-                title="QZ Tray is a free local service needed for direct USB/network thermal &amp; barcode printing"
-              >
-                🖨 Download QZ Tray driver (required for direct print)
-              </a>
-            )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-b border-emerald-200 bg-emerald-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
+            <Printer className="h-4 w-4" />
           </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900">Direct barcode printing</p>
+            <p className="text-xs leading-5 text-slate-600">
+              Select an item, choose the installed label printer, then send the label without downloading a PDF.
+            </p>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+          {qzConnected && printers.length > 0 ? (
+            <select
+              value={selectedPrinter}
+              onChange={(event) => {
+                const printer = event.target.value;
+                setSelectedPrinter(printer);
+                writeStorageWithLegacyCleanup(
+                  STORAGE_KEYS.directPrinterName,
+                  printer,
+                  LEGACY_STORAGE_KEYS.directPrinterName,
+                );
+              }}
+              className="h-9 min-w-0 max-w-full rounded-md border border-emerald-300 bg-white px-3 text-xs font-medium text-slate-800 sm:max-w-[240px]"
+              aria-label="Barcode label printer"
+            >
+              {printers.map((printer) => <option key={printer} value={printer}>{printer}</option>)}
+            </select>
+          ) : (
+            <button
+              type="button"
+              onClick={handleConnectQz}
+              disabled={qzLoading}
+              className="h-9 rounded-md border border-emerald-300 bg-white px-3 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+            >
+              {qzLoading ? 'Connecting…' : 'Connect printer'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleDirectPrint}
+            disabled={directPrinting || qzLoading || !selectedItemId}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Send this label directly to the selected system printer"
+          >
+            <Printer className="h-4 w-4" />
+            {directPrinting ? 'Sending to printer…' : 'Direct Print to Printer'}
+          </button>
+          {!qzConnected && (
+            <a href="https://qz.io/download/" target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-emerald-800 underline underline-offset-2">
+              Install QZ Tray
+            </a>
+          )}
         </div>
       </div>
 

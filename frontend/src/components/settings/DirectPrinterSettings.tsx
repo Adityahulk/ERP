@@ -68,10 +68,10 @@ export function DirectPrinterSettings() {
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Printer className="h-4 w-4" />
-            Direct POS printing
+            Direct POS and barcode printing
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Sends the receipt to the selected system printer after checkout. QZ Tray must be installed and running on this billing computer.
+            Uses this system printer for POS receipts and direct barcode labels. QZ Tray must be installed and running on this billing computer.
           </p>
         </div>
         <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enable direct POS printing" />

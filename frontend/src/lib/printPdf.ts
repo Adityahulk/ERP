@@ -48,7 +48,13 @@ function browserPrintPdf(blob: Blob) {
 
 export async function printPdfBlob(
   blob: Blob,
-  options: { direct?: boolean; printerName?: string } = {},
+  options: {
+    direct?: boolean;
+    printerName?: string;
+    copies?: number;
+    autoCut?: boolean;
+    openCashDrawer?: boolean;
+  } = {},
 ): Promise<'direct' | 'browser'> {
   const directSetting = readStorageWithLegacy(
     STORAGE_KEYS.directThermalPrint,
@@ -62,9 +68,17 @@ export async function printPdfBlob(
   if ((options.direct ?? directSetting) && printerName) {
     if (!qz.websocket.isActive()) await qz.websocket.connect();
     const data = await blobToBase64(blob);
+    const printData: any[] = [];
+    if (options.openCashDrawer) {
+      printData.push({ type: 'raw', format: 'command', flavor: 'plain', data: '\x1B\x70\x00\x19\xFA' });
+    }
+    printData.push({ type: 'pixel', format: 'pdf', flavor: 'base64', data });
+    if (options.autoCut) {
+      printData.push({ type: 'raw', format: 'command', flavor: 'plain', data: '\x1D\x56\x00' });
+    }
     await qz.print(
-      qz.configs.create(printerName),
-      [{ type: 'pixel', format: 'pdf', flavor: 'base64', data }],
+      qz.configs.create(printerName, { copies: Math.max(1, Math.min(10, Number(options.copies) || 1)) }),
+      printData,
     );
     return 'direct';
   }

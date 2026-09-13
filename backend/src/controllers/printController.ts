@@ -3,11 +3,11 @@ import { query } from '../config/db';
 import { error } from '../lib/response';
 import { generateQuotationPDF, generateThermalReceipt } from '../services/pdfService';
 
-/** GET /api/print/receipt/:invoiceId?width=58|80 */
+/** GET /api/print/receipt/:invoiceId?width=40..100 */
 export async function getReceiptPdf(req: Request, res: Response) {
   try {
     const { invoiceId } = req.params;
-    const w = req.query.width === '58' ? 58 : 80;
+    const requestedWidth = Number(req.query.width);
 
     const invRes = await query(
       `SELECT * FROM invoices WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
@@ -16,12 +16,34 @@ export async function getReceiptPdf(req: Request, res: Response) {
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
 
     const companyRes = await query(`SELECT * FROM companies WHERE id = $1`, [req.user!.company_id]);
+    const rawSettings = companyRes.rows[0]?.print_settings;
+    let printSettings: Record<string, any> = {};
+    if (typeof rawSettings === 'string') {
+      try {
+        printSettings = JSON.parse(rawSettings || '{}');
+      } catch {
+        printSettings = {};
+      }
+    } else if (rawSettings && typeof rawSettings === 'object') {
+      printSettings = rawSettings;
+    }
+    const thermal = printSettings.thermal || {};
+    const savedWidth = thermal.page_size === '2_inch'
+      ? 58
+      : thermal.page_size === '4_inch'
+        ? 100
+        : thermal.page_size === 'custom'
+          ? Number(thermal.custom_page_size || 48)
+          : 80;
+    const w = Number.isFinite(requestedWidth)
+      ? Math.max(40, Math.min(100, requestedWidth))
+      : Math.max(40, Math.min(100, savedWidth));
     const itemsRes = await query(
       `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
       [invoiceId, req.user!.company_id]
     );
 
-    const pdfBuffer = await generateThermalReceipt(invRes.rows[0], companyRes.rows[0], itemsRes.rows, w as 58 | 80);
+    const pdfBuffer = await generateThermalReceipt(invRes.rows[0], companyRes.rows[0], itemsRes.rows, w);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename=receipt-${invRes.rows[0].invoice_number}.pdf`);
     res.send(pdfBuffer);

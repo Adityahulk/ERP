@@ -2,6 +2,7 @@ import { Printer, X } from 'lucide-react';
 import { formatMoney } from '@/lib/formatters';
 import { QRCodeSVG } from 'qrcode.react';
 import { getApiBaseURL } from '@/lib/api';
+import { normalizeThermalSettings, type ThermalPrintSettings } from '@/lib/thermalSettings';
 
 interface ReceiptItem {
   item_name?: string;
@@ -23,6 +24,9 @@ interface ThermalReceiptProps {
     cgst_amount?: number;
     sgst_amount?: number;
     igst_amount?: number;
+    cess_amount?: number;
+    round_off_amount?: number;
+    round_off?: number;
     total_amount: number;
     paid_amount?: number;
     payment_mode?: string;
@@ -53,23 +57,9 @@ interface ThermalReceiptProps {
     logo_url?: string;
     receipt_footer_message?: string;
     print_settings?: {
-      thermal?: {
-        show_seller_name?: boolean;
-        seller_name?: string;
-        show_seller_phone?: boolean;
-        seller_phone?: string;
-        show_seller_address?: boolean;
-        seller_address?: string;
-        show_date_time?: boolean;
-        show_bill_no?: boolean;
-        show_logo?: boolean;
-        show_tax_columns?: boolean;
-        show_payment_details?: boolean;
+      thermal?: Partial<ThermalPrintSettings> & {
         card_auth_code_override?: string;
         card_last_four_override?: string;
-        barcode_or_qr?: 'none' | 'barcode' | 'qr';
-        return_policy?: string;
-        show_footer_thank_you?: boolean;
         enable_refund_layout?: boolean;
         enable_deposit_layout?: boolean;
         deposit_account_details?: string;
@@ -77,7 +67,7 @@ interface ThermalReceiptProps {
     };
   };
   items: ReceiptItem[];
-  widthMm?: 58 | 80;
+  widthMm?: number;
   onClose?: () => void;
   onPrint?: () => void;
 }
@@ -90,29 +80,14 @@ export default function ThermalReceipt({
   onClose,
   onPrint,
 }: ThermalReceiptProps) {
-  const paperWClass = widthMm === 58 ? 'w-[58mm]' : 'w-[80mm]';
-  const paperPadding = widthMm === 58 ? 'p-[2mm]' : 'p-[4mm]';
-
+  const rawThermal = company.print_settings?.thermal;
   const thermal = {
-    show_seller_name: company.print_settings?.thermal?.show_seller_name !== false,
-    seller_name: company.print_settings?.thermal?.seller_name || '',
-    show_seller_phone: company.print_settings?.thermal?.show_seller_phone !== false,
-    seller_phone: company.print_settings?.thermal?.seller_phone || '',
-    show_seller_address: company.print_settings?.thermal?.show_seller_address !== false,
-    seller_address: company.print_settings?.thermal?.seller_address || '',
-    show_date_time: company.print_settings?.thermal?.show_date_time !== false,
-    show_bill_no: company.print_settings?.thermal?.show_bill_no !== false,
-    show_logo: company.print_settings?.thermal?.show_logo !== false,
-    show_tax_columns: company.print_settings?.thermal?.show_tax_columns === true,
-    show_payment_details: company.print_settings?.thermal?.show_payment_details !== false,
-    card_auth_code_override: company.print_settings?.thermal?.card_auth_code_override || '',
-    card_last_four_override: company.print_settings?.thermal?.card_last_four_override || '',
-    barcode_or_qr: company.print_settings?.thermal?.barcode_or_qr || 'barcode',
-    return_policy: company.print_settings?.thermal?.return_policy ?? 'Items can be returned within 7 days in original condition.',
-    show_footer_thank_you: company.print_settings?.thermal?.show_footer_thank_you !== false,
-    enable_refund_layout: company.print_settings?.thermal?.enable_refund_layout !== false,
-    enable_deposit_layout: company.print_settings?.thermal?.enable_deposit_layout === true,
-    deposit_account_details: company.print_settings?.thermal?.deposit_account_details || '',
+    ...normalizeThermalSettings(rawThermal),
+    card_auth_code_override: rawThermal?.card_auth_code_override || '',
+    card_last_four_override: rawThermal?.card_last_four_override || '',
+    enable_refund_layout: rawThermal?.enable_refund_layout !== false,
+    enable_deposit_layout: rawThermal?.enable_deposit_layout === true,
+    deposit_account_details: rawThermal?.deposit_account_details || '',
   };
 
   const isRefund = (invoice.invoice_type === 'credit_note' || invoice.total_amount < 0) && thermal.enable_refund_layout;
@@ -143,6 +118,8 @@ export default function ThermalReceipt({
   const cgst = invoice.cgst_amount ?? 0;
   const sgst = invoice.sgst_amount ?? 0;
   const igst = invoice.igst_amount ?? 0;
+  const cess = invoice.cess_amount ?? 0;
+  const roundOff = invoice.round_off_amount ?? invoice.round_off ?? 0;
 
   const rateGuess = items[0]?.gst_rate ?? 0;
   const paid = invoice.paid_amount ?? invoice.total_amount;
@@ -196,8 +173,8 @@ export default function ThermalReceipt({
         {/* Receipt paper container */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-100 dark:bg-slate-900 flex justify-center">
           <div
-            className={`bg-white text-black shadow-lg border border-slate-300 font-mono text-[11px] leading-relaxed relative ${paperWClass} ${paperPadding} min-h-[120mm] select-none`}
-            style={{ boxSizing: 'border-box' }}
+            className={`bg-white text-black shadow-lg border border-slate-300 font-mono leading-relaxed relative min-h-[120mm] select-none ${widthMm <= 58 ? 'p-[2mm] text-[9px]' : 'p-[4mm] text-[11px]'}`}
+            style={{ boxSizing: 'border-box', width: `${Math.max(40, Math.min(100, widthMm))}mm`, fontWeight: thermal.text_styling_bold ? 600 : 400 }}
           >
             {/* Inner dashed receipt look */}
             <div className="text-center space-y-0.5">
@@ -255,10 +232,10 @@ export default function ThermalReceipt({
                   </div>
                 </>
               )}
-              <div className="flex justify-between">
+              {thermal.show_party && <div className="flex justify-between">
                 <span>Party:</span>
                 <span className="truncate max-w-[120px]">{invoice.party_name_snapshot || invoice.customer_name || 'Walk-in Customer'}</span>
-              </div>
+              </div>}
             </div>
 
             {isDeposit ? (
@@ -287,9 +264,9 @@ export default function ThermalReceipt({
                 <div className="border-t border-dashed border-black my-2"></div>
                 {/* Table Header */}
                 <div className="flex font-semibold">
-                  <span className="w-[50%] text-left">Item</span>
-                  <span className="w-[20%] text-center">Qty</span>
-                  <span className="w-[30%] text-right">Price</span>
+                  <span className={thermal.show_item_amount ? 'w-[50%] text-left' : 'w-[75%] text-left'}>Item</span>
+                  <span className={thermal.show_item_amount ? 'w-[20%] text-center' : 'w-[25%] text-center'}>Qty</span>
+                  {thermal.show_item_amount && <span className="w-[30%] text-right">Amount</span>}
                 </div>
 
                 <div className="border-t border-dashed border-black my-1"></div>
@@ -301,15 +278,16 @@ export default function ThermalReceipt({
                     const totalVal = it.total_amount ?? it.total ?? (it.unit_price * it.quantity);
                     const hsn = it.hsn_code ? `HSN: ${it.hsn_code}` : '';
                     const gst = it.gst_rate !== undefined ? `GST: ${it.gst_rate}%` : '';
-                    const sublineInfo = [hsn, gst].filter(Boolean).join(' | ');
+                    const rate = thermal.show_item_rate ? `Rate: ${formatMoney(it.unit_price)}` : '';
+                    const sublineInfo = [rate, thermal.show_tax_columns ? hsn : '', thermal.show_tax_columns ? gst : ''].filter(Boolean).join(' | ');
                     return (
                       <div key={idx} className="flex flex-col mb-1">
                         <div className="flex items-start">
-                          <span className="w-[50%] text-left truncate">{name}</span>
-                          <span className="w-[20%] text-center">{it.quantity}</span>
-                          <span className="w-[30%] text-right tabular-nums">{formatMoney(totalVal)}</span>
+                          <span className={thermal.show_item_amount ? 'w-[50%] text-left truncate' : 'w-[75%] text-left truncate'}>{name}</span>
+                          <span className={thermal.show_item_amount ? 'w-[20%] text-center' : 'w-[25%] text-center'}>{it.quantity}</span>
+                          {thermal.show_item_amount && <span className="w-[30%] text-right tabular-nums">{formatMoney(totalVal)}</span>}
                         </div>
-                        {thermal.show_tax_columns && sublineInfo && (
+                        {sublineInfo && (
                           <div className="text-[9px] text-slate-500 pl-2 leading-none mt-0.5">
                             [{sublineInfo}]
                           </div>
@@ -323,33 +301,45 @@ export default function ThermalReceipt({
 
                 {/* Calculation Block */}
                 <div className="space-y-0.5">
-                  <div className="flex justify-between">
+                  {thermal.show_subtotal && <div className="flex justify-between">
                     <span>Subtotal:</span>
                     <span className="tabular-nums">{formatMoney(invoice.subtotal)}</span>
-                  </div>
-                  {invoice.discount_amount && invoice.discount_amount > 0 ? (
+                  </div>}
+                  {thermal.show_discount && invoice.discount_amount && invoice.discount_amount > 0 ? (
                     <div className="flex justify-between text-black">
                       <span>Discount:</span>
                       <span className="tabular-nums">-{formatMoney(invoice.discount_amount)}</span>
                     </div>
                   ) : null}
 
-                  {cgst > 0 && (
+                  {thermal.show_tax_columns && cgst > 0 && (
                     <div className="flex justify-between">
                       <span>CGST @ {rateGuess}%:</span>
                       <span className="tabular-nums">{formatMoney(cgst)}</span>
                     </div>
                   )}
-                  {sgst > 0 && (
+                  {thermal.show_tax_columns && sgst > 0 && (
                     <div className="flex justify-between">
                       <span>SGST @ {rateGuess}%:</span>
                       <span className="tabular-nums">{formatMoney(sgst)}</span>
                     </div>
                   )}
-                  {igst > 0 && (
+                  {thermal.show_tax_columns && igst > 0 && (
                     <div className="flex justify-between">
                       <span>IGST:</span>
                       <span className="tabular-nums">{formatMoney(igst)}</span>
+                    </div>
+                  )}
+                  {thermal.show_tax_columns && cess > 0 && (
+                    <div className="flex justify-between">
+                      <span>Cess:</span>
+                      <span className="tabular-nums">{formatMoney(cess)}</span>
+                    </div>
+                  )}
+                  {thermal.show_round_off && roundOff !== 0 && (
+                    <div className="flex justify-between">
+                      <span>Round Off:</span>
+                      <span className="tabular-nums">{formatMoney(roundOff)}</span>
                     </div>
                   )}
                 </div>
@@ -492,6 +482,10 @@ export default function ThermalReceipt({
                 <span className="text-[8px] text-slate-500 font-sans mt-0.5">Scan for Digital Lookup</span>
               </div>
             )}
+
+            {Array.from({ length: thermal.extra_bottom_lines }, (_, index) => (
+              <div key={`bottom-line-${index}`} className="h-[5mm]" />
+            ))}
           </div>
         </div>
       </div>

@@ -26,6 +26,13 @@ import {
 } from '@/components/settings/PrintLayoutPreview';
 import { DirectPrinterSettings } from '@/components/settings/DirectPrinterSettings';
 import { printPdfBlob } from '@/lib/printPdf';
+import {
+  DEFAULT_THERMAL_SETTINGS,
+  legacyPrinterTypeForThermal,
+  normalizeThermalSettings,
+  thermalWidthMm,
+  type ThermalPrintSettings,
+} from '@/lib/thermalSettings';
 
 type SalesCustomFieldDef = {
   id: string;
@@ -131,31 +138,7 @@ type PrintSettingsState = {
     declaration: string;
     terms: string;
   };
-  thermal: {
-    make_default: boolean;
-    page_size: '2_inch' | '3_inch' | '4_inch' | 'custom';
-    custom_page_size: number;
-    printing_type: 'text' | 'image';
-    text_styling_bold: boolean;
-    auto_cut_paper: boolean;
-    open_cash_drawer: boolean;
-    extra_bottom_lines: number;
-    number_of_copies: number;
-    show_seller_name: boolean;
-    seller_name: string;
-    show_seller_phone: boolean;
-    seller_phone: string;
-    show_seller_address: boolean;
-    seller_address: string;
-    show_date_time: boolean;
-    show_bill_no: boolean;
-    show_logo: boolean;
-    show_tax_columns: boolean;
-    show_payment_details: boolean;
-    barcode_or_qr: 'none' | 'barcode' | 'qr';
-    return_policy: string;
-    show_footer_thank_you: boolean;
-  };
+  thermal: ThermalPrintSettings;
 };
 
 type TaxComponentType = 'CGST' | 'SGST' | 'IGST' | 'CESS' | 'OTHER';
@@ -385,31 +368,7 @@ const DEFAULT_PRINT_SETTINGS: PrintSettingsState = {
     declaration: '',
     terms: '1. Goods Once Sold Will Not Be Accepted.\n2. Subject to Ahemdabad jurisdiction. E. & O.E.\n3. Payment within 30 Days.\n4. Interest @ 18% will be charged from Due Date.',
   },
-  thermal: {
-    make_default: false,
-    page_size: '3_inch',
-    custom_page_size: 48,
-    printing_type: 'text',
-    text_styling_bold: true,
-    auto_cut_paper: false,
-    open_cash_drawer: false,
-    extra_bottom_lines: 0,
-    number_of_copies: 1,
-    show_seller_name: true,
-    seller_name: '',
-    show_seller_phone: true,
-    seller_phone: '',
-    show_seller_address: true,
-    seller_address: '',
-    show_date_time: true,
-    show_bill_no: true,
-    show_logo: true,
-    show_tax_columns: false,
-    show_payment_details: true,
-    barcode_or_qr: 'barcode',
-    return_policy: 'Items can be returned within 7 days in original condition.',
-    show_footer_thank_you: true,
-  },
+  thermal: DEFAULT_THERMAL_SETTINGS,
 };
 
 const STANDARD_GST_SLABS = [0, 0.1, 0.25, 0.5, 1, 1.5, 3, 5, 6, 7.5, 9, 12, 14, 18, 28, 40];
@@ -690,31 +649,7 @@ function normalizePrintSettings(value: unknown): PrintSettingsState {
       show_item_custom_fields: referenceInvoice.show_item_custom_fields !== false,
       include_eway_appendix: referenceInvoice.include_eway_appendix !== false,
     },
-    thermal: {
-      make_default: thermal.make_default === true,
-      page_size: ['2_inch', '3_inch', '4_inch', 'custom'].includes(String(thermal.page_size)) ? (thermal.page_size as any) : '3_inch',
-      custom_page_size: Math.max(10, Math.min(100, Number(thermal.custom_page_size ?? 48) || 48)),
-      printing_type: ['text', 'image'].includes(String(thermal.printing_type)) ? (thermal.printing_type as any) : 'text',
-      text_styling_bold: thermal.text_styling_bold !== false,
-      auto_cut_paper: thermal.auto_cut_paper === true,
-      open_cash_drawer: thermal.open_cash_drawer === true,
-      extra_bottom_lines: Math.max(0, Math.min(20, Number(thermal.extra_bottom_lines ?? 0) || 0)),
-      number_of_copies: Math.max(1, Math.min(10, Number(thermal.number_of_copies ?? 1) || 1)),
-      show_seller_name: thermal.show_seller_name !== false,
-      seller_name: String(thermal.seller_name ?? ''),
-      show_seller_phone: thermal.show_seller_phone !== false,
-      seller_phone: String(thermal.seller_phone ?? ''),
-      show_seller_address: thermal.show_seller_address !== false,
-      seller_address: String(thermal.seller_address ?? ''),
-      show_date_time: thermal.show_date_time !== false,
-      show_bill_no: thermal.show_bill_no !== false,
-      show_logo: thermal.show_logo !== false,
-      show_tax_columns: thermal.show_tax_columns === true,
-      show_payment_details: thermal.show_payment_details !== false,
-      barcode_or_qr: ['none', 'barcode', 'qr'].includes(String(thermal.barcode_or_qr)) ? thermal.barcode_or_qr as 'none' | 'barcode' | 'qr' : 'barcode',
-      return_policy: String(thermal.return_policy ?? DEFAULT_PRINT_SETTINGS.thermal.return_policy),
-      show_footer_thank_you: thermal.show_footer_thank_you !== false,
-    },
+    thermal: normalizeThermalSettings(thermal),
   };
 }
 
@@ -1363,6 +1298,21 @@ export default function Settings() {
     }));
   };
 
+  const applyCashierFinalAmountOnly = () => {
+    setPrintSettings((prev) => ({
+      ...prev,
+      thermal: {
+        ...prev.thermal,
+        cashier_show_rate: false,
+        cashier_show_discount: false,
+        cashier_show_tax: false,
+        cashier_show_stock: false,
+        cashier_show_line_total: false,
+        cashier_show_bill_breakdown: false,
+      },
+    }));
+  };
+
   const updateTransactionName = (key: string, value: string | boolean) => {
     setPrintSettings((prev) => ({
       ...prev,
@@ -1422,7 +1372,16 @@ export default function Settings() {
   const savePrintSettings = async () => {
     try {
       const response = await api.put('/settings/print', printSettings);
-      setPrintSettings(normalizePrintSettings(response.data?.data ?? response.data));
+      const saved = normalizePrintSettings(response.data?.data ?? response.data);
+      setPrintSettings(saved);
+      if (saved.thermal.make_default) {
+        writeStorageWithLegacyCleanup(
+          STORAGE_KEYS.printerType,
+          legacyPrinterTypeForThermal(saved.thermal),
+          LEGACY_STORAGE_KEYS.printerType,
+        );
+        setPrinterType(legacyPrinterTypeForThermal(saved.thermal));
+      }
       await qc.invalidateQueries({ queryKey: ['company'] });
       toast.success('Print settings saved');
     } catch (e: any) {
@@ -1720,7 +1679,9 @@ export default function Settings() {
         toast.error('No invoice found for sample print', { id: t });
         return;
       }
-      const w = printerType === 'thermal58' ? '58' : '80';
+      const w = printSettings.thermal.make_default
+        ? String(thermalWidthMm(printSettings.thermal))
+        : (printerType === 'thermal58' ? '58' : '80');
       const pdfRes = await api.get(`/print/receipt/${first.id}`, { params: { width: w }, responseType: 'blob' });
       const mode = await printPdfBlob(new Blob([pdfRes.data], { type: 'application/pdf' }));
       toast.success(mode === 'direct' ? 'Sample sent to printer' : 'Opening sample receipt…', { id: t });
@@ -2755,7 +2716,7 @@ export default function Settings() {
                                      </label>
                                      {printSettings.thermal.page_size === 'custom' && (
                                         <label className="text-sm font-medium text-slate-700">Custom width (mm)
-                                           <Input type="number" min={10} max={100} className="mt-1" value={printSettings.thermal.custom_page_size} onChange={(event) => updatePrintSetting('thermal', 'custom_page_size', Number(event.target.value) as never)} />
+                                           <Input type="number" min={40} max={100} className="mt-1" value={printSettings.thermal.custom_page_size} onChange={(event) => updatePrintSetting('thermal', 'custom_page_size', Number(event.target.value) as never)} />
                                         </label>
                                      )}
                                      <label className="text-sm font-medium text-slate-700">Printing mode
@@ -2798,7 +2759,13 @@ export default function Settings() {
                                        ['show_date_time', 'Date and time'],
                                        ['show_bill_no', 'Bill number'],
                                        ['show_logo', 'Company logo'],
-                                       ['show_tax_columns', 'Tax details'],
+                                       ['show_party', 'Customer / party'],
+                                       ['show_item_amount', 'Item line amount'],
+                                       ['show_item_rate', 'Item unit rate'],
+                                       ['show_subtotal', 'Subtotal'],
+                                       ['show_discount', 'Discount'],
+                                       ['show_tax_columns', 'Tax details and GST/HSN'],
+                                       ['show_round_off', 'Round off'],
                                        ['show_payment_details', 'Payment details'],
                                        ['show_footer_thank_you', 'Thank-you footer'],
                                      ] as const).map(([key, label]) => (
@@ -2835,6 +2802,36 @@ export default function Settings() {
                                   </label>
                                </section>
 
+                               <section className="space-y-4 border-t pt-5">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                     <div>
+                                        <h3 className="text-base font-bold text-slate-900">POS cashier visibility</h3>
+                                        <p className="mt-1 text-xs leading-5 text-slate-500">Control what a cashier can see while billing. Calculations and stored invoice data are unchanged.</p>
+                                     </div>
+                                     <Button type="button" size="sm" variant="outline" onClick={applyCashierFinalAmountOnly}>
+                                        Final amount only
+                                     </Button>
+                                  </div>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                     {([
+                                       ['cashier_show_rate', 'Selling rate'],
+                                       ['cashier_show_discount', 'Discount entry'],
+                                       ['cashier_show_tax', 'GST details'],
+                                       ['cashier_show_stock', 'Available stock'],
+                                       ['cashier_show_line_total', 'Item line totals'],
+                                       ['cashier_show_bill_breakdown', 'Bill calculation breakdown'],
+                                     ] as const).map(([key, label]) => (
+                                        <label key={key} className="flex min-w-0 items-start gap-3 text-sm font-medium text-slate-700">
+                                           <Switch className="mt-0.5 shrink-0" checked={printSettings.thermal[key]} onCheckedChange={(value) => updatePrintSetting('thermal', key, value)} />
+                                           <span className="min-w-0 leading-5">{label}</span>
+                                        </label>
+                                     ))}
+                                  </div>
+                                  <p className="rounded-md bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
+                                     Quantity controls and the final payable amount always remain visible so checkout stays usable.
+                                  </p>
+                               </section>
+
                                <section className="border-t pt-5">
                                   <DirectPrinterSettings />
                                </section>
@@ -2859,15 +2856,21 @@ export default function Settings() {
                                      <div className="my-2 border-t border-dashed border-slate-700" />
                                      {printSettings.thermal.show_bill_no && <div className="flex justify-between gap-3"><span>INVOICE</span><span>INV-101</span></div>}
                                      {printSettings.thermal.show_date_time && <><div className="flex justify-between gap-3"><span>Date</span><span>27-05-2026</span></div><div className="flex justify-between gap-3"><span>Time</span><span>12:30 PM</span></div></>}
-                                     <div className="flex justify-between gap-3"><span>Party</span><span>Classic enterprises</span></div>
+                                     {printSettings.thermal.show_party && <div className="flex justify-between gap-3"><span>Party</span><span>Classic enterprises</span></div>}
                                      <div className="my-2 border-t border-dashed border-slate-700" />
-                                     <div className={`grid gap-2 ${printSettings.thermal.show_tax_columns ? 'grid-cols-[1fr_38px_62px_54px]' : 'grid-cols-[1fr_42px_72px]'}`}>
-                                        <strong>Item</strong><strong className="text-right">Qty</strong>{printSettings.thermal.show_tax_columns && <strong className="text-right">Tax</strong>}<strong className="text-right">Amount</strong>
-                                        <span>Premium Service</span><span className="text-right">1</span>{printSettings.thermal.show_tax_columns && <span className="text-right">18%</span>}<span className="text-right">590.00</span>
-                                        <span>Implementation</span><span className="text-right">2</span>{printSettings.thermal.show_tax_columns && <span className="text-right">18%</span>}<span className="text-right">826.00</span>
+                                     <div className={`grid gap-x-2 gap-y-1 ${printSettings.thermal.show_item_amount ? 'grid-cols-[1fr_42px_72px]' : 'grid-cols-[1fr_42px]'}`}>
+                                        <strong>Item</strong><strong className="text-right">Qty</strong>{printSettings.thermal.show_item_amount && <strong className="text-right">Amount</strong>}
+                                        <span>Premium Service</span><span className="text-right">1</span>{printSettings.thermal.show_item_amount && <span className="text-right">590.00</span>}
+                                        {(printSettings.thermal.show_item_rate || printSettings.thermal.show_tax_columns) && <span className="col-span-full pl-2 text-[10px] text-slate-500">[{[printSettings.thermal.show_item_rate ? 'Rate: 500.00' : '', printSettings.thermal.show_tax_columns ? 'HSN: 9983 | GST: 18%' : ''].filter(Boolean).join(' | ')}]</span>}
+                                        <span>Implementation</span><span className="text-right">2</span>{printSettings.thermal.show_item_amount && <span className="text-right">826.00</span>}
+                                        {(printSettings.thermal.show_item_rate || printSettings.thermal.show_tax_columns) && <span className="col-span-full pl-2 text-[10px] text-slate-500">[{[printSettings.thermal.show_item_rate ? 'Rate: 350.00' : '', printSettings.thermal.show_tax_columns ? 'HSN: 9985 | GST: 18%' : ''].filter(Boolean).join(' | ')}]</span>}
                                      </div>
                                      <div className="my-2 border-t border-dashed border-slate-700" />
-                                     {printSettings.thermal.show_tax_columns && <><div className="flex justify-between"><span>Taxable</span><span>1,200.00</span></div><div className="flex justify-between"><span>GST</span><span>216.00</span></div></>}
+                                     {printSettings.thermal.show_subtotal && <div className="flex justify-between"><span>Subtotal</span><span>1,200.00</span></div>}
+                                     {printSettings.thermal.show_discount && <div className="flex justify-between"><span>Discount</span><span>-20.00</span></div>}
+                                     {printSettings.thermal.show_tax_columns && <><div className="flex justify-between"><span>CGST</span><span>108.00</span></div><div className="flex justify-between"><span>SGST</span><span>108.00</span></div></>}
+                                     {printSettings.thermal.show_round_off && <div className="flex justify-between"><span>Round Off</span><span>0.00</span></div>}
+                                     <div className="my-2 border-t border-dashed border-slate-700" />
                                      <div className="flex justify-between text-sm font-bold"><span>TOTAL</span><span>1,416.00</span></div>
                                      {printSettings.thermal.show_payment_details && <><div className="my-2 border-t border-dashed border-slate-700" /><div className="flex justify-between"><span>Payment</span><span>Cash</span></div><div className="flex justify-between"><span>Paid</span><span>1,416.00</span></div></>}
                                      {printSettings.thermal.return_policy.trim() && <><div className="my-2 border-t border-dashed border-slate-700" /><p className="text-center">{printSettings.thermal.return_policy}</p></>}

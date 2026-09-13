@@ -32,7 +32,8 @@ import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import PaymentRowsEditor, { newPaymentEditorRow, type PaymentEditorRow } from '@/components/transactions/PaymentRowsEditor';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import api from '@/lib/api';
-import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
+import { thermalWidthMm } from '@/lib/thermalSettings';
 import toast from 'react-hot-toast';
 import {
   DEFAULT_PRINT_LAYOUT_COLORS,
@@ -972,10 +973,9 @@ export default function InvoiceCreate() {
   };
 
   const handlePrintReceipt = async (id: string) => {
-    const printer = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) || 'a4';
     let pdfUrl = '';
     try {
-      const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
+      const w = thermalWidthMm(company?.print_settings?.thermal);
       const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
       pdfUrl = window.URL.createObjectURL(new Blob([pdfRes.data], { type: 'application/pdf' }));
 
@@ -1858,7 +1858,7 @@ export default function InvoiceCreate() {
           invoice={completedInvoice}
           company={company || { name: 'My Company' }}
           items={completedInvoice.items}
-          widthMm={readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? 58 : 80}
+          widthMm={thermalWidthMm(company?.print_settings?.thermal)}
           onClose={() => {
             const nextId = completedInvoice.id;
             setCompletedInvoice(null);

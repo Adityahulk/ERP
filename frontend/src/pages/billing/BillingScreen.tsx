@@ -18,6 +18,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { FixedSizeList as List } from 'react-window';
 import { useGodowns } from '@/hooks/useStock';
 import { printPdfBlob } from '@/lib/printPdf';
+import { normalizeThermalSettings, thermalWidthMm } from '@/lib/thermalSettings';
 
 interface BillItem {
   item_id: string;
@@ -146,6 +147,23 @@ export default function BillingScreen() {
   };
 
   const { data: companyData } = useCompany();
+  const thermalSettings = useMemo(
+    () => normalizeThermalSettings(companyData?.print_settings?.thermal),
+    [companyData?.print_settings?.thermal],
+  );
+  const receiptWidthMm = thermalWidthMm(companyData?.print_settings?.thermal);
+  const cartGridColumns = useMemo(() => [
+    'minmax(10rem,1fr)',
+    '8rem',
+    thermalSettings.cashier_show_rate ? '6rem' : '',
+    thermalSettings.cashier_show_discount ? '6rem' : '',
+    thermalSettings.cashier_show_line_total ? '8rem' : '',
+    '3rem',
+  ].filter(Boolean).join(' '), [
+    thermalSettings.cashier_show_discount,
+    thermalSettings.cashier_show_line_total,
+    thermalSettings.cashier_show_rate,
+  ]);
   const { data: godownResponse } = useGodowns();
   const godowns = useMemo(() => godownResponse?.data ?? [], [godownResponse?.data]);
 
@@ -207,14 +225,16 @@ export default function BillingScreen() {
   }, [searchResults]);
 
   const handlePrintReceipt = async (id: string) => {
-    const printer = readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) || 'a4';
     try {
       // Always print the receipt preview (thermal) in POS Billing rather than the standard A4 invoice
-      const w = (printer === 'thermal58' || printer === 'thermal_58') ? '58' : '80';
-      const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: w }, responseType: 'blob' });
+      const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: receiptWidthMm }, responseType: 'blob' });
       const receipt = new Blob([pdfRes.data], { type: 'application/pdf' });
       try {
-        const mode = await printPdfBlob(receipt);
+        const mode = await printPdfBlob(receipt, {
+          copies: thermalSettings.number_of_copies,
+          autoCut: thermalSettings.auto_cut_paper,
+          openCashDrawer: thermalSettings.open_cash_drawer,
+        });
         toast.success(mode === 'direct' ? 'Receipt sent to thermal printer' : 'Receipt opened in print dialog');
       } catch (directError: any) {
         console.error('Direct receipt print failed, using browser print:', directError);
@@ -730,23 +750,26 @@ export default function BillingScreen() {
                     >
                       <div>
                         <div className="font-bold">{item.name}</div>
-                        <div className="text-xs text-muted-foreground flex gap-2"><span>SKU: {item.sku}</span> <span>GST: {item.gst_rate}%</span></div>
+                        <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
+                          <span>SKU: {item.sku}</span>
+                          {thermalSettings.cashier_show_tax && <span>GST: {item.gst_rate}%</span>}
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-bold text-primary">{formatMoney(item.unit_price)}</div>
-                        {item.item_type === 'service' ? (
+                      {(thermalSettings.cashier_show_rate || thermalSettings.cashier_show_stock) && <div className="text-right">
+                        {thermalSettings.cashier_show_rate && <div className="font-bold text-primary">{formatMoney(item.unit_price)}</div>}
+                        {thermalSettings.cashier_show_stock && (item.item_type === 'service' ? (
                           <div className="text-xs text-muted-foreground">Service</div>
                         ) : (
                           <div className="text-xs text-muted-foreground">In Stock: {item.available_stock}</div>
-                        )}
-                      </div>
+                        ))}
+                      </div>}
                     </button>
                   ))}
                 </div>
               )}
             </div>
             
-            <Button
+            {thermalSettings.cashier_show_rate && <Button
               size="lg"
               variant="outline"
               className="h-12 px-3 shrink-0 gap-1.5"
@@ -759,7 +782,7 @@ export default function BillingScreen() {
             >
               <PackagePlus className="h-5 w-5" />
               <span className="hidden sm:inline text-sm font-medium">Add item</span>
-            </Button>
+            </Button>}
             <Button size="lg" variant="secondary" className="h-12 w-12 px-0 shrink-0" onClick={() => setScannerOpen(true)}>
               <Camera className="h-5 w-5" />
             </Button>
@@ -781,12 +804,12 @@ export default function BillingScreen() {
           </div>
 
           {/* Bill Render Header */}
-          <div className="grid grid-cols-[1fr_8rem_6rem_6rem_8rem_3rem] bg-muted py-3 px-4 text-sm font-semibold sticky top-0 z-0 border-b">
+          <div className="grid bg-muted py-3 px-4 text-sm font-semibold sticky top-0 z-0 border-b" style={{ gridTemplateColumns: cartGridColumns }}>
             <div>Item</div>
             <div className="text-center">Qty</div>
-            <div className="text-right">Rate</div>
-            <div className="text-right">Disc</div>
-            <div className="text-right">Total</div>
+            {thermalSettings.cashier_show_rate && <div className="text-right">Rate</div>}
+            {thermalSettings.cashier_show_discount && <div className="text-right">Disc</div>}
+            {thermalSettings.cashier_show_line_total && <div className="text-right">Total</div>}
             <div></div>
           </div>
 
@@ -807,15 +830,15 @@ export default function BillingScreen() {
                 {({ index, style }: { index: number; style: CSSProperties }) => {
                   const item = billItems[index];
                   return (
-                    <div style={style} className="grid grid-cols-[1fr_8rem_6rem_6rem_8rem_3rem] items-center border-b hover:bg-muted/50 py-2 px-4 transition-colors">
+                    <div style={{ ...style, gridTemplateColumns: cartGridColumns }} className="grid items-center border-b hover:bg-muted/50 py-2 px-4 transition-colors">
                       <div>
                         <div className="font-bold truncate max-w-[200px]">{item.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          GST {item.gst_rate}%
-                          {item.available_stock != null && item.track_inventory !== false
-                            ? ` · Stock ${item.available_stock} ${item.unit || ''}`
+                        {(thermalSettings.cashier_show_tax || thermalSettings.cashier_show_stock) && <div className="text-xs text-muted-foreground">
+                          {thermalSettings.cashier_show_tax ? `GST ${item.gst_rate}%` : ''}
+                          {thermalSettings.cashier_show_stock && item.available_stock != null && item.track_inventory !== false
+                            ? `${thermalSettings.cashier_show_tax ? ' · ' : ''}Stock ${item.available_stock} ${item.unit || ''}`
                             : ''}
-                        </div>
+                        </div>}
                       </div>
                       <div className="flex items-center justify-center bg-background border rounded-md overflow-hidden shadow-sm max-w-[100px] mx-auto">
                         <button className="px-2 py-1 hover:bg-muted" onClick={() => updateItem(index, { quantity: Math.max(1, item.quantity - 1) })}><Minus className="h-3 w-3"/></button>
@@ -829,23 +852,23 @@ export default function BillingScreen() {
                         />
                         <button className="px-2 py-1 hover:bg-muted" onClick={() => updateItem(index, { quantity: item.quantity + 1 })}><Plus className="h-3 w-3"/></button>
                       </div>
-                      <div className="text-right">
+                      {thermalSettings.cashier_show_rate && <div className="text-right">
                         <Input 
                           value={item.unit_price / 100} 
                           onChange={e => updateItem(index, { unit_price: Math.round(Number(e.target.value) * 100) })} 
                           className="h-8 w-20 text-right ml-auto px-1" 
                         />
-                      </div>
-                      <div className="text-right">
+                      </div>}
+                      {thermalSettings.cashier_show_discount && <div className="text-right">
                         <Input 
                           value={item.discount_amount / 100} 
                           onChange={e => updateItem(index, { discount_amount: Math.round(Number(e.target.value) * 100) })} 
                           className="h-8 w-20 text-right ml-auto px-1" 
                         />
-                      </div>
-                      <div className="text-right font-bold tabular-nums">
+                      </div>}
+                      {thermalSettings.cashier_show_line_total && <div className="text-right font-bold tabular-nums">
                         {formatMoney(item.total)}
-                      </div>
+                      </div>}
                       <div className="text-right">
                         <Button variant="ghost" size="icon" className="text-destructive h-8 w-8 hover:bg-destructive/10"
                           onClick={() => setBillItems(prev => prev.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" /></Button>
@@ -962,7 +985,7 @@ export default function BillingScreen() {
         <Card className="p-4 flex-1 shadow-sm flex flex-col min-h-0">
           <h3 className="font-semibold text-sm flex items-center gap-1.5 mb-3 border-b pb-1.5 text-muted-foreground"><FileText className="h-4 w-4" /> Bill Summary</h3>
           
-          <div className="space-y-2 flex-1 overflow-y-auto text-sm">
+          {thermalSettings.cashier_show_bill_breakdown && <div className="space-y-2 flex-1 overflow-y-auto text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>Subtotal</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(subtotal)}</span>
@@ -973,20 +996,20 @@ export default function BillingScreen() {
                 <span className="tabular-nums font-medium">-{formatMoney(itemDiscounts)}</span>
               </div>
             )}
-            <div className="flex justify-between text-muted-foreground">
+            {thermalSettings.cashier_show_tax && <div className="flex justify-between text-muted-foreground">
               <span>Taxable Value</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(taxable)}</span>
-            </div>
+            </div>}
             
-            <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
+            {thermalSettings.cashier_show_tax && <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
               <span className="text-muted-foreground">CGST</span>
               <span className="tabular-nums">{formatMoney(Math.ceil(totalTax / 2))}</span>
-            </div>
-            <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
+            </div>}
+            {thermalSettings.cashier_show_tax && <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
               <span className="text-muted-foreground">SGST</span>
               <span className="tabular-nums">{formatMoney(Math.floor(totalTax / 2))}</span>
-            </div>
-            {totalCess > 0 && (
+            </div>}
+            {thermalSettings.cashier_show_tax && totalCess > 0 && (
               <div className="flex justify-between border-l-2 border-primary/20 pl-3 py-0.5 text-xs bg-muted/30">
                 <span className="text-muted-foreground">Cess</span>
                 <span className="tabular-nums">{formatMoney(totalCess)}</span>
@@ -997,7 +1020,7 @@ export default function BillingScreen() {
               <span>Round Off</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(roundOff)}</span>
             </div>
-          </div>
+          </div>}
 
           <div className="mt-3 pt-3 border-t-2 border-dashed shrink-0">
              <div className="flex justify-between items-end">
@@ -1191,7 +1214,7 @@ export default function BillingScreen() {
           invoice={completedInvoice}
           company={companyData || { name: useAuthStore?.getState?.()?.company?.name || 'My Company' }}
           items={completedInvoice.items || billItems}
-          widthMm={readStorageWithLegacy(STORAGE_KEYS.printerType, LEGACY_STORAGE_KEYS.printerType) === 'thermal58' ? 58 : 80}
+          widthMm={receiptWidthMm}
           onClose={() => setCompletedInvoice(null)}
           onPrint={() => handlePrintReceipt(completedInvoice.id)}
         />
