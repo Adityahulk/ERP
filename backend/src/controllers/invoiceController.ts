@@ -333,6 +333,20 @@ function mapLineForGst(raw: any, pricingMode: 'inclusive' | 'exclusive' = 'exclu
   };
 }
 
+function mapInvoiceDiscount(raw: any): { type: 'percent' | 'flat' | 'none'; value: number } {
+  if (raw?.discount_type === 'percent') {
+    const value = Number(raw.discount_value ?? raw.discount_percent ?? 0);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      throw new Error('Invoice discount percentage must be between 0 and 100');
+    }
+    return value > 0 ? { type: 'percent', value } : { type: 'none', value: 0 };
+  }
+
+  const value = Math.round(Number(raw?.discount_amount ?? (raw?.discount_type === 'flat' ? raw?.discount_value : 0)) || 0);
+  if (value < 0) throw new Error('Invoice discount cannot be negative');
+  return value > 0 ? { type: 'flat', value } : { type: 'none', value: 0 };
+}
+
 function invoiceLineName(item: any): string {
   const value = item.item_name ?? item.name ?? item.description ?? item.item_description;
   const text = String(value ?? '').trim();
@@ -778,13 +792,13 @@ export async function createInvoice(req: Request, res: Response) {
       const isInterstate = gstContext.isInterstate;
 
       const gstType = isInterstate ? 'inter' : 'intra';
-      const invDisc = Math.round(Number(d.discount_amount) || 0);
+      const invoiceDiscount = mapInvoiceDiscount(d);
       const roundOffEnabled = d.round_off_enabled === true;
       const totalsInfo = calculateInvoiceTotals(
         mappedItems,
         gstType,
-        invDisc > 0 ? 'flat' : 'none',
-        invDisc,
+        invoiceDiscount.type,
+        invoiceDiscount.value,
         0,
         roundOffEnabled,
         pricingMode,
@@ -1066,7 +1080,7 @@ export async function createInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('createInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to create invoice';
-    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity|Invoice number/i.test(msg) ? 400 : 500;
+    const status = /At least one|Use the purchase module|cannot|Insufficient|No stock row|not found|Invalid quantity|Invoice number|discount/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -1405,7 +1419,7 @@ export async function updateInvoice(req: Request, res: Response) {
       const isInterstate = gstContext.isInterstate;
 
       const gstType = isInterstate ? 'inter' : 'intra';
-      const invDisc = Math.round(Number(d.discount_amount) || 0);
+      const invoiceDiscount = mapInvoiceDiscount(d);
       const roundOffEnabled = d.round_off_enabled === true;
       const transactionSettingsResult = await client.query(
         `SELECT round_off_type, round_off_to FROM transaction_settings WHERE firm_id = $1`,
@@ -1421,8 +1435,8 @@ export async function updateInvoice(req: Request, res: Response) {
       const totalsInfo = calculateInvoiceTotals(
         mappedItems,
         gstType,
-        invDisc > 0 ? 'flat' : 'none',
-        invDisc,
+        invoiceDiscount.type,
+        invoiceDiscount.value,
         0,
         roundOffEnabled,
         pricingMode,
@@ -1699,7 +1713,7 @@ export async function updateInvoice(req: Request, res: Response) {
   } catch (err: any) {
     console.error('updateInvoice error:', err.message, err.detail, err.position);
     const msg = err?.message || 'Failed to update invoice';
-    const status = /not found|Cannot edit|Insufficient|No stock row|Invalid quantity|At least one|Invoice number/i.test(msg) ? 400 : 500;
+    const status = /not found|Cannot edit|Insufficient|No stock row|Invalid quantity|At least one|Invoice number|discount/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -2300,14 +2314,14 @@ export async function previewInvoicePdf(req: Request, res: Response) {
       gst_rate: isGstInvoice ? it.gst_rate : 0,
       cess_rate: isGstInvoice ? it.cess_rate : 0,
     }, pricingMode));
-    const invDisc = Math.round(Number(d.discount_amount) || 0);
+    const invoiceDiscount = mapInvoiceDiscount(d);
     const roundOffEnabled = d.round_off_enabled === true;
     const roundSettings = transactionSettingsRes.rows[0] || {};
     const totals = calculateInvoiceTotals(
       mappedItems,
       gstType,
-      invDisc > 0 ? 'flat' : 'none',
-      invDisc,
+      invoiceDiscount.type,
+      invoiceDiscount.value,
       0,
       roundOffEnabled,
       pricingMode,
@@ -2402,7 +2416,8 @@ export async function previewInvoicePdf(req: Request, res: Response) {
     res.setHeader('Content-Disposition', 'inline; filename=invoice-preview.pdf');
     res.send(pdfBuffer);
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    const message = err?.message || 'Failed to preview invoice';
+    res.status(/discount|quantity|rate|item/i.test(message) ? 400 : 500).json(error(message));
   }
 }
 

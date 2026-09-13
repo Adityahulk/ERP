@@ -643,9 +643,15 @@ export function calculateInvoiceTotals(
   const taxableBeforeInvoiceDiscount = Math.max(0, subtotal - totalDiscountLineLevel);
   let globalDiscountAmount = 0;
   if (invoiceDiscountType === 'percent') {
-    globalDiscountAmount = (taxableBeforeInvoiceDiscount * (Number(invoiceDiscountValue) || 0)) / 100;
+    const percentage = Number(invoiceDiscountValue) || 0;
+    if (percentage < 0 || percentage > 100) {
+      throw new Error('Invoice discount percentage must be between 0 and 100');
+    }
+    globalDiscountAmount = (taxableBeforeInvoiceDiscount * percentage) / 100;
   } else if (invoiceDiscountType === 'flat') {
-    globalDiscountAmount = Math.min(Number(invoiceDiscountValue) || 0, taxableBeforeInvoiceDiscount);
+    const amount = Number(invoiceDiscountValue) || 0;
+    if (amount < 0) throw new Error('Invoice discount cannot be negative');
+    globalDiscountAmount = Math.min(amount, taxableBeforeInvoiceDiscount);
   }
   globalDiscountAmount = Math.max(0, Math.min(globalDiscountAmount, taxableBeforeInvoiceDiscount));
 

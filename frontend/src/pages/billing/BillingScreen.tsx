@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, CSSProperties } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, CSSProperties } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api, { getApiBaseURL } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -19,6 +19,7 @@ import { FixedSizeList as List } from 'react-window';
 import { useGodowns } from '@/hooks/useStock';
 import { printPdfBlob } from '@/lib/printPdf';
 import { normalizeThermalSettings, thermalWidthMm } from '@/lib/thermalSettings';
+import { calculatePosTotals, itemDiscountAmount, PosDiscountMode } from '@/lib/posBilling';
 
 interface BillItem {
   item_id: string;
@@ -34,6 +35,8 @@ interface BillItem {
   gst_rate: number;
   cess_rate: number;
   price_includes_tax: boolean;
+  discount_mode: PosDiscountMode;
+  discount_value: number;
   discount_amount: number;
   // Computed for display
   taxable: number;
@@ -50,7 +53,8 @@ export default function BillingScreen() {
   const [isScannerOpen, setScannerOpen] = useState(false);
   const [billItems, setBillItems] = useState<BillItem[]>([]);
   const [customerInfo, setCustomerInfo] = useState<{ id?: string, name: string, phone?: string }>({ name: 'Walk-in Customer' });
-  const [discountTotal] = useState(0);
+  const [billDiscountMode, setBillDiscountMode] = useState<PosDiscountMode>('amount');
+  const [billDiscountValue, setBillDiscountValue] = useState(0);
   const [paymentMode, setPaymentMode] = useState('cash');
   const [amountTendered, setAmountTendered] = useState<number | ''>('');
   const [quickAddItemOpen, setQuickAddItemOpen] = useState(false);
@@ -156,7 +160,7 @@ export default function BillingScreen() {
     'minmax(10rem,1fr)',
     '8rem',
     thermalSettings.cashier_show_rate ? '6rem' : '',
-    thermalSettings.cashier_show_discount ? '6rem' : '',
+    thermalSettings.cashier_show_discount ? '9rem' : '',
     thermalSettings.cashier_show_line_total ? '8rem' : '',
     '3rem',
   ].filter(Boolean).join(' '), [
@@ -224,7 +228,7 @@ export default function BillingScreen() {
     setHighlightedIndex(0);
   }, [searchResults]);
 
-  const handlePrintReceipt = async (id: string) => {
+  const handlePrintReceipt = useCallback(async (id: string) => {
     try {
       // Always print the receipt preview (thermal) in POS Billing rather than the standard A4 invoice
       const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: receiptWidthMm }, responseType: 'blob' });
@@ -245,7 +249,7 @@ export default function BillingScreen() {
       console.error(err);
       toast.error(err?.response?.data?.error || 'Receipt PDF could not be generated');
     }
-  };
+  }, [receiptWidthMm, thermalSettings.auto_cut_paper, thermalSettings.number_of_copies, thermalSettings.open_cash_drawer]);
 
   const handleConfirmUpiPayment = async () => {
     setShowQrModal(false);
@@ -299,6 +303,8 @@ export default function BillingScreen() {
           setBillItems([]);
           setSearchQuery('');
           setAmountTendered('');
+          setBillDiscountMode('amount');
+          setBillDiscountValue(0);
           toast.success('Cart cleared');
         }
         return;
@@ -319,7 +325,7 @@ export default function BillingScreen() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [billItems, customerInfo, paymentMode, discountTotal, amountTendered, lastCreatedInvoiceId, showQrModal, completedInvoice]);
+  }, [billItems, customerInfo, paymentMode, billDiscountMode, billDiscountValue, amountTendered, lastCreatedInvoiceId, showQrModal, completedInvoice, handlePrintReceipt]);
 
   // Ref to always access the latest addItem function in event listeners
   const addItemRef = useRef<any>(null);
@@ -504,6 +510,8 @@ export default function BillingScreen() {
         gst_rate: gstRate,
         cess_rate: cessRate,
         price_includes_tax: priceIncludesTax,
+        discount_mode: 'amount',
+        discount_value: 0,
         discount_amount: 0,
         taxable: 0,
         tax: 0,
@@ -524,20 +532,31 @@ export default function BillingScreen() {
       }
     }
     if (changes.unit_price != null) changes = { ...changes, unit_price: Math.max(0, Number(changes.unit_price) || 0) };
-    if (changes.discount_amount != null) {
-      const quantity = Number(changes.quantity ?? current.quantity) || 0;
-      const unitPrice = Number(changes.unit_price ?? current.unit_price) || 0;
-      changes = {
-        ...changes,
-        discount_amount: Math.min(unitPrice * quantity, Math.max(0, Number(changes.discount_amount) || 0)),
-      };
+    const merged = { ...newItems[index], ...changes };
+    if (changes.discount_amount != null && changes.discount_value == null) {
+      merged.discount_mode = 'amount';
+      merged.discount_value = Math.max(0, Number(changes.discount_amount) || 0);
     }
-    newItems[index] = updateCommputed({ ...newItems[index], ...changes });
+    merged.discount_value = merged.discount_mode === 'percent'
+      ? Math.max(0, Math.min(100, Number(merged.discount_value) || 0))
+      : Math.max(0, Math.round(Number(merged.discount_value) || 0));
+    newItems[index] = updateCommputed(merged);
     setBillItems(newItems);
+  };
+
+  const changeItemDiscountMode = (index: number, mode: PosDiscountMode) => {
+    const item = billItems[index];
+    if (!item || item.discount_mode === mode) return;
+    const gross = Math.max(0, item.unit_price * item.quantity);
+    const value = mode === 'percent'
+      ? (gross > 0 ? Math.round(item.discount_amount * 10_000 / gross) / 100 : 0)
+      : item.discount_amount;
+    updateItem(index, { discount_mode: mode, discount_value: value });
   };
 
   const updateCommputed = (item: BillItem) => {
     const base = item.unit_price * item.quantity;
+    item.discount_amount = itemDiscountAmount(item);
     const afterDiscount = Math.max(0, base - item.discount_amount);
     const totalRate = item.gst_rate + item.cess_rate;
     item.taxable = item.price_includes_tax && totalRate > 0
@@ -553,26 +572,40 @@ export default function BillingScreen() {
   };
 
   // Computations
-  const subtotal = billItems.reduce((acc, i) => acc + (i.unit_price * i.quantity), 0);
-  const itemDiscounts = billItems.reduce((acc, i) => acc + i.discount_amount, 0);
-  const taxable = billItems.reduce((acc, i) => acc + i.taxable, 0);
-  
-  // Note: POS often strictly considers CGST/SGST by default. Interstate can be toggled by party selection. We assume Intra.
-  const totalTax = billItems.reduce((acc, i) => acc + i.tax, 0);
-  const totalCess = billItems.reduce((acc, i) => acc + i.cess, 0);
-  const rawTotal = taxable + totalTax + totalCess - discountTotal;
   const roundOffEnabled = transactionConfig?.settings?.roundOffTotal !== false;
-  const roundToPaise = [1, 10, 100].includes(Number(transactionConfig?.settings?.roundOffTo))
-    ? Number(transactionConfig.settings.roundOffTo) * 100
-    : 100;
-  const roundMode = transactionConfig?.settings?.roundOffType || 'NEAREST';
-  const rounded = roundMode === 'FLOOR'
-    ? Math.floor(rawTotal / roundToPaise) * roundToPaise
-    : roundMode === 'CEIL'
-      ? Math.ceil(rawTotal / roundToPaise) * roundToPaise
-      : Math.round(rawTotal / roundToPaise) * roundToPaise;
-  const grandTotal = Math.max(0, roundOffEnabled ? rounded : rawTotal);
-  const roundOff = grandTotal - rawTotal;
+  const configuredRoundTo = Number(transactionConfig?.settings?.roundOffTo);
+  const roundOffTo: 1 | 10 | 100 = configuredRoundTo === 10 || configuredRoundTo === 100 ? configuredRoundTo : 1;
+  const configuredRoundMode = transactionConfig?.settings?.roundOffType;
+  const roundMode: 'NEAREST' | 'FLOOR' | 'CEIL' = configuredRoundMode === 'FLOOR' || configuredRoundMode === 'CEIL'
+    ? configuredRoundMode
+    : 'NEAREST';
+  const posTotals = useMemo(() => calculatePosTotals(
+    billItems,
+    billDiscountMode,
+    billDiscountValue,
+    roundOffEnabled,
+    roundMode,
+    roundOffTo,
+  ), [billItems, billDiscountMode, billDiscountValue, roundOffEnabled, roundMode, roundOffTo]);
+  const subtotal = posTotals.subtotal;
+  const itemDiscounts = posTotals.itemDiscount;
+  const discountTotal = posTotals.billDiscount;
+  const taxable = posTotals.taxable;
+  const totalTax = posTotals.gst;
+  const totalCess = posTotals.cess;
+  const grandTotal = posTotals.total;
+  const roundOff = posTotals.roundOff;
+
+  const changeBillDiscountMode = (mode: PosDiscountMode) => {
+    if (billDiscountMode === mode) return;
+    const nextValue = mode === 'percent'
+      ? (posTotals.billDiscountBase > 0
+          ? Math.round(discountTotal * 10_000 / posTotals.billDiscountBase) / 100
+          : 0)
+      : discountTotal;
+    setBillDiscountMode(mode);
+    setBillDiscountValue(nextValue);
+  };
 
   // Submit Pipeline
   const createInvoiceMut = useMutation({
@@ -587,7 +620,8 @@ export default function BillingScreen() {
         gst_rate: b.gst_rate,
         cess_rate: b.cess_rate,
         price_includes_tax: b.price_includes_tax,
-        discount_amount: b.discount_amount,
+        discount_amount: b.discount_mode === 'amount' ? b.discount_amount : 0,
+        discount_percent: b.discount_mode === 'percent' ? b.discount_value : 0,
       }));
       const tenderPaise =
         paymentMode === 'credit'
@@ -608,6 +642,8 @@ export default function BillingScreen() {
         godown_id: selectedGodownId,
         items: itemsPayload,
         discount_amount: discountTotal,
+        discount_type: discountTotal > 0 ? (billDiscountMode === 'percent' ? 'percent' : 'flat') : 'none',
+        discount_value: billDiscountMode === 'percent' ? billDiscountValue : discountTotal,
         round_off_enabled: roundOffEnabled,
         payments,
         amount_paid: paidPaise,
@@ -618,6 +654,8 @@ export default function BillingScreen() {
           pos: {
             tendered_amount: tenderPaise,
             change_amount: Math.max(0, tenderPaise - grandTotal),
+            bill_discount_mode: billDiscountMode,
+            bill_discount_value: billDiscountValue,
           },
         },
       };
@@ -643,6 +681,7 @@ export default function BillingScreen() {
         gst_rate: b.gst_rate,
         cess_rate: b.cess_rate,
         price_includes_tax: b.price_includes_tax,
+        discount_amount: b.discount_amount,
         hsn_code: b.hsn_code,
       }));
 
@@ -664,6 +703,8 @@ export default function BillingScreen() {
       setBillItems([]);
       setSearchQuery('');
       setAmountTendered('');
+      setBillDiscountMode('amount');
+      setBillDiscountValue(0);
       setCustomerInfo({ name: 'Walk-in Customer' });
       qc.invalidateQueries({ queryKey: ['stock'] });
       qc.invalidateQueries({ queryKey: ['billingSearch'] });
@@ -860,11 +901,32 @@ export default function BillingScreen() {
                         />
                       </div>}
                       {thermalSettings.cashier_show_discount && <div className="text-right">
-                        <Input 
-                          value={item.discount_amount / 100} 
-                          onChange={e => updateItem(index, { discount_amount: Math.round(Number(e.target.value) * 100) })} 
-                          className="h-8 w-20 text-right ml-auto px-1" 
-                        />
+                        <div className="flex h-8 items-stretch justify-end overflow-hidden rounded-md border bg-background">
+                          <select
+                            value={item.discount_mode}
+                            onChange={(event) => changeItemDiscountMode(index, event.target.value as PosDiscountMode)}
+                            className="w-12 border-0 border-r bg-muted px-1 text-xs font-semibold outline-none"
+                            aria-label={`Discount type for ${item.name}`}
+                            title="Choose amount or percentage discount"
+                          >
+                            <option value="amount">Amt</option>
+                            <option value="percent">%</option>
+                          </select>
+                          <Input
+                            type="number"
+                            min="0"
+                            max={item.discount_mode === 'percent' ? 100 : undefined}
+                            step={item.discount_mode === 'percent' ? '0.01' : '0.01'}
+                            value={item.discount_mode === 'percent' ? item.discount_value : item.discount_value / 100}
+                            onChange={(event) => updateItem(index, {
+                              discount_value: item.discount_mode === 'percent'
+                                ? Number(event.target.value)
+                                : Math.round(Number(event.target.value) * 100),
+                            })}
+                            className="h-8 w-20 rounded-none border-0 px-1 text-right focus-visible:ring-0"
+                            aria-label={`Discount value for ${item.name}`}
+                          />
+                        </div>
                       </div>}
                       {thermalSettings.cashier_show_line_total && <div className="text-right font-bold tabular-nums">
                         {formatMoney(item.total)}
@@ -984,16 +1046,67 @@ export default function BillingScreen() {
         {/* Calculation Board */}
         <Card className="p-4 flex-1 shadow-sm flex flex-col min-h-0">
           <h3 className="font-semibold text-sm flex items-center gap-1.5 mb-3 border-b pb-1.5 text-muted-foreground"><FileText className="h-4 w-4" /> Bill Summary</h3>
+
+          {thermalSettings.cashier_show_discount && (
+            <div className="mb-3 rounded-md border bg-muted/20 p-2.5">
+              <label className="mb-1.5 block text-[10px] font-semibold uppercase text-muted-foreground">
+                Discount on total bill
+              </label>
+              <div className="grid grid-cols-[7rem_1fr] gap-2">
+                <select
+                  value={billDiscountMode}
+                  onChange={(event) => changeBillDiscountMode(event.target.value as PosDiscountMode)}
+                  className="h-9 rounded-md border bg-background px-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-primary/30"
+                  aria-label="Total bill discount type"
+                >
+                  <option value="amount">Amount</option>
+                  <option value="percent">Percentage</option>
+                </select>
+                <div className="relative">
+                  <Input
+                    type="number"
+                    min="0"
+                    max={billDiscountMode === 'percent' ? 100 : undefined}
+                    step="0.01"
+                    value={billDiscountMode === 'percent' ? billDiscountValue : billDiscountValue / 100}
+                    onChange={(event) => setBillDiscountValue(
+                      billDiscountMode === 'percent'
+                        ? Math.max(0, Math.min(100, Number(event.target.value) || 0))
+                        : Math.max(0, Math.round((Number(event.target.value) || 0) * 100)),
+                    )}
+                    className="h-9 pr-8 text-right font-semibold"
+                    aria-label="Total bill discount value"
+                  />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground">
+                    {billDiscountMode === 'percent' ? '%' : 'INR'}
+                  </span>
+                </div>
+              </div>
+              {discountTotal > 0 && (
+                <div className="mt-1.5 text-right text-xs font-medium text-emerald-700">
+                  Applied: -{formatMoney(discountTotal)}
+                </div>
+              )}
+            </div>
+          )}
           
           {thermalSettings.cashier_show_bill_breakdown && <div className="space-y-2 flex-1 overflow-y-auto text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>Subtotal</span>
-              <span className="tabular-nums font-medium text-foreground">{formatMoney(subtotal)}</span>
+              <span className="tabular-nums font-medium text-foreground">
+                {formatMoney(thermalSettings.cashier_show_tax ? subtotal : grandTotal)}
+              </span>
             </div>
-            {itemDiscounts > 0 && (
+            {thermalSettings.cashier_show_tax && itemDiscounts > 0 && (
               <div className="flex justify-between text-emerald-600">
                 <span>Item Level Discount</span>
                 <span className="tabular-nums font-medium">-{formatMoney(itemDiscounts)}</span>
+              </div>
+            )}
+            {thermalSettings.cashier_show_tax && discountTotal > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Bill Discount{billDiscountMode === 'percent' ? ` (${billDiscountValue}%)` : ''}</span>
+                <span className="tabular-nums font-medium">-{formatMoney(discountTotal)}</span>
               </div>
             )}
             {thermalSettings.cashier_show_tax && <div className="flex justify-between text-muted-foreground">
@@ -1016,10 +1129,10 @@ export default function BillingScreen() {
               </div>
             )}
 
-            <div className="flex justify-between text-muted-foreground">
+            {thermalSettings.cashier_show_tax && <div className="flex justify-between text-muted-foreground">
               <span>Round Off</span>
               <span className="tabular-nums font-medium text-foreground">{formatMoney(roundOff)}</span>
-            </div>
+            </div>}
           </div>}
 
           <div className="mt-3 pt-3 border-t-2 border-dashed shrink-0">
