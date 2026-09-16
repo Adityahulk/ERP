@@ -42,13 +42,14 @@ export interface SendMailArgs {
   subject: string;
   html: string;
   text?: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
 }
 
 /**
  * Send a transactional email. In dev (no SMTP configured) the call is logged and resolves
  * successfully so flows can still be tested — the OTP/link is also logged to the console.
  */
-export async function sendMail({ to, subject, html, text }: SendMailArgs): Promise<{ delivered: boolean; reason?: string }> {
+export async function sendMail({ to, subject, html, text, attachments = [] }: SendMailArgs): Promise<{ delivered: boolean; reason?: string }> {
   const provider = activeProvider();
   if (!provider) {
     logger.warn(`[mailer] transactional email provider not configured — would have sent: to=${to} subject="${subject}"`);
@@ -73,6 +74,12 @@ export async function sendMail({ to, subject, html, text }: SendMailArgs): Promi
           subject,
           html,
           text: text || html.replace(/<[^>]+>/g, ' '),
+          ...(attachments.length ? {
+            attachments: attachments.map((attachment) => ({
+              filename: attachment.filename,
+              content: attachment.content.toString('base64'),
+            })),
+          } : {}),
           ...(env.RESEND_REPLY_TO ? { reply_to: env.RESEND_REPLY_TO } : {}),
         }),
       });
@@ -100,6 +107,7 @@ export async function sendMail({ to, subject, html, text }: SendMailArgs): Promi
         subject,
         html,
         text: text || html.replace(/<[^>]+>/g, ' '),
+        attachments,
       });
     }
     return { delivered: true };

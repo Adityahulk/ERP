@@ -26,6 +26,7 @@ import {
 } from '@/lib/storageKeys';
 
 import type { LabelField } from '@/types/label';
+import { readPrinterSettings, resolveConfiguredPrinter } from '@/lib/printerSettings';
 
 // ── Section header ────────────────────────────────────────────────────────────
 function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) {
@@ -78,13 +79,14 @@ function FieldRow({ label, field, onChange, onToggleVisibility, placeholder, bol
             type="button"
             onClick={onToggleVisibility}
             title={isHidden ? 'Show line' : 'Hide line'}
+            aria-label={isHidden ? `Show ${label} value` : `Hide ${label} value`}
             className={`w-6 h-6 flex items-center justify-center rounded transition-colors shrink-0 ${
               isHidden
                 ? 'text-slate-300 hover:text-slate-500'
                 : 'text-slate-400 hover:text-slate-700'
             }`}
           >
-            {isHidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
           </button>
         )}
       </div>
@@ -184,7 +186,8 @@ export function LabelEditorPanel() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setSelectedPrinter(readStorageWithLegacy(
+    const configured = resolveConfiguredPrinter(readPrinterSettings(), 'barcode');
+    setSelectedPrinter(configured || readStorageWithLegacy(
       STORAGE_KEYS.directPrinterName,
       LEGACY_STORAGE_KEYS.directPrinterName,
     ) || '');
@@ -686,7 +689,7 @@ export function LabelEditorPanel() {
 
           {/* Section 3: Barcode */}
           <section>
-            <SectionHeader icon={<Barcode className="w-3.5 h-3.5" />} title="Barcode" subtitle="System-assigned or custom code" />
+            <SectionHeader icon={<Barcode className="w-3.5 h-3.5" />} title="Assign Code" subtitle="System-assigned barcode or custom code" />
             <div className="rounded-lg border border-slate-200 bg-white p-2.5 space-y-2">
               {/* Source toggle */}
               <div className="flex items-center gap-2">
@@ -902,7 +905,7 @@ export function LabelEditorPanel() {
           <div className="rounded-lg border border-amber-100 bg-amber-50/50 p-2.5 text-xs text-amber-800 space-y-1">
             <p className="font-semibold text-amber-900">💡 Tips</p>
             <p>• <strong>Vertical</strong> stacks lines in one column — best for thermal rolls.</p>
-            <p>• Eye icon hides a line from the printed label.</p>
+            <p>• Eye / eye-off toggles show or hide a line without deleting its value.</p>
             <p>• Use <strong>PDF Preview</strong> to proof before printing.</p>
           </div>
         </div>

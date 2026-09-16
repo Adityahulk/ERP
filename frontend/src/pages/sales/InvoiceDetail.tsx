@@ -433,13 +433,43 @@ Thank you.
     }
   };
 
-  const openEmailShare = () => {
+  const sharePdfFile = async (channel: 'email' | 'sms') => {
+    const file = await fetchInvoicePdfFile();
+    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+    if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
+      await navigator.share({ title: `Invoice ${inv.invoice_number}`, text: buildWaMessage(), files: [file] });
+      return true;
+    }
+    const url = window.URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name; a.click();
+    window.URL.revokeObjectURL(url);
+    toast.success(channel === 'email'
+      ? 'Invoice PDF downloaded. Attach it to the email before sending.'
+      : 'Invoice PDF downloaded. MMS attachments depend on your device and carrier.');
+    return false;
+  };
+
+  const openEmailShare = async () => {
+    if (inv.party_email) {
+      if (!window.confirm(`Email invoice ${inv.invoice_number} to ${inv.party_email}?`)) return;
+      const t = toast.loading('Sending invoice PDF…');
+      try {
+        await api.post(`/invoices/${id}/email`, { email: inv.party_email });
+        toast.success(`Invoice sent to ${inv.party_email}`, { id: t });
+        return;
+      } catch (error: any) {
+        toast.error(error?.response?.data?.error || 'Server email failed. Opening device share instead.', { id: t });
+      }
+    }
+    if (await sharePdfFile('email')) return;
     const subject = encodeURIComponent(`Invoice ${inv.invoice_number}`);
     const body = encodeURIComponent(buildWaMessage());
     window.location.href = `mailto:?subject=${subject}&body=${body}`;
   };
 
-  const openSmsShare = () => {
+  const openSmsShare = async () => {
+    if (await sharePdfFile('sms')) return;
     const phone = normalizePhone(sharePhone);
     const body = encodeURIComponent(buildWaMessage());
     window.location.href = phone ? `sms:${phone}?&body=${body}` : `sms:?&body=${body}`;
@@ -539,10 +569,10 @@ Thank you.
             <Button size="sm" variant="outline" onClick={() => openWhatsApp('app')} loading={waSending}>
               WhatsApp App
             </Button>
-            <Button size="sm" variant="outline" onClick={openEmailShare}>
+            <Button size="sm" variant="outline" onClick={() => { void openEmailShare().catch((error) => error?.name !== 'AbortError' && toast.error(error?.message || 'Email share failed')); }}>
               Email
             </Button>
-            <Button size="sm" variant="outline" onClick={openSmsShare}>
+            <Button size="sm" variant="outline" onClick={() => { void openSmsShare().catch((error) => error?.name !== 'AbortError' && toast.error(error?.message || 'Message share failed')); }}>
               SMS
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setWaPickerOpen(false)} disabled={waSending}>
@@ -1027,6 +1057,7 @@ Thank you.
           partyName: inv.party_name || inv.party_display_name || 'Customer',
         }}
         partyPhone={inv.party_phone}
+        partyEmail={inv.party_email}
         companyName={company?.name}
       />
 

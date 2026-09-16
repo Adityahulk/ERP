@@ -27,6 +27,7 @@ import {
   type EinvoiceItemRow,
 } from '../services/eInvoiceService';
 import { env } from '../config/env';
+import { isMailerConfigured, sendMail } from '../services/mailer';
 import {
   resolveBankSnapshotsForInsert,
   resolveCompanyRowForInvoicePdf,
@@ -1987,6 +1988,55 @@ export async function getInvoicePDF(req: Request, res: Response) {
   } catch (err: any) {
     console.error('invoiceController error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));
+  }
+}
+
+export async function emailInvoicePdf(req: Request, res: Response) {
+  try {
+    if (!isMailerConfigured()) {
+      return res.status(503).json(error('Email delivery is not configured on this server. Use the device share option instead.'));
+    }
+    const companyId = req.user!.company_id;
+    const recipient = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+      return res.status(400).json(error('Enter a valid customer email address'));
+    }
+    const invRes = await query(
+      `SELECT i.*, COALESCE(i.party_name_snapshot, p.name) AS party_name
+       FROM invoices i
+       LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id
+       WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false`,
+      [req.params.id, companyId],
+    );
+    if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
+    const invoice = invRes.rows[0];
+    const [companyRes, bankRes, itemsRes, partyRes] = await Promise.all([
+      query('SELECT * FROM companies WHERE id = $1', [companyId]),
+      query(`SELECT * FROM company_bank_accounts WHERE company_id = $1 AND is_deleted = false AND is_active = true ORDER BY is_primary DESC, created_at ASC LIMIT 1`, [companyId]),
+      query(`SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`, [req.params.id, companyId]),
+      invoice.party_id ? query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2`, [invoice.party_id, companyId]) : Promise.resolve({ rows: [null] } as any),
+    ]);
+    const company = companyRes.rows[0];
+    const companyForPdf = await resolveCompanyRowForInvoicePdf(
+      ({ query } as Queryable), companyId, company, invoice, bankRes.rows[0] || null,
+    );
+    const pdf = await generateInvoicePDF(invoice, companyForPdf, partyRes.rows[0], itemsRes.rows);
+    const safeNumber = String(invoice.invoice_number || 'invoice').replace(/[^A-Za-z0-9._-]+/g, '-');
+    const customerName = String(invoice.party_name || 'Customer').replace(/[<>&]/g, '');
+    const companyName = String(company?.name || 'Microtechnique Accounts').replace(/[<>&]/g, '');
+    const amount = (Number(invoice.total_amount || 0) / 100).toFixed(2);
+    const message = await sendMail({
+      to: recipient,
+      subject: `Invoice ${invoice.invoice_number} from ${companyName}`,
+      html: `<p>Hi ${customerName},</p><p>Please find invoice <strong>${invoice.invoice_number}</strong> for <strong>₹${amount}</strong> attached as a PDF.</p><p>Thank you,<br>${companyName}</p>`,
+      text: `Hi ${customerName},\n\nPlease find invoice ${invoice.invoice_number} for ₹${amount} attached as a PDF.\n\nThank you,\n${companyName}`,
+      attachments: [{ filename: `${safeNumber || 'invoice'}.pdf`, content: pdf, contentType: 'application/pdf' }],
+    });
+    if (!message.delivered) return res.status(502).json(error(message.reason || 'Email delivery failed'));
+    await logAction(req.user!.id, companyId, 'email_send', 'invoice', req.params.id, null, { recipient }, req.ip, req.get('User-Agent'));
+    res.json(success({ delivered: true, recipient }));
+  } catch (err: any) {
+    res.status(500).json(error(err?.message || 'Failed to email invoice'));
   }
 }
 

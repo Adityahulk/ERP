@@ -68,6 +68,7 @@ type Props = {
   invoiceIdForPrint?: string;
   shareContext: ShareContext;
   partyPhone?: string;
+  partyEmail?: string;
   companyName?: string;
 };
 
@@ -92,6 +93,7 @@ export function InvoicePreviewWorkspace({
   invoiceIdForPrint,
   shareContext,
   partyPhone,
+  partyEmail,
   companyName,
 }: Props) {
   const [template, setTemplate] = useState<InvoicePdfTemplateId>('business-theme-1');
@@ -302,8 +304,8 @@ Thank you.
     }
     const t = toast.loading('Opening print dialog…');
     try {
-      await printPdfBlob(pdfBlob, { direct: false });
-      toast.success('Print dialog opened', { id: t });
+      const mode = await printPdfBlob(pdfBlob, { documentType: 'invoice' });
+      toast.success(mode === 'direct' ? 'Invoice sent to printer' : 'Print dialog opened', { id: t });
     } catch (e: any) {
       toast.error(e?.message || 'Could not print invoice', { id: t });
     }
@@ -320,7 +322,7 @@ Thank you.
       const res = await api.get(`/print/receipt/${id}`, { responseType: 'blob' });
       const receipt = new Blob([res.data], { type: 'application/pdf' });
       try {
-        const mode = await printPdfBlob(receipt);
+        const mode = await printPdfBlob(receipt, { documentType: 'pos' });
         toast.success(mode === 'direct' ? 'Receipt sent to printer' : 'Print dialog opened', { id: t });
       } catch {
         await printPdfBlob(receipt, { direct: false });
@@ -331,17 +333,51 @@ Thank you.
     }
   };
 
-  const openGmail = () => {
+  const downloadShareFile = (file: File) => {
+    const url = window.URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name; a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const shareFileNatively = async (file: File) => {
+    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+    if (!navigator.share || (nav.canShare && !nav.canShare({ files: [file] }))) return false;
+    await navigator.share({ title: `Invoice ${shareContext.invoiceNumber}`, text: buildWaMessage(), files: [file] });
+    return true;
+  };
+
+  const openGmail = async () => {
+    const id = invoiceIdForPrint || invoiceId;
+    if (mode === 'saved' && id && partyEmail) {
+      if (!window.confirm(`Email invoice ${shareContext.invoiceNumber} to ${partyEmail}?`)) return;
+      const t = toast.loading('Sending invoice PDF…');
+      try {
+        await api.post(`/invoices/${id}/email`, { email: partyEmail });
+        toast.success(`Invoice sent to ${partyEmail}`, { id: t });
+        return;
+      } catch (error: any) {
+        toast.error(error?.response?.data?.error || 'Server email failed. Opening device share instead.', { id: t });
+      }
+    }
+    const file = await fetchCurrentPdfFile();
+    if (await shareFileNatively(file)) return;
+    downloadShareFile(file);
     const subject = encodeURIComponent(`Invoice ${shareContext.invoiceNumber}`);
     const body = encodeURIComponent(buildWaMessage());
     window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`, '_blank', 'noopener,noreferrer');
+    toast.success('Invoice PDF downloaded. Attach it to the email before sending.');
   };
 
-  const openSms = () => {
+  const openSms = async () => {
+    const file = await fetchCurrentPdfFile();
+    if (await shareFileNatively(file)) return;
+    downloadShareFile(file);
     const phone = normalizePhone(sharePhone);
     const body = encodeURIComponent(buildWaMessage());
     const href = phone ? `sms:${phone}?&body=${body}` : `sms:?&body=${body}`;
     window.location.href = href;
+    toast.success('Invoice PDF downloaded. MMS attachments depend on your device and carrier.');
   };
 
   const handleSaveClose = async () => {
@@ -466,15 +502,15 @@ Thank you.
                 <button
                   type="button"
                   className="flex-1 flex flex-col items-center gap-1 rounded-lg border border-slate-200 py-2 hover:bg-slate-50 text-xs"
-                  onClick={() => openGmail()}
+                  onClick={() => { void openGmail().catch((error) => error?.name !== 'AbortError' && toast.error(error?.message || 'Email share failed')); }}
                 >
                   <Mail className="h-5 w-5 text-red-500" />
-                  Gmail
+                  {partyEmail ? 'Email PDF' : 'Email'}
                 </button>
                 <button
                   type="button"
                   className="flex-1 flex flex-col items-center gap-1 rounded-lg border border-slate-200 py-2 hover:bg-slate-50 text-xs"
-                  onClick={openSms}
+                  onClick={() => { void openSms().catch((error) => error?.name !== 'AbortError' && toast.error(error?.message || 'Message share failed')); }}
                 >
                   <MessageSquare className="h-5 w-5 text-sky-600" />
                   SMS

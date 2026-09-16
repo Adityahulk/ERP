@@ -4,6 +4,12 @@ import {
   readStorageWithLegacy,
   STORAGE_KEYS,
 } from '@/lib/storageKeys';
+import {
+  readPrinterSettings,
+  resolveConfiguredPrinter,
+  type PrinterDocumentType,
+  type PrinterPaperSize,
+} from '@/lib/printerSettings';
 
 async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,18 +60,27 @@ export async function printPdfBlob(
     copies?: number;
     autoCut?: boolean;
     openCashDrawer?: boolean;
+    documentType?: PrinterDocumentType;
+    paperSize?: PrinterPaperSize;
   } = {},
 ): Promise<'direct' | 'browser'> {
+  const workstation = readPrinterSettings();
   const directSetting = readStorageWithLegacy(
     STORAGE_KEYS.directThermalPrint,
     LEGACY_STORAGE_KEYS.directThermalPrint,
   ) === 'true';
-  const printerName = options.printerName || readStorageWithLegacy(
+  const legacyPrinterName = readStorageWithLegacy(
     STORAGE_KEYS.directPrinterName,
     LEGACY_STORAGE_KEYS.directPrinterName,
   ) || '';
+  const printerName = options.printerName
+    || resolveConfiguredPrinter(workstation, options.documentType || 'default')
+    || legacyPrinterName;
+  const direct = options.direct ?? workstation.directPrinting ?? directSetting;
+  const copies = options.copies ?? workstation.copies;
+  const paperSize = options.paperSize || workstation.paperSize;
 
-  if ((options.direct ?? directSetting) && printerName) {
+  if (direct && printerName) {
     if (!qz.websocket.isActive()) await qz.websocket.connect();
     const data = await blobToBase64(blob);
     const printData: any[] = [];
@@ -76,13 +91,47 @@ export async function printPdfBlob(
     if (options.autoCut) {
       printData.push({ type: 'raw', format: 'command', flavor: 'plain', data: '\x1D\x56\x00' });
     }
+    const size = paperSize === '80mm'
+      ? { width: 80, height: 297 }
+      : paperSize === '58mm'
+        ? { width: 58, height: 297 }
+        : paperSize;
     await qz.print(
-      qz.configs.create(printerName, { copies: Math.max(1, Math.min(10, Number(options.copies) || 1)) }),
+      qz.configs.create(printerName, {
+        copies: Math.max(1, Math.min(10, Number(copies) || 1)),
+        size,
+        units: paperSize.endsWith('mm') ? 'mm' : undefined,
+      }),
       printData,
     );
     return 'direct';
   }
 
   browserPrintPdf(blob);
+  return 'browser';
+}
+
+export async function printPdfBlobs(
+  blobs: Blob[],
+  options: Parameters<typeof printPdfBlob>[1] = {},
+): Promise<'direct' | 'browser'> {
+  if (!blobs.length) throw new Error('Select at least one bill to print');
+  const workstation = readPrinterSettings();
+  const printerName = options.printerName
+    || resolveConfiguredPrinter(workstation, options.documentType || 'default');
+  const direct = options.direct ?? workstation.directPrinting;
+  if (direct && printerName) {
+    if (!qz.websocket.isActive()) await qz.websocket.connect();
+    const data = await Promise.all(blobs.map(blobToBase64));
+    await qz.print(
+      qz.configs.create(printerName, {
+        copies: Math.max(1, Math.min(10, Number(options.copies ?? workstation.copies) || 1)),
+      }),
+      data.map((pdf) => ({ type: 'pixel', format: 'pdf', flavor: 'base64', data: pdf })),
+    );
+    return 'direct';
+  }
+  // Browser security requires one dialog per PDF. Open them in order as the safe fallback.
+  blobs.forEach((blob, index) => window.setTimeout(() => browserPrintPdf(blob), index * 350));
   return 'browser';
 }

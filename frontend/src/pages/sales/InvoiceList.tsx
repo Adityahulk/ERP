@@ -15,6 +15,7 @@ import toast from 'react-hot-toast';
 import { InvoicePreviewWorkspace } from '@/components/invoices/InvoicePreviewWorkspace';
 import { useCompany, useUpdateCompany } from '@/hooks/useBusiness';
 import { apiErrorMessage } from '@/lib/blobError';
+import { printPdfBlobs } from '@/lib/printPdf';
 
 const BULK_COLUMN_OPTIONS = [
   { id: 'serial_no', label: '#' },
@@ -101,6 +102,8 @@ export default function InvoiceList() {
   const [receiveReference, setReceiveReference] = useState('');
   const [receiveNotes, setReceiveNotes] = useState('');
   const [historyInvoice, setHistoryInvoice] = useState<any | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
+  const [printingSelected, setPrintingSelected] = useState(false);
   const customBulkColumnOptions = useMemo(() => salesCustomBulkOptions(company), [company]);
 
   const companyDefaultBulkColumns = useMemo(
@@ -140,6 +143,9 @@ export default function InvoiceList() {
       return res.data;
     }
   });
+  const meta = data?.meta || {};
+  const invoices: any[] = data?.data?.data || data?.data || [];
+  const pagination = data?.data?.pagination;
 
   useEffect(() => {
     setPage(1);
@@ -199,6 +205,29 @@ export default function InvoiceList() {
       setPdfLoadingId(null);
     }
   }, []);
+
+  const printSelectedInvoices = useCallback(async (ids = selectedInvoiceIds) => {
+    if (!ids.length) return toast.error('Select at least one sales invoice');
+    const t = toast.loading(ids.length === 1 ? 'Preparing invoice…' : `Preparing ${ids.length} invoices…`);
+    try {
+      setPrintingSelected(true);
+      const rows = ids.map((id) => invoices.find((invoice) => invoice.id === id)).filter(Boolean);
+      const allPosBills = rows.length === ids.length && rows.every((invoice) => Boolean(invoice?.custom_fields?.pos));
+      const responses = await Promise.all(ids.map((id) => api.get(
+        allPosBills ? `/print/receipt/${id}` : `/invoices/${id}/pdf`,
+        { responseType: 'blob' },
+      )));
+      const mode = await printPdfBlobs(
+        responses.map((response) => new Blob([response.data], { type: 'application/pdf' })),
+        { documentType: allPosBills ? 'pos' : 'invoice' },
+      );
+      toast.success(mode === 'direct' ? 'Invoices sent to the configured printer' : 'Print dialog opened', { id: t });
+    } catch (error: any) {
+      toast.error(await apiErrorMessage(error, 'Failed to print invoices'), { id: t });
+    } finally {
+      setPrintingSelected(false);
+    }
+  }, [invoices, selectedInvoiceIds]);
 
   const toggleBulkColumn = useCallback((id: string, enabled: boolean) => {
     setBulkColumns((current) => {
@@ -420,10 +449,7 @@ export default function InvoiceList() {
     cancelled: 'bg-slate-200 text-slate-500 line-through',
   };
 
-  const meta = data?.meta || {};
   // Response: { success, data: { data: [...], pagination: {...} }, meta: {...} }
-  const invoices: any[] = data?.data?.data || data?.data || [];
-  const pagination = data?.data?.pagination;
   const activeMenuInvoice = menuInvoiceId ? invoices.find((inv: any) => inv.id === menuInvoiceId) : null;
   const activeMenuHasIrn = !!activeMenuInvoice?.irn && activeMenuInvoice?.einvoice_status === 'generated';
   const activeMenuCanEdit = !!activeMenuInvoice && !activeMenuHasIrn && activeMenuInvoice.status !== 'cancelled';
@@ -507,6 +533,11 @@ export default function InvoiceList() {
         </div>
 
         <div className="flex gap-2">
+          {selectedInvoiceIds.length > 0 && (
+            <Button variant="outline" onClick={() => printSelectedInvoices()} loading={printingSelected} className="gap-2">
+              <Printer className="h-4 w-4" /> {selectedInvoiceIds.length === 1 ? 'Print Single Bill' : `Print All Bills (${selectedInvoiceIds.length})`}
+            </Button>
+          )}
           <div className="relative w-64">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search invoice or party..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
@@ -526,6 +557,14 @@ export default function InvoiceList() {
           <table className="w-full text-sm text-left">
             <thead className="bg-muted text-muted-foreground font-medium border-b">
               <tr>
+                <th className="w-10 py-3 px-3 text-center">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible sales invoices"
+                    checked={invoices.length > 0 && invoices.every((invoice) => selectedInvoiceIds.includes(invoice.id))}
+                    onChange={(event) => setSelectedInvoiceIds(event.target.checked ? invoices.map((invoice) => invoice.id) : [])}
+                  />
+                </th>
                 <th className="py-3 px-4">Date</th>
                 <th className="py-3 px-4">Invoice #</th>
                 <th className="py-3 px-4">Party</th>
@@ -537,9 +576,9 @@ export default function InvoiceList() {
             </thead>
             <tbody className="divide-y">
               {isLoading ? (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading sales...</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading sales...</td></tr>
               ) : invoices.length === 0 ? (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground"><FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />No invoices found</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground"><FileText className="h-8 w-8 mx-auto mb-2 opacity-20" />No invoices found</td></tr>
               ) : (
                 invoices.map((inv: any) => {
                   const displayStatus = inv.status === 'cancelled' ? 'cancelled' : (inv.payment_status || inv.status);
@@ -550,6 +589,14 @@ export default function InvoiceList() {
 
                   return (
                     <tr key={inv.id} className="hover:bg-muted/50 transition-colors">
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select invoice ${inv.invoice_number}`}
+                          checked={selectedInvoiceIds.includes(inv.id)}
+                          onChange={(event) => setSelectedInvoiceIds((current) => event.target.checked ? [...new Set([...current, inv.id])] : current.filter((id) => id !== inv.id))}
+                        />
+                      </td>
                       <td className="py-3 px-4 tabular-nums">{formatDate(inv.invoice_date)}</td>
                       <td className="py-3 px-4 font-medium">
                         <button onClick={() => navigate(`/sales/${inv.id}`)} className="text-primary hover:underline">
@@ -593,6 +640,15 @@ export default function InvoiceList() {
                             {pdfLoadingId === inv.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Download className="h-4 w-4" />}
+                          </Button>
+
+                          <Button
+                            variant="ghost" size="icon"
+                            disabled={printingSelected}
+                            onClick={() => printSelectedInvoices([inv.id])}
+                            title="Print Single Bill"
+                          >
+                            <Printer className="h-4 w-4" />
                           </Button>
 
                           {canDelete && (
@@ -969,6 +1025,7 @@ export default function InvoiceList() {
           partyName: previewInvoice?.party_name || 'Customer',
         }}
         partyPhone={previewInvoice?.party_phone || ''}
+        partyEmail={previewInvoice?.party_email || ''}
       />
     </div>
   );

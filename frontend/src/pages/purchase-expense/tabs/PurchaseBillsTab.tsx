@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil, Eye, Download } from 'lucide-react';
+import { Plus, Search, IndianRupee, CheckCircle2, AlertCircle, FileText, UserPlus, Pencil, Eye, Download, ScanLine, Printer, Share2 } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import { BankAccountPicker } from '@/components/company/BankAccountPicker';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
@@ -16,12 +16,15 @@ import MoneyInput from '@/components/transactions/MoneyInput';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
 import toast from 'react-hot-toast';
+import OcrBillSheet, { type OcrResult } from '@/components/shared/OcrBillSheet';
+import { printPdfBlobs } from '@/lib/printPdf';
 
 const PAYMENT_MODES = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'credit'];
 const BILL_NUMBER_PATTERN = /^[A-Za-z1-9][A-Za-z0-9/-]{0,15}$/;
 const BILL_NUMBER_HELP = 'Use 1-16 characters: A-Z, 0-9, / or -. First character cannot be 0.';
 
 function PaymentBadge({ status }: { status: string }) {
+  if (status === 'overdue') return <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-rose-100 text-rose-700">Overdue</span>;
   if (status === 'paid') return <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-700">Paid</span>;
   if (status === 'partial') return <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-700">Partial</span>;
   return <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-red-100 text-red-700">Unpaid</span>;
@@ -34,6 +37,9 @@ export default function PurchaseBillsTab() {
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [selectedBillIds, setSelectedBillIds] = useState<string[]>([]);
+  const [printing, setPrinting] = useState(false);
+  const [ocrOpen, setOcrOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const billHydratedRef = useRef<string | null>(null);
@@ -48,6 +54,7 @@ export default function PurchaseBillsTab() {
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState('');
   const [billNumber, setBillNumber] = useState('');
   const [godownId, setGodownId] = useState('');
   const [isGst, setIsGst] = useState(true);
@@ -83,11 +90,12 @@ export default function PurchaseBillsTab() {
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     STORAGE_KEYS.drafts.purchaseBill,
-    { partyId, partyName, billDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
+    { partyId, partyName, billDate, dueDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
       setPartyName(String(draft.partyName || ''));
       setBillDate(String(draft.billDate || new Date().toISOString().split('T')[0]));
+      setDueDate(String(draft.dueDate || ''));
       setBillNumber(String(draft.billNumber || ''));
       setGodownId(String(draft.godownId || ''));
       setIsGst(draft.isGst !== false);
@@ -102,7 +110,7 @@ export default function PurchaseBillsTab() {
       enabled: !editingBillId,
       legacyKey: LEGACY_STORAGE_KEYS.drafts.purchaseBill,
       shouldSave: (draft) => Boolean(
-        draft.partyId || draft.partyName || draft.billNumber || draft.notes ||
+        draft.partyId || draft.partyName || draft.billNumber || draft.dueDate || draft.notes ||
         draft.companyBankAccountId || draft.items.length
       ),
     },
@@ -189,7 +197,7 @@ export default function PurchaseBillsTab() {
 
   const resetForm = () => {
     setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]);
-    setBillDate(new Date().toISOString().split('T')[0]); setBillNumber('');
+    setBillDate(new Date().toISOString().split('T')[0]); setDueDate(''); setBillNumber('');
     setGodownId(''); setNotes(''); setItems([]);
     setCompanyBankAccountId('');
     setEditingBillId(null);
@@ -204,6 +212,7 @@ export default function PurchaseBillsTab() {
 
     setPartyId(String(b.party_id || ''));
     setBillDate(b.bill_date ? String(b.bill_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
+    setDueDate(b.due_date ? String(b.due_date).slice(0, 10) : '');
     setBillNumber(String(b.bill_number || ''));
     setGodownId(b.godown_id ? String(b.godown_id) : '');
     setIsGst(b.is_gst_invoice !== false);
@@ -247,6 +256,7 @@ export default function PurchaseBillsTab() {
   const buildPayload = () => ({
     party_id: partyId,
     bill_date: billDate,
+    due_date: dueDate || undefined,
     bill_number: billNumber.trim() || undefined,
     godown_id: godownId || undefined,
     is_gst_invoice: isGst,
@@ -259,6 +269,7 @@ export default function PurchaseBillsTab() {
       unit: it.unit,
       quantity: it.quantity,
       unit_price: it.unit_price,
+      discount_amount: it.discount_amount || 0,
       gst_rate: it.gst_rate,
     })),
   });
@@ -307,6 +318,91 @@ export default function PurchaseBillsTab() {
     }
   };
 
+  const fetchBillPdf = async (id: string) => {
+    const res = await api.get(`/purchases/invoices/${id}/pdf`, { responseType: 'blob' });
+    return new Blob([res.data], { type: 'application/pdf' });
+  };
+
+  const printSelectedBills = async (ids = selectedBillIds) => {
+    if (!ids.length) return toast.error('Select at least one purchase bill');
+    const t = toast.loading(ids.length === 1 ? 'Preparing bill…' : `Preparing ${ids.length} bills…`);
+    try {
+      setPrinting(true);
+      const blobs = await Promise.all(ids.map(fetchBillPdf));
+      const mode = await printPdfBlobs(blobs, { documentType: 'purchase' });
+      toast.success(mode === 'direct' ? 'Bills sent to the purchase printer' : 'Print dialog opened', { id: t });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || e?.message || 'Printing failed', { id: t });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const shareBillPdf = async (bill: any) => {
+    try {
+      const blob = await fetchBillPdf(bill.id);
+      const file = new File([blob], `${bill.bill_number || 'purchase-bill'}.pdf`, { type: 'application/pdf' });
+      const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
+      if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
+        await navigator.share({ title: `Purchase bill ${bill.bill_number}`, text: `Purchase bill ${bill.bill_number}`, files: [file] });
+        return;
+      }
+      const url = window.URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = url; a.download = file.name; a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('PDF downloaded. Attach it in WhatsApp, email, or your messaging app.');
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') toast.error(e?.message || 'Could not share purchase bill');
+    }
+  };
+
+  const applyOcrResult = async (result: OcrResult & { overrides: any }) => {
+    resetForm();
+    const scannedNumber = String(result.invoice_number || '')
+      .trim().toUpperCase().replace(/[^A-Z0-9/-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 16);
+    setBillNumber(scannedNumber.startsWith('0') ? `B${scannedNumber}`.slice(0, 16) : scannedNumber);
+    if (result.bill_date) setBillDate(result.bill_date);
+    setDueDate(result.due_date || '');
+    setIsGst(Boolean(result.supplier_gstin || result.tax_summary?.gst_rate || result.items?.some((item) => Number(item.gst_rate) > 0)));
+    setItems((result.items || []).map((item) => ({
+      name: item.description || 'Scanned item',
+      description: item.description || '',
+      hsn_code: item.hsn_code || '',
+      unit: item.unit || 'PCS',
+      quantity: Number(item.quantity) || 1,
+      unit_price: Number(item.rate_paise) || (item.amount_paise && item.quantity ? Math.round(item.amount_paise / item.quantity) : 0),
+      discount_amount: Number(item.discount_paise) || 0,
+      gst_rate: Number(item.gst_rate) || 0,
+      cess_rate: Number(item.cess_rate) || 0,
+    })));
+
+    if (result.matched_party_id) {
+      setPartyId(result.matched_party_id);
+      setPartyName(result.matched_party_name || result.party_name || 'Matched supplier');
+    } else {
+      const lookup = String(result.supplier_gstin || result.party_name || '').trim();
+      if (lookup) {
+        try {
+          const response = await api.get('/parties/search', { params: { q: lookup } });
+          const matches = response.data?.data || [];
+          const exact = matches.find((party: any) =>
+            (result.supplier_gstin && party.gstin === result.supplier_gstin)
+            || String(party.name || '').toLowerCase() === String(result.party_name || '').toLowerCase());
+          if (exact) selectSupplier(exact);
+          else setPartySearch(result.party_name || '');
+        } catch { setPartySearch(result.party_name || ''); }
+      }
+    }
+    const scanNotes = [
+      result.total_amount_paise != null ? `Scanned supplier total: ${formatMoney(result.total_amount_paise)}. Verify it against the calculated item total.` : '',
+      result.warnings?.length ? `OCR review: ${result.warnings.join(' ')}` : '',
+    ].filter(Boolean).join('\n');
+    setNotes(scanNotes);
+    setShowForm(true);
+    toast.success('Bill details applied. Review every field before saving.');
+  };
+
   return (
     <div className="space-y-5">
       {/* Stats */}
@@ -332,13 +428,21 @@ export default function PurchaseBillsTab() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search bills…" className="pl-9 h-9" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        {['', 'unpaid', 'partial', 'paid'].map(s => (
+        {['', 'paid', 'unpaid', 'overdue', 'partial'].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium ${statusFilter === s ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
             {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
         <div className="ml-auto flex flex-wrap gap-2">
+          {selectedBillIds.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => printSelectedBills()} loading={printing} className="gap-1.5">
+              <Printer className="h-4 w-4" /> {selectedBillIds.length === 1 ? 'Print Single Bill' : `Print All Bills (${selectedBillIds.length})`}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => setOcrOpen(true)} className="gap-1.5">
+            <ScanLine className="h-4 w-4" /> AI Bill Scanner
+          </Button>
           {hasDraft && !editingBillId && (
             <Button size="sm" variant="outline" onClick={loadSavedDraft}>
               Open draft
@@ -354,8 +458,16 @@ export default function PurchaseBillsTab() {
       <div className="border rounded-xl bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b bg-muted/40">
-              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
+              <tr className="border-b bg-muted/40">
+                <th className="w-10 px-3 py-2.5 text-center">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible purchase bills"
+                    checked={bills.length > 0 && bills.every((bill: any) => selectedBillIds.includes(bill.id))}
+                    onChange={(event) => setSelectedBillIds(event.target.checked ? bills.map((bill: any) => bill.id) : [])}
+                  />
+                </th>
+                <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Bill No.</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground hidden sm:table-cell">Status</th>
@@ -365,9 +477,9 @@ export default function PurchaseBillsTab() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && bills.length === 0 && (
-              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">
                 <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 No purchase bills. Click <strong>Add Purchase</strong> to create one.
               </td></tr>
@@ -376,13 +488,22 @@ export default function PurchaseBillsTab() {
               const balance = (parseInt(b.total_amount)||0) - (parseInt(b.paid_amount)||0);
               const paidAmt = parseInt(b.paid_amount) || 0;
               const canEditBill = paidAmt === 0;
+              const isOverdue = b.payment_status !== 'paid' && b.due_date && new Date(`${String(b.due_date).slice(0, 10)}T23:59:59`) < new Date();
               return (
                 <tr key={b.id} className="border-b hover:bg-muted/20">
+                  <td className="px-3 py-2.5 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select purchase bill ${b.bill_number || ''}`}
+                      checked={selectedBillIds.includes(b.id)}
+                      onChange={(event) => setSelectedBillIds((current) => event.target.checked ? [...new Set([...current, b.id])] : current.filter((id) => id !== b.id))}
+                    />
+                  </td>
                   <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(b.bill_date)}</td>
                   <td className="px-4 py-2.5 font-mono text-xs font-medium">{b.bill_number || '—'}</td>
                   <td className="px-4 py-2.5 font-medium">{b.party_name || '—'}</td>
                   <td className="px-4 py-2.5 text-center hidden sm:table-cell">
-                    <PaymentBadge status={b.payment_status || 'unpaid'} />
+                    <PaymentBadge status={isOverdue ? 'overdue' : (b.payment_status || 'unpaid')} />
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-medium">{formatMoney(parseInt(b.total_amount)||0)}</td>
                   <td className={`px-4 py-2.5 text-right tabular-nums font-semibold hidden md:table-cell ${balance > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
@@ -395,6 +516,12 @@ export default function PurchaseBillsTab() {
                       </Button>
                       <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => downloadBillPdf(b.id, b.bill_number)} title="Download PDF">
                         <Download className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => printSelectedBills([b.id])} title="Print Single Bill">
+                        <Printer className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => shareBillPdf(b)} title="Share PDF via WhatsApp, email, or messages">
+                        <Share2 className="w-3.5 h-3.5" />
                       </Button>
                       {canEditBill && (
                         <Button size="sm" variant="outline" className="h-7 text-xs px-2 gap-1" onClick={() => openEditBill(b.id, b.party_name)}>
@@ -474,6 +601,10 @@ export default function PurchaseBillsTab() {
               <div>
                 <Label className="text-xs">Bill Date</Label>
                 <Input type="date" className="mt-1 h-9" value={billDate} onChange={e => setBillDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Payment Due Date</Label>
+                <Input type="date" className="mt-1 h-9" min={billDate} value={dueDate} onChange={e => setDueDate(e.target.value)} />
               </div>
               <div>
                 <Label className="text-xs">Vendor bill no. (optional)</Label>
@@ -573,6 +704,7 @@ export default function PurchaseBillsTab() {
       )}
 
       <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
+      <OcrBillSheet open={ocrOpen} onOpenChange={setOcrOpen} context="Purchase Bill" onConfirm={applyOcrResult} />
     </div>
   );
 }

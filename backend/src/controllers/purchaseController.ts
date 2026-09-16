@@ -443,14 +443,14 @@ export async function receiveStock(req: Request, res: Response) {
       // 2. Create Purchase Invoice
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
-          company_id, godown_id, bill_number, bill_date, po_id, party_id,
+          company_id, godown_id, bill_number, bill_date, due_date, po_id, party_id,
           subtotal, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
           status, created_by, pdf_template, document_theme,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'received',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'received',$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING *`,
         [
-          companyId, po.godown_id, grnBillNumber, d.bill_date, po.id, po.party_id,
+          companyId, po.godown_id, grnBillNumber, d.bill_date, d.due_date || null, po.id, po.party_id,
           invoiceTotals.subtotal, invoiceTotals.totalTaxable,
           invoiceTotals.totalCgst, invoiceTotals.totalSgst, invoiceTotals.totalIgst,
           invoiceTotals.totalAmount, req.user!.id,
@@ -470,7 +470,7 @@ export async function receiveStock(req: Request, res: Response) {
       // 3. Process each received item
       let fullyReceived = true;
 
-      for (const reqItem of receivedItems) {
+      for (const [lineIndex, reqItem] of receivedItems.entries()) {
         const poItem = poItemById.get(String(reqItem.po_item_id));
         if (!poItem) throw new Error('PO Item reference missing');
 
@@ -513,11 +513,15 @@ export async function receiveStock(req: Request, res: Response) {
         await client.query(
           `INSERT INTO purchase_invoice_items (
             purchase_invoice_id, item_id, item_name, quantity, unit_price,
-            gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount, batch_id, serial_numbers
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            taxable_amount, gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount,
+            batch_id, serial_numbers, sort_order
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
           [
             invoice.id, poItem.item_id, poItem.item_name, reqItem.quantity_received, unitPricePaise,
-            isGstInvoice ? (reqItem.gst_rate || poItem.gst_rate) : 0, lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount, batchId, (reqItem.serial_numbers && reqItem.serial_numbers.length > 0) ? reqItem.serial_numbers : null
+            lineTax.totalTaxable, isGstInvoice ? (reqItem.gst_rate || poItem.gst_rate) : 0,
+            lineTax.totalCgst, lineTax.totalSgst, lineTax.totalIgst, lineTax.totalAmount,
+            batchId, (reqItem.serial_numbers && reqItem.serial_numbers.length > 0) ? reqItem.serial_numbers : null,
+            lineIndex,
           ]
         );
 
@@ -612,8 +616,8 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       const normalizedItems = normalizePurchaseItems(d.items, isGst);
       const itemsForTotals = normalizedItems.map((it) => ({
         ...it,
-        discount_type: 'none' as const,
-        discount_value: 0,
+        discount_type: Number(it.discount_amount || 0) > 0 ? 'flat' as const : 'none' as const,
+        discount_value: Math.max(0, Math.round(Number(it.discount_amount || 0))),
       }));
       const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
@@ -621,16 +625,16 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
 
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
-          company_id, godown_id, bill_number, bill_date, po_id, party_id,
+          company_id, godown_id, bill_number, bill_date, due_date, po_id, party_id,
           subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
           paid_amount, payment_status, status, notes, created_by,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,0,'unpaid','received',$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,0,'unpaid','received',$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING *`,
         [
           companyId, d.godown_id || null, billNumber, d.bill_date,
-          d.po_id || null, d.party_id,
-          totals.subtotal, 0, totals.totalTaxable,
+          d.due_date || null, d.po_id || null, d.party_id,
+          totals.subtotal, totals.totalDiscount, totals.totalTaxable,
           totals.totalCgst, totals.totalSgst, totals.totalIgst, totals.totalAmount,
           d.notes || null, req.user!.id,
           bankSnap.company_bank_account_id,
@@ -644,22 +648,22 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       );
       const inv = invRes.rows[0];
 
-      for (const item of normalizedItems) {
-        const lineTotals = calculateInvoiceTotals(
-          [{ unit_price: item.unit_price, quantity: item.quantity, gst_rate: item.gst_rate, discount_type: 'none' as const, discount_value: 0 }],
-          gstType, 'none', 0,
-        );
+      for (const [index, item] of normalizedItems.entries()) {
+        const lineTotals = totals.lines[index];
         await client.query(
           `INSERT INTO purchase_invoice_items (
             purchase_invoice_id, item_id, item_name, hsn_code, unit, quantity, unit_price,
-            gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            discount_amount, taxable_amount, gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount, sort_order
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [
             inv.id, item.item_id || null, item.item_name || 'Item',
             item.hsn_code || null, item.unit || 'PCS',
             item.quantity, item.unit_price,
+            lineTotals.totalDiscount,
+            lineTotals.taxableAmount,
             item.gst_rate,
-            lineTotals.totalCgst, lineTotals.totalSgst, lineTotals.totalIgst, lineTotals.totalAmount,
+            lineTotals.cgstAmount, lineTotals.sgstAmount, lineTotals.igstAmount, lineTotals.totalAmount,
+            index,
           ],
         );
 
@@ -711,7 +715,9 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
     let where = 'pi.company_id = $1 AND pi.is_deleted = false';
     const params: any[] = [companyId];
     let idx = 2;
-    if (payment_status) { where += ` AND pi.payment_status = $${idx++}`; params.push(payment_status); }
+    if (payment_status === 'overdue') {
+      where += ` AND pi.payment_status <> 'paid' AND pi.status <> 'cancelled' AND pi.due_date IS NOT NULL AND pi.due_date < CURRENT_DATE`;
+    } else if (payment_status) { where += ` AND pi.payment_status = $${idx++}`; params.push(payment_status); }
     if (party_id) { where += ` AND pi.party_id = $${idx++}`; params.push(party_id); }
     if (search) { where += ` AND (pi.bill_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
     if (outstanding === 'true') { where += ` AND pi.status != 'cancelled' AND pi.total_amount > pi.paid_amount`; }
@@ -831,8 +837,8 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
       const normalizedItems = normalizePurchaseItems(d.items, isGst);
       const itemsForTotals = normalizedItems.map((it) => ({
         ...it,
-        discount_type: 'none' as const,
-        discount_value: 0,
+        discount_type: Number(it.discount_amount || 0) > 0 ? 'flat' as const : 'none' as const,
+        discount_value: Math.max(0, Math.round(Number(it.discount_amount || 0))),
       }));
       const totals = calculateInvoiceTotals(itemsForTotals, gstType, 'none', 0);
 
@@ -847,21 +853,23 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 
       await client.query(
         `UPDATE purchase_invoices SET
-          party_id = $1, godown_id = $2, bill_number = $3, bill_date = $4,
-          subtotal = $5, discount_amount = 0, taxable_amount = $6,
-          cgst_amount = $7, sgst_amount = $8, igst_amount = $9, total_amount = $10,
-          notes = $11, is_gst_invoice = $12,
-          company_bank_account_id = $13, bank_label_snapshot = $14, bank_name_snapshot = $15,
-          bank_account_number_snapshot = $16, bank_ifsc_snapshot = $17, bank_branch_snapshot = $18, upi_id_snapshot = $19,
-          pdf_template = $20, document_theme = $21,
+          party_id = $1, godown_id = $2, bill_number = $3, bill_date = $4, due_date = $5,
+          subtotal = $6, discount_amount = $7, taxable_amount = $8,
+          cgst_amount = $9, sgst_amount = $10, igst_amount = $11, total_amount = $12,
+          notes = $13, is_gst_invoice = $14,
+          company_bank_account_id = $15, bank_label_snapshot = $16, bank_name_snapshot = $17,
+          bank_account_number_snapshot = $18, bank_ifsc_snapshot = $19, bank_branch_snapshot = $20, upi_id_snapshot = $21,
+          pdf_template = $22, document_theme = $23,
           updated_at = NOW()
-        WHERE id = $22 AND company_id = $23`,
+        WHERE id = $24 AND company_id = $25`,
         [
           d.party_id,
           d.godown_id || null,
           billNumber,
           d.bill_date,
+          d.due_date || null,
           totals.subtotal,
+          totals.totalDiscount,
           totals.totalTaxable,
           totals.totalCgst,
           totals.totalSgst,
@@ -884,26 +892,13 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
       );
 
       const godownId = d.godown_id || null;
-      for (const item of normalizedItems) {
-        const lineTotals = calculateInvoiceTotals(
-          [
-            {
-              unit_price: item.unit_price,
-              quantity: item.quantity,
-              gst_rate: item.gst_rate,
-              discount_type: 'none' as const,
-              discount_value: 0,
-            },
-          ],
-          gstType,
-          'none',
-          0,
-        );
+      for (const [index, item] of normalizedItems.entries()) {
+        const lineTotals = totals.lines[index];
         await client.query(
           `INSERT INTO purchase_invoice_items (
             purchase_invoice_id, item_id, item_name, hsn_code, unit, quantity, unit_price,
-            gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            discount_amount, taxable_amount, gst_rate, cgst_amount, sgst_amount, igst_amount, total_amount, sort_order
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [
             id,
             item.item_id || null,
@@ -912,11 +907,14 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
             item.unit || 'PCS',
             item.quantity,
             item.unit_price,
+            lineTotals.totalDiscount,
+            lineTotals.taxableAmount,
             item.gst_rate,
-            lineTotals.totalCgst,
-            lineTotals.totalSgst,
-            lineTotals.totalIgst,
+            lineTotals.cgstAmount,
+            lineTotals.sgstAmount,
+            lineTotals.igstAmount,
             lineTotals.totalAmount,
+            index,
           ],
         );
 

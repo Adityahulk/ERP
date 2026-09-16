@@ -10,6 +10,7 @@ export const STORAGE_KEYS = {
   printerType: `${APP_PREFIX}_printer_type`,
   directPrinterName: `${APP_PREFIX}_direct_printer_name`,
   directThermalPrint: `${APP_PREFIX}_direct_thermal_print`,
+  printerSettings: `${APP_PREFIX}_printer_settings`,
   customUpiQr: `${APP_PREFIX}_custom_upi_qr`,
   skipInvoicePreview: `${APP_PREFIX}_skip_invoice_preview_after_save`,
   drafts: {
@@ -31,6 +32,7 @@ export const LEGACY_STORAGE_KEYS = {
   printerType: `${LEGACY_PREFIX}_printer_type`,
   directPrinterName: `${LEGACY_PREFIX}_direct_printer_name`,
   directThermalPrint: `${LEGACY_PREFIX}_direct_thermal_print`,
+  printerSettings: `${LEGACY_PREFIX}_printer_settings`,
   customUpiQr: `${LEGACY_PREFIX}_custom_upi_qr`,
   skipInvoicePreview: `${LEGACY_PREFIX}_skip_invoice_preview_after_save`,
   drafts: {

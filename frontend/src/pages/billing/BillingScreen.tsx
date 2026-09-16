@@ -20,6 +20,7 @@ import { useGodowns } from '@/hooks/useStock';
 import { printPdfBlob } from '@/lib/printPdf';
 import { normalizeThermalSettings, thermalWidthMm } from '@/lib/thermalSettings';
 import { calculatePosTotals, itemDiscountAmount, PosDiscountMode } from '@/lib/posBilling';
+import { readPrinterSettings } from '@/lib/printerSettings';
 
 interface BillItem {
   item_id: string;
@@ -233,9 +234,12 @@ export default function BillingScreen() {
       // Always print the receipt preview (thermal) in POS Billing rather than the standard A4 invoice
       const pdfRes = await api.get(`/print/receipt/${id}`, { params: { width: receiptWidthMm }, responseType: 'blob' });
       const receipt = new Blob([pdfRes.data], { type: 'application/pdf' });
+      const workstationPrinter = readPrinterSettings();
       try {
         const mode = await printPdfBlob(receipt, {
-          copies: thermalSettings.number_of_copies,
+          documentType: 'pos',
+          copies: workstationPrinter.copies || thermalSettings.number_of_copies,
+          paperSize: receiptWidthMm === 58 ? '58mm' : '80mm',
           autoCut: thermalSettings.auto_cut_paper,
           openCashDrawer: thermalSettings.open_cash_drawer,
         });
@@ -710,11 +714,8 @@ export default function BillingScreen() {
       qc.invalidateQueries({ queryKey: ['billingSearch'] });
       searchInputRef.current?.focus();
 
-      const directPrint = readStorageWithLegacy(
-        STORAGE_KEYS.directThermalPrint,
-        LEGACY_STORAGE_KEYS.directThermalPrint,
-      ) === 'true';
-      if (id && directPrint) {
+      const printerSettings = readPrinterSettings();
+      if (id && printerSettings.autoPrint) {
         void handlePrintReceipt(id);
       }
     },

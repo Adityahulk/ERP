@@ -22,6 +22,7 @@ router.get('/:id/pdf', ctrl.getInvoicePDF);
 router.get('/:id/history', ctrl.getInvoiceHistory);
 router.get('/:id/delivery-challan-preview', ctrl.getInvoiceDeliveryChallanPreview);
 router.post('/:id/whatsapp', ctrl.sendWhatsApp);
+router.post('/:id/email', ctrl.emailInvoicePdf);
 router.post('/:id/einvoice/generate', requireMinRole('accountant'), ctrl.generateEinvoice);
 router.post('/:id/einvoice/cancel', requireMinRole('company_admin'), ctrl.cancelEinvoice);
 router.get('/:id/einvoice/pdf', ctrl.getEinvoicePdf);
