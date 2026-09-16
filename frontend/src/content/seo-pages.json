@@ -1,0 +1,250 @@
+{
+  "siteName": "Microtechnique Accounts",
+  "siteUrl": "https://microtechnique.in",
+  "supportEmail": "support@microtechnique.in",
+  "phone": "+91 6355 997 080",
+  "pages": [
+    {
+      "slug": "",
+      "navLabel": "Home",
+      "title": "GST Billing & Accounting Software | Microtechnique Accounts",
+      "description": "Run GST billing, accounting, inventory, invoicing and business reports from one connected platform built for Indian businesses.",
+      "eyebrow": "Business software for India",
+      "h1": "GST billing, accounting and inventory in one place",
+      "intro": "Microtechnique Accounts helps Indian businesses create invoices, control stock, maintain ledgers and prepare GST reports without switching between disconnected tools.",
+      "primaryKeyword": "GST billing and accounting software",
+      "features": [
+        { "title": "GST-ready billing", "body": "Create tax invoices, credit notes, quotations, proforma invoices and delivery challans with configurable print formats." },
+        { "title": "Connected inventory", "body": "Track stock, godowns, purchases, barcodes and POS sales while every confirmed transaction updates inventory." },
+        { "title": "Reliable accounts", "body": "Keep party ledgers, cash and bank records, receivables, payables and financial reports aligned with daily billing." }
+      ],
+      "sections": [],
+      "faqs": [],
+      "related": ["gst-billing-software", "accounting-software", "inventory-management-software", "pricing"]
+    },
+    {
+      "slug": "gst-software",
+      "navLabel": "GST Software",
+      "title": "GST Software for Indian Businesses | Microtechnique Accounts",
+      "description": "Simplify GST invoicing, tax calculations, HSN/SAC reporting and GST return preparation with connected billing and accounting software.",
+      "eyebrow": "GST compliance without spreadsheet work",
+      "h1": "GST software built around everyday business transactions",
+      "intro": "Create compliant sales and purchase documents, apply the right tax treatment and turn transaction data into useful GST reports from one business workspace.",
+      "primaryKeyword": "GST software",
+      "features": [
+        { "title": "Accurate GST invoices", "body": "Apply CGST and SGST for intrastate sales or IGST for interstate transactions, with HSN/SAC codes and configurable tax rates." },
+        { "title": "GST reports from live data", "body": "Review sales by tax rate, HSN summaries and return-oriented reports without maintaining a second set of figures." },
+        { "title": "E-invoice and e-Way Bill workflow", "body": "Keep invoice data, IRN status and e-Way Bill information connected to the originating transaction where enabled." }
+      ],
+      "sections": [
+        { "title": "Configure GST for the way your business sells", "body": "Enable the tax rates and tax groups your team actually uses. Item rows can draw from those settings, while place of supply and interstate treatment determine the appropriate tax split.", "bullets": ["Standard and custom tax rates", "CGST, SGST, IGST and cess components", "HSN/SAC details at item level", "Tax-inclusive and tax-exclusive pricing"] },
+        { "title": "Move from billing to reporting without re-entry", "body": "Because GST data is recorded with each transaction, reports stay connected to invoices, returns and customer balances. Teams can investigate a figure by tracing it back to the source document.", "bullets": ["GST rate report", "HSN and SAC summaries", "Sales and purchase tax views", "Export-ready GST data"] }
+      ],
+      "faqs": [
+        { "question": "Can I use different GST rates for different items?", "answer": "Yes. GST rates are configured in Settings and selected per item. Custom rates and composite tax groups can also be maintained for the firm." },
+        { "question": "Does the software support interstate invoices?", "answer": "Yes. Interstate transactions can apply IGST, while intrastate invoices can split tax into CGST and SGST." },
+        { "question": "Can GST details appear on the printed invoice?", "answer": "Yes. GSTIN, HSN/SAC, item tax and tax summaries can be controlled through invoice and print settings." }
+      ],
+      "related": ["gst-billing-software", "gst-accounting-software", "gst-reports", "pricing"]
+    },
+    {
+      "slug": "billing-software",
+      "navLabel": "Billing Software",
+      "title": "Billing Software with POS | Microtechnique Accounts",
+      "description": "Create bills faster with POS, barcode scanning, customer balances, thermal printing, discounts and stock updates in one billing system.",
+      "eyebrow": "Fast billing with complete business control",
+      "h1": "Billing software that keeps sales, payments and stock connected",
+      "intro": "Serve customers quickly at the counter or create detailed sales invoices, while inventory, party balances and payment records update from the same transaction.",
+      "primaryKeyword": "billing software",
+      "features": [
+        { "title": "Counter-ready POS billing", "body": "Scan barcodes, change quantities, accept common payment modes and print a configured thermal receipt without leaving the billing screen." },
+        { "title": "Flexible discounts", "body": "Apply amount or percentage discounts at item level or across the complete bill, with totals recalculated consistently." },
+        { "title": "Credit and cash sales", "body": "Handle walk-in customers, named parties, cash sales and credit invoices while keeping payment status visible." }
+      ],
+      "sections": [
+        { "title": "A smoother checkout for cashiers", "body": "POS visibility settings let business owners decide whether cashiers can see rates, taxes, discounts, stock and line totals. Final-amount-only workflows remain fast without exposing internal pricing details.", "bullets": ["USB and camera barcode scanning", "Thermal receipt settings", "Cash, UPI, card and credit modes", "Configurable cashier visibility"] },
+        { "title": "Billing that updates the rest of the business", "body": "Confirmed bills can deduct stock from the selected godown, update party balances, record payments and become available in the invoice list for preview, printing and sharing.", "bullets": ["Automatic stock movement", "Party ledger impact", "Invoice status and payment tracking", "Reprint and PDF access"] }
+      ],
+      "faqs": [
+        { "question": "Can I use a barcode scanner with POS billing?", "answer": "Yes. USB scanners can enter the barcode like a keyboard, and supported devices can also use the camera scanner workflow." },
+        { "question": "Can I print directly to a thermal printer?", "answer": "Yes. After direct printer setup, POS receipts can be sent to the selected thermal printer. Browser print remains available as a fallback." },
+        { "question": "Can the cashier be prevented from seeing item rates?", "answer": "Yes. Cashier visibility settings can hide rates, taxes, stock, discounts, line totals or the full bill breakdown while retaining the final payable amount." }
+      ],
+      "related": ["gst-billing-software", "invoice-software", "inventory-management-software", "pricing"]
+    },
+    {
+      "slug": "gst-billing-software",
+      "navLabel": "GST Billing",
+      "title": "GST Billing Software for India | Microtechnique Accounts",
+      "description": "Make GST bills with HSN/SAC, CGST, SGST or IGST, custom invoice formats, payment tracking and connected inventory management.",
+      "eyebrow": "Professional GST bills, fewer manual steps",
+      "h1": "GST billing software for accurate invoices and faster collections",
+      "intro": "Build tax-compliant invoices from saved customer, item and tax settings, then track payments, print the chosen format and keep stock in sync.",
+      "primaryKeyword": "GST billing software",
+      "features": [
+        { "title": "Correct tax on every line", "body": "Use saved GST slabs or tax groups and calculate taxable value, CGST, SGST, IGST and cess consistently." },
+        { "title": "Invoices that match your business", "body": "Choose templates, item columns, footer content, terms, bank details and transport information from settings." },
+        { "title": "Payment and balance tracking", "body": "Record received amounts, show balance due and maintain party outstanding figures from confirmed invoices." }
+      ],
+      "sections": [
+        { "title": "From item selection to a compliant invoice", "body": "Customer details, place of supply, item HSN/SAC, quantity, unit, rate and discount feed one calculation flow. The resulting totals are used consistently for saving, previewing and printing.", "bullets": ["Inclusive or exclusive prices", "Item and bill-level discounts", "Place of supply handling", "Round-off configuration"] },
+        { "title": "Print the information your customer needs", "body": "Regular and thermal print settings control the document layout and visible fields. Saved settings become the default for future bills while authorized users can choose another layout when required.", "bullets": ["A4 invoice templates", "Thermal POS receipts", "Bill To and Ship To details", "Terms, bank and signature blocks"] }
+      ],
+      "faqs": [
+        { "question": "Can I create both GST and non-GST bills?", "answer": "Yes. The sales workflow can create GST invoices or non-GST bills, with tax-specific fields hidden when GST is not applicable." },
+        { "question": "Can a saved invoice format be used automatically?", "answer": "Yes. The default print and invoice configuration saved for the firm is used by the sales and preview workflows." },
+        { "question": "Are discounts calculated before GST?", "answer": "Discounts are applied through the shared invoice calculation flow so taxable value and GST are recalculated consistently." }
+      ],
+      "related": ["gst-software", "billing-software", "invoice-software", "gst-reports"]
+    },
+    {
+      "slug": "accounting-software",
+      "navLabel": "Accounting Software",
+      "title": "Accounting Software for SMEs | Microtechnique Accounts",
+      "description": "Manage ledgers, receivables, payables, cash, bank, trial balance, profit and loss and balance sheet from connected transactions.",
+      "eyebrow": "Accounts that begin with real transactions",
+      "h1": "Accounting software that stays connected to daily billing",
+      "intro": "Turn sales, purchases, payments and expenses into organized business accounts, with reports that can be traced back to the transactions behind them.",
+      "primaryKeyword": "accounting software",
+      "features": [
+        { "title": "Party ledgers and balances", "body": "Track receivables, payables, invoices, payments and outstanding amounts for customers and suppliers." },
+        { "title": "Cash and bank visibility", "body": "Record payment modes and bank activity while keeping transaction references connected to source documents." },
+        { "title": "Financial statements", "body": "Review trial balance, profit and loss, balance sheet, cash flow and bill-wise profitability from one report area." }
+      ],
+      "sections": [
+        { "title": "Reduce the gap between operations and accounts", "body": "Sales and purchase documents share data with stock, party ledgers and accounting entries. This reduces duplicate entry and makes it easier to explain balances.", "bullets": ["Sales and purchase accounting", "Payment-in and payment-out records", "Expense tracking", "Audit-friendly transaction references"] },
+        { "title": "Reports for daily decisions and period close", "body": "Use operational reports during the month and financial statements when reviewing performance. Filters help teams narrow figures by period, party, item or transaction type.", "bullets": ["Day Book and all transactions", "Trial Balance", "Profit and Loss", "Balance Sheet and Cash Flow"] }
+      ],
+      "faqs": [
+        { "question": "Does billing update party balances?", "answer": "Confirmed sales and payments can update party balances and linked ledger activity, subject to the transaction workflow and permissions." },
+        { "question": "Which accounting reports are available?", "answer": "The report catalogue includes transaction, party, stock, tax, expense and financial reports such as trial balance, profit and loss and balance sheet." },
+        { "question": "Can multiple users work in the same company?", "answer": "Yes. Plans support multiple users, with roles and permissions controlling access to operational and administrative areas." }
+      ],
+      "related": ["gst-accounting-software", "billing-software", "gst-reports", "pricing"]
+    },
+    {
+      "slug": "gst-accounting-software",
+      "navLabel": "GST Accounting",
+      "title": "GST Accounting Software | Microtechnique Accounts",
+      "description": "Connect GST invoices, tax ledgers, party accounts, payments and financial reports in accounting software designed for Indian businesses.",
+      "eyebrow": "GST and accounts from one transaction source",
+      "h1": "GST accounting software for connected books and tax reporting",
+      "intro": "Keep GST values aligned with sales, purchases, party balances and financial reports instead of reconciling separate billing and accounting systems.",
+      "primaryKeyword": "GST accounting software",
+      "features": [
+        { "title": "Tax-aware accounting", "body": "Preserve taxable value and tax components with each invoice so accounting and GST reports use the same source figures." },
+        { "title": "Party and payment control", "body": "Connect invoices, credit transactions and receipts to customer balances and outstanding reports." },
+        { "title": "Business and tax reports", "body": "Move between financial statements, GST rate reports, HSN/SAC summaries and transaction detail without re-entering data." }
+      ],
+      "sections": [
+        { "title": "Keep invoice totals and accounting entries aligned", "body": "A shared calculation path handles line discounts, invoice discounts, GST, cess and round-off. Saved totals then support payment status, party balances and accounting records.", "bullets": ["Consistent taxable values", "CGST, SGST and IGST breakup", "Round-off accounting", "Linked source documents"] },
+        { "title": "Review GST in financial context", "body": "Tax reports answer compliance questions, while ledgers and financial reports show how the same transactions affect cash, receivables, stock and profitability.", "bullets": ["GST report and GST rate report", "TDS and TCS reports", "Party statements", "Profit and loss and balance sheet"] }
+      ],
+      "faqs": [
+        { "question": "Is GST accounting separate from billing?", "answer": "No. The goal is to use confirmed billing and purchase transactions as the source for related balances, tax figures and accounting reports." },
+        { "question": "Can I see tax by rate?", "answer": "Yes. GST rate and HSN/SAC-oriented reports help analyze taxable sales and tax amounts by classification." },
+        { "question": "Does it support discounts and round-off?", "answer": "Yes. Item-level and invoice-level discounts, tax calculations and configured round-off are handled before the invoice is saved." }
+      ],
+      "related": ["gst-software", "accounting-software", "gst-billing-software", "gst-reports"]
+    },
+    {
+      "slug": "invoice-software",
+      "navLabel": "Invoice Software",
+      "title": "Invoice Software & Templates | Microtechnique Accounts",
+      "description": "Create professional invoices with custom templates, GST details, Bill To and Ship To addresses, payment terms, PDFs and print settings.",
+      "eyebrow": "Invoices designed around your company",
+      "h1": "Invoice software for professional, configurable business documents",
+      "intro": "Create sales invoices with the customer, item and payment information you need, then preview, download, print or share them in your saved company format.",
+      "primaryKeyword": "invoice software",
+      "features": [
+        { "title": "Flexible invoice entry", "body": "Capture Bill To and Ship To addresses, item descriptions, quantities, units, rates, discounts, taxes, notes and terms." },
+        { "title": "Configurable print templates", "body": "Choose document layout, accent color, visible columns, footer details, signature, bank information and additional fields." },
+        { "title": "Complete document lifecycle", "body": "Create quotations and proforma invoices, confirm customer requirements and convert the approved transaction into a sales invoice." }
+      ],
+      "sections": [
+        { "title": "Make every invoice recognizable", "body": "Company profile data, logo, GSTIN, address, bank details and signature flow into configured templates. Print settings control which optional sections appear.", "bullets": ["Multiple A4 invoice layouts", "Separate billing and shipping addresses", "Editable terms and conditions", "Authorized signature and bank details"] },
+        { "title": "Keep invoice details useful after printing", "body": "Generated invoices remain available in the sales area for status review, payment tracking, PDF download, preview, reprinting and related actions.", "bullets": ["Invoice list and search", "Payment status", "PDF preview and download", "Delivery challan and return workflows"] }
+      ],
+      "faqs": [
+        { "question": "Can I add descriptions below individual items?", "answer": "Yes. Item descriptions can be entered with invoice lines and displayed in templates that include item description content." },
+        { "question": "Can billing and shipping addresses be different?", "answer": "Yes. Bill To and Ship To details can be captured separately and rendered as separate sections in supported invoice layouts." },
+        { "question": "Can I choose which columns appear on the invoice?", "answer": "Yes. Item table customization in Print Settings controls common item, quantity, pricing, discount and tax columns." }
+      ],
+      "related": ["billing-software", "gst-billing-software", "accounting-software", "pricing"]
+    },
+    {
+      "slug": "inventory-management-software",
+      "navLabel": "Inventory",
+      "title": "Inventory Management Software | Microtechnique Accounts",
+      "description": "Track item stock, godowns, purchases, transfers, low-stock levels, barcodes and sales movement with connected inventory software.",
+      "eyebrow": "Know what is in stock and where",
+      "h1": "Inventory management software connected to purchasing and sales",
+      "intro": "Manage products, materials and stock locations while sales, purchases, transfers and adjustments create a traceable movement history.",
+      "primaryKeyword": "inventory management software",
+      "features": [
+        { "title": "Multi-godown stock", "body": "View quantities by location, transfer stock between godowns and select the correct source while billing." },
+        { "title": "Barcode workflow", "body": "Generate and save item barcodes, reprint labels and scan the same code to add products in POS billing." },
+        { "title": "Purchases and stock movement", "body": "Receive goods against purchase workflows, update stock and retain the transaction reference behind each movement." }
+      ],
+      "sections": [
+        { "title": "Keep item masters clean and useful", "body": "Maintain units, categories, HSN/SAC, purchase and sale prices, tax settings and inventory controls without duplicating the same item across workflows.", "bullets": ["Product and service items", "Categories and units", "Opening stock and godown allocation", "Low-stock thresholds"] },
+        { "title": "Turn stock data into action", "body": "Inventory reports help identify current quantity, movement detail, low-stock items, category performance and item-wise profit or discount patterns.", "bullets": ["Stock Summary", "Stock Detail", "Low Stock Summary", "Item and category reports"] }
+      ],
+      "faqs": [
+        { "question": "Can stock be tracked across multiple locations?", "answer": "Yes. Godowns represent stock locations, and transactions can use or transfer quantities for the selected location." },
+        { "question": "Does POS billing reduce stock?", "answer": "Yes. Confirmed POS invoices deduct the billed quantity from the selected godown for inventory-tracked items." },
+        { "question": "Can I reuse a previously generated barcode?", "answer": "Yes. Saved item barcodes can be searched and reprinted, and scanning the code can retrieve the same item during POS billing." }
+      ],
+      "related": ["billing-software", "invoice-software", "accounting-software", "pricing"]
+    },
+    {
+      "slug": "gst-reports",
+      "navLabel": "GST Reports",
+      "title": "GST Reports Software for Business | Microtechnique Accounts",
+      "description": "Review GST reports, rate-wise sales, HSN/SAC summaries and return-oriented transaction data directly from your invoices and purchases.",
+      "eyebrow": "Tax reports backed by transaction detail",
+      "h1": "GST reports that connect every figure to business transactions",
+      "intro": "Analyze GST from invoices and purchases with rate-wise, item-wise and return-oriented views that reduce manual report preparation.",
+      "primaryKeyword": "GST reports",
+      "features": [
+        { "title": "GST rate analysis", "body": "Review taxable value and tax amounts by GST rate to understand the composition of sales and purchases." },
+        { "title": "HSN and SAC reporting", "body": "Summarize goods and services using the classifications already captured on transaction items." },
+        { "title": "Return-oriented data", "body": "Prepare and inspect GSTR-oriented exports and reports while retaining access to the invoices behind the totals." }
+      ],
+      "sections": [
+        { "title": "Use the same source for billing and reporting", "body": "Tax reports use transaction data recorded during normal sales and purchase workflows. This limits re-entry and makes corrections easier to trace.", "bullets": ["GST Report", "GST Rate Report", "Sale Summary by HSN", "SAC Report"] },
+        { "title": "Investigate before you export", "body": "Filter by period and drill into relevant transactions before creating return data. Missing or unusual values can be corrected at the document level instead of patched in a separate spreadsheet.", "bullets": ["Invoice-level traceability", "Taxable and tax amount checks", "Sales and purchase context", "Export workflow"] }
+      ],
+      "faqs": [
+        { "question": "Where do GST report values come from?", "answer": "They come from GST-related fields saved with sales, purchase and related transaction records for the selected company and period." },
+        { "question": "Can I view HSN and SAC summaries?", "answer": "Yes. Separate HSN and SAC-oriented reports are available for goods and services analysis." },
+        { "question": "Can I export GST return data?", "answer": "The GST workflow supports return-oriented reports and JSON export where configured. Figures should be reviewed before filing with the applicable portal or adviser." }
+      ],
+      "related": ["gst-software", "gst-accounting-software", "accounting-software", "gst-billing-software"]
+    },
+    {
+      "slug": "pricing",
+      "navLabel": "Pricing",
+      "title": "Pricing Plans | Microtechnique Accounts",
+      "description": "Compare Microtechnique Accounts plans for GST billing, accounting, inventory, reports, OCR, HR and business management features.",
+      "eyebrow": "Plans for growing Indian businesses",
+      "h1": "Choose the Microtechnique Accounts plan that fits your team",
+      "intro": "Start with core billing and inventory, add GST and expense workflows as you grow, or choose the complete suite for a larger operating team.",
+      "primaryKeyword": "billing software pricing",
+      "features": [
+        { "title": "Silver", "body": "Core GST invoicing, inventory, purchase workflows, parties, ledgers and basic reports for up to four users." },
+        { "title": "Gold", "body": "Adds advanced reports, GST filing, expenses and OCR-assisted bill scanning for up to five users." },
+        { "title": "Diamond", "body": "Adds HR, attendance, manufacturing, BOM and job work workflows for up to seven users." }
+      ],
+      "sections": [
+        { "title": "Start with a guided trial", "body": "Create an account, set up the company and test the workflows that matter to your team before requesting a paid plan.", "bullets": ["15-day trial", "No credit card required", "Company setup and onboarding", "Support for plan selection"] }
+      ],
+      "faqs": [
+        { "question": "Is there a free trial?", "answer": "Yes. A 15-day trial is available so a business can evaluate the relevant workflows before choosing a plan." },
+        { "question": "Can I change plans later?", "answer": "Yes. Contact the Microtechnique Accounts team to select or change the plan that matches your current feature and user requirements." },
+        { "question": "Are prices billed yearly?", "answer": "The listed Silver, Gold and Diamond prices are annual plan prices. Applicable taxes and confirmed commercial terms are provided during purchase." }
+      ],
+      "related": ["billing-software", "gst-software", "accounting-software", "inventory-management-software"]
+    }
+  ]
+}

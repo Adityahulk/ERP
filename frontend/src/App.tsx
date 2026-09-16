@@ -5,6 +5,7 @@ import { useRegistrantStore } from '@/store/registrantStore';
 import { LEGACY_STORAGE_KEYS, readStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import ModuleGate from '@/components/shared/ModuleGate';
 import { canAccessRole, normalizeRole, type NormalizedRole } from '@/lib/roles';
+import PrivateRouteSeo from '@/components/seo/PrivateRouteSeo';
 
 // Route-level splitting keeps the first screen small. Large features such as
 // reports, settings, PDF preview, and barcode tooling load only when opened.
@@ -56,6 +57,7 @@ const SuperAdminLicenseDetail = lazy(() => import('@/pages/superadmin/SuperAdmin
 const SuperAdminCompanies = lazy(() => import('@/pages/superadmin/SuperAdminCompanies'));
 const SuperAdminCompanyDetail = lazy(() => import('@/pages/superadmin/SuperAdminCompanyDetail'));
 const SuperAdminRegistrants = lazy(() => import('@/pages/superadmin/SuperAdminRegistrants'));
+const ProductSeoPage = lazy(() => import('@/pages/seo/ProductSeoPage'));
 
 function RouteLoadingState() {
   return (
@@ -140,8 +142,10 @@ export default function App() {
 
   return (
     <Suspense fallback={<RouteLoadingState />}>
+    <PrivateRouteSeo />
     <Routes>
       <Route path="/" element={<AuthHomeRedirect />} />
+      <Route path="/:slug" element={<ProductSeoPage />} />
       <Route path="/login" element={<LoginEntry />} />
 
       <Route path="/superadmin" element={<SuperAdminShell />}>

@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /superadmin/
+Disallow: /register/
+Disallow: /uploads/
+Disallow: /settings
+Disallow: /dashboard
+Disallow: /onboarding
+
+Sitemap: https://microtechnique.in/sitemap.xml

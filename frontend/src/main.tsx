@@ -45,7 +45,12 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root')!;
+// Build-time SEO content is replaced once the interactive application starts.
+rootElement.replaceChildren();
+document.head.querySelector('style[data-seo-static]')?.remove();
+
+ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

@@ -26,6 +26,12 @@ import {
   Sparkles,
   Wand2,
 } from 'lucide-react';
+import SeoHead from '@/components/seo/SeoHead';
+import { homeSchemas } from '@/lib/seoSchemas';
+import { pageForSlug } from '@/lib/seo';
+
+const HOME_SEO_PAGE = pageForSlug('')!;
+const HOME_SCHEMAS = homeSchemas();
 
 const TIERS = [
   {
@@ -209,6 +215,7 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-[#420662] selection:text-white">
+      <SeoHead page={HOME_SEO_PAGE} schemas={HOME_SCHEMAS} />
       <a
         href="https://wa.me/916355997080"
         target="_blank"
@@ -226,7 +233,7 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <Link to="/" className="flex items-center gap-3 min-w-0 shrink">
-            <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-20 h-20 shrink-0 drop-shadow" />
+            <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts GST billing and accounting software" className="w-20 h-20 shrink-0 drop-shadow" />
             <div className="leading-tight min-w-0 text-left">
               <p className="text-[15px] font-semibold text-slate-900 leading-snug">
                 <span className="block">Microtechnique</span>
@@ -234,19 +241,12 @@ export default function LandingPage() {
               </p>
             </div>
           </Link>
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
-              Features
-            </a>
-            <a href="#pricing" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
-              Pricing
-            </a>
-            <a href="#who-its-for" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
-              Who It's For
-            </a>
-            <a href="#faq" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">
-              FAQ
-            </a>
+          <div className="hidden md:flex items-center gap-5">
+            <Link to="/gst-software" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">GST</Link>
+            <Link to="/billing-software" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">Billing</Link>
+            <Link to="/accounting-software" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">Accounting</Link>
+            <Link to="/inventory-management-software" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">Inventory</Link>
+            <Link to="/pricing" className="text-sm font-medium text-slate-700 hover:text-[#420662] transition-colors">Pricing</Link>
           </div>
           <div className="flex items-center gap-3">
             <Link
@@ -702,7 +702,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1 md:col-span-2">
             <div className="mb-6 flex items-start gap-3">
-              <img src="/logo-microtechnique.svg" alt="Microtechnique" className="w-20 h-20 shrink-0 drop-shadow brightness-0 invert" />
+              <img src="/logo-microtechnique.svg" alt="Microtechnique Accounts" className="w-20 h-20 shrink-0 drop-shadow brightness-0 invert" />
               <div className="leading-tight min-w-0">
                 <p className="text-base font-semibold text-white leading-snug">
                   <span className="block">Microtechnique</span>
@@ -721,11 +721,17 @@ export default function LandingPage() {
             </div>
           </div>
           <div>
-            <h4 className="text-white font-bold mb-6">Company</h4>
+            <h4 className="text-white font-bold mb-6">Software</h4>
             <ul className="space-y-3">
-              <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
-              <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
-              <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
+              <li><Link to="/gst-software" className="hover:text-white transition-colors">GST Software</Link></li>
+              <li><Link to="/billing-software" className="hover:text-white transition-colors">Billing Software</Link></li>
+              <li><Link to="/gst-billing-software" className="hover:text-white transition-colors">GST Billing Software</Link></li>
+              <li><Link to="/accounting-software" className="hover:text-white transition-colors">Accounting Software</Link></li>
+              <li><Link to="/gst-accounting-software" className="hover:text-white transition-colors">GST Accounting Software</Link></li>
+              <li><Link to="/invoice-software" className="hover:text-white transition-colors">Invoice Software</Link></li>
+              <li><Link to="/inventory-management-software" className="hover:text-white transition-colors">Inventory Software</Link></li>
+              <li><Link to="/gst-reports" className="hover:text-white transition-colors">GST Reports</Link></li>
+              <li><Link to="/pricing" className="hover:text-white transition-colors">Pricing</Link></li>
               <li><Link to="/register" className="hover:text-white transition-colors">Register</Link></li>
               <li><Link to="/register/dashboard" className="hover:text-white transition-colors">Sign in</Link></li>
               <li><Link to="/login" className="hover:text-white transition-colors">Software Login</Link></li>

@@ -62,7 +62,29 @@ app.get('/health', (_req, res) => {
 // ── Full-stack static frontend hosting ────────────────
 const frontendDist = path.resolve(env.FRONTEND_DIST_DIR);
 if (fs.existsSync(frontendDist)) {
-  app.use(express.static(frontendDist));
+  const indexablePaths = new Set([
+    '/',
+    '/gst-software',
+    '/billing-software',
+    '/gst-billing-software',
+    '/accounting-software',
+    '/gst-accounting-software',
+    '/invoice-software',
+    '/inventory-management-software',
+    '/gst-reports',
+    '/pricing',
+    '/robots.txt',
+    '/sitemap.xml'
+  ]);
+  app.use((req, res, next) => {
+    const cleanPath = req.path.length > 1 ? req.path.replace(/\/$/, '') : req.path;
+    const isAsset = /\.[a-z0-9]+$/i.test(cleanPath);
+    if (req.method === 'GET' && !isAsset && !indexablePaths.has(cleanPath)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    }
+    next();
+  });
+  app.use(express.static(frontendDist, { extensions: ['html'] }));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path === '/health') return next();
     res.sendFile(path.join(frontendDist, 'index.html'));

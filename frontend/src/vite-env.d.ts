@@ -6,6 +6,10 @@ interface ImportMetaEnv {
   readonly VITE_BACKEND_PORT?: string;
   /** Customer-facing login URL (Super Admin credential copy block). */
   readonly VITE_APP_URL?: string;
+  /** Preferred canonical origin for public marketing pages. */
+  readonly VITE_SITE_URL?: string;
+  /** Google Search Console HTML meta verification token. */
+  readonly VITE_GOOGLE_SITE_VERIFICATION?: string;
 }
 
 interface ImportMeta {
