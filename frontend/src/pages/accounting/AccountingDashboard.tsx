@@ -167,7 +167,10 @@ export default function AccountingDashboard() {
 
   const { data: journals = [], isLoading: journalsLoading } = useQuery({
     queryKey: ['accounting', 'journal-entries'],
-    queryFn: async () => (await api.get('/accounting/journal-entries')).data?.data || [],
+    queryFn: async () => {
+      const body = (await api.get('/accounting/journal-entries', { params: { page: 1, limit: 100 } })).data?.data;
+      return Array.isArray(body) ? body : body?.data || [];
+    },
   });
 
   const { data: statement, isLoading: statementLoading } = useQuery({

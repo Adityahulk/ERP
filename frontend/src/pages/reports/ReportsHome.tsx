@@ -476,7 +476,7 @@ export default function ReportsHome() {
   };
 
   return (
-    <div className="flex flex-col md:flex-row min-h-[calc(100vh-theme(spacing.16))] bg-slate-50/50 animate-in slide-in-from-bottom-4 duration-500">
+    <div className="flex h-[calc(100dvh-theme(spacing.16))] min-h-0 flex-col overflow-hidden bg-slate-50/50 animate-in slide-in-from-bottom-4 duration-500 md:flex-row">
       <div className="md:hidden border-b bg-white p-3 flex items-center gap-2">
         <Button variant="outline" size="sm" className="flex-1" onClick={() => setMobileMenuOpen(true)}>
           {activeReport} <ChevronDown className="w-4 h-4 ml-1 opacity-60" />
@@ -510,28 +510,33 @@ export default function ReportsHome() {
         </SheetContent>
       </Sheet>
 
-      <div className="w-64 border-r bg-white p-4 overflow-y-auto hidden md:block shrink-0">
-        <h2 className="text-xl font-bold mb-6 text-slate-800 tracking-tight">Report Center</h2>
-        {reportCategories.map((cat) => (
-          <div key={cat.id} className="mb-6">
-            <h3 className="text-xs font-semibold uppercase text-slate-500 tracking-wider mb-3">{cat.title}</h3>
-            <div className="space-y-1">
-              {cat.reports.map((r) => (
-                <button
-                  key={r.name}
-                  type="button"
-                  onClick={() => setActiveReport(r.name)}
-                  className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${activeReport === r.name ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
-                >
-                  {r.name}
-                </button>
-              ))}
+      <div className="hidden w-64 min-h-0 shrink-0 flex-col border-r bg-white md:flex">
+        <div className="shrink-0 border-b px-4 py-4">
+          <h2 className="text-xl font-bold text-slate-800 tracking-tight">Report Center</h2>
+          <p className="mt-1 text-xs text-slate-500">Select a report from the list</p>
+        </div>
+        <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4" aria-label="Report list">
+          {reportCategories.map((cat) => (
+            <div key={cat.id} className="mb-6 last:mb-2">
+              <h3 className="text-xs font-semibold uppercase text-slate-500 tracking-wider mb-3">{cat.title}</h3>
+              <div className="space-y-1">
+                {cat.reports.map((r) => (
+                  <button
+                    key={r.name}
+                    type="button"
+                    onClick={() => setActiveReport(r.name)}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${activeReport === r.name ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
+                  >
+                    {r.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </nav>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="h-auto min-h-14 border-b flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-3 bg-white shrink-0">
           <h1 className="text-lg sm:text-xl font-semibold flex items-center gap-2 min-w-0">
             <FileText className="w-5 h-5 text-indigo-500 shrink-0" />
@@ -550,7 +555,7 @@ export default function ReportsHome() {
           </div>
         </div>
 
-        <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <p className="text-xs text-muted-foreground mb-4">
             Showing <span className="font-medium text-foreground">{appliedFrom}</span> to <span className="font-medium text-foreground">{appliedTo}</span>
             {['GSTR-1 Data', 'GSTR-3B Summary', 'HSN Summary'].includes(activeReport) && (

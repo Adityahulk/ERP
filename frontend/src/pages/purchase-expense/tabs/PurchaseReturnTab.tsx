@@ -31,9 +31,9 @@ export default function PurchaseReturnTab() {
   // In a production system this would be its own table
   const { data, isLoading } = useQuery({
     queryKey: ['purchase-returns'],
-    queryFn: () => api.get('/expenses', { params: { search: 'Purchase Return', limit: 50 } }).then(r => r.data),
+    queryFn: () => api.get('/expenses', { params: { category: 'Purchase Return', limit: 100 } }).then(r => r.data),
   });
-  const returns = (data as any)?.data?.data?.filter((e: any) => e.category === 'Purchase Return') || [];
+  const returns = ((data as any)?.data?.data || []).filter((e: any) => e.category === 'Purchase Return');
 
   const createReturn = useMutation({
     mutationFn: async (payload: any) => {
