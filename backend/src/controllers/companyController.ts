@@ -12,6 +12,7 @@ import {
   resolveStateName,
 } from '../services/onboardingService';
 import { INVOICE_PRINT_THEMES, normalizeInvoicePrintTheme } from '../lib/printThemes';
+import { logger } from '../config/logger';
 
 function sanitizeCompany(row: Record<string, unknown>) {
   const { einvoice_gsp_password_enc: _enc, ...rest } = row;
@@ -31,6 +32,21 @@ const JSONB_COMPANY_FIELD_DEFAULTS: Record<string, unknown> = {
   tax_settings: {},
   gstin_lookup_payload: null,
 };
+
+// Cast shared placeholders explicitly. PostgreSQL can otherwise infer different
+// types for $1 when `name` and `legal_name` use different varchar/text types.
+export const COMPLETE_ONBOARDING_COMPANY_SQL = `UPDATE companies SET
+   name = $1::text,
+   legal_name = COALESCE(NULLIF(TRIM(legal_name), ''), $1::text),
+   gstin = $2,
+   state_code = $3,
+   state = COALESCE($4, state),
+   city = COALESCE($5, city),
+   pincode = COALESCE($6, pincode),
+   business_type = COALESCE($7, business_type),
+   onboarding_completed = true,
+   updated_at = NOW()
+ WHERE id = $8`;
 
 function parseJsonMaybe(value: string): unknown | undefined {
   try {
@@ -652,44 +668,35 @@ export async function completeOnboarding(req: Request, res: Response) {
     const gstin = company.gstin ? String(company.gstin).replace(/\s+/g, '').toUpperCase() : null;
     const stateName = resolveStateName(company.state_code);
 
-    await query(
-      `UPDATE companies SET
-         name = $1,
-         legal_name = COALESCE(NULLIF(TRIM(legal_name), ''), $1),
-         gstin = $2,
-         state_code = $3,
-         state = COALESCE($4, state),
-         city = COALESCE($5, city),
-         pincode = COALESCE($6, pincode),
-         business_type = COALESCE($7, business_type),
-         onboarding_completed = true,
-         updated_at = NOW()
-       WHERE id = $8`,
-      [
-        company.name.trim(),
-        gstin,
-        company.state_code,
-        stateName,
-        location.city?.trim() || null,
-        location.pincode?.trim() || null,
-        company.business_type?.trim() || null,
-        companyId,
-      ],
-    );
-
-    const godownId = await ensurePrimaryGodown(companyId, {
-      name: location.name.trim(),
-      city: location.city?.trim() || undefined,
-      pincode: location.pincode?.trim() || undefined,
-      state_code: company.state_code,
-    });
-
     const seedFlags = {
       items: !!seed?.items,
       coa: !!seed?.coa,
       leaves: !!seed?.leaves,
     };
-    const seeded = await applyOnboardingSeeds(companyId, godownId, seedFlags);
+    const { godownId, seeded } = await withTransaction(async (client) => {
+      await client.query(
+        COMPLETE_ONBOARDING_COMPANY_SQL,
+        [
+          company.name.trim(),
+          gstin,
+          company.state_code,
+          stateName,
+          location.city?.trim() || null,
+          location.pincode?.trim() || null,
+          company.business_type?.trim() || null,
+          companyId,
+        ],
+      );
+
+      const primaryGodownId = await ensurePrimaryGodown(companyId, {
+        name: location.name.trim(),
+        city: location.city?.trim() || undefined,
+        pincode: location.pincode?.trim() || undefined,
+        state_code: company.state_code,
+      }, client);
+      const appliedSeeds = await applyOnboardingSeeds(companyId, primaryGodownId, seedFlags, client);
+      return { godownId: primaryGodownId, seeded: appliedSeeds };
+    });
 
     await logAction(
       req.user!.id,
@@ -706,7 +713,12 @@ export async function completeOnboarding(req: Request, res: Response) {
     const result = await query('SELECT * FROM companies WHERE id = $1', [companyId]);
     res.json(success({ company: sanitizeCompany(result.rows[0] as any), seeded }));
   } catch (err: any) {
-    res.status(500).json(error(err.message));
+    logger.error('Company onboarding failed', {
+      companyId: req.user?.company_id,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json(error('Unable to complete company setup. Please try again.'));
   }
 }
 

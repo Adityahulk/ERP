@@ -4,6 +4,7 @@ import { pool } from '../config/db';
 import { INVOICE_PRINT_THEMES } from '../lib/printThemes';
 import { generateInvoicePDF } from '../services/pdfService';
 import { normalizePurchaseItems } from '../controllers/purchaseController';
+import { COMPLETE_ONBOARDING_COMPANY_SQL } from '../controllers/companyController';
 
 function verifyPurchaseValidation(): void {
   const [line] = normalizePurchaseItems(
@@ -104,6 +105,48 @@ async function verifyPartyCreation(): Promise<void> {
   }
 }
 
+async function verifyCompanyOnboardingUpdate(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const fixture = await client.query(
+      `SELECT id, name, gstin, state_code, state, city, pincode, business_type
+       FROM companies
+       WHERE is_deleted = false
+       ORDER BY created_at ASC
+       LIMIT 1`,
+    );
+    if (!fixture.rows.length) {
+      console.log('Production regression smoke: skipped onboarding update (no local company fixture).');
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    const company = fixture.rows[0];
+    const updated = await client.query(
+      `${COMPLETE_ONBOARDING_COMPANY_SQL} RETURNING id, name, onboarding_completed`,
+      [
+        company.name || 'Production Smoke Company',
+        company.gstin || null,
+        company.state_code || '24',
+        company.state || 'Gujarat',
+        company.city || 'Surat',
+        company.pincode || '395007',
+        company.business_type || 'Other',
+        company.id,
+      ],
+    );
+    assert.equal(updated.rows[0]?.id, company.id);
+    assert.equal(updated.rows[0]?.onboarding_completed, true);
+    await client.query('ROLLBACK');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function verifyInvoicePdfs(): Promise<void> {
   const invoiceResult = await pool.query(
     `SELECT i.*
@@ -148,10 +191,11 @@ async function verifyInvoicePdfs(): Promise<void> {
 
 async function main(): Promise<void> {
   verifyPurchaseValidation();
+  await verifyCompanyOnboardingUpdate();
   await verifyPartyCreation();
   await verifyInvoicePdfs();
   await pool.end();
-  console.log('Purchase validation, party creation, and all invoice PDF themes passed.');
+  console.log('Purchase validation, company onboarding, party creation, and all invoice PDF themes passed.');
   process.exit(0);
 }
 
