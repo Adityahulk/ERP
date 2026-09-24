@@ -240,6 +240,7 @@ export default function InvoiceCreate() {
   const [ocrOpen, setOcrOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const transactionDefaultsHydratedRef = useRef(false);
+  const submitInFlightRef = useRef(false);
   const saleTerms = useMemo(
     () => (Array.isArray(transactionConfig?.terms?.SALE) ? transactionConfig.terms.SALE : []),
     [transactionConfig],
@@ -1015,7 +1016,9 @@ export default function InvoiceCreate() {
   };
 
   const handleSubmit = async (shouldPrintReceipt: boolean | unknown = false) => {
+    if (submitInFlightRef.current) return;
     if (!validate()) return;
+    submitInFlightRef.current = true;
     const printRequested = shouldPrintReceipt === true;
     const normalizedInvoiceNumber = invoiceNumber.trim();
     const commonPayload = {
@@ -1082,6 +1085,8 @@ export default function InvoiceCreate() {
         }
       } catch (e: any) {
         toast.error(e.response?.data?.error || 'Failed to update invoice');
+      } finally {
+        submitInFlightRef.current = false;
       }
       return;
     }
@@ -1145,6 +1150,8 @@ export default function InvoiceCreate() {
       }
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to create invoice');
+    } finally {
+      submitInFlightRef.current = false;
     }
   };
 

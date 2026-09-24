@@ -1131,7 +1131,15 @@ export async function listInvoices(req: Request, res: Response) {
               dc.id AS delivery_challan_id,
               dc.challan_number AS delivery_challan_number
        FROM invoices i LEFT JOIN parties p ON i.party_id = p.id
-       LEFT JOIN delivery_challans dc ON dc.invoice_id = i.id AND dc.company_id = i.company_id AND dc.is_deleted = false
+       LEFT JOIN LATERAL (
+         SELECT candidate.id, candidate.challan_number
+         FROM delivery_challans candidate
+         WHERE candidate.invoice_id = i.id
+           AND candidate.company_id = i.company_id
+           AND candidate.is_deleted = false
+         ORDER BY candidate.created_at DESC, candidate.id DESC
+         LIMIT 1
+       ) dc ON true
        WHERE ${where} ORDER BY i.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
       [...params, limit, offset]
     );
@@ -1190,7 +1198,15 @@ export async function getInvoice(req: Request, res: Response) {
        FROM invoices i
        LEFT JOIN parties p ON p.id = i.party_id AND p.company_id = i.company_id AND p.is_deleted = false
        LEFT JOIN companies c ON c.id = i.company_id
-       LEFT JOIN delivery_challans dc ON dc.invoice_id = i.id AND dc.company_id = i.company_id AND dc.is_deleted = false
+       LEFT JOIN LATERAL (
+         SELECT candidate.id, candidate.challan_number
+         FROM delivery_challans candidate
+         WHERE candidate.invoice_id = i.id
+           AND candidate.company_id = i.company_id
+           AND candidate.is_deleted = false
+         ORDER BY candidate.created_at DESC, candidate.id DESC
+         LIMIT 1
+       ) dc ON true
        WHERE i.id = $1 AND i.company_id = $2 AND i.is_deleted = false`,
       [id, req.user!.company_id]
     );

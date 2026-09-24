@@ -81,6 +81,8 @@ export default function BillingScreen() {
   const lookupBarcodeRef = useRef<(code: string, source?: string) => Promise<void>>(async () => undefined);
   const checkoutActionRef = useRef<() => void>(() => undefined);
   const confirmUpiActionRef = useRef<() => void>(() => undefined);
+  const submitInvoiceActionRef = useRef<() => void>(() => undefined);
+  const invoiceSubmitLockRef = useRef(false);
   
   const getQrUrl = () => {
     const hostname = window.location.hostname;
@@ -269,7 +271,7 @@ export default function BillingScreen() {
         console.error("Failed to auto-save UPI ID to settings:", err);
       }
     }
-    createInvoiceMut.mutate();
+    submitInvoiceActionRef.current();
   };
   confirmUpiActionRef.current = () => { void handleConfirmUpiPayment(); };
 
@@ -719,8 +721,18 @@ export default function BillingScreen() {
         void handlePrintReceipt(id);
       }
     },
-    onError: (err: any) => toast.error(err.response?.data?.error || 'Failed to generate bill')
+    onError: (err: any) => toast.error(err.response?.data?.error || 'Failed to generate bill'),
+    onSettled: () => {
+      invoiceSubmitLockRef.current = false;
+    },
   });
+
+  const submitInvoiceOnce = () => {
+    if (invoiceSubmitLockRef.current || createInvoiceMut.isPending) return;
+    invoiceSubmitLockRef.current = true;
+    createInvoiceMut.mutate();
+  };
+  submitInvoiceActionRef.current = submitInvoiceOnce;
 
   const handleCheckout = () => {
     if (billItems.length === 0) return toast.error('Bill is empty');
@@ -730,7 +742,7 @@ export default function BillingScreen() {
     if (paymentMode === 'upi') {
       setShowQrModal(true);
     } else {
-      createInvoiceMut.mutate();
+      submitInvoiceOnce();
     }
   };
   checkoutActionRef.current = handleCheckout;

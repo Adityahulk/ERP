@@ -378,7 +378,8 @@ export async function updateQuotationStatus(req: Request, res: Response) {
 
     const r = await query(
       `UPDATE quotations
-       SET status = $1, confirmed_at = CASE WHEN $1 = 'accepted' THEN now() ELSE confirmed_at END
+       SET status = $1::varchar(20),
+           confirmed_at = CASE WHEN $1::varchar(20) = 'accepted' THEN now() ELSE confirmed_at END
        WHERE id = $2 AND company_id = $3 AND is_deleted = false RETURNING id, document_type`,
       [status, id, req.user!.company_id]
     );
