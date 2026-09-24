@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Edit2, Plus, RotateCcw, UserPlus } from 'lucide-react';
+import { Plus, RotateCcw, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
+import SalesDocumentActionMenu from '@/components/transactions/SalesDocumentActionMenu';
 
 export default function SaleReturnTab() {
   const qc = useQueryClient();
@@ -68,15 +69,15 @@ export default function SaleReturnTab() {
   const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
   const resetForm = () => { setEditingId(null); setCreditNoteNumber(''); clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
 
-  const openEdit = (row: any) => {
-    setEditingId(row.id);
-    setCreditNoteNumber(row.credit_note_number || '');
+  const openEdit = (row: any, duplicate = false) => {
+    setEditingId(duplicate ? null : row.id);
+    setCreditNoteNumber(duplicate ? '' : row.credit_note_number || '');
     setPartyId(row.party_id || '');
     setPartyName(row.party_name_snapshot || row.party_name || '');
     setReturnDate(String(row.return_date || new Date().toISOString().split('T')[0]).slice(0, 10));
     setReason(row.reason || '');
     setInvoiceId(row.invoice_id || '');
-    setRefInvoiceNo('');
+    setRefInvoiceNo(row.invoice_number || '');
     setItems((row.items || []).map((it: any) => ({
       item_id: it.item_id || '',
       name: it.item_name || it.name || 'Item',
@@ -88,6 +89,7 @@ export default function SaleReturnTab() {
       gst_rate: Number(it.gst_rate) || 0,
     })));
     setShowForm(true);
+    if (duplicate) toast.success('Review the duplicate and save it as a new credit note.');
   };
 
   const handleCreate = () => {
@@ -125,13 +127,14 @@ export default function SaleReturnTab() {
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Reason</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
+              <th className="px-4 py-2.5 text-center font-medium text-xs text-muted-foreground">Status</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Action</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && returns.length === 0 && (
-              <tr><td colSpan={6} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
                 <RotateCcw className="w-10 h-10 mx-auto mb-2 opacity-30" />No sale returns / credit notes yet.
               </td></tr>
             )}
@@ -142,10 +145,33 @@ export default function SaleReturnTab() {
                 <td className="px-4 py-2.5 font-medium">{r.party_name_snapshot || r.party_name || '—'}</td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground hidden lg:table-cell truncate max-w-[200px]">{r.reason || '—'}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-red-500">{formatMoney(parseInt(r.total_amount)||0)}</td>
+                <td className="px-4 py-2.5 text-center">
+                  <span className={`rounded px-2 py-0.5 text-[11px] font-medium capitalize ${r.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{r.status || 'active'}</span>
+                </td>
                 <td className="px-4 py-2.5 text-right">
-                  <Button type="button" variant="ghost" size="icon" title="Edit credit note" onClick={() => openEdit(r)}>
-                    <Edit2 className="w-4 h-4" />
-                  </Button>
+                  <SalesDocumentActionMenu
+                    basePath={`/sales/returns/${r.id}`}
+                    documentNumber={r.credit_note_number}
+                    documentTitle="Credit Note"
+                    phone={r.party_phone}
+                    email={r.party_email}
+                    canModify={r.status !== 'cancelled'}
+                    canCancel={r.status !== 'cancelled'}
+                    onEdit={() => openEdit(r)}
+                    onDuplicate={() => openEdit(r, true)}
+                    onCancel={async () => {
+                      if (!window.confirm(`Cancel credit note ${r.credit_note_number}? Its party balance effect will be reversed.`)) return;
+                      await api.patch(`/sales/returns/${r.id}/cancel`);
+                      toast.success('Credit note cancelled');
+                      await qc.invalidateQueries({ queryKey: ['sale-returns'] });
+                    }}
+                    onDelete={async () => {
+                      if (!window.confirm(`Delete credit note ${r.credit_note_number}? Its party balance effect will be reversed.`)) return;
+                      await api.delete(`/sales/returns/${r.id}`);
+                      toast.success('Credit note deleted');
+                      await qc.invalidateQueries({ queryKey: ['sale-returns'] });
+                    }}
+                  />
                 </td>
               </tr>
             ))}

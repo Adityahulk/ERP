@@ -233,7 +233,7 @@ export default function App() {
 
       {/* ── Registrant / License routes ─────────────────────── */}
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/register/login" element={<Navigate to="/login?mode=licenses" replace />} />
+      <Route path="/register/login" element={<Navigate to="/login" replace />} />
       <Route path="/register/verify" element={<VerifyEmailPage />} />
       <Route path="/register/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/register/reset-password" element={<ResetPasswordPage />} />

@@ -1307,6 +1307,75 @@ function buildInvoiceHtml(args: {
   return kind === 'simple' ? simple : kind === 'performa' ? performa : kind === 'monochrome' ? monochrome : standard;
 }
 
+export async function generateSalesDocumentPDF(
+  documentType: 'sale_order' | 'credit_note',
+  document: any,
+  company: any,
+  party: any | null,
+  items: any[],
+): Promise<Buffer> {
+  const isOrder = documentType === 'sale_order';
+  const title = isOrder ? 'SALE ORDER' : 'CREDIT NOTE';
+  const number = isOrder ? document.so_number : document.credit_note_number;
+  const date = isOrder ? document.so_date : document.return_date;
+  const logoSrc = inlineAssetAsDataUri(company?.logo_url) || resolveAssetUrl(company?.logo_url);
+  const currency = document.currency_code || company?.default_currency || company?.currency || 'INR';
+  let taxableTotal = 0;
+  let taxTotal = 0;
+  let discountTotal = 0;
+
+  const rows = items.map((item, index) => {
+    const quantity = Number(isOrder ? item.quantity_ordered : item.quantity) || 0;
+    const unitPrice = Math.round(Number(item.unit_price) || 0);
+    const discount = Math.max(0, Math.round(Number(item.discount_amount) || 0));
+    const gross = Math.round(quantity * unitPrice);
+    const taxable = Math.max(0, gross - discount);
+    const gstRate = Math.max(0, Number(item.gst_rate) || 0);
+    const tax = Math.round(taxable * gstRate / 100);
+    taxableTotal += taxable;
+    taxTotal += tax;
+    discountTotal += discount;
+    return `<tr>
+      <td class="center">${index + 1}</td>
+      <td><b>${escapeHtml(item.item_name || item.name || 'Item')}</b></td>
+      <td>${escapeHtml(item.hsn_code || '—')}</td>
+      <td class="num">${fmtQty(quantity)}</td>
+      <td>${escapeHtml(item.unit || '—')}</td>
+      <td class="num">${fmtMoney(unitPrice, currency)}</td>
+      <td class="num">${gstRate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}%</td>
+      <td class="num"><b>${fmtMoney(taxable + tax, currency)}</b></td>
+    </tr>`;
+  }).join('');
+
+  const grandTotal = Number(document.total_amount || 0) || (taxableTotal + taxTotal);
+  const partyAddress = party?.billing_address || document.party_address_snapshot || '';
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+    @page{size:A4;margin:10mm}*{box-sizing:border-box}body{margin:0;color:#111827;font:11px Arial,Helvetica,sans-serif}
+    .doc{border:1px solid #111}.header{display:grid;grid-template-columns:1fr 180px;border-bottom:1px solid #111;min-height:120px}
+    .company{display:flex;gap:16px;padding:16px}.logo{width:66px;height:66px;object-fit:contain}.company h1{font-size:19px;margin:0 0 6px}.lines{line-height:1.5;color:#374151}
+    .title{display:flex;align-items:center;justify-content:center;border-left:1px solid #111;font-size:24px;font-weight:800;letter-spacing:1px;text-align:center}
+    .meta{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #111}.box{padding:12px;min-height:118px}.box+ .box{border-left:1px solid #111}
+    .label{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563}.party{font-size:15px;font-weight:800;margin:7px 0}.kv{display:grid;grid-template-columns:135px 1fr;gap:7px 12px;line-height:1.35}.kv b{text-align:right}
+    table{width:100%;border-collapse:collapse}th,td{border-right:1px solid #111;border-bottom:1px solid #111;padding:7px 6px;vertical-align:top}th:last-child,td:last-child{border-right:0}
+    th{font-size:10px;text-transform:uppercase;letter-spacing:.03em;background:#f3f4f6;text-align:left}.num{text-align:right;white-space:nowrap}.center{text-align:center}
+    tbody tr{height:42px}.summary{display:grid;grid-template-columns:1fr 270px}.notes{padding:13px;line-height:1.55;min-height:115px}.totals{border-left:1px solid #111}.totals div{display:flex;justify-content:space-between;gap:16px;padding:7px 10px;border-bottom:1px solid #d1d5db}.totals .grand{font-size:15px;font-weight:800;border-bottom:0}
+    .footer{display:grid;grid-template-columns:1fr 240px;border-top:1px solid #111;min-height:100px}.terms{padding:12px}.sign{border-left:1px solid #111;padding:12px;text-align:center;display:flex;flex-direction:column;justify-content:space-between}.muted{color:#6b7280}
+  </style></head><body><main class="doc">
+    <section class="header"><div class="company">${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Logo"/>` : ''}<div><h1>${escapeHtml(companyLegalDisplayName(company))}</h1><div class="lines">${escapeHtml(companyAddress(company))}<br/>${company?.phone ? `Phone: ${escapeHtml(company.phone)}<br/>` : ''}${company?.email ? `Email: ${escapeHtml(company.email)}<br/>` : ''}${company?.gstin ? `GSTIN: ${escapeHtml(company.gstin)}` : ''}</div></div></div><div class="title">${title}</div></section>
+    <section class="meta"><div class="box"><div class="label">${isOrder ? 'Order From' : 'Credit To'}</div><div class="party">${escapeHtml(party?.name || document.party_name_snapshot || 'Customer')}</div><div class="lines">${addressHtml(partyAddress)}${party?.phone ? `<br/>Phone: ${escapeHtml(party.phone)}` : ''}${party?.email ? `<br/>Email: ${escapeHtml(party.email)}` : ''}${party?.gstin ? `<br/>GSTIN: ${escapeHtml(party.gstin)}` : ''}</div></div>
+      <div class="box"><div class="kv"><span>${isOrder ? 'Order No.' : 'Credit Note No.'}</span><b>${escapeHtml(number || '—')}</b><span>Date</span><b>${formatDocDate(date)}</b>${isOrder ? `<span>Expected Delivery</span><b>${formatDocDate(document.expected_delivery_date)}</b><span>Status</span><b>${escapeHtml(document.status || 'confirmed')}</b>` : `<span>Against Invoice</span><b>${escapeHtml(document.invoice_number || '—')}</b><span>Status</span><b>${escapeHtml(document.status || 'active')}</b>`}</div></div></section>
+    <table><thead><tr><th style="width:34px">#</th><th>Item & Description</th><th style="width:78px">HSN/SAC</th><th style="width:58px" class="num">Qty</th><th style="width:58px">Unit</th><th style="width:92px" class="num">Rate</th><th style="width:58px" class="num">GST</th><th style="width:105px" class="num">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="center muted">No items</td></tr>'}</tbody></table>
+    <section class="summary"><div class="notes"><div class="label">${isOrder ? 'Payment Terms / Notes' : 'Reason for Return'}</div><div style="margin-top:7px">${escapeHtml(isOrder ? [document.payment_terms, document.notes].filter(Boolean).join('\n') || '—' : document.reason || '—').replace(/\n/g, '<br/>')}</div></div><div class="totals"><div><span>Taxable Amount</span><b>${fmtMoney(taxableTotal, currency)}</b></div>${discountTotal ? `<div><span>Discount</span><b>-${fmtMoney(discountTotal, currency)}</b></div>` : ''}<div><span>GST</span><b>${fmtMoney(taxTotal, currency)}</b></div><div class="grand"><span>Total</span><b>${fmtMoney(grandTotal, currency)}</b></div></div></section>
+    <section class="footer"><div class="terms"><div class="label">Amount in words</div><div style="margin-top:7px;font-weight:700">${escapeHtml(amountToWordsINR(grandTotal / 100))}</div></div><div class="sign"><b>For ${escapeHtml(companyLegalDisplayName(company))}</b><span>Authorized Signatory</span></div></section>
+  </main></body></html>`;
+
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } });
+    return Buffer.from(pdf);
+  });
+}
+
 export async function generateInvoicePDF(
   invoice: any,
   company: any,

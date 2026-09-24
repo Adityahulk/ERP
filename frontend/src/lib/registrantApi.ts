@@ -21,7 +21,12 @@ registrantApi.interceptors.request.use((config) => {
 registrantApi.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const requestUrl = String(err.config?.url || '');
+    const isPublicAuthRequest = requestUrl.includes('/register/login')
+      || requestUrl.includes('/register/forgot-password')
+      || requestUrl.includes('/register/reset-password')
+      || requestUrl.includes('/register/verify');
+    if (err.response?.status === 401 && !isPublicAuthRequest) {
       removeStorageWithLegacy(REGISTRANT_TOKEN_KEY, LEGACY_REGISTRANT_TOKEN_KEY);
       if (window.location.pathname !== '/register/login') {
         const next = encodeURIComponent(window.location.pathname + window.location.search);

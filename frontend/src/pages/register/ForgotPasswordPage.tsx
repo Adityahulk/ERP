@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
-import registrantApi from '@/lib/registrantApi';
+import api from '@/lib/api';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -14,7 +14,7 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const { data: res } = await registrantApi.post('/register/forgot-password', { email });
+      const { data: res } = await api.post('/auth/forgot-password', { email });
       if (res.success) {
         setSent(true);
         setDevLink(res.data?.dev_reset_link || null);

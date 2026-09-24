@@ -250,7 +250,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
-              to="/register/dashboard"
+              to="/login"
               className="text-sm font-medium text-[#420662] hover:text-[#2d0444] transition-colors hidden sm:block"
             >
               Sign in
@@ -733,8 +733,7 @@ export default function LandingPage() {
               <li><Link to="/gst-reports" className="hover:text-white transition-colors">GST Reports</Link></li>
               <li><Link to="/pricing" className="hover:text-white transition-colors">Pricing</Link></li>
               <li><Link to="/register" className="hover:text-white transition-colors">Register</Link></li>
-              <li><Link to="/register/dashboard" className="hover:text-white transition-colors">Sign in</Link></li>
-              <li><Link to="/login" className="hover:text-white transition-colors">Software Login</Link></li>
+              <li><Link to="/login" className="hover:text-white transition-colors">Login</Link></li>
             </ul>
           </div>
           <div>

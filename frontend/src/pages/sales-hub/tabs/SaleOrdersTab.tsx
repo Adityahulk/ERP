@@ -10,6 +10,7 @@ import { Plus, ClipboardList, UserPlus } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
+import SalesDocumentActionMenu from '@/components/transactions/SalesDocumentActionMenu';
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -22,6 +23,8 @@ const STATUS_COLORS: Record<string, string> = {
 export default function SaleOrdersTab() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [soNumber, setSoNumber] = useState('');
 
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
@@ -43,9 +46,9 @@ export default function SaleOrdersTab() {
   const orders = (data as any)?.data?.data || [];
 
   const createMut = useMutation({
-    mutationFn: (payload: any) => api.post('/sales/orders', payload),
+    mutationFn: (payload: any) => editingId ? api.put(`/sales/orders/${editingId}`, payload) : api.post('/sales/orders', payload),
     onSuccess: () => {
-      toast.success('Sale order created');
+      toast.success(editingId ? 'Sale order updated' : 'Sale order created');
       qc.invalidateQueries({ queryKey: ['sale-orders'] });
       resetForm(); setShowForm(false);
     },
@@ -74,16 +77,44 @@ export default function SaleOrdersTab() {
   const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
   const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
   const resetForm = () => {
+    setEditingId(null); setSoNumber('');
     clearCustomer(); setNotes(''); setPaymentTerms(''); setItems([]);
     setSoDate(new Date().toISOString().split('T')[0]);
     const d = new Date(); d.setDate(d.getDate() + 7);
     setExpectedDate(d.toISOString().split('T')[0]);
   };
 
+  const openOrderForm = async (row: any, duplicate = false) => {
+    const loadingToast = toast.loading(duplicate ? 'Preparing duplicate…' : 'Loading sale order…');
+    try {
+      const response = await api.get(`/sales/orders/${row.id}`);
+      const order = response.data?.data;
+      setEditingId(duplicate ? null : order.id);
+      setSoNumber(duplicate ? '' : order.so_number || '');
+      setPartyId(order.party_id || '');
+      setPartyName(order.party_name_snapshot || order.party_name || '');
+      setSoDate(duplicate ? new Date().toISOString().split('T')[0] : String(order.so_date || '').slice(0, 10));
+      setExpectedDate(String(order.expected_delivery_date || '').slice(0, 10));
+      setPaymentTerms(order.payment_terms || '');
+      setNotes(order.notes || '');
+      setItems((order.items || []).map((item: any) => ({
+        item_id: item.item_id || '', name: item.item_name || 'Item', hsn_code: item.hsn_code || '',
+        unit: item.unit || '', quantity: Number(item.quantity_ordered) || 0,
+        unit_price: Number(item.unit_price) || 0, gst_rate: Number(item.gst_rate) || 0,
+        discount_amount: Number(item.discount_amount) || 0,
+      })));
+      setShowForm(true);
+      toast.success(duplicate ? 'Review the duplicate and save it as a new order.' : 'Sale order ready to edit', { id: loadingToast });
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error || 'Failed to load sale order', { id: loadingToast });
+    }
+  };
+
   const handleCreate = () => {
     if (!partyId) { toast.error('Select a party'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     createMut.mutate({
+      ...(editingId ? { so_number: soNumber } : {}),
       party_id: partyId,
       so_date: soDate,
       expected_delivery_date: expectedDate,
@@ -140,12 +171,37 @@ export default function SaleOrdersTab() {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-right">
+                  <div className="flex items-center justify-end gap-1">
                   {o.status === 'confirmed' || o.status === 'partial' ? (
                     <Button size="sm" variant="default" className="h-7 text-xs px-3 bg-indigo-600 hover:bg-indigo-700"
                       onClick={() => statusMut.mutate({ id: o.id, status: 'fulfilled' })}>
                       Mark Fulfilled
                     </Button>
                   ) : null}
+                  <SalesDocumentActionMenu
+                    basePath={`/sales/orders/${o.id}`}
+                    documentNumber={o.so_number}
+                    documentTitle="Sale Order"
+                    phone={o.party_phone}
+                    email={o.party_email}
+                    canModify={o.status !== 'fulfilled' && o.status !== 'cancelled'}
+                    canCancel={o.status !== 'cancelled' && o.status !== 'fulfilled'}
+                    onEdit={() => void openOrderForm(o)}
+                    onDuplicate={() => void openOrderForm(o, true)}
+                    onCancel={async () => {
+                      if (!window.confirm(`Cancel sale order ${o.so_number}?`)) return;
+                      await api.patch(`/sales/orders/${o.id}/status`, { status: 'cancelled' });
+                      toast.success('Sale order cancelled');
+                      await qc.invalidateQueries({ queryKey: ['sale-orders'] });
+                    }}
+                    onDelete={async () => {
+                      if (!window.confirm(`Delete sale order ${o.so_number}? This cannot be undone.`)) return;
+                      await api.delete(`/sales/orders/${o.id}`);
+                      toast.success('Sale order deleted');
+                      await qc.invalidateQueries({ queryKey: ['sale-orders'] });
+                    }}
+                  />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -155,7 +211,7 @@ export default function SaleOrdersTab() {
 
       <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
         <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
-          <SheetHeader className="mb-5"><SheetTitle>New Sale Order</SheetTitle></SheetHeader>
+          <SheetHeader className="mb-5"><SheetTitle>{editingId ? 'Edit Sale Order' : 'New Sale Order'}</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
               <Label className="text-xs">Party *</Label>
@@ -185,6 +241,12 @@ export default function SaleOrdersTab() {
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
+              {editingId && (
+                <div className="col-span-2">
+                  <Label className="text-xs">Sale Order No.</Label>
+                  <Input className="mt-1 h-9 font-mono" value={soNumber} onChange={e => setSoNumber(e.target.value)} />
+                </div>
+              )}
               <div>
                 <Label className="text-xs">Order Date</Label>
                 <Input type="date" className="mt-1 h-9" value={soDate} onChange={e => setSoDate(e.target.value)} />
@@ -209,7 +271,7 @@ export default function SaleOrdersTab() {
             <div className="flex gap-3 pt-3 border-t">
               <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
               <Button className="flex-1" loading={createMut.isPending} onClick={handleCreate} disabled={!partyId || items.length === 0}>
-                Save Order
+                {editingId ? 'Update Order' : 'Save Order'}
               </Button>
             </div>
           </div>

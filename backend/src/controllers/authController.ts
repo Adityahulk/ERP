@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
+import { env } from '../config/env';
 import { success, error } from '../lib/response';
 import { logAction } from '../lib/auditLog';
+import { isMailerConfigured, renderResetLinkEmail, sendMail } from '../services/mailer';
 import {
   generateAccessToken, generateRefreshToken, verifyRefreshTokenJWT,
   storeRefreshToken, validateRefreshToken, removeRefreshToken,
@@ -368,30 +370,41 @@ export async function getMe(req: Request, res: Response) {
 // ── POST /api/auth/forgot-password ────────────────────────────
 export async function forgotPassword(req: Request, res: Response) {
   try {
-    const { email } = req.body;
+    const cleanEmail = String(req.body?.email || '').toLowerCase().trim();
     const result = await query(
-      'SELECT id, company_id FROM users WHERE email = $1 AND is_deleted = false AND is_active = true',
-      [email.toLowerCase().trim()]
+      `SELECT name, email FROM users WHERE lower(email) = $1 AND is_deleted = false AND is_active = true
+       UNION ALL
+       SELECT name, email FROM registrants WHERE lower(email) = $1 AND is_deleted = false AND is_active = true
+       LIMIT 1`,
+      [cleanEmail],
     );
+    const responseData: any = { message: 'If the email exists, a reset link has been sent.', delivered: false };
+    if (!result.rows.length) return res.json(success(responseData));
 
-    if (!result.rows.length) {
-      return res.json(success({ message: 'If the email exists, a reset link has been sent.' }));
-    }
-
-    const user = result.rows[0];
+    const account = result.rows[0];
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    const expires = new Date(Date.now() + 60 * 60 * 1000);
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE users SET password_reset_token = $1, password_reset_expires = $2
+         WHERE lower(email) = $3 AND is_deleted = false AND is_active = true`,
+        [resetToken, expires, cleanEmail],
+      );
+      await client.query(
+        `UPDATE registrants SET password_reset_token = $1, password_reset_expires = $2, updated_at = NOW()
+         WHERE lower(email) = $3 AND is_deleted = false AND is_active = true`,
+        [resetToken, expires, cleanEmail],
+      );
+    });
 
-    await query(
-      'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
-      [resetToken, expires, user.id]
-    );
-
-    const responseData: any = { message: 'If the email exists, a reset link has been sent.' };
-    if (process.env.NODE_ENV === 'development') {
-      responseData.resetToken = resetToken;
+    const baseUrl = String(env.FRONTEND_URL || '').replace(/\/$/, '');
+    const link = `${baseUrl}/register/reset-password?token=${encodeURIComponent(resetToken)}`;
+    const template = renderResetLinkEmail(account.name, link);
+    const sent = await sendMail({ to: account.email, subject: template.subject, html: template.html, text: template.text });
+    responseData.delivered = sent.delivered;
+    if (env.NODE_ENV !== 'production' && (!sent.delivered || !isMailerConfigured())) {
+      responseData.dev_reset_link = link;
     }
-
     res.json(success(responseData));
   } catch (err: any) {
     res.status(500).json(error(err.message));
@@ -404,25 +417,40 @@ export async function resetPassword(req: Request, res: Response) {
     const { token, password } = req.body;
 
     const result = await query(
-      `SELECT id, company_id FROM users
-       WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND is_deleted = false`,
-      [token]
+      `SELECT email FROM users
+       WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND is_deleted = false
+       UNION ALL
+       SELECT email FROM registrants
+       WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND is_deleted = false
+       LIMIT 1`,
+      [token],
     );
 
     if (!result.rows.length) {
       return res.status(400).json(error('Invalid or expired reset token'));
     }
 
-    const user = result.rows[0];
+    const cleanEmail = String(result.rows[0].email).toLowerCase();
     const hash = await bcrypt.hash(password, 12);
+    const affectedUsers = await withTransaction(async (client) => {
+      const users = await client.query(
+        `UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL
+         WHERE lower(email) = $2 AND is_deleted = false RETURNING id, company_id`,
+        [hash, cleanEmail],
+      );
+      await client.query(
+        `UPDATE registrants SET password_hash = $1, password_reset_token = NULL,
+          password_reset_expires = NULL, updated_at = NOW()
+         WHERE lower(email) = $2 AND is_deleted = false`,
+        [hash, cleanEmail],
+      );
+      return users.rows;
+    });
 
-    await query(
-      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL WHERE id = $2',
-      [hash, user.id]
-    );
-
-    await removeRefreshToken(user.id);
-    await logAction(user.id, user.company_id ?? null, 'reset_password', 'user', user.id);
+    for (const user of affectedUsers) {
+      await removeRefreshToken(user.id);
+      await logAction(user.id, user.company_id ?? null, 'reset_password', 'user', user.id);
+    }
 
     res.json(success({ message: 'Password reset successfully. Please login with your new password.' }));
   } catch (err: any) {

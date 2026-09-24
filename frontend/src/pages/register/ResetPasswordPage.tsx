@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import registrantApi from '@/lib/registrantApi';
+import api from '@/lib/api';
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ export default function ResetPasswordPage() {
     }
     setSubmitting(true);
     try {
-      const { data: res } = await registrantApi.post('/register/reset-password', { token, password });
+      const { data: res } = await api.post('/auth/reset-password', { token, password });
       if (res.success) {
         setDone(true);
         toast.success('Password reset. Redirecting to sign in…');
