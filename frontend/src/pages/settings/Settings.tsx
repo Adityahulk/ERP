@@ -25,6 +25,7 @@ import {
   type PrintLayoutId,
 } from '@/components/settings/PrintLayoutPreview';
 import { DirectPrinterSettings } from '@/components/settings/DirectPrinterSettings';
+import { DataImportManager } from '@/components/settings/DataImportManager';
 import { printPdfBlob } from '@/lib/printPdf';
 import {
   DEFAULT_THERMAL_SETTINGS,
@@ -801,20 +802,10 @@ export default function Settings() {
   const [editingGodownId, setEditingGodownId] = useState<string | null>(null);
   const [editUserForm, setEditUserForm] = useState({ name: '', email: '', phone: '', role: 'staff', is_active: true });
   const [editGodownForm, setEditGodownForm] = useState({ name: '', code: '', city: '', state: '', is_default: false, is_active: true });
-  const importFileRef = useRef<HTMLInputElement | null>(null);
   const tallyImportFileRef = useRef<HTMLInputElement | null>(null);
-  const pendingImportFile = useRef<File | null>(null);
   const logoFileRef = useRef<HTMLInputElement | null>(null);
   const signatureFileRef = useRef<HTMLInputElement | null>(null);
   const lastAutoFetchedGstin = useRef('');
-  const [importing, setImporting] = useState(false);
-  const [importPreview, setImportPreview] = useState<{
-    preview?: { row: number; data: Record<string, unknown>; valid: boolean }[];
-    errors?: { row: number; errors: string[]; data: unknown }[];
-    total?: number;
-    valid?: number;
-    invalid?: number;
-  } | null>(null);
 
   const uploadsBase = () => getApiBaseURL().replace(/\/api$/, '');
   const logoSrc =
@@ -832,7 +823,6 @@ export default function Settings() {
 
   const [deleteConf, setDeleteConf] = useState('');
   const [dataDumping, setDataDumping] = useState(false);
-  const [templateDownloading, setTemplateDownloading] = useState(false);
   const [testPrintRunning, setTestPrintRunning] = useState(false);
   const [tallyExporting, setTallyExporting] = useState(false);
   const [tallyImporting, setTallyImporting] = useState(false);
@@ -988,71 +978,6 @@ export default function Settings() {
       is_default: !!g.is_default,
       is_active: !!g.is_active,
     });
-  };
-
-  const downloadItemsTemplate = async () => {
-    setTemplateDownloading(true);
-    const t = toast.loading('Preparing template…');
-    try {
-      const res = await api.get('/items/import-template', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'microtechnique_item_import_template.xlsx';
-      a.click();
-      window.URL.revokeObjectURL(url);
-      toast.success('Template downloaded', { id: t });
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Template download failed', { id: t });
-    } finally {
-      setTemplateDownloading(false);
-    }
-  };
-
-  const previewImportFile = async (file?: File) => {
-    if (!file) return;
-    try {
-      setImporting(true);
-      pendingImportFile.current = file;
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await api.post('/items/bulk-import', fd);
-      const d = res.data?.data ?? res.data;
-      setImportPreview(d);
-      if (!d.preview?.length && (d.errors?.length || 0) > 0) {
-        toast.error('No valid rows — fix errors and try again.');
-      }
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Preview failed');
-      pendingImportFile.current = null;
-      setImportPreview(null);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const confirmImportFile = async () => {
-    const file = pendingImportFile.current;
-    if (!file) {
-      toast.error('Choose a file first');
-      return;
-    }
-    try {
-      setImporting(true);
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await api.post('/items/bulk-import?action=confirm', fd);
-      const d = res.data?.data ?? res.data;
-      toast.success(`Import complete. Inserted ${d.inserted || 0} items`);
-      setImportPreview(null);
-      pendingImportFile.current = null;
-      qc.invalidateQueries({ queryKey: ['items'] });
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Import failed');
-    } finally {
-      setImporting(false);
-      if (importFileRef.current) importFileRef.current.value = '';
-    }
   };
 
   const uploadAsset = async (file: File | undefined, kind: 'logo' | 'signature') => {
@@ -4280,14 +4205,7 @@ export default function Settings() {
 
                {tab === 'data' && (
                   <CardContent className="p-6 space-y-6">
-                     <h2 className="text-xl font-bold">Data Management Flow</h2>
-                     <input
-                       ref={importFileRef}
-                       type="file"
-                       accept=".csv,.xlsx,.xls,.json"
-                       className="hidden"
-                       onChange={(e) => previewImportFile(e.target.files?.[0])}
-                     />
+                    <DataImportManager />
                     <input
                       ref={tallyImportFileRef}
                       type="file"
@@ -4295,46 +4213,7 @@ export default function Settings() {
                       className="hidden"
                       onChange={(e) => importTally(e.target.files?.[0])}
                     />
-                     <div className="grid md:grid-cols-2 gap-6">
-                        <Card className="border-indigo-100 shadow-sm">
-                           <CardContent className="p-6 flex flex-col items-center text-center">
-                              <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-3"><Upload className="w-6 h-6"/></div>
-                              <h3 className="font-bold text-slate-900 mb-1">Import Legacy Data</h3>
-                              <p className="text-sm text-slate-500 mb-4">Upload Item Masters or Customer ledgers via structured CSV.</p>
-                              <div className="w-full space-y-2">
-                                <Button variant="outline" className="w-full" onClick={downloadItemsTemplate} loading={templateDownloading}>Download item template</Button>
-                                <Button variant="outline" className="w-full" onClick={() => importFileRef.current?.click()} disabled={importing}>
-                                  {importing && !importPreview ? 'Reading file…' : 'Choose file to preview'}
-                                </Button>
-                              </div>
-                              {importPreview?.preview && importPreview.preview.length > 0 && (
-                                <div className="mt-4 text-left w-full rounded-lg border bg-white p-3 max-h-56 overflow-y-auto">
-                                  <p className="text-xs font-semibold text-slate-700 mb-2">
-                                    Preview: {importPreview.valid ?? importPreview.preview.length} valid row(s)
-                                    {importPreview.invalid ? `, ${importPreview.invalid} invalid` : ''}
-                                  </p>
-                                  <ul className="text-xs text-slate-600 space-y-1">
-                                    {importPreview.preview.slice(0, 12).map((p) => (
-                                      <li key={p.row}>
-                                        Row {p.row}: {(p.data as { name?: string })?.name || '—'}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {importPreview.preview.length > 12 && (
-                                    <p className="text-xs text-slate-400 mt-1">Showing first 12 rows…</p>
-                                  )}
-                                  <div className="flex gap-2 mt-3">
-                                    <Button size="sm" onClick={confirmImportFile} loading={importing}>
-                                      Import valid rows
-                                    </Button>
-                                    <Button size="sm" variant="outline" onClick={() => { setImportPreview(null); pendingImportFile.current = null; }}>
-                                      Cancel
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
-                           </CardContent>
-                        </Card>
+                     <div className="grid gap-6 border-t pt-6 md:grid-cols-2">
                         <Card className="border-emerald-100 shadow-sm">
                            <CardContent className="p-6 flex flex-col items-center text-center">
                               <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 mb-3"><Database className="w-6 h-6"/></div>

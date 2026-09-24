@@ -37,6 +37,7 @@ import superAdminRoutes from './superAdmin';
 import transactionSettingsRoutes from './transactionSettings';
 import taxSettingsRoutes from './taxSettings';
 import printSettingsRoutes from './printSettings';
+import dataImportRoutes from './dataImport';
 
 import { verifyToken } from '../middleware/auth';
 import barcodeRoutes from './barcode';
@@ -56,6 +57,7 @@ router.use('/company', companyRoutes);
 router.use('/settings/transaction', transactionSettingsRoutes);
 router.use('/settings/taxes', taxSettingsRoutes);
 router.use('/settings/print', printSettingsRoutes);
+router.use('/data-import', dataImportRoutes);
 router.use('/godowns', godownRoutes);
 router.use('/users', userRoutes);
 router.use('/item-categories', itemCategoryRoutes);
