@@ -35,6 +35,18 @@ import {
   type ThermalPrintSettings,
 } from '@/lib/thermalSettings';
 
+const DEFAULT_QUOTATION_TERMS = `This quotation is valid only until the date shown above.
+Prices exclude freight or other charges unless specifically mentioned.
+Changes in quantity or specifications may affect the quoted price.
+Payment terms will be confirmed on the final invoice.
+Please confirm the order within the validity period to avoid price changes.`;
+
+const DEFAULT_SALE_ORDER_TERMS = `This Sales Order is subject to the agreed validity period.
+Prices exclude freight or other charges unless specifically mentioned.
+Changes in quantity or specifications may affect the order value.
+Payment terms are as stated in this order or the final invoice.
+Delivery dates are estimates unless expressly confirmed.`;
+
 type SalesCustomFieldDef = {
   id: string;
   label: string;
@@ -757,6 +769,12 @@ export default function Settings() {
   const [upiId, setUpiId] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [invoiceTerms, setInvoiceTerms] = useState('');
+  const [documentTagline, setDocumentTagline] = useState('');
+  const [proformaValidityDays, setProformaValidityDays] = useState(14);
+  const [quotationValidityDays, setQuotationValidityDays] = useState(14);
+  const [saleOrderDeliveryDays, setSaleOrderDeliveryDays] = useState(14);
+  const [quotationTermsTemplate, setQuotationTermsTemplate] = useState(DEFAULT_QUOTATION_TERMS);
+  const [saleOrderTermsTemplate, setSaleOrderTermsTemplate] = useState(DEFAULT_SALE_ORDER_TERMS);
   const [invoiceTemplate, setInvoiceTemplate] = useState('business-theme-1');
   const [, setDocumentTheme] = useState('business-theme-1');
   const [documentPrimaryColor, setDocumentPrimaryColor] = useState('#4F46E5');
@@ -1077,6 +1095,12 @@ export default function Settings() {
     setUpiId(company.upi_id || '');
     setInvoicePrefix(company.invoice_prefix || 'INV');
     setInvoiceTerms(company.terms_and_conditions || '');
+    setDocumentTagline(company.document_tagline || '');
+    setProformaValidityDays(Math.max(1, Math.min(365, Number(company.proforma_validity_days) || 14)));
+    setQuotationValidityDays(Math.max(1, Math.min(365, Number(company.quotation_validity_days) || 14)));
+    setSaleOrderDeliveryDays(Math.max(1, Math.min(365, Number(company.sale_order_delivery_days) || 14)));
+    setQuotationTermsTemplate(company.quotation_terms_template || DEFAULT_QUOTATION_TERMS);
+    setSaleOrderTermsTemplate(company.sale_order_terms_template || DEFAULT_SALE_ORDER_TERMS);
     setInvoiceTemplate(normalizeInvoiceThemeId(company.invoice_pdf_template));
     setDocumentTheme(normalizeInvoiceThemeId(company.document_theme));
     setDocumentPrimaryColor(company.document_primary_color || '#4F46E5');
@@ -1187,6 +1211,12 @@ export default function Settings() {
       await updateCompany.mutateAsync({
         invoice_prefix: invoicePrefix.trim() || 'INV',
         terms_and_conditions: invoiceTerms.trim() || null,
+        document_tagline: documentTagline.trim() || null,
+        proforma_validity_days: Math.max(1, Math.min(365, Math.round(proformaValidityDays || 14))),
+        quotation_validity_days: Math.max(1, Math.min(365, Math.round(quotationValidityDays || 14))),
+        sale_order_delivery_days: Math.max(1, Math.min(365, Math.round(saleOrderDeliveryDays || 14))),
+        quotation_terms_template: quotationTermsTemplate.trim() || null,
+        sale_order_terms_template: saleOrderTermsTemplate.trim() || null,
         invoice_pdf_template: selectedLayout,
         document_theme: selectedLayout,
         document_primary_color: selectedColor,
@@ -3262,7 +3292,6 @@ export default function Settings() {
                               </div>
                            </div>
                         </section>
-
                         <section className="space-y-6">
                            <div className="space-y-3">
                               <h3 className="border-b pb-3 font-semibold">Items Table</h3>
@@ -3853,6 +3882,56 @@ export default function Settings() {
                            <label className="text-sm font-medium text-slate-700">Default Terms & Conditions</label>
                           <textarea className="w-full mt-1 border rounded-md p-3 h-32 text-sm" value={invoiceTerms} onChange={(e) => setInvoiceTerms(e.target.value)} />
                         </div>
+                        <section className="rounded-lg border bg-slate-50 p-4">
+                           <div>
+                              <h3 className="font-semibold text-slate-900">Proforma Invoice defaults</h3>
+                              <p className="mt-1 text-xs text-slate-500">Used for new Proforma Invoices. Users can still change the validity date while preparing a document.</p>
+                           </div>
+                           <div className="mt-4 grid gap-4 md:grid-cols-[1fr_180px]">
+                              <label className="text-sm font-medium text-slate-700">Company tagline
+                                 <Input
+                                    className="mt-1 bg-white"
+                                    maxLength={250}
+                                    value={documentTagline}
+                                    onChange={(e) => setDocumentTagline(e.target.value)}
+                                    placeholder="Technology for a Better Tomorrow"
+                                 />
+                                 <span className="mt-1 block text-xs font-normal text-slate-500">Printed below the company name. Leave blank to hide it.</span>
+                              </label>
+                              <label className="text-sm font-medium text-slate-700">Default validity (days)
+                                 <Input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    className="mt-1 bg-white"
+                                    value={proformaValidityDays}
+                                    onChange={(e) => setProformaValidityDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))}
+                                 />
+                              </label>
+                           </div>
+                        </section>
+                        <section className="rounded-lg border bg-slate-50 p-4">
+                           <div>
+                              <h3 className="font-semibold text-slate-900">Quotation and Sales Order defaults</h3>
+                              <p className="mt-1 text-xs text-slate-500">These defaults prefill new documents and remain editable for each customer.</p>
+                           </div>
+                           <div className="mt-4 grid gap-4 md:grid-cols-2">
+                              <label className="text-sm font-medium text-slate-700">Quotation validity (days)
+                                 <Input type="number" min={1} max={365} className="mt-1 bg-white" value={quotationValidityDays} onChange={(e) => setQuotationValidityDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} />
+                              </label>
+                              <label className="text-sm font-medium text-slate-700">Sales Order delivery period (days)
+                                 <Input type="number" min={1} max={365} className="mt-1 bg-white" value={saleOrderDeliveryDays} onChange={(e) => setSaleOrderDeliveryDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} />
+                              </label>
+                              <label className="text-sm font-medium text-slate-700">Default Quotation terms
+                                 <textarea className="mt-1 min-h-40 w-full rounded-md border bg-white p-3 text-sm font-normal" value={quotationTermsTemplate} onChange={(e) => setQuotationTermsTemplate(e.target.value)} />
+                                 <span className="mt-1 block text-xs font-normal text-slate-500">Enter one clause per line. It prints as a numbered list.</span>
+                              </label>
+                              <label className="text-sm font-medium text-slate-700">Default Sales Order terms
+                                 <textarea className="mt-1 min-h-40 w-full rounded-md border bg-white p-3 text-sm font-normal" value={saleOrderTermsTemplate} onChange={(e) => setSaleOrderTermsTemplate(e.target.value)} />
+                                 <span className="mt-1 block text-xs font-normal text-slate-500">Enter one clause per line. It prints as a numbered list.</span>
+                              </label>
+                           </div>
+                        </section>
                         <div className="grid grid-cols-1 gap-4 max-w-2xl">
                            <div>
                               <label className="text-sm font-medium text-slate-700">Default invoice layout</label>

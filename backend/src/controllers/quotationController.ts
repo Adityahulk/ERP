@@ -23,6 +23,14 @@ function documentLabel(documentType: QuoteDocumentType): string {
   return documentType === 'proforma' ? 'Proforma Invoice' : 'Quotation';
 }
 
+const DEFAULT_QUOTATION_TERMS = [
+  'This quotation is valid only until the date shown above.',
+  'Prices exclude freight or other charges unless specifically mentioned.',
+  'Changes in quantity or specifications may affect the quoted price.',
+  'Payment terms will be confirmed on the final invoice.',
+  'Please confirm the order within the validity period to avoid price changes.',
+].join('\n');
+
 /** Same FY + branch pattern as sales invoices, with an independent sequence per document type. */
 async function generateQuotationNumber(companyId: string, godownId: string | null, documentType: QuoteDocumentType): Promise<string> {
   const prefixRes = await query('SELECT quotation_prefix FROM companies WHERE id = $1', [companyId]);
@@ -92,7 +100,7 @@ function calculateLine(item: QuotationItemInput, isInterstate: boolean) {
   const gross = Math.max(0, Math.round(quantity * unitPrice));
   const discountAmount = Math.max(0, Math.round(Number(item.discount_amount) || 0));
   const taxable = Math.max(0, gross - discountAmount);
-  const gstRate = Math.max(0, Math.round(Number(item.gst_rate) || 0));
+  const gstRate = Math.max(0, Math.min(100, Number(item.gst_rate) || 0));
   const taxTotal = Math.round((taxable * gstRate) / 100);
   const cgst = isInterstate ? 0 : Math.round(taxTotal / 2);
   const sgst = isInterstate ? 0 : taxTotal - cgst;
@@ -155,22 +163,58 @@ export async function createQuotation(req: Request, res: Response) {
       const customNo = trimOrNull(d.quotation_number);
       const qn = customNo || (await generateQuotationNumber(companyId, godownId, documentType));
 
-      const partyRes = await client.query(
-        `SELECT id, name, phone, email, billing_state_code
+      const [partyRes, companyRes, salespersonRes] = await Promise.all([
+        client.query(
+        `SELECT id, name, phone, email, gstin, billing_address, billing_state,
+                billing_state_code, state, state_code
          FROM parties
          WHERE id = $1 AND company_id = $2 AND is_deleted = false
          FOR SHARE`,
         [d.party_id, companyId],
-      );
+        ),
+        client.query(
+          `SELECT state_code, proforma_validity_days, quotation_validity_days,
+                  quotation_terms_template, terms_and_conditions
+           FROM companies WHERE id = $1 AND is_deleted = false`,
+          [companyId],
+        ),
+        client.query(
+          `SELECT name, phone, email FROM users
+           WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+          [req.user!.id, companyId],
+        ),
+      ]);
       if (!partyRes.rows.length) throw new Error('Party not found for this company');
       const party = partyRes.rows[0];
+      const company = companyRes.rows[0] || {};
+      const salesperson = salespersonRes.rows[0] || {};
+
+      const buyerAddress = trimOrNull(d.party_address_override) || trimOrNull(party.billing_address);
+      const buyerGstin = trimOrNull(d.party_gstin_override) || trimOrNull(party.gstin);
+      const buyerState = trimOrNull(d.party_state_override) || trimOrNull(party.billing_state) || trimOrNull(party.state);
+      const buyerStateCode = trimOrNull(d.party_state_code_override)
+        || trimOrNull(party.billing_state_code)
+        || trimOrNull(party.state_code);
+
+      let validUntil = trimOrNull(d.valid_until);
+      if (!validUntil) {
+        const issueDate = new Date(`${d.quotation_date}T00:00:00.000Z`);
+        const configuredDays = documentType === 'proforma'
+          ? company.proforma_validity_days
+          : company.quotation_validity_days;
+        const days = Math.max(1, Math.min(365, Number(configuredDays) || 14));
+        issueDate.setUTCDate(issueDate.getUTCDate() + days);
+        validUntil = issueDate.toISOString().slice(0, 10);
+      }
+      if (validUntil && validUntil < String(d.quotation_date)) {
+        throw new Error('Valid Until cannot be before the Proforma Invoice date');
+      }
 
       let isInterstate = Boolean(d.is_interstate);
       const isGstQuote = d.is_gst_quote !== false;
-      if (d.is_interstate === undefined && d.party_id) {
-        const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-        const partyState = String(party.billing_state_code || '');
-        const companyState = String(cRes.rows[0]?.state_code || '');
+      if (d.is_interstate === undefined) {
+        const partyState = String(buyerStateCode || '').slice(0, 2);
+        const companyState = String(company.state_code || '').slice(0, 2);
         isInterstate = !!(partyState && companyState && partyState !== companyState);
       }
 
@@ -195,26 +239,34 @@ export async function createQuotation(req: Request, res: Response) {
       });
 
       const qRes = await client.query(
-        `INSERT INTO quotations (
+         `INSERT INTO quotations (
            company_id, godown_id, quotation_number, quotation_date, valid_until, party_id,
            party_name_override, party_phone_override, party_email_override,
+           party_address_override, party_gstin_override, party_state_override, party_state_code_override,
+           is_interstate,
            subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
            customer_notes, internal_notes, terms_and_conditions,
            status, created_by, is_gst_quote, pdf_template, document_theme,
-           document_type, payment_terms, delivery_terms
+           document_type, payment_terms, delivery_terms,
+           salesperson_name_snapshot, salesperson_phone_snapshot, salesperson_email_snapshot
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'draft',$20,$21,$22,$23,$24,$25,$26
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,'draft',$26,$27,$28,$29,$30,$31,$32,$33,$34
          ) RETURNING *`,
         [
           companyId,
           godownId,
           qn,
           d.quotation_date,
-          d.valid_until || null,
+          validUntil,
           d.party_id,
           trimOrNull(d.party_name_override) || trimOrNull(party.name),
           trimOrNull(d.party_phone_override) || trimOrNull(party.phone),
           trimOrNull(d.party_email_override) || trimOrNull(party.email),
+          buyerAddress,
+          buyerGstin,
+          buyerState,
+          buyerStateCode,
+          isInterstate,
           subtotal,
           discount,
           taxable,
@@ -224,7 +276,10 @@ export async function createQuotation(req: Request, res: Response) {
           total,
           trimOrNull(d.customer_notes),
           trimOrNull(d.internal_notes),
-          trimOrNull(d.terms_and_conditions),
+          trimOrNull(d.terms_and_conditions)
+            || (documentType === 'quotation'
+              ? trimOrNull(company.quotation_terms_template) || trimOrNull(company.terms_and_conditions) || DEFAULT_QUOTATION_TERMS
+              : trimOrNull(company.terms_and_conditions)),
           req.user!.id,
           isGstQuote,
           normalizeInvoicePrintTheme(d.pdf_template || d.document_theme),
@@ -232,6 +287,9 @@ export async function createQuotation(req: Request, res: Response) {
           documentType,
           trimOrNull(d.payment_terms),
           trimOrNull(d.delivery_terms),
+          trimOrNull(salesperson.name),
+          trimOrNull(salesperson.phone),
+          trimOrNull(salesperson.email),
         ]
       );
       const quotation = qRes.rows[0];
@@ -320,12 +378,23 @@ export async function getQuotation(req: Request, res: Response) {
               COALESCE(q.party_name_override, p.name) AS party_name,
               COALESCE(q.party_phone_override, p.phone) AS party_phone,
               COALESCE(q.party_email_override, p.email) AS party_email,
-              p.gstin AS party_gstin,
-              p.billing_address AS party_address,
-              p.billing_state AS party_state,
-              p.billing_state_code AS party_state_code
+              COALESCE(q.party_gstin_override, p.gstin, 'URP') AS party_gstin,
+              COALESCE(q.party_address_override, p.billing_address) AS party_address,
+              COALESCE(q.party_state_override, p.billing_state, p.state) AS party_state,
+              COALESCE(q.party_state_code_override, p.billing_state_code, p.state_code) AS party_state_code,
+              COALESCE(q.salesperson_name_snapshot, u.name) AS salesperson_name,
+              COALESCE(q.salesperson_phone_snapshot, u.phone) AS salesperson_phone,
+              COALESCE(q.salesperson_email_snapshot, u.email) AS salesperson_email,
+              COALESCE(c.legal_name, c.name) AS seller_name,
+              c.phone AS seller_phone, c.email AS seller_email, c.gstin AS seller_gstin,
+              c.registered_address AS seller_address, c.city AS seller_city,
+              c.state AS seller_state, c.pincode AS seller_pincode,
+              c.logo_url AS seller_logo_url, c.signature_url AS seller_signature_url,
+              c.document_tagline AS seller_tagline
        FROM quotations q
        LEFT JOIN parties p ON p.id = q.party_id AND p.company_id = q.company_id AND p.is_deleted = false
+       LEFT JOIN users u ON u.id = q.created_by AND u.company_id = q.company_id AND u.is_deleted = false
+       LEFT JOIN companies c ON c.id = q.company_id AND c.is_deleted = false
        WHERE q.id = $1 AND q.company_id = $2 AND q.is_deleted = false`,
       [req.params.id, req.user!.company_id]
     );
@@ -436,12 +505,12 @@ export async function convertToInvoice(req: Request, res: Response) {
         ship: string | null;
       } = {
         name: trimOrNull(q.party_name_override),
-        gstin: null,
-        bill: null,
+        gstin: trimOrNull(q.party_gstin_override),
+        bill: trimOrNull(q.party_address_override),
         ship: null,
       };
-      let isInterstate = false;
-      let placeOfSupply: string | null = null;
+      let isInterstate = Boolean(q.is_interstate);
+      let placeOfSupply: string | null = trimOrNull(q.party_state_code_override);
 
       if (q.party_id) {
         const pr = await client.query(
@@ -452,14 +521,18 @@ export async function convertToInvoice(req: Request, res: Response) {
         if (pr.rows[0]) {
           partySnap = {
             name: trimOrNull(q.party_name_override) || (pr.rows[0].name as string) || null,
-            gstin: (pr.rows[0].gstin as string) || null,
-            bill: (pr.rows[0].billing_address as string) || null,
+            gstin: trimOrNull(q.party_gstin_override) || (pr.rows[0].gstin as string) || null,
+            bill: trimOrNull(q.party_address_override) || (pr.rows[0].billing_address as string) || null,
             ship: (pr.rows[0].shipping_address as string) || null,
           };
-          placeOfSupply = String(pr.rows[0].billing_state_code || '').slice(0, 5) || null;
-          const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-          isInterstate =
-            determineGSTType(cRes.rows[0]?.state_code, pr.rows[0]?.billing_state_code) === 'inter';
+          placeOfSupply = trimOrNull(q.party_state_code_override)
+            || String(pr.rows[0].billing_state_code || '').slice(0, 5)
+            || null;
+          if (q.is_interstate == null) {
+            const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
+            isInterstate =
+              determineGSTType(cRes.rows[0]?.state_code, placeOfSupply || '') === 'inter';
+          }
         }
       } else if (Number(q.igst_amount) > 0) {
         isInterstate = true;

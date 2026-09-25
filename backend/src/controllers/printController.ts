@@ -57,7 +57,13 @@ export async function getQuotationPdf(req: Request, res: Response) {
   try {
     const { quotationId } = req.params;
     const qRes = await query(
-      `SELECT * FROM quotations WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      `SELECT q.*,
+              COALESCE(q.salesperson_name_snapshot, u.name) AS salesperson_name,
+              COALESCE(q.salesperson_phone_snapshot, u.phone) AS salesperson_phone,
+              COALESCE(q.salesperson_email_snapshot, u.email) AS salesperson_email
+       FROM quotations q
+       LEFT JOIN users u ON u.id = q.created_by AND u.company_id = q.company_id AND u.is_deleted = false
+       WHERE q.id = $1 AND q.company_id = $2 AND q.is_deleted = false`,
       [quotationId, req.user!.company_id]
     );
     if (!qRes.rows.length) return res.status(404).json(error('Quotation not found'));

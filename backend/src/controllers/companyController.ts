@@ -454,6 +454,20 @@ export async function getCompany(req: Request, res: Response) {
 export async function updateCompany(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
+    for (const [field, label] of [
+      ['proforma_validity_days', 'Proforma validity'],
+      ['quotation_validity_days', 'Quotation validity'],
+      ['sale_order_delivery_days', 'Sales Order delivery period'],
+    ] as const) {
+      if (req.body[field] === undefined) continue;
+      const days = Number(req.body[field]);
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        return res.status(400).json(error(`${label} must be a whole number between 1 and 365 days`));
+      }
+    }
+    if (req.body.document_tagline !== undefined && String(req.body.document_tagline || '').length > 250) {
+      return res.status(400).json(error('Document tagline cannot exceed 250 characters'));
+    }
     const oldResult = await query('SELECT * FROM companies WHERE id = $1', [companyId]);
     const old = oldResult.rows[0];
 
@@ -462,7 +476,8 @@ export async function updateCompany(req: Request, res: Response) {
       'registered_address', 'city', 'state', 'pincode', 'state_code',
       'phone', 'email', 'website',
       'financial_year_start', 'invoice_prefix', 'po_prefix', 'quotation_prefix',
-      'default_due_days', 'currency', 'default_currency', 'enabled_currencies', 'timezone',
+      'default_due_days', 'proforma_validity_days', 'quotation_validity_days', 'sale_order_delivery_days',
+      'currency', 'default_currency', 'enabled_currencies', 'timezone',
       'item_terminology', 'item_terminology_plural', 'default_gst_rate', 'default_hsn',
       'bank_name', 'bank_account_number', 'bank_ifsc', 'bank_branch', 'upi_id',
       'business_category',
@@ -472,6 +487,7 @@ export async function updateCompany(req: Request, res: Response) {
       'einvoice_enabled', 'einvoice_turnover_above_5cr', 'einvoice_sandbox',
       'einvoice_gsp_username', 'eway_bill_only_above_50k',
       'document_primary_color', 'document_theme', 'receipt_footer_message', 'invoice_pdf_template',
+      'document_tagline', 'quotation_terms_template', 'sale_order_terms_template',
       'delivery_challan_show_pricing', 'bulk_sales_invoice_columns', 'sales_invoice_custom_fields',
       'item_settings', 'item_custom_fields', 'print_settings', 'tax_settings',
     ];

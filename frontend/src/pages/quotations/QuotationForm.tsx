@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -16,14 +16,22 @@ import { TransactionHeader, TransactionPageShell } from '@/components/transactio
 import DocumentActionsBar from '@/components/transactions/DocumentActionsBar';
 import { useTransactionDraft } from '@/hooks/useTransactionDraft';
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storageKeys';
+import { useCompany } from '@/hooks/useBusiness';
 
 type QuoteDocumentType = 'quotation' | 'proforma';
+
+function stateCodeFrom(value: unknown) {
+  return String(value || '').trim().slice(0, 2);
+}
 
 export default function QuotationForm({ documentType = 'quotation' }: { documentType?: QuoteDocumentType }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: godownRes } = useGodowns();
+  const { data: company } = useCompany();
   const godowns = (godownRes as any)?.data ?? [];
+  const validityManuallyChanged = useRef(false);
+  const termsInitialized = useRef(false);
 
   // Party
   const [partyId, setPartyId] = useState('');
@@ -46,6 +54,10 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
   const [partyNameOverride, setPartyNameOverride] = useState('');
   const [partyPhoneOverride, setPartyPhoneOverride] = useState('');
   const [partyEmailOverride, setPartyEmailOverride] = useState('');
+  const [partyAddressOverride, setPartyAddressOverride] = useState('');
+  const [partyGstinOverride, setPartyGstinOverride] = useState('');
+  const [partyStateOverride, setPartyStateOverride] = useState('');
+  const [partyStateCodeOverride, setPartyStateCodeOverride] = useState('');
 
   // Settings
   const [isGstQuote, setIsGstQuote] = useState(true);
@@ -71,6 +83,26 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     if (!godownId && defaultGodown) setGodownId(defaultGodown);
   }, [godownId, defaultGodown]);
 
+  useEffect(() => {
+    if (validityManuallyChanged.current || !quotationDate) return;
+    const configuredDays = documentType === 'proforma'
+      ? (company as any)?.proforma_validity_days
+      : (company as any)?.quotation_validity_days;
+    const validityDays = Math.max(1, Math.min(365, Number(configuredDays) || 14));
+    const next = new Date(`${quotationDate}T00:00:00`);
+    next.setDate(next.getDate() + validityDays);
+    setValidUntil(next.toISOString().slice(0, 10));
+  }, [company, documentType, quotationDate]);
+
+  useEffect(() => {
+    if (!company || termsInitialized.current) return;
+    termsInitialized.current = true;
+    const configured = documentType === 'quotation'
+      ? (company as any).quotation_terms_template
+      : (company as any).terms_and_conditions;
+    if (configured) setTermsAndConditions(String(configured));
+  }, [company, documentType]);
+
   const searchParties = async (q: string) => {
     setPartySearch(q);
     if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
@@ -95,6 +127,13 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     setPartyNameOverride(String(p.name ?? ''));
     setPartyPhoneOverride(String(p.phone ?? ''));
     setPartyEmailOverride(String(p.email ?? ''));
+    setPartyAddressOverride(String(p.billing_address ?? ''));
+    setPartyGstinOverride(String(p.gstin ?? ''));
+    setPartyStateOverride(String(p.billing_state ?? p.state ?? ''));
+    const partyStateCode = String(p.billing_state_code ?? p.state_code ?? stateCodeFrom(p.gstin));
+    setPartyStateCodeOverride(partyStateCode);
+    const sellerStateCode = stateCodeFrom((company as any)?.state_code || (company as any)?.gstin);
+    if (sellerStateCode && partyStateCode) setIsInterstate(sellerStateCode !== stateCodeFrom(partyStateCode));
     setPartySearch('');
     setPartyResults([]);
   };
@@ -103,6 +142,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     setPartyId(''); setPartyName('');
     setPartySearch(''); setPartyResults([]);
     setPartyNameOverride(''); setPartyPhoneOverride(''); setPartyEmailOverride('');
+    setPartyAddressOverride(''); setPartyGstinOverride(''); setPartyStateOverride(''); setPartyStateCodeOverride('');
   };
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
@@ -110,6 +150,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     {
       partyId, partyName, godownId, quotationNumber, quotationDate, validUntil,
       partyNameOverride, partyPhoneOverride, partyEmailOverride,
+      partyAddressOverride, partyGstinOverride, partyStateOverride, partyStateCodeOverride,
       isGstQuote, isInterstate, pdfTemplate, documentTheme,
       customerNotes, termsAndConditions, paymentTerms, deliveryTerms, internalNotes, showExtras, items,
     },
@@ -120,9 +161,14 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
       setQuotationNumber(String(draft.quotationNumber || ''));
       setQuotationDate(String(draft.quotationDate || new Date().toISOString().split('T')[0]));
       setValidUntil(String(draft.validUntil || validUntil));
+      validityManuallyChanged.current = Boolean(draft.validUntil);
       setPartyNameOverride(String(draft.partyNameOverride || ''));
       setPartyPhoneOverride(String(draft.partyPhoneOverride || ''));
       setPartyEmailOverride(String(draft.partyEmailOverride || ''));
+      setPartyAddressOverride(String(draft.partyAddressOverride || ''));
+      setPartyGstinOverride(String(draft.partyGstinOverride || ''));
+      setPartyStateOverride(String(draft.partyStateOverride || ''));
+      setPartyStateCodeOverride(String(draft.partyStateCodeOverride || ''));
       setIsGstQuote(draft.isGstQuote !== false);
       setIsInterstate(Boolean(draft.isInterstate));
       setPdfTemplate(normalizeInvoiceThemeId(draft.pdfTemplate));
@@ -174,6 +220,11 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
         party_name_override: partyNameOverride.trim() || undefined,
         party_phone_override: partyPhoneOverride.trim() || undefined,
         party_email_override: partyEmailOverride.trim() || undefined,
+        party_address_override: partyAddressOverride.trim() || undefined,
+        party_gstin_override: partyGstinOverride.trim().toUpperCase() || undefined,
+        party_state_override: partyStateOverride.trim() || undefined,
+        party_state_code_override: partyStateCodeOverride.trim() || undefined,
+        is_interstate: isInterstate,
         customer_notes: customerNotes.trim() || undefined,
         internal_notes: internalNotes.trim() || undefined,
         terms_and_conditions: termsAndConditions.trim() || undefined,
@@ -204,7 +255,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     onError: (e: any) => toast.error(e.response?.data?.error || e.message || `Failed to create ${documentType === 'proforma' ? 'Proforma Invoice' : 'quotation'}`),
   });
 
-  const canSave = items.length > 0 && !!quotationDate;
+  const canSave = items.length > 0 && !!quotationDate && !!partyId;
 
   return (
     <TransactionPageShell className="max-w-5xl">
@@ -265,8 +316,45 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
                     </button>
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground">Optional — leave blank to enter party name manually on the quote</p>
+                <p className="text-xs text-muted-foreground">Select an existing party or add a new one before saving.</p>
               </>
+            )}
+            {partyId && (
+              <div className="space-y-3 border-t pt-3">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">Buyer details printed on {documentType === 'proforma' ? 'Proforma Invoice' : 'Quotation'}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-xs">Business name</Label>
+                    <Input className="mt-1 h-9" value={partyNameOverride} onChange={(e) => setPartyNameOverride(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Phone</Label>
+                    <Input className="mt-1 h-9" value={partyPhoneOverride} onChange={(e) => setPartyPhoneOverride(e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Email</Label>
+                  <Input type="email" className="mt-1 h-9" value={partyEmailOverride} onChange={(e) => setPartyEmailOverride(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Location / billing address</Label>
+                  <textarea className="mt-1 min-h-[66px] w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm" value={partyAddressOverride} onChange={(e) => setPartyAddressOverride(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-[1fr_92px] gap-2">
+                  <div>
+                    <Label className="text-xs">State</Label>
+                    <Input className="mt-1 h-9" value={partyStateOverride} onChange={(e) => setPartyStateOverride(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">State code</Label>
+                    <Input className="mt-1 h-9" maxLength={5} value={partyStateCodeOverride} onChange={(e) => setPartyStateCodeOverride(e.target.value.toUpperCase())} />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">GSTIN / URP</Label>
+                  <Input className="mt-1 h-9 font-mono uppercase" maxLength={20} placeholder="URP for unregistered buyer" value={partyGstinOverride} onChange={(e) => setPartyGstinOverride(e.target.value.toUpperCase())} />
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -282,7 +370,8 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
               </div>
               <div>
                 <Label className="text-xs">Valid Until</Label>
-                <Input type="date" className="mt-1 h-9" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+                <Input type="date" min={quotationDate} className="mt-1 h-9" value={validUntil} onChange={(e) => { validityManuallyChanged.current = true; setValidUntil(e.target.value); }} />
+                <p className="mt-1 text-[11px] text-muted-foreground">Defaults to {documentType === 'proforma' ? (company as any)?.proforma_validity_days || 14 : (company as any)?.quotation_validity_days || 14} days; editable here.</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -348,7 +437,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
       {showExtras && (
         <Card>
           <CardContent className="pt-5 space-y-4">
-            <div className="grid md:grid-cols-3 gap-3">
+            {documentType !== 'proforma' && <div className="grid md:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">PDF Template</Label>
                 <select className="mt-1 w-full h-9 rounded-md border bg-background px-3 text-sm" value={pdfTemplate} onChange={(e) => setPdfTemplate(e.target.value as InvoicePdfTemplateId)}>
@@ -361,7 +450,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
                   {DOCUMENT_THEME_OPTIONS.map((theme) => <option key={theme.id} value={theme.id}>{theme.label}</option>)}
                 </select>
               </div>
-            </div>
+            </div>}
 
             <div className="grid md:grid-cols-3 gap-3">
               <div>

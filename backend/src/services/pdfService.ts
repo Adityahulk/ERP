@@ -403,6 +403,25 @@ function formatDocDate(value: unknown): string {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }
 
+function formatFullDocumentDate(value: unknown): string {
+  if (!value) return '—';
+  const raw = String(value).slice(0, 10);
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return escapeHtml(String(value));
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()];
+  return `${weekday} ${month} ${String(d.getUTCDate()).padStart(2, '0')} ${d.getUTCFullYear()} 00:00:00 GMT+0000 (Coordinated Universal Time)`;
+}
+
+function numberedTermsHtml(value: unknown): string {
+  const rows = String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^\d+[.)]\s*/, ''))
+    .filter(Boolean);
+  if (!rows.length) return '<span class="muted">—</span>';
+  return `<ol>${rows.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ol>`;
+}
+
 function fmtQty(value: unknown): string {
   const n = Number(value || 0);
   return Number.isInteger(n) ? n.toFixed(0) : n.toFixed(2);
@@ -1307,6 +1326,70 @@ function buildInvoiceHtml(args: {
   return kind === 'simple' ? simple : kind === 'performa' ? performa : kind === 'monochrome' ? monochrome : standard;
 }
 
+async function generateSaleOrderPDF(document: any, company: any, party: any | null, items: any[]): Promise<Buffer> {
+  const navy = '#1e3a5f';
+  const light = '#e9eff6';
+  const logoSrc = inlineAssetAsDataUri(company?.logo_url) || resolveAssetUrl(company?.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company?.signature_url) || resolveAssetUrl(company?.signature_url);
+  const currency = document.currency_code || company?.default_currency || company?.currency || 'INR';
+  const sellerName = companyLegalDisplayName(company);
+  const buyerName = document.party_name_snapshot || party?.name || 'Customer';
+  const buyerPhone = document.party_phone_snapshot || party?.phone || '';
+  const buyerEmail = document.party_email_snapshot || party?.email || '';
+  const buyerGstin = document.party_gstin_snapshot || party?.gstin || 'URP';
+  const buyerState = document.party_state_snapshot || party?.billing_state || party?.state || '';
+  const buyerStateCode = document.party_state_code_snapshot || party?.billing_state_code || party?.state_code || '';
+  const isInterstate = document.is_interstate === true || Number(document.igst_amount || 0) > 0;
+
+  let subtotal = 0; let discount = 0; let taxable = 0; let cgst = 0; let sgst = 0; let igst = 0; let grand = 0;
+  const rows = items.map((item, index) => {
+    const quantity = Number(item.quantity_ordered) || 0;
+    const rate = Number(item.unit_price) || 0;
+    const gross = Math.round(quantity * rate);
+    const lineDiscount = Number(item.discount_amount) || 0;
+    const lineTaxable = Number(item.taxable_amount) || Math.max(0, gross - lineDiscount);
+    const gstRate = Number(item.gst_rate) || 0;
+    const tax = Math.round(lineTaxable * gstRate / 100);
+    const lineCgst = Number(item.cgst_amount) || (isInterstate ? 0 : Math.round(tax / 2));
+    const lineSgst = Number(item.sgst_amount) || (isInterstate ? 0 : tax - lineCgst);
+    const lineIgst = Number(item.igst_amount) || (isInterstate ? tax : 0);
+    const lineTotal = Number(item.total_amount) || lineTaxable + tax;
+    subtotal += gross; discount += lineDiscount; taxable += lineTaxable;
+    cgst += lineCgst; sgst += lineSgst; igst += lineIgst; grand += lineTotal;
+    return `<tr><td class="center">${index + 1}</td><td><b>${escapeHtml(item.item_name || 'Item')}</b>${item.item_description ? `<div class="description">${multilineHtml(item.item_description)}</div>` : ''}</td><td class="center mono">${escapeHtml(item.hsn_code || '—')}</td><td class="num">${fmtQty(quantity)}</td><td class="num">${fmtMoney(rate, currency)}</td><td class="num">${fmtMoney(lineDiscount, currency)}</td><td class="num">${gstRate.toLocaleString('en-IN', { maximumFractionDigits: 3 })}%</td><td class="num strong">${fmtMoney(lineTotal, currency)}</td></tr>`;
+  }).join('');
+  const rates = Array.from(new Set(items.map((item) => Number(item.gst_rate) || 0).filter(Boolean)));
+  const componentRate = rates.length === 1 ? `${(isInterstate ? rates[0] : rates[0] / 2).toLocaleString('en-IN', { maximumFractionDigits: 3 })}%` : 'multiple rates';
+  const billAddress = [document.billing_address, document.billing_city, document.billing_state, document.billing_pincode, document.billing_country].filter(Boolean).join(', ');
+  const shipAddress = [document.shipping_address, document.shipping_city, document.shipping_state, document.shipping_pincode, document.shipping_country].filter(Boolean).join(', ');
+  const sellerLocation = [company?.city, company?.state, company?.country || 'India'].filter(Boolean).join(', ');
+  const signature = signatureSrc ? `<img class="signature" src="${signatureSrc}" alt="Authorised signature"/>` : '<div class="signature-space"></div>';
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+    @page{size:A4;margin:8mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font:10.5px Arial,Helvetica,sans-serif}.sheet{position:relative;min-height:279mm;border:1px solid #cad5e1;padding:9mm 8mm 6mm;overflow:hidden}
+    .top{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.brand{display:flex;align-items:center;gap:12px}.logo{width:50px;height:50px;border-radius:50%;object-fit:contain;border:2px solid ${navy};padding:3px}.brand h1{margin:0;color:${navy};font:700 21px Georgia,serif}.tagline{margin-top:3px;color:#64748b;font-style:italic}.corner{position:absolute;right:0;top:0;width:88px;height:52px;background:linear-gradient(145deg,${navy} 0 55%,#8fb8d8 55% 76%,transparent 76%)}
+    .title-row{display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:center;margin:18px 0 9px}.title-wrap{display:flex;gap:10px;align-items:flex-start}.title-icon{width:27px;height:27px;background:${navy};color:white;display:grid;place-items:center;font-size:16px}.title{margin:0;color:${navy};font-size:22px;letter-spacing:.08em}.subtitle{color:#64748b;font-style:italic;margin-top:3px}.meta{border:1px solid #9fb0c3;background:#f8fafc}.meta div{display:grid;grid-template-columns:126px 1fr;gap:8px;padding:5px 7px;border-bottom:1px solid #d4dde7}.meta div:last-child{border:0}.meta span{color:#64748b}.meta b{text-align:right}.contact{line-height:1.65;color:#475569}.rule{height:1px;background:${navy};margin:8px 0 10px}
+    .party-grid,.address-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{border:1px solid #9fb0c3;min-height:105px}.card-head{background:${light};color:${navy};font-weight:800;letter-spacing:.06em;padding:6px 9px}.card-body{padding:8px 9px;line-height:1.45}.party-name{font-size:13px;font-weight:800;margin-bottom:4px}.info{display:grid;grid-template-columns:63px 1fr;gap:5px}.info span{color:#64748b}.address-grid .card{min-height:78px}.address-grid .card-body{white-space:normal}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:11px}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #a9b6c4;padding:4px 5px;vertical-align:top}th{background:${navy};color:#fff;font-size:9px;text-transform:uppercase;letter-spacing:.04em}tbody tr:nth-child(even){background:#f8fafc}.center{text-align:center}.num{text-align:right;white-space:nowrap}.strong{font-weight:800}.mono{font-family:Consolas,monospace}.description{font-size:9px;color:#64748b;margin-top:3px}
+    .totals-wrap,.footer-grid,.terms-row,.bottom{break-inside:avoid;page-break-inside:avoid}.totals-wrap{display:flex;justify-content:flex-end;margin-top:10px}.totals{width:315px;border:1px solid #9fb0c3;background:#f8fafc}.total{display:flex;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #d4dde7}.grand{background:${navy};color:#fff;font-weight:800;font-size:13px;padding:8px 9px}
+    .footer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #9fb0c3;margin-top:11px}.footer-cell{min-height:70px;padding:8px;border-right:1px solid #9fb0c3}.footer-cell:last-child{border:0}.footer-label{color:${navy};font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}.footer-value{white-space:pre-line;line-height:1.45}.terms-row{display:grid;grid-template-columns:1fr 225px;border:1px solid #9fb0c3;border-top:0;min-height:102px}.terms{padding:8px}.terms ol{margin:4px 0 0;padding-left:18px}.terms li{margin:2px 0}.sign{border-left:1px solid #9fb0c3;padding:8px;text-align:center;display:flex;flex-direction:column;align-items:center}.signature{max-width:115px;max-height:43px;object-fit:contain;margin:auto}.signature-space{height:43px}.sign-line{width:145px;border-top:1px solid #334155;margin:3px auto 4px}
+    .bottom{display:grid;grid-template-columns:1fr 310px;align-items:stretch;margin-top:12px}.location{padding:8px 10px;color:#475569;border-top:1px solid #9fb0c3}.thanks{background:${navy};color:#fff;font-weight:800;text-align:center;padding:9px;position:relative}.thanks:before{content:"";position:absolute;left:-34px;top:0;border-top:17px solid transparent;border-bottom:17px solid ${navy};border-left:34px solid transparent}.accent{position:absolute;right:0;bottom:0;width:95px;height:28px;background:linear-gradient(145deg,transparent 0 25%,#8fb8d8 25% 52%,${navy} 52%)}
+  </style></head><body><main class="sheet"><div class="corner"></div>
+    <header class="top"><div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Company logo"/>` : ''}<div><h1>${escapeHtml(sellerName)}</h1>${company?.document_tagline ? `<div class="tagline">${escapeHtml(company.document_tagline)}</div>` : ''}</div></div></header>
+    <section class="title-row"><div><div class="title-wrap"><span class="title-icon">≡</span><div><h2 class="title">SALES ORDER</h2><div class="subtitle">Confirming Your Order, Powering Your Business</div></div></div><div class="contact" style="margin-top:10px">${company?.phone ? `<div>Phone no.: <b>${escapeHtml(company.phone)}</b></div>` : ''}${company?.email ? `<div>Email: <b>${escapeHtml(company.email)}</b></div>` : ''}</div></div><div class="meta"><div><span>Order No.</span><b>${escapeHtml(document.so_number || '—')}</b></div><div><span>Order Date</span><b>${formatFullDocumentDate(document.so_date)}</b></div><div><span>Expected Delivery</span><b>${formatFullDocumentDate(document.expected_delivery_date)}</b></div></div></section><div class="rule"></div>
+    <section class="party-grid"><article class="card"><div class="card-head">SELLER (Company Details)</div><div class="card-body"><div class="party-name">${escapeHtml(sellerName)}</div><div class="info"><span>Phone</span><b>${escapeHtml(company?.phone || '—')}</b><span>Email</span><b>${escapeHtml(company?.email || '—')}</b><span>Address</span><b>${escapeHtml(companyAddress(company) || '—')}</b></div></div></article><article class="card"><div class="card-head">BUYER (Customer Details)</div><div class="card-body"><div class="party-name">${escapeHtml(buyerName)}</div><div class="info"><span>Location</span><b>${escapeHtml(document.party_address_snapshot || party?.billing_address || '—')}</b><span>Phone</span><b>${escapeHtml(buyerPhone || '—')}</b><span>GSTIN</span><b>${escapeHtml(buyerGstin)}</b><span>State</span><b>${escapeHtml([buyerStateCode,buyerState].filter(Boolean).join(' - ') || '—')}</b></div></div></article></section>
+    <section class="address-grid"><article class="card"><div class="card-head">Billing Address</div><div class="card-body"><b>${escapeHtml(document.billing_recipient_name || buyerName)}</b><br/>${escapeHtml(billAddress || '—')}</div></article><article class="card"><div class="card-head">Shipping Address</div><div class="card-body"><b>${escapeHtml(document.shipping_recipient_name || buyerName)}</b><br/>${escapeHtml(shipAddress || '—')}</div></article></section>
+    <table><colgroup><col style="width:5%"><col style="width:29%"><col style="width:10%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:16%"></colgroup><thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Disc</th><th>GST</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="center">No items</td></tr>'}</tbody></table>
+    <div class="totals-wrap"><section class="totals"><div class="total"><span>Subtotal</span><b>${fmtMoney(Number(document.subtotal_amount) || subtotal, currency)}</b></div><div class="total"><span>Discount</span><b>${fmtMoney(Number(document.discount_amount) || discount, currency)}</b></div><div class="total"><span>Taxable Amount</span><b>${fmtMoney(Number(document.taxable_amount) || taxable, currency)}</b></div>${isInterstate ? `<div class="total"><span>IGST (${componentRate})</span><b>${fmtMoney(Number(document.igst_amount) || igst, currency)}</b></div>` : `<div class="total"><span>CGST (${componentRate})</span><b>${fmtMoney(Number(document.cgst_amount) || cgst, currency)}</b></div><div class="total"><span>SGST (${componentRate})</span><b>${fmtMoney(Number(document.sgst_amount) || sgst, currency)}</b></div>`}<div class="total grand"><span>Grand Total</span><b>${fmtMoney(Number(document.total_amount) || grand, currency)}</b></div></section></div>
+    <section class="footer-grid"><div class="footer-cell"><div class="footer-label">Payment Terms</div><div class="footer-value">${multilineHtml(document.payment_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Delivery Terms</div><div class="footer-value">${multilineHtml(document.delivery_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Customer Notes</div><div class="footer-value">${multilineHtml(document.customer_notes || document.notes || '—')}</div></div></section>
+    <section class="terms-row"><div class="terms"><div class="footer-label">Terms &amp; Conditions</div>${numberedTermsHtml(document.terms_and_conditions)}</div><div class="sign"><b>For ${escapeHtml(sellerName)}</b>${signature}<div class="sign-line"></div><div>Authorised Signatory</div></div></section>
+    <section class="bottom"><div class="location">⌖ ${escapeHtml(sellerLocation || 'India')}</div><div class="thanks">Thank you for your business!</div></section><div class="accent"></div>
+  </main></body></html>`;
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    return Buffer.from(await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } }));
+  });
+}
+
 export async function generateSalesDocumentPDF(
   documentType: 'sale_order' | 'credit_note',
   document: any,
@@ -1314,10 +1397,10 @@ export async function generateSalesDocumentPDF(
   party: any | null,
   items: any[],
 ): Promise<Buffer> {
-  const isOrder = documentType === 'sale_order';
-  const title = isOrder ? 'SALE ORDER' : 'CREDIT NOTE';
-  const number = isOrder ? document.so_number : document.credit_note_number;
-  const date = isOrder ? document.so_date : document.return_date;
+  if (documentType === 'sale_order') return generateSaleOrderPDF(document, company, party, items);
+  const title = 'CREDIT NOTE';
+  const number = document.credit_note_number;
+  const date = document.return_date;
   const logoSrc = inlineAssetAsDataUri(company?.logo_url) || resolveAssetUrl(company?.logo_url);
   const currency = document.currency_code || company?.default_currency || company?.currency || 'INR';
   let taxableTotal = 0;
@@ -1325,7 +1408,7 @@ export async function generateSalesDocumentPDF(
   let discountTotal = 0;
 
   const rows = items.map((item, index) => {
-    const quantity = Number(isOrder ? item.quantity_ordered : item.quantity) || 0;
+    const quantity = Number(item.quantity) || 0;
     const unitPrice = Math.round(Number(item.unit_price) || 0);
     const discount = Math.max(0, Math.round(Number(item.discount_amount) || 0));
     const gross = Math.round(quantity * unitPrice);
@@ -1362,10 +1445,10 @@ export async function generateSalesDocumentPDF(
     .footer{display:grid;grid-template-columns:1fr 240px;border-top:1px solid #111;min-height:100px}.terms{padding:12px}.sign{border-left:1px solid #111;padding:12px;text-align:center;display:flex;flex-direction:column;justify-content:space-between}.muted{color:#6b7280}
   </style></head><body><main class="doc">
     <section class="header"><div class="company">${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Logo"/>` : ''}<div><h1>${escapeHtml(companyLegalDisplayName(company))}</h1><div class="lines">${escapeHtml(companyAddress(company))}<br/>${company?.phone ? `Phone: ${escapeHtml(company.phone)}<br/>` : ''}${company?.email ? `Email: ${escapeHtml(company.email)}<br/>` : ''}${company?.gstin ? `GSTIN: ${escapeHtml(company.gstin)}` : ''}</div></div></div><div class="title">${title}</div></section>
-    <section class="meta"><div class="box"><div class="label">${isOrder ? 'Order From' : 'Credit To'}</div><div class="party">${escapeHtml(party?.name || document.party_name_snapshot || 'Customer')}</div><div class="lines">${addressHtml(partyAddress)}${party?.phone ? `<br/>Phone: ${escapeHtml(party.phone)}` : ''}${party?.email ? `<br/>Email: ${escapeHtml(party.email)}` : ''}${party?.gstin ? `<br/>GSTIN: ${escapeHtml(party.gstin)}` : ''}</div></div>
-      <div class="box"><div class="kv"><span>${isOrder ? 'Order No.' : 'Credit Note No.'}</span><b>${escapeHtml(number || '—')}</b><span>Date</span><b>${formatDocDate(date)}</b>${isOrder ? `<span>Expected Delivery</span><b>${formatDocDate(document.expected_delivery_date)}</b><span>Status</span><b>${escapeHtml(document.status || 'confirmed')}</b>` : `<span>Against Invoice</span><b>${escapeHtml(document.invoice_number || '—')}</b><span>Status</span><b>${escapeHtml(document.status || 'active')}</b>`}</div></div></section>
+    <section class="meta"><div class="box"><div class="label">Credit To</div><div class="party">${escapeHtml(party?.name || document.party_name_snapshot || 'Customer')}</div><div class="lines">${addressHtml(partyAddress)}${party?.phone ? `<br/>Phone: ${escapeHtml(party.phone)}` : ''}${party?.email ? `<br/>Email: ${escapeHtml(party.email)}` : ''}${party?.gstin ? `<br/>GSTIN: ${escapeHtml(party.gstin)}` : ''}</div></div>
+      <div class="box"><div class="kv"><span>Credit Note No.</span><b>${escapeHtml(number || '—')}</b><span>Date</span><b>${formatDocDate(date)}</b><span>Against Invoice</span><b>${escapeHtml(document.invoice_number || '—')}</b><span>Status</span><b>${escapeHtml(document.status || 'active')}</b></div></div></section>
     <table><thead><tr><th style="width:34px">#</th><th>Item & Description</th><th style="width:78px">HSN/SAC</th><th style="width:58px" class="num">Qty</th><th style="width:58px">Unit</th><th style="width:92px" class="num">Rate</th><th style="width:58px" class="num">GST</th><th style="width:105px" class="num">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="center muted">No items</td></tr>'}</tbody></table>
-    <section class="summary"><div class="notes"><div class="label">${isOrder ? 'Payment Terms / Notes' : 'Reason for Return'}</div><div style="margin-top:7px">${escapeHtml(isOrder ? [document.payment_terms, document.notes].filter(Boolean).join('\n') || '—' : document.reason || '—').replace(/\n/g, '<br/>')}</div></div><div class="totals"><div><span>Taxable Amount</span><b>${fmtMoney(taxableTotal, currency)}</b></div>${discountTotal ? `<div><span>Discount</span><b>-${fmtMoney(discountTotal, currency)}</b></div>` : ''}<div><span>GST</span><b>${fmtMoney(taxTotal, currency)}</b></div><div class="grand"><span>Total</span><b>${fmtMoney(grandTotal, currency)}</b></div></div></section>
+    <section class="summary"><div class="notes"><div class="label">Reason for Return</div><div style="margin-top:7px">${escapeHtml(document.reason || '—').replace(/\n/g, '<br/>')}</div></div><div class="totals"><div><span>Taxable Amount</span><b>${fmtMoney(taxableTotal, currency)}</b></div>${discountTotal ? `<div><span>Discount</span><b>-${fmtMoney(discountTotal, currency)}</b></div>` : ''}<div><span>GST</span><b>${fmtMoney(taxTotal, currency)}</b></div><div class="grand"><span>Total</span><b>${fmtMoney(grandTotal, currency)}</b></div></div></section>
     <section class="footer"><div class="terms"><div class="label">Amount in words</div><div style="margin-top:7px;font-weight:700">${escapeHtml(amountToWordsINR(grandTotal / 100))}</div></div><div class="sign"><b>For ${escapeHtml(companyLegalDisplayName(company))}</b><span>Authorized Signatory</span></div></section>
   </main></body></html>`;
 
@@ -2022,6 +2105,133 @@ export async function generateEinvoicePdf(
   });
 }
 
+async function generateProformaInvoicePDF(
+  quotation: any,
+  company: any,
+  party: any | null,
+  items: any[],
+): Promise<Buffer> {
+  const navy = '#1e3a5f';
+  const lightNavy = '#e9eff6';
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  const sellerName = companyLegalDisplayName(company);
+  const sellerAddress = companyAddress(company);
+  const buyerName = quotation.party_name_override || party?.name || 'Customer';
+  const buyerLocation = quotation.party_address_override || buyerAddress(party) || '';
+  const buyerPhone = quotation.party_phone_override || party?.phone || '';
+  const buyerGstin = quotation.party_gstin_override || party?.gstin || 'URP';
+  const buyerState = quotation.party_state_override || partyStateLabel(party, buyerGstin) || '';
+  const buyerStateCode = quotation.party_state_code_override || party?.billing_state_code || party?.state_code || '';
+  const salespersonName = quotation.salesperson_name || quotation.salesperson_name_snapshot || '';
+  const salespersonPhone = quotation.salesperson_phone || quotation.salesperson_phone_snapshot || '';
+  const salespersonEmail = quotation.salesperson_email || quotation.salesperson_email_snapshot || '';
+  const isInterstate = quotation.is_interstate === true || Number(quotation.igst_amount || 0) > 0;
+
+  const uniqueRates = (field: string) => Array.from(new Set(
+    items.map((item) => Number(item[field]) || 0).filter((rate) => rate > 0),
+  ));
+  const taxLabel = (name: string, field: string) => {
+    const rates = uniqueRates(field);
+    if (rates.length === 1) return `${name} (${rates[0].toLocaleString('en-IN', { maximumFractionDigits: 3 })}%)`;
+    if (rates.length > 1) return `${name} (multiple rates)`;
+    return name;
+  };
+
+  const rows = items.map((item: any, index: number) => `<tr>
+    <td class="center">${index + 1}</td>
+    <td><b>${escapeHtml(item.item_name || 'Item')}</b>${item.item_description ? `<div class="item-description">${multilineHtml(item.item_description)}</div>` : ''}</td>
+    <td class="center mono">${escapeHtml(item.hsn_code || '—')}</td>
+    <td class="num">${fmtQty(Number(item.quantity) || 0)}</td>
+    <td class="num">₹${fmtPaise(Number(item.unit_price) || 0)}</td>
+    <td class="num">₹${fmtPaise(Number(item.discount_amount) || 0)}</td>
+    <td class="num">${Number(item.gst_rate || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })}%</td>
+    <td class="num strong">₹${fmtPaise(Number(item.total_amount) || 0)}</td>
+  </tr>`).join('');
+
+  const identityLines = [
+    salespersonName ? `<span><b>Contact:</b> ${escapeHtml(salespersonName)}</span>` : '',
+    salespersonPhone ? `<span><b>Phone:</b> ${escapeHtml(salespersonPhone)}</span>` : '',
+    salespersonEmail ? `<span><b>Email:</b> ${escapeHtml(salespersonEmail)}</span>` : '',
+  ].filter(Boolean).join('');
+  const tagline = String(company.document_tagline || '').trim();
+  const signature = signatureSrc
+    ? `<img class="signature" src="${signatureSrc}" alt="Authorised signature"/>`
+    : '<div class="signature-space"></div>';
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+    @page{size:A4;margin:8mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font-family:Arial,Helvetica,sans-serif;font-size:10.5px}
+    .sheet{position:relative;min-height:279mm;border:1px solid #cbd5e1;background:#fff;padding:10mm 9mm 13mm;overflow:hidden}
+    .brand-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.brand{display:flex;align-items:center;gap:12px}.brand-logo{width:52px;height:52px;border-radius:50%;object-fit:contain;border:2px solid ${navy};padding:3px}.brand h1{margin:0;color:${navy};font-size:21px;letter-spacing:.02em}.tagline{margin-top:3px;color:#64748b;font-size:9.5px;font-style:italic}.seal{width:48px;height:48px;border-radius:50%;object-fit:contain;border:1px solid #94a3b8;padding:5px}.rule{height:2px;background:${navy};margin:8px 0 10px}
+    .title{text-align:center;color:${navy};margin:0;font-size:22px;letter-spacing:.08em}.subtitle{text-align:center;color:#64748b;font-size:9px;margin-top:3px}
+    .identity{display:grid;grid-template-columns:1fr 250px;gap:16px;align-items:end;margin:12px 0}.contact{display:flex;flex-direction:column;gap:4px;color:#475569}.document-meta{border:1px solid #9fb0c3;background:#f8fafc}.document-meta div{display:grid;grid-template-columns:95px 1fr;padding:5px 7px;border-bottom:1px solid #d4dde7}.document-meta div:last-child{border-bottom:0}.document-meta span{color:#64748b}.document-meta b{text-align:right;color:#172033}
+    .party-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.party-card{border:1px solid #9fb0c3;min-height:112px}.party-head{background:${lightNavy};color:${navy};font-weight:800;letter-spacing:.09em;padding:6px 9px}.party-body{padding:8px 9px;line-height:1.5}.party-name{font-size:13px;font-weight:800;color:#172033;margin-bottom:4px}.info-line{display:grid;grid-template-columns:58px 1fr;gap:6px}.info-line span:first-child{color:#64748b}
+    table{width:100%;border-collapse:collapse;margin-top:11px;table-layout:fixed}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #a9b6c4;padding:6px 5px;vertical-align:top}th{background:${lightNavy};color:${navy};font-size:9px;text-transform:uppercase;letter-spacing:.04em}tbody tr:nth-child(even){background:#f8fafc}.center{text-align:center}.num{text-align:right;white-space:nowrap}.strong{font-weight:800}.mono{font-family:Consolas,monospace}.item-description{margin-top:3px;color:#64748b;font-size:9px;white-space:pre-line}
+    .totals-wrap{display:flex;justify-content:flex-end;margin-top:10px}.totals{width:310px;border:1px solid #9fb0c3;background:#f8fafc}.total-row{display:flex;justify-content:space-between;gap:12px;padding:5px 9px;border-bottom:1px solid #d4dde7}.total-row:last-child{border-bottom:0}.grand{background:${navy};color:#fff;font-size:13px;font-weight:800;padding:8px 9px}
+    .totals-wrap,.footer-grid,.terms-row,.thanks{break-inside:avoid;page-break-inside:avoid}.footer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #9fb0c3;margin-top:11px}.footer-cell{min-height:68px;padding:7px 8px;border-right:1px solid #9fb0c3}.footer-cell:last-child{border-right:0}.footer-label{color:${navy};font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;margin-bottom:5px}.footer-value{white-space:pre-line;line-height:1.45;color:#334155}
+    .terms-row{display:grid;grid-template-columns:1fr 230px;border:1px solid #9fb0c3;border-top:0;min-height:94px}.terms{padding:8px;white-space:pre-line;line-height:1.45}.signatory{border-left:1px solid #9fb0c3;padding:8px;text-align:center;display:flex;flex-direction:column;align-items:center}.signatory .for{font-weight:700;margin-bottom:4px}.signature{max-width:120px;max-height:45px;object-fit:contain;margin:auto}.signature-space{height:42px}.sign-line{width:150px;border-top:1px solid #334155;margin:3px auto 4px}.thanks{display:flex;align-items:center;gap:12px;color:${navy};font-weight:800;letter-spacing:.09em;justify-content:center;margin:12px 0 2px}.thanks:before,.thanks:after{content:"";height:1px;background:#9fb0c3;flex:1}.bottom-accent{position:absolute;left:0;right:0;bottom:0;height:8mm;background:linear-gradient(160deg,transparent 0 18%,${navy} 18% 72%,#718096 72% 82%,#d8e0e9 82%)}
+  </style></head><body><main class="sheet">
+    <header class="brand-row"><div class="brand">${logoSrc ? `<img class="brand-logo" src="${logoSrc}" alt="Company logo"/>` : ''}<div><h1>${escapeHtml(sellerName)}</h1>${tagline ? `<div class="tagline">${escapeHtml(tagline)}</div>` : ''}</div></div>${logoSrc ? `<img class="seal" src="${logoSrc}" alt="Registered company seal"/>` : ''}</header>
+    <div class="rule"></div><h2 class="title">PROFORMA INVOICE</h2><div class="subtitle">(For Quotation Purpose Only)</div>
+    <section class="identity"><div class="contact">${identityLines || '<span>Prepared by authorised sales representative</span>'}</div><div class="document-meta"><div><span>Proforma No.</span><b>${escapeHtml(quotation.quotation_number || '—')}</b></div><div><span>Date</span><b>${formatDocDate(quotation.quotation_date)}</b></div><div><span>Valid Until</span><b>${formatDocDate(quotation.valid_until)}</b></div></div></section>
+    <section class="party-grid"><article class="party-card"><div class="party-head">SELLER</div><div class="party-body"><div class="party-name">${escapeHtml(sellerName)}</div><div class="info-line"><span>Phone</span><b>${escapeHtml(company.phone || '—')}</b></div><div class="info-line"><span>Email</span><b>${escapeHtml(company.email || '—')}</b></div><div class="info-line"><span>Address</span><b>${escapeHtml(sellerAddress || '—')}</b></div></div></article><article class="party-card"><div class="party-head">BUYER</div><div class="party-body"><div class="party-name">${escapeHtml(buyerName)}</div><div class="info-line"><span>Location</span><b>${escapeHtml(buyerLocation || '—')}</b></div><div class="info-line"><span>Phone</span><b>${escapeHtml(buyerPhone || '—')}</b></div><div class="info-line"><span>GSTIN</span><b>${escapeHtml(buyerGstin || 'URP')}</b></div><div class="info-line"><span>State</span><b>${escapeHtml([buyerStateCode, buyerState].filter(Boolean).join(' - ') || '—')}</b></div></div></article></section>
+    <table><colgroup><col style="width:6%"><col style="width:27%"><col style="width:10%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:17%"></colgroup><thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Disc</th><th>GST</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="center">No line items</td></tr>'}</tbody></table>
+    <div class="totals-wrap"><section class="totals"><div class="total-row"><span>Subtotal</span><b>₹${fmtPaise(Number(quotation.subtotal) || 0)}</b></div><div class="total-row"><span>Discount</span><b>₹${fmtPaise(Number(quotation.discount_amount) || 0)}</b></div><div class="total-row"><span>Taxable</span><b>₹${fmtPaise(Number(quotation.taxable_amount) || 0)}</b></div>${isInterstate ? `<div class="total-row"><span>${taxLabel('IGST', 'igst_rate')}</span><b>₹${fmtPaise(Number(quotation.igst_amount) || 0)}</b></div>` : `<div class="total-row"><span>${taxLabel('CGST', 'cgst_rate')}</span><b>₹${fmtPaise(Number(quotation.cgst_amount) || 0)}</b></div><div class="total-row"><span>${taxLabel('SGST', 'sgst_rate')}</span><b>₹${fmtPaise(Number(quotation.sgst_amount) || 0)}</b></div>`}<div class="total-row grand"><span>Grand Total</span><b>₹${fmtPaise(Number(quotation.total_amount) || 0)}</b></div></section></div>
+    <section class="footer-grid"><div class="footer-cell"><div class="footer-label">Payment Terms</div><div class="footer-value">${multilineHtml(quotation.payment_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Delivery Terms</div><div class="footer-value">${multilineHtml(quotation.delivery_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Customer Notes</div><div class="footer-value">${multilineHtml(quotation.customer_notes || '—')}</div></div></section>
+    <section class="terms-row"><div class="terms"><div class="footer-label">Terms &amp; Conditions</div>${multilineHtml(quotation.terms_and_conditions || company.terms_and_conditions || '—')}</div><div class="signatory"><div class="for">For ${escapeHtml(sellerName)}</div>${signature}<div class="sign-line"></div><div>Authorised Signatory</div></div></section>
+    <div class="thanks">THANK YOU FOR YOUR BUSINESS!</div><div class="bottom-accent"></div>
+  </main></body></html>`;
+
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+    return Buffer.from(pdf);
+  });
+}
+
+async function generateQuotationDesignPDF(quotation: any, company: any, party: any | null, items: any[]): Promise<Buffer> {
+  const navy = '#1e3a5f';
+  const light = '#e9eff6';
+  const logoSrc = inlineAssetAsDataUri(company.logo_url) || resolveAssetUrl(company.logo_url);
+  const signatureSrc = inlineAssetAsDataUri(company.signature_url) || resolveAssetUrl(company.signature_url);
+  const sellerName = companyLegalDisplayName(company);
+  const buyerName = quotation.party_name_override || quotation.party_name_snapshot || party?.name || 'Customer';
+  const buyerAddressValue = quotation.party_address_override || quotation.party_address_snapshot || buyerAddress(party) || '';
+  const buyerPhone = quotation.party_phone_override || quotation.party_phone_snapshot || party?.phone || '';
+  const buyerGstin = quotation.party_gstin_override || quotation.party_gstin_snapshot || party?.gstin || 'URP';
+  const buyerState = quotation.party_state_override || quotation.party_state_snapshot || partyStateLabel(party, buyerGstin) || '';
+  const buyerStateCode = quotation.party_state_code_override || quotation.party_state_code_snapshot || party?.billing_state_code || party?.state_code || '';
+  const isInterstate = quotation.is_interstate === true || Number(quotation.igst_amount || 0) > 0;
+  const rows = items.map((item, index) => `<tr><td class="center">${index + 1}</td><td><b>${escapeHtml(item.item_name || 'Item')}</b>${item.item_description ? `<div class="description">${multilineHtml(item.item_description)}</div>` : ''}</td><td class="center mono">${escapeHtml(item.hsn_code || '—')}</td><td class="num">${fmtQty(item.quantity)}</td><td class="num">₹${fmtPaise(Number(item.unit_price) || 0)}</td><td class="num">₹${fmtPaise(Number(item.discount_amount) || 0)}</td><td class="num">${Number(item.gst_rate || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })}%</td><td class="num strong">₹${fmtPaise(Number(item.total_amount) || 0)}</td></tr>`).join('');
+  const rates = (field: string) => Array.from(new Set(items.map((item) => Number(item[field]) || 0).filter(Boolean)));
+  const taxLabel = (name: string, field: string) => {
+    const found = rates(field);
+    return found.length === 1 ? `${name} (${found[0].toLocaleString('en-IN', { maximumFractionDigits: 3 })}%)` : found.length ? `${name} (multiple rates)` : name;
+  };
+  const sellerLocation = [company.city, company.state, company.country || 'India'].filter(Boolean).join(', ');
+  const signature = signatureSrc ? `<img class="signature" src="${signatureSrc}" alt="Authorised signature"/>` : '<div class="signature-space"></div>';
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+    @page{size:A4;margin:8mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font:10.5px Arial,Helvetica,sans-serif}.sheet{position:relative;min-height:279mm;border:1px solid #cad5e1;padding:9mm 8mm 6mm;overflow:hidden}
+    .header{position:relative;min-height:76px;padding-right:245px}.brand{display:flex;align-items:center;gap:12px}.logo{width:52px;height:52px;border-radius:50%;border:2px solid ${navy};padding:3px;object-fit:contain}.brand h1{font:700 23px Georgia,serif;color:${navy};margin:0}.tagline{font-style:italic;color:#64748b;margin-top:3px}.doc-title{position:absolute;right:107px;top:28px;text-align:right;color:${navy};font-size:27px;font-weight:800;white-space:nowrap}.doc-title:after{content:"";display:block;width:92px;height:4px;background:${navy};margin:6px 0 0 auto}.corner{position:absolute;z-index:2;right:0;top:0;width:96px;height:58px;background:linear-gradient(145deg,${navy} 0 55%,#8fb8d8 55% 76%,transparent 76%)}.rule{height:1px;background:${navy};margin:11px 0}
+    .info-row{display:grid;grid-template-columns:1fr 390px;gap:20px;align-items:end;margin:11px 0}.contact{line-height:1.7;color:#475569}.meta{border:1px solid #9fb0c3;background:#f8fafc}.meta div{display:grid;grid-template-columns:92px 1fr;gap:8px;padding:5px 7px;border-bottom:1px solid #d4dde7}.meta div:last-child{border:0}.meta span{color:#64748b}.meta b{text-align:right;font-size:9.5px}
+    .party-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.card{border:1px solid #9fb0c3;min-height:112px}.card-head{background:${navy};color:#fff;font-weight:800;letter-spacing:.08em;padding:6px 9px}.card-body{padding:8px 9px;line-height:1.48}.party-name{font-size:13px;font-weight:800;margin-bottom:4px}.info{display:grid;grid-template-columns:62px 1fr;gap:5px}.info span{color:#64748b}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:11px}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #a9b6c4;padding:5px;vertical-align:top}th{background:${navy};color:#fff;font-size:9px;text-transform:uppercase}tbody tr:nth-child(even){background:#f8fafc}.center{text-align:center}.num{text-align:right;white-space:nowrap}.strong{font-weight:800}.mono{font-family:Consolas,monospace}.description{font-size:9px;color:#64748b;margin-top:3px}
+    .totals-wrap,.footer-grid,.terms-row,.bottom{break-inside:avoid;page-break-inside:avoid}.totals-wrap{display:flex;justify-content:flex-end;margin-top:10px}.totals{width:315px;border:1px solid #9fb0c3;background:#f8fafc}.total{display:flex;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #d4dde7}.grand{background:${navy};color:#fff;font-weight:800;font-size:13px;padding:8px 9px}
+    .footer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #9fb0c3;margin-top:11px}.footer-cell{min-height:70px;padding:8px;border-right:1px solid #9fb0c3}.footer-cell:last-child{border:0}.footer-label{color:${navy};font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}.footer-value{white-space:pre-line;line-height:1.45}.terms-row{display:grid;grid-template-columns:1fr 225px;border:1px solid #9fb0c3;border-top:0;min-height:108px}.terms{padding:8px}.terms ol{margin:4px 0 0;padding-left:18px}.terms li{margin:2px 0}.sign{border-left:1px solid #9fb0c3;padding:8px;text-align:center;display:flex;flex-direction:column;align-items:center}.signature{max-width:115px;max-height:43px;object-fit:contain;margin:auto}.signature-space{height:43px}.sign-line{width:145px;border-top:1px solid #334155;margin:3px auto 4px}.bottom{display:grid;grid-template-columns:1fr 310px;margin-top:12px}.location{border-top:1px solid #9fb0c3;padding:8px 10px;color:#475569}.thanks{background:${navy};color:#fff;text-align:center;font-weight:800;padding:9px;position:relative}.thanks:before{content:"";position:absolute;left:-34px;top:0;border-top:17px solid transparent;border-bottom:17px solid ${navy};border-left:34px solid transparent}.accent{position:absolute;right:0;bottom:0;width:96px;height:28px;background:linear-gradient(145deg,transparent 0 25%,#8fb8d8 25% 52%,${navy} 52%)}.muted{color:#64748b}
+  </style></head><body><main class="sheet"><div class="corner"></div>
+    <header class="header"><div class="brand">${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Company logo"/>` : ''}<div><h1>${escapeHtml(sellerName)}</h1>${company.document_tagline ? `<div class="tagline">${escapeHtml(company.document_tagline)}</div>` : ''}</div></div><div class="doc-title">Quotation</div></header><div class="rule"></div>
+    <section class="info-row"><div class="contact">${company.phone ? `<div>Phone no.: <b>${escapeHtml(company.phone)}</b></div>` : ''}${company.email ? `<div>Email: <b>${escapeHtml(company.email)}</b></div>` : ''}</div><div class="meta"><div><span>Quote No</span><b>${escapeHtml(quotation.quotation_number || '—')}</b></div><div><span>Date</span><b>${formatFullDocumentDate(quotation.quotation_date)}</b></div><div><span>Valid Until</span><b>${formatFullDocumentDate(quotation.valid_until)}</b></div></div></section>
+    <section class="party-grid"><article class="card"><div class="card-head">SELLER</div><div class="card-body"><div class="party-name">${escapeHtml(sellerName)}</div><div class="info"><span>Phone</span><b>${escapeHtml(company.phone || '—')}</b><span>Email</span><b>${escapeHtml(company.email || '—')}</b></div></div></article><article class="card"><div class="card-head">BUYER</div><div class="card-body"><div class="party-name">${escapeHtml(buyerName)}</div><div class="info"><span>Location</span><b>${escapeHtml(buyerAddressValue || '—')}</b><span>Phone</span><b>${escapeHtml(buyerPhone || '—')}</b><span>GSTIN</span><b>${escapeHtml(buyerGstin)}</b><span>State</span><b>${escapeHtml([buyerStateCode,buyerState].filter(Boolean).join(' - ') || '—')}</b></div></div></article></section>
+    <table><colgroup><col style="width:5%"><col style="width:29%"><col style="width:10%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:9%"><col style="width:16%"></colgroup><thead><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Disc</th><th>GST</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="center">No items</td></tr>'}</tbody></table>
+    <div class="totals-wrap"><section class="totals"><div class="total"><span>Subtotal</span><b>₹${fmtPaise(Number(quotation.subtotal) || 0)}</b></div><div class="total"><span>Discount</span><b>₹${fmtPaise(Number(quotation.discount_amount) || 0)}</b></div><div class="total"><span>Taxable</span><b>₹${fmtPaise(Number(quotation.taxable_amount) || 0)}</b></div>${isInterstate ? `<div class="total"><span>${taxLabel('IGST','igst_rate')}</span><b>₹${fmtPaise(Number(quotation.igst_amount) || 0)}</b></div>` : `<div class="total"><span>${taxLabel('CGST','cgst_rate')}</span><b>₹${fmtPaise(Number(quotation.cgst_amount) || 0)}</b></div><div class="total"><span>${taxLabel('SGST','sgst_rate')}</span><b>₹${fmtPaise(Number(quotation.sgst_amount) || 0)}</b></div>`}<div class="total grand"><span>Grand Total</span><b>₹${fmtPaise(Number(quotation.total_amount) || 0)}</b></div></section></div>
+    <section class="footer-grid"><div class="footer-cell"><div class="footer-label">Payment Terms</div><div class="footer-value">${multilineHtml(quotation.payment_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Delivery Terms</div><div class="footer-value">${multilineHtml(quotation.delivery_terms || '—')}</div></div><div class="footer-cell"><div class="footer-label">Customer Notes</div><div class="footer-value">${multilineHtml(quotation.customer_notes || '—')}</div></div></section>
+    <section class="terms-row"><div class="terms"><div class="footer-label">Terms &amp; Conditions</div>${numberedTermsHtml(quotation.terms_and_conditions)}</div><div class="sign"><b>For ${escapeHtml(sellerName)}</b>${signature}<div class="sign-line"></div><div>Authorised Signatory</div></div></section><section class="bottom"><div class="location">⌖ ${escapeHtml(sellerLocation || 'India')}</div><div class="thanks">Thank you for your business!</div></section><div class="accent"></div>
+  </main></body></html>`;
+  return withBrowserPage(async (page) => {
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    return Buffer.from(await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } }));
+  });
+}
+
 export async function generateQuotationPDF(
   quotation: any,
   company: any,
@@ -2029,6 +2239,9 @@ export async function generateQuotationPDF(
   items: any[],
 ): Promise<Buffer> {
   const isProforma = String(quotation.document_type || '').toLowerCase() === 'proforma';
+  if (isProforma) return generateProformaInvoicePDF(quotation, company, party, items);
+  return generateQuotationDesignPDF(quotation, company, party, items);
+  /* istanbul ignore next -- retained legacy renderer for old snapshots */
   const documentTitle = isProforma ? 'Proforma Invoice' : 'Quotation';
   const numberLabel = isProforma ? 'Proforma No' : 'Quote No';
   const buyerAddr = buyerAddress(party);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { formatMoney, formatDate } from '@/lib/formatters';
@@ -6,11 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Plus, ClipboardList, UserPlus } from 'lucide-react';
+import { Plus, ClipboardList, UserPlus, Eye } from 'lucide-react';
 import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
 import SalesDocumentActionMenu from '@/components/transactions/SalesDocumentActionMenu';
+import SaleOrderDocument from '@/components/sales/SaleOrderDocument';
+import { useCompany } from '@/hooks/useBusiness';
+import { useGodowns } from '@/hooks/useStock';
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -22,6 +25,12 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function SaleOrdersTab() {
   const qc = useQueryClient();
+  const { data: company = {} as any } = useCompany();
+  const { data: godownResponse } = useGodowns();
+  const godowns = (godownResponse as any)?.data || [];
+  const defaultGodownId = useMemo(() => godowns.find((godown: any) => godown.is_default)?.id || godowns[0]?.id || '', [godowns]);
+  const deliveryManuallyChanged = useRef(false);
+  const termsInitialized = useRef(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [soNumber, setSoNumber] = useState('');
@@ -31,13 +40,36 @@ export default function SaleOrdersTab() {
   const [partySearch, setPartySearch] = useState('');
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [godownId, setGodownId] = useState('');
   const [soDate, setSoDate] = useState(new Date().toISOString().split('T')[0]);
   const [expectedDate, setExpectedDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0];
   });
   const [paymentTerms, setPaymentTerms] = useState('');
+  const [deliveryTerms, setDeliveryTerms] = useState('');
+  const [customerNotes, setCustomerNotes] = useState('');
+  const [termsAndConditions, setTermsAndConditions] = useState('');
   const [notes, setNotes] = useState('');
+  const [isInterstate, setIsInterstate] = useState(false);
+  const [billing, setBilling] = useState({ recipient: '', address: '', city: '', state: '', stateCode: '', pincode: '', country: 'India' });
+  const [sameAsBilling, setSameAsBilling] = useState(true);
+  const [shipping, setShipping] = useState({ recipient: '', address: '', city: '', state: '', stateCode: '', pincode: '', country: 'India' });
+  const [partySnapshot, setPartySnapshot] = useState({ phone: '', email: '', gstin: '' });
+  const [showPreview, setShowPreview] = useState(false);
   const [items, setItems] = useState<VyaparLineItem[]>([]);
+
+  useEffect(() => { if (!godownId && defaultGodownId) setGodownId(defaultGodownId); }, [defaultGodownId, godownId]);
+  useEffect(() => {
+    if (!showForm || editingId || deliveryManuallyChanged.current) return;
+    const date = new Date(`${soDate}T00:00:00`);
+    date.setDate(date.getDate() + Math.max(1, Math.min(365, Number((company as any).sale_order_delivery_days) || 14)));
+    setExpectedDate(date.toISOString().slice(0, 10));
+  }, [company, editingId, showForm, soDate]);
+  useEffect(() => {
+    if (!showForm || editingId || termsInitialized.current || termsAndConditions) return;
+    setTermsAndConditions(String((company as any).sale_order_terms_template || (company as any).terms_and_conditions || ''));
+    termsInitialized.current = true;
+  }, [company, editingId, showForm, termsAndConditions]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sale-orders'],
@@ -74,11 +106,23 @@ export default function SaleOrdersTab() {
     } catch { setPartyResults([]); }
   };
 
-  const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
-  const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
+  const selectCustomer = (p: any) => {
+    setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]);
+    setPartySnapshot({ phone: p.phone || '', email: p.email || '', gstin: p.gstin || '' });
+    const nextBilling = { recipient: p.name || '', address: p.billing_address || '', city: p.billing_city || p.city || '', state: p.billing_state || p.state || '', stateCode: p.billing_state_code || p.state_code || String(p.gstin || '').slice(0, 2), pincode: p.billing_pincode || '', country: 'India' };
+    const nextShipping = { recipient: p.name || '', address: p.shipping_address || p.billing_address || '', city: p.shipping_city || p.billing_city || p.city || '', state: p.shipping_state || p.billing_state || p.state || '', stateCode: p.billing_state_code || p.state_code || String(p.gstin || '').slice(0, 2), pincode: p.shipping_pincode || p.billing_pincode || '', country: 'India' };
+    setBilling(nextBilling); setShipping(nextShipping); setSameAsBilling(!p.shipping_address || p.shipping_address === p.billing_address);
+    const sellerCode = String((company as any).state_code || (company as any).gstin || '').slice(0, 2);
+    if (sellerCode && nextBilling.stateCode) setIsInterstate(sellerCode !== String(nextBilling.stateCode).slice(0, 2));
+  };
+  const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); setPartySnapshot({ phone: '', email: '', gstin: '' }); };
   const resetForm = () => {
     setEditingId(null); setSoNumber('');
-    clearCustomer(); setNotes(''); setPaymentTerms(''); setItems([]);
+    clearCustomer(); setNotes(''); setPaymentTerms(''); setDeliveryTerms(''); setCustomerNotes(''); setTermsAndConditions(''); setItems([]);
+    setBilling({ recipient: '', address: '', city: '', state: '', stateCode: '', pincode: '', country: 'India' });
+    setShipping({ recipient: '', address: '', city: '', state: '', stateCode: '', pincode: '', country: 'India' });
+    setSameAsBilling(true); setIsInterstate(false); setShowPreview(false); setGodownId(defaultGodownId); deliveryManuallyChanged.current = false;
+    termsInitialized.current = false;
     setSoDate(new Date().toISOString().split('T')[0]);
     const d = new Date(); d.setDate(d.getDate() + 7);
     setExpectedDate(d.toISOString().split('T')[0]);
@@ -93,10 +137,21 @@ export default function SaleOrdersTab() {
       setSoNumber(duplicate ? '' : order.so_number || '');
       setPartyId(order.party_id || '');
       setPartyName(order.party_name_snapshot || order.party_name || '');
+      setPartySnapshot({ phone: order.party_phone_snapshot || order.party_phone || '', email: order.party_email_snapshot || order.party_email || '', gstin: order.party_gstin_snapshot || order.party_gstin || '' });
+      setGodownId(order.godown_id || defaultGodownId);
       setSoDate(duplicate ? new Date().toISOString().split('T')[0] : String(order.so_date || '').slice(0, 10));
       setExpectedDate(String(order.expected_delivery_date || '').slice(0, 10));
+      deliveryManuallyChanged.current = !duplicate;
       setPaymentTerms(order.payment_terms || '');
+      setDeliveryTerms(order.delivery_terms || '');
+      setCustomerNotes(order.customer_notes || '');
+      setTermsAndConditions(order.terms_and_conditions || (company as any).sale_order_terms_template || '');
+      termsInitialized.current = true;
       setNotes(order.notes || '');
+      setIsInterstate(Boolean(order.is_interstate));
+      setBilling({ recipient: order.billing_recipient_name || order.party_name_snapshot || '', address: order.billing_address || order.party_address_snapshot || '', city: order.billing_city || '', state: order.billing_state || order.party_state_snapshot || '', stateCode: order.billing_state_code || order.party_state_code_snapshot || '', pincode: order.billing_pincode || '', country: order.billing_country || 'India' });
+      setSameAsBilling(order.shipping_same_as_billing !== false);
+      setShipping({ recipient: order.shipping_recipient_name || order.party_name_snapshot || '', address: order.shipping_address || order.billing_address || '', city: order.shipping_city || order.billing_city || '', state: order.shipping_state || order.billing_state || '', stateCode: order.shipping_state_code || order.billing_state_code || '', pincode: order.shipping_pincode || order.billing_pincode || '', country: order.shipping_country || 'India' });
       setItems((order.items || []).map((item: any) => ({
         item_id: item.item_id || '', name: item.item_name || 'Item', hsn_code: item.hsn_code || '',
         unit: item.unit || '', quantity: Number(item.quantity_ordered) || 0,
@@ -116,13 +171,29 @@ export default function SaleOrdersTab() {
     createMut.mutate({
       ...(editingId ? { so_number: soNumber } : {}),
       party_id: partyId,
+      party_name: partyName,
+      godown_id: godownId || undefined,
       so_date: soDate,
       expected_delivery_date: expectedDate,
       payment_terms: paymentTerms.trim() || undefined,
+      delivery_terms: deliveryTerms.trim() || undefined,
+      customer_notes: customerNotes.trim() || undefined,
+      terms_and_conditions: termsAndConditions.trim() || undefined,
       notes: notes.trim() || undefined,
+      is_interstate: isInterstate,
+      billing_recipient_name: billing.recipient, billing_address: billing.address, billing_city: billing.city,
+      billing_state: billing.state, billing_state_code: billing.stateCode, billing_pincode: billing.pincode, billing_country: billing.country,
+      shipping_same_as_billing: sameAsBilling,
+      shipping_recipient_name: sameAsBilling ? billing.recipient : shipping.recipient,
+      shipping_address: sameAsBilling ? billing.address : shipping.address,
+      shipping_city: sameAsBilling ? billing.city : shipping.city,
+      shipping_state: sameAsBilling ? billing.state : shipping.state,
+      shipping_state_code: sameAsBilling ? billing.stateCode : shipping.stateCode,
+      shipping_pincode: sameAsBilling ? billing.pincode : shipping.pincode,
+      shipping_country: sameAsBilling ? billing.country : shipping.country,
       status: 'confirmed',
       items: items.map(it => ({
-        item_id: it.item_id, item_name: it.name, hsn_code: it.hsn_code,
+        item_id: it.item_id, item_name: it.name, item_description: it.description, hsn_code: it.hsn_code,
         unit: it.unit, quantity: it.quantity, unit_price: it.unit_price,
         gst_rate: it.gst_rate, discount_amount: it.discount_amount || 0,
       })),
@@ -210,7 +281,7 @@ export default function SaleOrdersTab() {
       </div>
 
       <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
-        <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
+        <SheetContent side="right" className="w-full max-w-5xl overflow-y-auto">
           <SheetHeader className="mb-5"><SheetTitle>{editingId ? 'Edit Sale Order' : 'New Sale Order'}</SheetTitle></SheetHeader>
           <div className="space-y-4">
             <div>
@@ -253,21 +324,28 @@ export default function SaleOrdersTab() {
               </div>
               <div>
                 <Label className="text-xs">Expected Delivery</Label>
-                <Input type="date" className="mt-1 h-9" value={expectedDate} onChange={e => setExpectedDate(e.target.value)} />
+                <Input type="date" min={soDate} className="mt-1 h-9" value={expectedDate} onChange={e => { deliveryManuallyChanged.current = true; setExpectedDate(e.target.value); }} />
               </div>
+              <div>
+                <Label className="text-xs">Godown / Branch</Label>
+                <select className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm" value={godownId} onChange={(e) => setGodownId(e.target.value)}><option value="">Head Office</option>{godowns.map((godown: any) => <option key={godown.id} value={godown.id}>{godown.name}{godown.is_default ? ' (default)' : ''}</option>)}</select>
+              </div>
+              <label className="flex h-9 items-center gap-2 self-end rounded-md border px-3 text-sm"><input type="checkbox" checked={isInterstate} onChange={(e) => setIsInterstate(e.target.checked)} />Interstate (IGST)</label>
               <div className="col-span-2">
                 <Label className="text-xs">Payment Terms (optional)</Label>
                 <Input className="mt-1 h-9" placeholder="e.g. Net 30, 50% advance" value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} />
               </div>
             </div>
+            {partyId && <div className="space-y-3 rounded-lg border bg-slate-50 p-4"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold">Billing and Shipping Addresses</p><p className="text-xs text-muted-foreground">Saved as a snapshot on this order, so later party edits do not alter it.</p></div><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={sameAsBilling} onChange={(e) => setSameAsBilling(e.target.checked)} />Shipping same as billing</label></div><div className="grid gap-4 lg:grid-cols-2"><AddressEditor title="Billing Address" value={billing} onChange={setBilling} />{!sameAsBilling && <AddressEditor title="Shipping Address" value={shipping} onChange={setShipping} />}{sameAsBilling && <div className="rounded-md border border-dashed bg-white p-4 text-sm text-muted-foreground"><b className="text-slate-800">Shipping Address</b><p className="mt-2">{[billing.recipient, billing.address, billing.city, billing.state, billing.pincode, billing.country].filter(Boolean).join(', ') || 'Enter billing address details.'}</p></div>}</div></div>}
             <div>
               <Label className="text-xs mb-2 block">Items</Label>
-              <VyaparLineItems items={items} onChange={setItems} isGst={true} searchMode="catalog" showHsn showUnit />
+              <VyaparLineItems items={items} onChange={setItems} isGst={true} isInterstate={isInterstate} searchMode="catalog" showHsn showUnit showDescription />
             </div>
-            <div>
-              <Label className="text-xs">Notes</Label>
-              <textarea className="mt-1 w-full rounded-md border px-3 py-2 text-sm bg-transparent resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-            </div>
+            <div className="grid gap-3 md:grid-cols-2"><label className="text-xs font-medium">Delivery Terms<textarea className="mt-1 min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-normal" value={deliveryTerms} onChange={e=>setDeliveryTerms(e.target.value)} /></label><label className="text-xs font-medium">Customer Notes<textarea className="mt-1 min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-normal" value={customerNotes} onChange={e=>setCustomerNotes(e.target.value)} /></label></div>
+            <label className="block text-xs font-medium">Terms &amp; Conditions<textarea className="mt-1 min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-normal" value={termsAndConditions} onChange={e=>setTermsAndConditions(e.target.value)} /><span className="mt-1 block font-normal text-muted-foreground">One clause per line; printed as a numbered list.</span></label>
+            <label className="block text-xs font-medium">Internal Notes<textarea className="mt-1 min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-normal" value={notes} onChange={e=>setNotes(e.target.value)} /></label>
+            <Button type="button" variant="outline" className="gap-2" onClick={() => setShowPreview((value) => !value)}><Eye className="h-4 w-4" />{showPreview ? 'Hide' : 'Show'} live order preview</Button>
+            {showPreview && <SaleOrderDocument company={company as any} items={items.map((item) => ({ ...item, item_name: item.name, item_description: item.description, quantity_ordered: item.quantity }))} order={{ so_number: soNumber || 'Auto-generated', so_date: soDate, expected_delivery_date: expectedDate, party_name_snapshot: partyName, party_phone_snapshot: partySnapshot.phone, party_email_snapshot: partySnapshot.email, party_gstin_snapshot: partySnapshot.gstin, party_address_snapshot: billing.address, party_state_snapshot: billing.state, party_state_code_snapshot: billing.stateCode, billing_recipient_name: billing.recipient, billing_address: billing.address, billing_city: billing.city, billing_state: billing.state, billing_pincode: billing.pincode, billing_country: billing.country, shipping_recipient_name: sameAsBilling ? billing.recipient : shipping.recipient, shipping_address: sameAsBilling ? billing.address : shipping.address, shipping_city: sameAsBilling ? billing.city : shipping.city, shipping_state: sameAsBilling ? billing.state : shipping.state, shipping_pincode: sameAsBilling ? billing.pincode : shipping.pincode, shipping_country: sameAsBilling ? billing.country : shipping.country, is_interstate: isInterstate, payment_terms: paymentTerms, delivery_terms: deliveryTerms, customer_notes: customerNotes, terms_and_conditions: termsAndConditions }} />}
             <div className="flex gap-3 pt-3 border-t">
               <Button variant="outline" className="flex-1" onClick={() => { resetForm(); setShowForm(false); }}>Cancel</Button>
               <Button className="flex-1" loading={createMut.isPending} onClick={handleCreate} disabled={!partyId || items.length === 0}>
@@ -281,4 +359,10 @@ export default function SaleOrdersTab() {
       <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectCustomer(row)} />
     </div>
   );
+}
+
+type AddressValue = { recipient: string; address: string; city: string; state: string; stateCode: string; pincode: string; country: string };
+function AddressEditor({ title, value, onChange }: { title: string; value: AddressValue; onChange: (value: AddressValue) => void }) {
+  const field = (key: keyof AddressValue, next: string) => onChange({ ...value, [key]: next });
+  return <div className="space-y-2 rounded-md border bg-white p-3"><p className="text-xs font-semibold uppercase text-slate-500">{title}</p><Input className="h-9" placeholder="Recipient name" value={value.recipient} onChange={(e)=>field('recipient',e.target.value)} /><textarea className="min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-sm" placeholder="Address" value={value.address} onChange={(e)=>field('address',e.target.value)} /><div className="grid grid-cols-2 gap-2"><Input className="h-9" placeholder="City" value={value.city} onChange={(e)=>field('city',e.target.value)} /><Input className="h-9" placeholder="State" value={value.state} onChange={(e)=>field('state',e.target.value)} /><Input className="h-9" placeholder="State code" maxLength={5} value={value.stateCode} onChange={(e)=>field('stateCode',e.target.value)} /><Input className="h-9" placeholder="Pincode" maxLength={10} value={value.pincode} onChange={(e)=>field('pincode',e.target.value)} /></div></div>;
 }

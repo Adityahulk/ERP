@@ -367,8 +367,9 @@ export async function searchParties(req: Request, res: Response) {
     if (q) { where += ` AND (name ILIKE $${idx} OR phone ILIKE $${idx} OR gstin ILIKE $${idx})`; params.push(`%${q}%`); idx++; }
 
     const result = await query(
-      `SELECT id, name, phone, gstin, city, state, state_code, billing_state_code,
+      `SELECT id, name, phone, email, gstin, city, state, state_code, billing_state_code,
               billing_address, shipping_address, billing_city, billing_state, billing_pincode,
+              shipping_city, shipping_state, shipping_pincode,
               party_type, balance
        FROM parties WHERE ${where} ORDER BY name LIMIT 20`, params
     );

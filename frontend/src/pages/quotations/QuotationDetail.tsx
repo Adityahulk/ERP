@@ -3,14 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2, FileText, CheckCircle2, Eye, MessageCircle, Mail, Send } from 'lucide-react';
 import api from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import toast from 'react-hot-toast';
-
-function money(paise: number) {
-  return `₹${((paise || 0) / 100).toFixed(2)}`;
-}
+import ProformaInvoiceDocument from '@/components/quotations/ProformaInvoiceDocument';
+import QuotationDocument from '@/components/quotations/QuotationDocument';
 
 const STATUS_STYLES: Record<string, string> = {
   draft: 'bg-slate-100 text-slate-600',
@@ -218,105 +215,9 @@ export default function QuotationDetail() {
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Customer</CardTitle></CardHeader>
-          <CardContent className="text-sm space-y-1">
-            <p className="font-medium">{quote.party_name_override || quote.party_name || '—'}</p>
-            {(quote.party_email_override || quote.party_phone_override) && (
-              <p className="text-muted-foreground text-xs">
-                {quote.party_email_override}
-                {quote.party_phone_override ? ` · ${quote.party_phone_override}` : ''}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
-          <CardContent className="text-sm space-y-1">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="tabular-nums font-medium">{money(quote.subtotal || 0)}</span>
-            </div>
-            {(quote.discount_amount > 0) && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Discount</span>
-                <span className="tabular-nums text-red-500">− {money(quote.discount_amount || 0)}</span>
-              </div>
-            )}
-            {(quote.cgst_amount > 0 || quote.sgst_amount > 0) && (
-              <>
-                <div className="flex justify-between"><span className="text-muted-foreground">CGST</span><span className="tabular-nums">{money(quote.cgst_amount || 0)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">SGST</span><span className="tabular-nums">{money(quote.sgst_amount || 0)}</span></div>
-              </>
-            )}
-            {quote.igst_amount > 0 && (
-              <div className="flex justify-between"><span className="text-muted-foreground">IGST</span><span className="tabular-nums">{money(quote.igst_amount || 0)}</span></div>
-            )}
-            <div className="flex justify-between border-t pt-1.5 font-bold text-base">
-              <span>Total</span>
-              <span className="tabular-nums">{money(quote.total_amount || 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Line Items</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-muted/50 border-b">
-                <tr>
-                  <th className="px-4 py-3">Item</th>
-                  <th className="px-4 py-3 text-right">Qty</th>
-                  <th className="px-4 py-3 text-right">Rate</th>
-                  <th className="px-4 py-3 text-right hidden md:table-cell">Disc</th>
-                  <th className="px-4 py-3 text-right hidden md:table-cell">GST</th>
-                  <th className="px-4 py-3 text-right font-semibold">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {items.map((it: any, i: number) => (
-                  <tr key={it.id || i} className="hover:bg-muted/20">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{it.item_name || 'Item'}</div>
-                      {it.item_description ? <div className="text-xs text-muted-foreground">{it.item_description}</div> : null}
-                      {it.unit && <div className="text-[10px] text-muted-foreground">{it.unit}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{it.quantity}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{money(it.unit_price || 0)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums hidden md:table-cell">{money(it.discount_amount || 0)}</td>
-                    <td className="px-4 py-3 text-right hidden md:table-cell">{it.gst_rate || 0}%</td>
-                    <td className="px-4 py-3 text-right tabular-nums font-semibold">{money(it.total_amount || 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {quote.customer_notes && (
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Customer Notes</CardTitle></CardHeader>
-          <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">{quote.customer_notes}</CardContent>
-        </Card>
-      )}
-
-      {isProforma && (quote.payment_terms || quote.delivery_terms) && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Payment Terms</CardTitle></CardHeader>
-            <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">{quote.payment_terms || '—'}</CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Delivery Terms</CardTitle></CardHeader>
-            <CardContent className="text-sm text-muted-foreground whitespace-pre-wrap">{quote.delivery_terms || '—'}</CardContent>
-          </Card>
-        </div>
-      )}
+      {isProforma ? (
+        <ProformaInvoiceDocument quote={quote} items={items} />
+      ) : <QuotationDocument quote={quote} items={items} />}
 
       <ConfirmDialog
         open={convertConfirmOpen}
