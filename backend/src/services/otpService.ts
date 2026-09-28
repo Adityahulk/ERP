@@ -13,7 +13,7 @@ import crypto from 'crypto';
 import { query } from '../config/db';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { sendMail, renderOtpEmail, isMailerConfigured } from './mailer';
+import { sendMail, renderOtpEmail } from './mailer';
 
 export type OtpPurpose = 'signup_verify' | 'password_reset' | 'login_2fa' | 'change_email';
 export type OtpChannel = 'email' | 'sms';
@@ -169,8 +169,9 @@ export async function issueOtp(args: IssueOtpArgs): Promise<IssueOtpResult> {
     expires_at: expiresAt,
     reason,
   };
-  // In non-production environments without configured transport, surface the code so devs can complete the flow.
-  if (env.NODE_ENV !== 'production' && !delivered && (args.channel !== 'email' || !isMailerConfigured())) {
+  // Never block local development when a provider is absent or temporarily rejects the message.
+  // Production never receives the plain OTP in an API response.
+  if (env.NODE_ENV !== 'production' && !delivered) {
     result.dev_code = code;
   }
   return result;

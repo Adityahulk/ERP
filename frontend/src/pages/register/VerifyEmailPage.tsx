@@ -32,6 +32,7 @@ export default function VerifyEmailPage() {
   const [emailMasked, setEmailMasked] = useState<string>(initialState.emailMasked || '');
   const [email] = useState<string>(initialState.email || '');
   const [code, setCode] = useState<string[]>(Array(CODE_LENGTH).fill(''));
+  const [devCode, setDevCode] = useState<string>(initialState.devCode || '');
   const [submitting, setSubmitting] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -176,6 +177,7 @@ export default function VerifyEmailPage() {
         if (res.data.verification_token) setVerificationToken(res.data.verification_token);
         if (res.data.email_masked) setEmailMasked(res.data.email_masked);
         if (res.data.dev_code && res.data.dev_code.length === CODE_LENGTH) {
+          setDevCode(res.data.dev_code);
           setCode(res.data.dev_code.split(''));
           toast.success('Code generated (dev mode — pre-filled).');
         } else {
@@ -218,6 +220,15 @@ export default function VerifyEmailPage() {
         </div>
 
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8 space-y-5">
+          {devCode && (
+            <div className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+              <p className="font-semibold">Local development mode</p>
+              <p className="mt-1 text-amber-100/80">
+                Email delivery is not configured. Use verification code{' '}
+                <span className="font-mono text-base font-bold tracking-widest text-white">{devCode}</span>.
+              </p>
+            </div>
+          )}
           <div className="flex justify-between gap-2">
             {code.map((digit, idx) => (
               <input

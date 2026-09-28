@@ -101,8 +101,14 @@ export async function register(req: Request, res: Response) {
 
     const verificationToken = issueVerificationToken({ registrant_id: registrantId, email: normalizedEmail });
 
+    if (env.NODE_ENV === 'production' && !otpInfo.delivered) {
+      return res.status(503).json(error('Verification email could not be delivered. Please check the email address and try Resend code.'));
+    }
+
     res.status(201).json(success({
-      message: 'We sent a verification code to your email. Enter it to finish creating your account.',
+      message: otpInfo.delivered
+        ? 'We sent a verification code to your email. Enter it to finish creating your account.'
+        : 'Email delivery is not configured locally. Use the development verification code shown on the next screen.',
       verification_token: verificationToken,
       email_masked: otpInfo.identifier_masked,
       expires_at: otpInfo.expires_at,
@@ -221,8 +227,13 @@ export async function resendSignupOtp(req: Request, res: Response) {
     }
 
     const newToken = issueVerificationToken({ registrant_id: registrantId, email: registrantEmail });
+    if (env.NODE_ENV === 'production' && !otpInfo.delivered) {
+      return res.status(503).json(error('Verification email could not be delivered. Please try again shortly.'));
+    }
     res.json(success({
-      message: 'A new code has been sent.',
+      message: otpInfo.delivered
+        ? 'A new code has been sent.'
+        : 'Email delivery is not configured locally. Use the development code shown below.',
       verification_token: newToken,
       email_masked: otpInfo.identifier_masked,
       expires_at: otpInfo.expires_at,
