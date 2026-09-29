@@ -4,6 +4,7 @@ import { verifyToken } from '../middleware/auth';
 import { requireMinRole } from '../middleware/role';
 import { validateBody } from '../middleware/validate';
 import * as ctrl from '../controllers/expenseController';
+import { MAX_MONEY_PAISE } from '../lib/money';
 
 const router = Router();
 router.use(verifyToken);
@@ -11,7 +12,7 @@ router.use(verifyToken);
 const createSchema = z.object({
   expense_date: z.string().optional(),
   category: z.string().min(1, 'Category is required'),
-  amount: z.number().int().positive('Amount must be positive'),
+  amount: z.number().int().positive('Amount must be positive').max(MAX_MONEY_PAISE),
   /** When true, `amount` is total paid in paise (GST-inclusive). When false, `amount` is taxable value in paise (GST extra). */
   amount_includes_gst: z.boolean().optional(),
   gst_rate: z.coerce.number().min(0).max(100).optional(),

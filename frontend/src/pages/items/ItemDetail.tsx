@@ -81,6 +81,12 @@ export default function ItemDetail() {
         </CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock Value</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.total_stock_value || 0)}</p></CardContent></Card>
       </div>
+      {item.has_negative_stock && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Negative stock exists in at least one godown. Review recent movements or create a stock adjustment.</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased Qty</p><p className="text-xl font-bold tabular-nums mt-1">{Number(activitySummary.purchased_quantity || 0)}</p></CardContent></Card>
@@ -186,11 +192,13 @@ export default function ItemDetail() {
                     <div className="text-xs text-muted-foreground">{row.activity_at ? formatDate(String(row.activity_at)) : '—'}</div>
                   </div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><span className="text-muted-foreground">Unit price</span><p className="tabular-nums">{formatMoney(Number(row.unit_price || 0))}</p></div>
-                  <div><span className="text-muted-foreground">Taxable</span><p className="tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</p></div>
-                  <div><span className="text-muted-foreground">Tax</span><p className="tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</p></div>
-                  <div><span className="text-muted-foreground">Total</span><p className="tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</p></div>
+                <div className="mt-3 overflow-x-auto rounded-md border bg-muted/10">
+                  <div className="grid min-w-[640px] grid-cols-4 divide-x text-sm">
+                    <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Unit price</span><p className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.unit_price || 0))}</p></div>
+                    <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Taxable</span><p className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</p></div>
+                    <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Tax</span><p className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</p></div>
+                    <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Total</span><p className="mt-0.5 whitespace-nowrap font-medium tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</p></div>
+                  </div>
                 </div>
                 {row.notes ? <p className="mt-2 text-xs text-muted-foreground">{row.notes}</p> : null}
               </div>

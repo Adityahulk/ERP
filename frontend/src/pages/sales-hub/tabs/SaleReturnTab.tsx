@@ -157,6 +157,7 @@ export default function SaleReturnTab() {
                     email={r.party_email}
                     canModify={r.status !== 'cancelled'}
                     canCancel={r.status !== 'cancelled'}
+                    canDelete={r.status === 'draft'}
                     onEdit={() => openEdit(r)}
                     onDuplicate={() => openEdit(r, true)}
                     onCancel={async () => {

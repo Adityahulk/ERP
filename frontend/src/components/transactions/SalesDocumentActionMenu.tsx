@@ -14,6 +14,7 @@ type Props = {
   email?: string | null;
   canModify?: boolean;
   canCancel?: boolean;
+  canDelete?: boolean;
   onEdit: () => void;
   onDuplicate: () => void;
   onCancel: () => Promise<void>;
@@ -111,7 +112,7 @@ export default function SalesDocumentActionMenu(props: Props) {
         <button type="button" className={itemClass} onClick={() => { close(); props.onEdit(); }} disabled={!props.canModify}><Edit2 className="h-4 w-4" /> Edit</button>
         <button type="button" className={itemClass} onClick={() => { close(); props.onDuplicate(); }}><Copy className="h-4 w-4" /> Duplicate</button>
         {props.canCancel && <button type="button" className={itemClass} onClick={() => void run('cancel', props.onCancel)}><Ban className="h-4 w-4 text-amber-600" /> Cancel</button>}
-        <button type="button" className={`${itemClass} text-red-600 hover:bg-red-50`} onClick={() => void run('delete', props.onDelete)}><Trash2 className="h-4 w-4" /> Delete</button>
+        {props.canDelete && <button type="button" className={`${itemClass} text-red-600 hover:bg-red-50`} onClick={() => void run('delete', props.onDelete)}><Trash2 className="h-4 w-4" /> Delete draft</button>}
       </div>
     </details>
   );

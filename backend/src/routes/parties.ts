@@ -4,6 +4,7 @@ import { verifyToken } from '../middleware/auth';
 import { requireMinRole } from '../middleware/role';
 import { validateBody } from '../middleware/validate';
 import * as ctrl from '../controllers/partyController';
+import { MAX_MONEY_PAISE } from '../lib/money';
 
 const router = Router();
 router.use(verifyToken);
@@ -26,9 +27,9 @@ const createSchema = z.object({
   state: z.string().optional(),
   pincode: z.string().max(10).optional(),
   state_code: z.string().max(3).optional(),
-  credit_limit: z.number().int().min(0).optional(),
+  credit_limit: z.number().int().min(0).max(MAX_MONEY_PAISE).optional(),
   payment_terms: z.number().int().min(0).max(365).optional(),
-  opening_balance: z.number().int().optional(),
+  opening_balance: z.number().int().min(-MAX_MONEY_PAISE).max(MAX_MONEY_PAISE).optional(),
   contact_person: z.string().optional(),
   notes: z.string().optional(),
   custom_fields: z.record(z.any()).optional(),

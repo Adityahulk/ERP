@@ -4,6 +4,7 @@ import { logAction } from '../lib/auditLog';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { postPaymentAccounting, reverseAccountingForReference } from '../services/accountingService';
+import { isSafePaise } from '../lib/money';
 
 function isIncomingPaymentType(value: unknown) {
   return ['incoming', 'payment_in', 'receipt'].includes(String(value || 'incoming').toLowerCase());
@@ -11,7 +12,7 @@ function isIncomingPaymentType(value: unknown) {
 
 function positivePaise(value: unknown, label = 'Amount') {
   const amount = Math.round(Number(value) || 0);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error(`${label} must be greater than zero`);
+  if (!isSafePaise(amount) || amount <= 0) throw new Error(`${label} must be a valid amount greater than zero`);
   return amount;
 }
 
@@ -259,7 +260,7 @@ export async function allocatePayment(req: Request, res: Response) {
       const payment = pRes.rows[0];
 
       const sumRes = await client.query(
-        `SELECT COALESCE(SUM(amount), 0)::int AS s FROM payment_allocations WHERE payment_id = $1`,
+        `SELECT COALESCE(SUM(amount), 0)::bigint AS s FROM payment_allocations WHERE payment_id = $1`,
         [id],
       );
       const alreadyAllocated = Number(sumRes.rows[0]?.s || 0);

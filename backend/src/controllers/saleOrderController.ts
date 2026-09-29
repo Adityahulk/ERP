@@ -405,6 +405,14 @@ export async function emailSaleOrder(req: Request, res: Response) {
 export async function deleteSaleOrder(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
+    const existing = await query(
+      `SELECT status FROM sale_orders WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [req.params.id, companyId],
+    );
+    if (!existing.rows.length) return res.status(404).json(error('Sale order not found'));
+    if (existing.rows[0].status !== 'draft') {
+      return res.status(400).json(error('Only draft sale orders can be deleted. Cancel a confirmed order instead.'));
+    }
     const linked = await query(
       `SELECT 1 FROM delivery_challans WHERE so_id = $1 AND company_id = $2 AND is_deleted = false LIMIT 1`,
       [req.params.id, companyId],

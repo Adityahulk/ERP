@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowRight,
+  AlertTriangle,
   Barcode,
   Download,
   Edit2,
@@ -448,6 +449,12 @@ export default function ItemList() {
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.purchased_quantity)}</p></CardContent></Card>
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sold qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.sold_quantity)}</p></CardContent></Card>
                     </div>
+                    {selectedItem.has_negative_stock && (
+                      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>Negative stock exists in at least one godown. Stock value reflects the current godown balances; review the audit trail or adjust stock.</span>
+                      </div>
+                    )}
 
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.6fr)]">
                       <div className="space-y-4">
@@ -514,11 +521,13 @@ export default function ItemList() {
                                   <div className="text-xs text-muted-foreground">{row.activity_at ? formatDate(String(row.activity_at)) : '—'}</div>
                                 </div>
                               </div>
-                              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
-                                <div><span className="text-muted-foreground">Unit price</span><div className="tabular-nums">{formatMoney(Number(row.unit_price || 0))}</div></div>
-                                <div><span className="text-muted-foreground">Taxable</span><div className="tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</div></div>
-                                <div><span className="text-muted-foreground">Tax</span><div className="tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</div></div>
-                                <div><span className="text-muted-foreground">Total</span><div className="tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</div></div>
+                              <div className="mt-3 overflow-x-auto rounded-md border bg-muted/10">
+                                <div className="grid min-w-[640px] grid-cols-4 divide-x text-sm">
+                                  <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Unit price</span><div className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.unit_price || 0))}</div></div>
+                                  <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Taxable</span><div className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.taxable_amount || 0))}</div></div>
+                                  <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Tax</span><div className="mt-0.5 whitespace-nowrap tabular-nums">{formatMoney(Number(row.tax_amount || 0))}</div></div>
+                                  <div className="min-w-0 p-2.5"><span className="text-xs text-muted-foreground">Total</span><div className="mt-0.5 whitespace-nowrap font-medium tabular-nums">{formatMoney(Number(row.gross_amount || 0))}</div></div>
+                                </div>
                               </div>
                               {row.notes ? <p className="mt-2 text-xs text-muted-foreground">{row.notes}</p> : null}
                             </div>

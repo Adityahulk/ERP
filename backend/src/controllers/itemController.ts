@@ -8,6 +8,8 @@ import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
 import { decodeSmartBarcode, isSmartBarcode, getOrCreateItemBarcode } from '../utils/barcodeUtils';
+import { calculateStockValuation } from '../lib/stockValuation';
+import { isSafePaise } from '../lib/money';
 
 function isValidGstRate(value: unknown) {
   const rate = Number(value);
@@ -588,14 +590,21 @@ export async function listItems(req: Request, res: Response) {
       `SELECT i.*, 
               c.name as category_name, u.name as unit_name, u.abbreviation as unit_abbr,
               COALESCE(ts.total_stock, 0) as total_stock,
-              COALESCE(ts.total_value, 0) as total_stock_value
+              COALESCE(ts.total_value, 0) as total_stock_value,
+              COALESCE(ts.has_negative_stock, false) as has_negative_stock
               ${godownCols}
        FROM items i
        ${stockJoin}
        LEFT JOIN item_categories c ON i.category_id = c.id
        LEFT JOIN item_units u ON i.unit_id = u.id
        LEFT JOIN (
-         SELECT item_id, SUM(quantity) as total_stock, SUM(quantity * avg_cost_price) as total_value 
+         SELECT item_id,
+                SUM(quantity) as total_stock,
+                CASE
+                  WHEN ABS(SUM(quantity)) < 0.00005 THEN 0
+                  ELSE ROUND(SUM(quantity * COALESCE(avg_cost_price, 0)))
+                END as total_value,
+                BOOL_OR(quantity < 0) as has_negative_stock
          FROM item_stock GROUP BY item_id
        ) ts ON ts.item_id = i.id
        WHERE ${where}
@@ -663,14 +672,14 @@ export async function getItem(req: Request, res: Response) {
     }
 
     // Total stock
-    const totalStock = stockRes.rows.reduce((sum: number, s: any) => sum + s.quantity, 0);
-    const totalValue = stockRes.rows.reduce((sum: number, s: any) => sum + (s.quantity * s.avg_cost_price), 0);
+    const valuation = calculateStockValuation(stockRes.rows);
 
     res.json(success({
       ...item,
       stock: stockRes.rows,
-      total_stock: totalStock,
-      total_stock_value: totalValue,
+      total_stock: valuation.stockOnHand,
+      total_stock_value: valuation.stockValue,
+      has_negative_stock: valuation.hasNegativeStock,
       recent_movements: movementsRes.rows,
       activity_timeline: activity.timeline,
       activity_summary: activity.summary,
@@ -701,7 +710,7 @@ export async function updateItem(req: Request, res: Response) {
       return res.status(400).json(error('Cess rate must be between 0 and 100 with at most three decimal places'));
     }
     for (const field of ['purchase_price', 'selling_price', 'opening_stock_value'] as const) {
-      if (data[field] !== undefined && (!Number.isFinite(Number(data[field])) || Number(data[field]) < 0 || !Number.isInteger(Number(data[field])))) {
+      if (data[field] !== undefined && (!isSafePaise(data[field]) || Number(data[field]) < 0)) {
         return res.status(400).json(error(`${field.replaceAll('_', ' ')} must be a non-negative amount in paise`));
       }
     }

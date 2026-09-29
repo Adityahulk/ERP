@@ -198,7 +198,7 @@ export async function createTransfer(req: Request, res: Response) {
                    (item_stock.quantity::numeric * item_stock.avg_cost_price
                     + EXCLUDED.quantity::numeric * EXCLUDED.avg_cost_price)
                    / (item_stock.quantity + EXCLUDED.quantity)
-                 )::integer
+                 )::bigint
                ELSE EXCLUDED.avg_cost_price
              END`,
           [companyId, item.item_id, to_godown_id, qty, costPrice]
@@ -313,7 +313,7 @@ export async function receiveTransfer(req: Request, res: Response) {
                    (item_stock.quantity::numeric * item_stock.avg_cost_price
                     + EXCLUDED.quantity::numeric * EXCLUDED.avg_cost_price)
                    / (item_stock.quantity + EXCLUDED.quantity)
-                 )::integer
+                 )::bigint
                ELSE EXCLUDED.avg_cost_price
              END`,
           [companyId, item.item_id, transfer.to_godown_id, recv, costPrice]

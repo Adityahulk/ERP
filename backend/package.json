@@ -22,6 +22,7 @@
     "test:production-regression": "ts-node src/tests/productionRegression.smoke.ts",
     "test:reports": "ts-node --files src/tests/reportCatalog.smoke.ts",
     "test:reports:db": "ts-node --files src/tests/reportCatalogDb.smoke.ts",
+    "test:financial-scale": "ts-node src/tests/financialScale.smoke.ts",
     "reset": "ts-node src/db/reset.ts && npm run migrate:dev && npm run seed:dev"
   },
   "dependencies": {

@@ -257,6 +257,7 @@ export default function SaleOrdersTab() {
                     email={o.party_email}
                     canModify={o.status !== 'fulfilled' && o.status !== 'cancelled'}
                     canCancel={o.status !== 'cancelled' && o.status !== 'fulfilled'}
+                    canDelete={o.status === 'draft'}
                     onEdit={() => void openOrderForm(o)}
                     onDuplicate={() => void openOrderForm(o, true)}
                     onCancel={async () => {

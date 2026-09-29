@@ -318,6 +318,14 @@ export async function cancelSaleReturn(req: Request, res: Response) {
 
 export async function deleteSaleReturn(req: Request, res: Response) {
   try {
+    const current = await query(
+      `SELECT status FROM sale_returns WHERE id = $1 AND company_id = $2 AND is_deleted = false`,
+      [req.params.id, req.user!.company_id],
+    );
+    if (!current.rows.length) return res.status(404).json(error('Credit note not found'));
+    if (current.rows[0].status !== 'draft') {
+      return res.status(400).json(error('Only draft credit notes can be deleted. Cancel an active credit note instead.'));
+    }
     const row = await deactivateSaleReturn(req.params.id, req.user!.company_id, true);
     res.json(success({ id: row.id }));
   } catch (err: any) {

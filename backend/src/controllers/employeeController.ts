@@ -272,8 +272,8 @@ export async function generateSalarySlip(req: Request, res: Response) {
 
     const adj = await query(
       `SELECT
-         COALESCE(SUM(amount) FILTER (WHERE adjustment_type = 'bonus'), 0)::int AS bonus,
-         COALESCE(SUM(amount) FILTER (WHERE adjustment_type = 'deduction'), 0)::int AS deduction
+         COALESCE(SUM(amount) FILTER (WHERE adjustment_type = 'bonus'), 0)::bigint AS bonus,
+         COALESCE(SUM(amount) FILTER (WHERE adjustment_type = 'deduction'), 0)::bigint AS deduction
        FROM employee_salary_adjustments
        WHERE company_id = $1 AND user_id = $2 AND salary_month = $3 AND is_deleted = false`,
       [companyId, userId, salaryMonth],
