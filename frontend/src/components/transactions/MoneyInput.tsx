@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { InputHTMLAttributes } from 'react';
 import { Input } from '@/components/ui/input';
-import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
+import { isSafePaiseAmount, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 
 type MoneyInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & {
@@ -43,7 +43,10 @@ export default function MoneyInput({ value, onChange, className, onFocus, onBlur
       onChange={(event) => {
         const nextDraft = cleanMoney(event.target.value);
         setDraft(nextDraft);
-        onChange(rupeesToPaise(nextDraft || '0'));
+        const paise = rupeesToPaise(nextDraft || '0');
+        const valid = isSafePaiseAmount(paise);
+        event.currentTarget.setCustomValidity(valid ? '' : 'Amount exceeds the supported range');
+        if (valid) onChange(paise);
       }}
     />
   );

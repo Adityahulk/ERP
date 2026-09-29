@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { Card, CardContent } from '@/components/ui/card';
@@ -71,6 +71,7 @@ type ItemSettingsState = {
   stock_maintenance: boolean;
   manufacturing: boolean;
   show_low_stock_dialog: boolean;
+  allow_negative_stock: boolean;
   items_unit: boolean;
   default_unit: boolean;
   item_category: boolean;
@@ -228,6 +229,7 @@ const DEFAULT_ITEM_SETTINGS: ItemSettingsState = {
   stock_maintenance: true,
   manufacturing: false,
   show_low_stock_dialog: true,
+  allow_negative_stock: false,
   items_unit: true,
   default_unit: false,
   item_category: true,
@@ -1154,7 +1156,7 @@ export default function Settings() {
     }
   };
 
-  const fetchGstin = async (options?: { silent?: boolean }) => {
+  const fetchGstin = useCallback(async (options?: { silent?: boolean }) => {
     const silent = !!options?.silent;
     const g = gstin.trim().toUpperCase();
     if (g.length !== 15) {
@@ -1180,7 +1182,7 @@ export default function Settings() {
     } finally {
       setGstinFetching(false);
     }
-  };
+  }, [gstin]);
 
   useEffect(() => {
     const g = gstin.trim().toUpperCase();
@@ -1190,7 +1192,7 @@ export default function Settings() {
       fetchGstin({ silent: true });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [gstin]);
+  }, [fetchGstin, gstin]);
 
   const saveInvoicePreferences = async () => {
     try {
@@ -4160,6 +4162,7 @@ export default function Settings() {
                               ['stock_maintenance', 'Stock Maintenance'],
                               ['manufacturing', 'Manufacturing'],
                               ['show_low_stock_dialog', 'Show Low Stock Dialog'],
+                              ['allow_negative_stock', 'Allow negative stock / backorders'],
                               ['items_unit', 'Items Unit'],
                               ['default_unit', 'Default Unit'],
                               ['item_category', 'Item Category'],

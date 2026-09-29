@@ -591,6 +591,7 @@ export async function listItems(req: Request, res: Response) {
               c.name as category_name, u.name as unit_name, u.abbreviation as unit_abbr,
               COALESCE(ts.total_stock, 0) as total_stock,
               COALESCE(ts.total_value, 0) as total_stock_value,
+              COALESCE(ts.shortfall_value, 0) as stock_shortfall_value,
               COALESCE(ts.has_negative_stock, false) as has_negative_stock
               ${godownCols}
        FROM items i
@@ -598,14 +599,14 @@ export async function listItems(req: Request, res: Response) {
        LEFT JOIN item_categories c ON i.category_id = c.id
        LEFT JOIN item_units u ON i.unit_id = u.id
        LEFT JOIN (
-         SELECT item_id,
-                SUM(quantity) as total_stock,
-                CASE
-                  WHEN ABS(SUM(quantity)) < 0.00005 THEN 0
-                  ELSE ROUND(SUM(quantity * COALESCE(avg_cost_price, 0)))
-                END as total_value,
-                BOOL_OR(quantity < 0) as has_negative_stock
-         FROM item_stock GROUP BY item_id
+         SELECT stock.item_id,
+                SUM(stock.quantity) as total_stock,
+                ROUND(SUM(GREATEST(stock.quantity, 0) * COALESCE(NULLIF(stock.avg_cost_price, 0), valuation_item.purchase_price, 0))) as total_value,
+                ROUND(SUM(ABS(LEAST(stock.quantity, 0)) * COALESCE(NULLIF(stock.avg_cost_price, 0), valuation_item.purchase_price, 0))) as shortfall_value,
+                BOOL_OR(stock.quantity < 0) as has_negative_stock
+         FROM item_stock stock
+         JOIN items valuation_item ON valuation_item.id = stock.item_id
+         GROUP BY stock.item_id
        ) ts ON ts.item_id = i.id
        WHERE ${where}
        ORDER BY i.name ASC
@@ -640,8 +641,14 @@ export async function getItem(req: Request, res: Response) {
 
     // Stock per godown
     const stockRes = await query(
-      `SELECT s.*, g.name as godown_name, g.code as godown_code
-       FROM item_stock s JOIN godowns g ON s.godown_id = g.id
+      `SELECT s.id, s.company_id, s.item_id, s.godown_id, s.quantity,
+              s.reserved_quantity, s.available_quantity,
+              s.avg_cost_price AS stored_avg_cost_price,
+              COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0) AS avg_cost_price,
+              s.updated_at, g.name as godown_name, g.code as godown_code
+       FROM item_stock s
+       JOIN items i ON i.id = s.item_id AND i.company_id = s.company_id
+       JOIN godowns g ON s.godown_id = g.id
        WHERE s.item_id = $1 AND s.company_id = $2
        ORDER BY g.name`,
       [id, companyId]
@@ -679,6 +686,7 @@ export async function getItem(req: Request, res: Response) {
       stock: stockRes.rows,
       total_stock: valuation.stockOnHand,
       total_stock_value: valuation.stockValue,
+      stock_shortfall_value: valuation.stockShortfallValue,
       has_negative_stock: valuation.hasNegativeStock,
       recent_movements: movementsRes.rows,
       activity_timeline: activity.timeline,
@@ -866,48 +874,10 @@ async function assessItemsForDeletion(companyId: string, ids: string[]): Promise
               SELECT SUM(ABS(s.quantity)) FROM item_stock s
               WHERE s.item_id = i.id AND s.company_id = i.company_id
             ), 0) AS absolute_stock,
-            EXISTS (
-              SELECT 1 FROM stock_movements sm
-              WHERE sm.item_id = i.id AND sm.company_id = i.company_id
-            )
-            OR EXISTS (
-              SELECT 1 FROM stock_transfer_items sti
-              JOIN stock_transfers st ON st.id = sti.transfer_id
-              WHERE sti.item_id = i.id AND st.company_id = i.company_id
-            )
-            OR EXISTS (
-              SELECT 1 FROM stock_adjustment_items sai
-              JOIN stock_adjustments sa ON sa.id = sai.adjustment_id
-              WHERE sai.item_id = i.id AND sa.company_id = i.company_id
-            ) AS has_stock_history,
-            EXISTS (
-              SELECT 1 FROM invoice_items ii
-              JOIN invoices inv ON inv.id = ii.invoice_id
-              WHERE ii.item_id = i.id AND inv.company_id = i.company_id
-            ) AS has_sales_history,
-            EXISTS (
-              SELECT 1 FROM purchase_invoice_items pii
-              JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
-              WHERE pii.item_id = i.id AND pi.company_id = i.company_id
-            ) AS has_purchase_history,
-            (
-              EXISTS (SELECT 1 FROM quotation_items qi JOIN quotations q ON q.id = qi.quotation_id WHERE qi.item_id = i.id AND q.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM sale_order_items soi JOIN sale_orders so ON so.id = soi.order_id WHERE soi.item_id = i.id AND so.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM sale_return_items sri JOIN sale_returns sr ON sr.id = sri.return_id WHERE sri.item_id = i.id AND sr.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM delivery_challan_items dci JOIN delivery_challans dc ON dc.id = dci.challan_id WHERE dci.item_id = i.id AND dc.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM purchase_order_items poi JOIN purchase_orders po ON po.id = poi.po_id WHERE poi.item_id = i.id AND po.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM wholesale_order_items woi JOIN wholesale_orders wo ON wo.id = woi.order_id WHERE woi.item_id = i.id AND wo.company_id = i.company_id)
-            ) AS has_document_history,
-            (
-              EXISTS (SELECT 1 FROM bom b WHERE b.finished_item_id = i.id AND b.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM bom_items bi JOIN bom b ON b.id = bi.bom_id WHERE bi.item_id = i.id AND b.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM job_work_challan_items jwi JOIN job_work_challans jw ON jw.id = jwi.challan_id WHERE jwi.item_id = i.id AND jw.company_id = i.company_id)
-            ) AS has_manufacturing_history,
-            (
-              EXISTS (SELECT 1 FROM item_batches ib WHERE ib.item_id = i.id AND ib.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM item_serial_numbers isn WHERE isn.item_id = i.id AND isn.company_id = i.company_id)
-              OR EXISTS (SELECT 1 FROM wholesale_price_tiers wpt WHERE wpt.item_id = i.id AND wpt.company_id = i.company_id)
-            ) AS has_master_references
+            COALESCE((
+              SELECT SUM(ABS(COALESCE(s.reserved_quantity, 0))) FROM item_stock s
+              WHERE s.item_id = i.id AND s.company_id = i.company_id
+            ), 0) AS absolute_reserved_stock
      FROM items i
      WHERE i.company_id = $1 AND i.is_deleted = false AND i.id = ANY($2::uuid[])`,
     [companyId, ids],
@@ -919,12 +889,7 @@ async function assessItemsForDeletion(companyId: string, ids: string[]): Promise
     if (!row) return { id, name: 'Unknown item', reason: 'Item was not found or was already deleted.' };
     let reason: string | null = null;
     if (Number(row.absolute_stock || 0) > 0) reason = 'Active stock exists. Adjust every godown balance to zero first.';
-    else if (row.has_stock_history) reason = 'Stock movement history exists for this item.';
-    else if (row.has_sales_history) reason = 'The item is referenced by a sales invoice.';
-    else if (row.has_purchase_history) reason = 'The item is referenced by a purchase bill.';
-    else if (row.has_document_history) reason = 'The item is referenced by an order, quotation, return, challan, or wholesale document.';
-    else if (row.has_manufacturing_history) reason = 'The item is referenced by manufacturing or job-work records.';
-    else if (row.has_master_references) reason = 'The item is referenced by a batch or wholesale price configuration.';
+    else if (Number(row.absolute_reserved_stock || 0) > 0) reason = 'Reserved stock exists. Release the reservation before deleting this item.';
     return { id, name: String(row.name || 'Unnamed item'), reason };
   });
 }
@@ -940,11 +905,17 @@ export async function deleteItem(req: Request, res: Response) {
     }
     if (assessment.reason) return res.status(400).json(error(assessment.reason));
 
-    const result = await query(
-      'UPDATE items SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id',
-      [id, companyId],
-    );
-    if (!result.rows.length) return res.status(404).json(error('Item not found'));
+    const wasDeleted = await withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
+        [id, companyId],
+      );
+      if (!result.rows.length) return false;
+      await client.query('DELETE FROM barcode_registry WHERE company_id = $1 AND item_id = $2', [companyId, id]);
+      return true;
+    });
+    if (!wasDeleted) return res.status(404).json(error('Item not found'));
 
     await logAction(req.user!.id, companyId, 'delete', 'item', id, null, null, req.ip);
     res.json(success({ message: 'Item deleted' }));
@@ -962,19 +933,25 @@ export async function bulkDeleteItems(req: Request, res: Response) {
     const assessments = await assessItemsForDeletion(companyId, ids);
     const allowed = assessments.filter((item) => !item.reason);
     const failed = assessments.filter((item) => item.reason);
-    const deleted: Array<{ id: string; name: string }> = [];
-
-    for (const item of allowed) {
-      const result = await query(
-        `UPDATE items SET is_deleted = true, updated_at = NOW()
-         WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
-        [item.id, companyId],
-      );
-      if (!result.rows.length) {
-        failed.push({ ...item, reason: 'Item changed or was deleted before this request completed.' });
-        continue;
+    const deleted = await withTransaction(async (client) => {
+      const completed: Array<{ id: string; name: string }> = [];
+      for (const item of allowed) {
+        const result = await client.query(
+          `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
+           WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
+          [item.id, companyId],
+        );
+        if (!result.rows.length) {
+          failed.push({ ...item, reason: 'Item changed or was deleted before this request completed.' });
+          continue;
+        }
+        await client.query('DELETE FROM barcode_registry WHERE company_id = $1 AND item_id = $2', [companyId, item.id]);
+        completed.push({ id: item.id, name: item.name });
       }
-      deleted.push({ id: item.id, name: item.name });
+      return completed;
+    });
+
+    for (const item of deleted) {
       await logAction(req.user!.id, companyId, 'delete', 'item', item.id, null, { source: 'bulk_delete' }, req.ip);
     }
 

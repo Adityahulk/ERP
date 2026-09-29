@@ -213,7 +213,7 @@ export default function ItemList() {
       setBulkDeleteFailures(failed);
       setSelectedItemIds(new Set(failed.map((item) => item.id)));
       if (deleted.some((item: any) => item.id === selectedItemId)) setSelectedItemId('');
-      if (deleted.length) toast.success(`${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted`);
+      if (deleted.length) toast.success(`${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted. Historical transactions were preserved.`);
       if (failed.length) toast.error(`${failed.length} ${failed.length === 1 ? 'item was' : 'items were'} not deleted. Review the reasons shown.`);
       setBulkDeleteOpen(false);
     } catch (e: any) {
@@ -519,14 +519,14 @@ export default function ItemList() {
             </Card>
 
             <Card>
-              <CardContent className="p-4 md:p-6">
+              <CardContent className="p-4">
                 {!selectedItemId || !selectedItem ? (
                   <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
                     <Package className="w-12 h-12 text-muted-foreground/40 mb-3" />
                     <p className="text-muted-foreground">Select a product to view stock, pricing, and full audit.</p>
                   </div>
                 ) : (
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -556,30 +556,41 @@ export default function ItemList() {
                       </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-4">
+                    <div className="grid gap-3 md:grid-cols-4">
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock on hand</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(totalStock)}</p></CardContent></Card>
-                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock value</p><p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(Number(selectedItem.total_stock_value || 0))}</p></CardContent></Card>
+                      <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock asset value</p><p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(Number(selectedItem.total_stock_value || 0))}</p></CardContent></Card>
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.purchased_quantity)}</p></CardContent></Card>
                       <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sold qty</p><p className="mt-1 text-xl font-bold tabular-nums">{qtyText(activitySummary.sold_quantity)}</p></CardContent></Card>
                     </div>
                     {selectedItem.has_negative_stock && (
-                      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>Negative stock exists in at least one godown. Stock value reflects the current godown balances; review the audit trail or adjust stock.</span>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            Negative stock is shown as a fulfilment shortfall, not an inventory asset.
+                            {Number(selectedItem.stock_shortfall_value || 0) > 0 ? ` Shortfall value: ${formatMoney(Number(selectedItem.stock_shortfall_value))}.` : ''}
+                          </span>
+                        </div>
+                        <Button type="button" size="sm" variant="outline" onClick={() => navigate('/inventory/adjust')}>Adjust stock</Button>
                       </div>
                     )}
 
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.6fr)]">
-                      <div className="space-y-4">
+                    <Tabs defaultValue="overview" className="space-y-3">
+                      <TabsList>
+                        <TabsTrigger value="overview">Overview</TabsTrigger>
+                        <TabsTrigger value="history">Audit trail ({activity.length})</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="overview" className="mt-0">
+                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
                         <div className="rounded-xl border p-4">
                           <div className="flex items-center justify-between">
                             <h3 className="font-semibold">Stock by godown</h3>
                             <Badge variant="secondary">{godowns.length} godowns</Badge>
                           </div>
-                          <div className="mt-3 space-y-3">
+                          <div className="mt-3 max-h-[250px] space-y-2 overflow-y-auto pr-1">
                             {(selectedItem.stock || []).length === 0 && <p className="text-sm text-muted-foreground">No stock records yet.</p>}
                             {(selectedItem.stock || []).map((row: any) => (
-                              <div key={row.godown_id} className="rounded-lg border p-3">
+                              <div key={row.godown_id} className="rounded-lg border px-3 py-2.5">
                                 <div className="flex items-center justify-between">
                                   <div className="font-medium">{row.godown_name}</div>
                                   <div className="text-sm font-semibold tabular-nums">{qtyText(row.quantity)}</div>
@@ -603,8 +614,9 @@ export default function ItemList() {
                             <div className="flex justify-between"><span className="text-muted-foreground">Last sale</span><span>{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</span></div>
                           </div>
                         </div>
-                      </div>
-
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="history" className="mt-0">
                       <div className="rounded-xl border p-4">
                         <div className="flex items-center justify-between">
                           <div>
@@ -613,7 +625,7 @@ export default function ItemList() {
                           </div>
                           <Badge variant="info">{activity.length} events</Badge>
                         </div>
-                        <div className="mt-4 max-h-[620px] overflow-y-auto space-y-3 pr-1">
+                        <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-1">
                           {activity.length === 0 && <p className="text-sm text-muted-foreground">No activity yet for this item.</p>}
                           {activity.map((row: any, index: number) => (
                             <div key={`${row.activity_type}-${row.reference_id}-${index}`} className="rounded-lg border p-3">
@@ -647,7 +659,8 @@ export default function ItemList() {
                           ))}
                         </div>
                       </div>
-                    </div>
+                      </TabsContent>
+                    </Tabs>
                   </div>
                 )}
               </CardContent>
@@ -865,7 +878,7 @@ export default function ItemList() {
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
         title={`Delete ${selectedItemIds.size} selected ${selectedItemIds.size === 1 ? 'item' : 'items'}?`}
-        description="Only unreferenced items with no stock or transaction history will be deleted. Blocked items will remain and their reasons will be shown."
+        description="Items with zero available and reserved stock will be removed from active lists. Historical invoices, purchases, and stock movements remain preserved. Items with current stock will stay and show an actionable reason."
         confirmLabel="Delete selected"
         variant="destructive"
         isPending={bulkDeleteMutation.isPending}

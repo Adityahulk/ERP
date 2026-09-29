@@ -43,9 +43,10 @@ export default function ItemDetail() {
   const activity: any[] = item.activity_timeline || [];
   const activitySummary: Record<string, unknown> = item.activity_summary || {};
   const totalStock = item.total_stock || 0;
+  const stockShortfallValue = Number(item.stock_shortfall_value || 0);
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="max-w-6xl space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -73,29 +74,28 @@ export default function ItemDetail() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchase Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.purchase_price, (item as any).price_currency_code)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Selling Price</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.selling_price, (item as any).price_currency_code)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Stock</p><p className="text-xl font-bold tabular-nums mt-1">{totalStock} {item.unit_abbr || ''}</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Card><CardContent className="p-3.5"><p className="text-xs text-muted-foreground">Stock on hand</p><p className="mt-1 text-xl font-bold tabular-nums">{totalStock} {item.unit_abbr || ''}</p>
           {item.track_inventory && totalStock <= (item.reorder_point || 0) && totalStock > 0 && <div className="flex items-center gap-1 mt-1 text-amber-600 text-xs"><AlertTriangle className="w-3 h-3" />Low stock</div>}
         </CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Stock Value</p><p className="text-xl font-bold tabular-nums mt-1">{formatMoney(item.total_stock_value || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-3.5"><p className="text-xs text-muted-foreground">Stock asset value</p><p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(item.total_stock_value || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-3.5"><p className="text-xs text-muted-foreground">Purchased qty</p><p className="mt-1 text-xl font-bold tabular-nums">{Number(activitySummary.purchased_quantity || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-3.5"><p className="text-xs text-muted-foreground">Sold qty</p><p className="mt-1 text-xl font-bold tabular-nums">{Number(activitySummary.sold_quantity || 0)}</p></CardContent></Card>
       </div>
       {item.has_negative_stock && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>Negative stock exists in at least one godown. Review recent movements or create a stock adjustment.</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Negative stock is tracked as a fulfilment shortfall, not an inventory asset.
+              {stockShortfallValue > 0 ? ` Shortfall value: ${formatMoney(stockShortfallValue)}.` : ''}
+            </span>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={() => navigate('/inventory/adjust')}>Adjust stock</Button>
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Purchased Qty</p><p className="text-xl font-bold tabular-nums mt-1">{Number(activitySummary.purchased_quantity || 0)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sold Qty</p><p className="text-xl font-bold tabular-nums mt-1">{Number(activitySummary.sold_quantity || 0)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Last Purchase</p><p className="text-sm font-semibold mt-2">{activitySummary.last_purchase_date ? formatDate(String(activitySummary.last_purchase_date)) : '—'}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Last Sale</p><p className="text-sm font-semibold mt-2">{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</p></CardContent></Card>
-      </div>
-
-      <Tabs defaultValue="details" className="space-y-4">
+      <Tabs defaultValue="details" className="space-y-3">
         <TabsList>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="stock">Stock by Godown</TabsTrigger>
@@ -104,14 +104,18 @@ export default function ItemDetail() {
         </TabsList>
 
         <TabsContent value="details">
-          <Card><CardContent className="p-6">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-y-4 gap-x-8 text-sm">
+          <Card><CardContent className="p-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-3">
               <div><span className="text-muted-foreground">Category</span><p className="font-medium mt-0.5">{item.category_name || '—'}</p></div>
               <div><span className="text-muted-foreground">Unit</span><p className="font-medium mt-0.5">{item.unit_name || '—'}</p></div>
               <div><span className="text-muted-foreground">Brand</span><p className="font-medium mt-0.5">{item.brand || '—'}</p></div>
               <div><span className="text-muted-foreground">Type</span><p className="font-medium mt-0.5 capitalize">{item.item_type?.replace('_', ' ')}</p></div>
               <div><span className="text-muted-foreground">GST Rate</span><p className="font-medium mt-0.5">{item.gst_rate}% ({item.tax_preference})</p></div>
+              <div><span className="text-muted-foreground">Purchase price</span><p className="font-medium mt-0.5 tabular-nums">{formatMoney(item.purchase_price, item.price_currency_code)}</p></div>
+              <div><span className="text-muted-foreground">Selling price</span><p className="font-medium mt-0.5 tabular-nums">{formatMoney(item.selling_price, item.price_currency_code)}</p></div>
               <div><span className="text-muted-foreground">Reorder Point</span><p className="font-medium mt-0.5">{item.reorder_point || '—'}</p></div>
+              <div><span className="text-muted-foreground">Last purchase</span><p className="font-medium mt-0.5">{activitySummary.last_purchase_date ? formatDate(String(activitySummary.last_purchase_date)) : '—'}</p></div>
+              <div><span className="text-muted-foreground">Last sale</span><p className="font-medium mt-0.5">{activitySummary.last_sale_date ? formatDate(String(activitySummary.last_sale_date)) : '—'}</p></div>
               <div><span className="text-muted-foreground">Track Inventory</span><p className="font-medium mt-0.5">{item.track_inventory ? 'Yes' : 'No'}</p></div>
               <div><span className="text-muted-foreground">Serialized</span><p className="font-medium mt-0.5">{item.is_serialized ? 'Yes' : 'No'}</p></div>
               <div><span className="text-muted-foreground">Created</span><p className="font-medium mt-0.5">{item.created_at ? formatDate(item.created_at) : '—'}</p></div>
@@ -140,7 +144,9 @@ export default function ItemDetail() {
                     <td className="p-3 text-right tabular-nums">{s.quantity}</td>
                     <td className="p-3 text-right tabular-nums">{s.available_quantity}</td>
                     <td className="p-3 text-right tabular-nums">{formatMoney(s.avg_cost_price)}</td>
-                    <td className="p-3 text-right tabular-nums font-medium">{formatMoney(s.quantity * s.avg_cost_price)}</td>
+                    <td className={`p-3 text-right font-medium tabular-nums ${Number(s.quantity) < 0 ? 'text-amber-700' : ''}`}>
+                      {Number(s.quantity) < 0 ? `Shortfall ${formatMoney(Math.abs(s.quantity * s.avg_cost_price))}` : formatMoney(s.quantity * s.avg_cost_price)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -149,7 +155,7 @@ export default function ItemDetail() {
         </TabsContent>
 
         <TabsContent value="movements">
-          <Card><CardContent className="p-0">
+          <Card><CardContent className="max-h-[430px] overflow-y-auto p-0">
             <table className="w-full text-sm">
               <thead><tr className="border-b bg-muted/40"><th className="p-3 text-left">Date</th><th className="p-3 text-left">Type</th><th className="p-3 text-left">Godown</th><th className="p-3 text-right">Qty</th><th className="p-3 text-right">Balance</th><th className="p-3 text-left">By</th></tr></thead>
               <tbody>
@@ -169,7 +175,7 @@ export default function ItemDetail() {
         </TabsContent>
 
         <TabsContent value="audit">
-          <Card><CardContent className="p-4 space-y-3">
+          <Card><CardContent className="max-h-[460px] space-y-3 overflow-y-auto p-4">
             {activity.length === 0 && <div className="p-8 text-center text-muted-foreground">No transaction history for this item yet.</div>}
             {activity.map((row: any, index: number) => (
               <div key={`${row.activity_type}-${row.reference_id}-${index}`} className="rounded-lg border p-4">

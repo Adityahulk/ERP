@@ -34,7 +34,7 @@ export default function StockList() {
 
   const stats = [
     { label: 'Total Items', value: meta.total_items || pagination?.total || 0, icon: Package, color: 'text-blue-600 bg-blue-50 dark:bg-blue-500/10' },
-    { label: 'Total Value (Cost)', value: formatMoney(parseInt(meta.total_value) || 0), icon: IndianRupee, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10' },
+    { label: 'Stock Asset Value', value: formatMoney(parseInt(meta.total_value) || 0), icon: IndianRupee, color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10' },
     { label: 'Low Stock', value: meta.low_stock_count || 0, icon: AlertTriangle, color: 'text-amber-600 bg-amber-50 dark:bg-amber-500/10' },
     { label: 'Out of Stock', value: meta.out_of_stock_count || 0, icon: XCircle, color: 'text-red-600 bg-red-50 dark:bg-red-500/10' },
   ];
@@ -58,6 +58,18 @@ export default function StockList() {
           </CardContent></Card>
         ))}
       </div>
+
+      {Number(meta.total_shortfall_value || 0) > 0 && (
+        <div className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <div>
+            <p className="font-medium text-destructive">Stock fulfilment shortfall</p>
+            <p className="text-muted-foreground">
+              Negative quantities are excluded from asset value. Current shortfall value: {formatMoney(Number(meta.total_shortfall_value))}.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Godown Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -99,7 +111,8 @@ export default function StockList() {
             {!isLoading && items.length === 0 && <tr><td colSpan={7} className="p-12 text-center text-muted-foreground"><Warehouse className="w-12 h-12 mx-auto mb-3 opacity-30" />No stock records</td></tr>}
             {items.map((s: any, i: number) => {
               const isLow = s.quantity > 0 && s.quantity <= (s.reorder_point || 0);
-              const isOut = s.quantity === 0;
+              const isOut = Number(s.quantity) === 0;
+              const isShort = Number(s.quantity) < 0;
               return (
                 <tr key={`${s.id}-${s.godown_id}-${i}`} className={`border-b hover:bg-muted/30 ${isOut ? 'border-l-4 border-l-red-400' : isLow ? 'border-l-4 border-l-amber-400' : ''}`}>
                   <td className="p-3"><div className="font-medium">{s.name}</div><div className="text-xs text-muted-foreground">{s.sku || ''}</div></td>
@@ -107,8 +120,10 @@ export default function StockList() {
                   <td className="p-3 text-right tabular-nums font-semibold">{s.quantity}</td>
                   <td className="p-3 hidden lg:table-cell text-muted-foreground">{s.unit_abbr || s.unit_name || ''}</td>
                   <td className="p-3 text-right tabular-nums">{formatMoney(s.avg_cost_price || 0)}</td>
-                  <td className="p-3 text-right tabular-nums font-medium">{formatMoney((s.quantity || 0) * (s.avg_cost_price || 0))}</td>
-                  <td className="p-3 text-center">{isOut ? <Badge variant="destructive">Out</Badge> : isLow ? <Badge variant="warning">Low</Badge> : <Badge variant="success">OK</Badge>}</td>
+                  <td className="p-3 text-right tabular-nums font-medium">
+                    {isShort ? <span className="text-destructive">Shortfall {formatMoney(Math.abs(Number(s.quantity) * Number(s.avg_cost_price || 0)))}</span> : formatMoney(Number(s.quantity || 0) * Number(s.avg_cost_price || 0))}
+                  </td>
+                  <td className="p-3 text-center">{isShort ? <Badge variant="destructive">Short</Badge> : isOut ? <Badge variant="destructive">Out</Badge> : isLow ? <Badge variant="warning">Low</Badge> : <Badge variant="success">OK</Badge>}</td>
                 </tr>
               );
             })}

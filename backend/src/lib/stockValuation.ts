@@ -5,7 +5,10 @@ export type StockValuationRow = {
 
 export type StockValuationSummary = {
   stockOnHand: number;
+  /** Value of physical stock that is currently on hand (never negative). */
   stockValue: number;
+  /** Cost value required to fulfil negative/backordered godown quantities. */
+  stockShortfallValue: number;
   hasNegativeStock: boolean;
 };
 
@@ -17,7 +20,8 @@ const ZERO_TOLERANCE = 0.00005;
  */
 export function calculateStockValuation(rows: StockValuationRow[]): StockValuationSummary {
   let stockOnHand = 0;
-  let rawValue = 0;
+  let positiveValue = 0;
+  let shortfallValue = 0;
   let hasNegativeStock = false;
 
   for (const row of rows) {
@@ -25,14 +29,19 @@ export function calculateStockValuation(rows: StockValuationRow[]): StockValuati
     const unitCost = Number(row.avg_cost_price || 0);
     if (!Number.isFinite(quantity) || !Number.isFinite(unitCost)) continue;
     stockOnHand += quantity;
-    rawValue += quantity * unitCost;
-    hasNegativeStock ||= quantity < 0;
+    if (quantity < 0) {
+      hasNegativeStock = true;
+      shortfallValue += Math.abs(quantity) * unitCost;
+    } else {
+      positiveValue += quantity * unitCost;
+    }
   }
 
   const normalizedStock = Math.abs(stockOnHand) < ZERO_TOLERANCE ? 0 : stockOnHand;
   return {
     stockOnHand: normalizedStock,
-    stockValue: normalizedStock === 0 ? 0 : Math.round(rawValue),
+    stockValue: Math.round(positiveValue),
+    stockShortfallValue: Math.round(shortfallValue),
     hasNegativeStock: hasNegativeStock || normalizedStock < 0,
   };
 }

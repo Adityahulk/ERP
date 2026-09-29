@@ -464,7 +464,7 @@ export async function deductSaleStockAllowNegative(
       -qty,
       balanceAfter,
       args.allowNegative === false
-        ? 'POS sale invoice stock deduction'
+        ? 'Sale invoice stock deduction; negative stock blocked by item settings'
         : 'Sale invoice stock deduction; negative stock allowed',
       args.userId,
     ],
@@ -857,6 +857,7 @@ export async function createInvoice(req: Request, res: Response) {
       const einvoiceStatus = einvOn ? 'pending' : 'not_applicable';
       const companyItemSettings = objectSetting(compEinv.rows[0]?.item_settings);
       const updateSalePriceFromTransaction = companyItemSettings.update_sale_price_from_transaction === true;
+      const allowNegativeStock = companyItemSettings.allow_negative_stock === true;
 
       const placeOfSupply = gstContext.placeOfSupply;
 
@@ -999,7 +1000,7 @@ export async function createInvoice(req: Request, res: Response) {
               invoiceId: invoice.id,
               quantity: mappedItems[i].quantity,
               userId: req.user!.id,
-              allowNegative: d.transaction_source !== 'pos',
+              allowNegative: allowNegativeStock,
             });
           }
           if (updateSalePriceFromTransaction) {
@@ -1449,6 +1450,7 @@ export async function updateInvoice(req: Request, res: Response) {
       );
       const companyItemSettings = objectSetting(companySettingsResult.rows[0]?.item_settings);
       const updateSalePriceFromTransaction = companyItemSettings.update_sale_price_from_transaction === true;
+      const allowNegativeStock = companyItemSettings.allow_negative_stock === true;
       const totalsInfo = calculateInvoiceTotals(
         mappedItems,
         gstType,
@@ -1693,6 +1695,7 @@ export async function updateInvoice(req: Request, res: Response) {
               invoiceId: id,
               quantity: mappedItems[i].quantity,
               userId: req.user!.id,
+              allowNegative: allowNegativeStock,
             });
           }
           if (updateSalePriceFromTransaction) {

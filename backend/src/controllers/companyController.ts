@@ -155,6 +155,7 @@ function normalizeJsonbField(field: string, value: unknown): string | null {
       stock_maintenance: record.stock_maintenance !== false,
       manufacturing: record.manufacturing === true,
       show_low_stock_dialog: record.show_low_stock_dialog !== false,
+      allow_negative_stock: record.allow_negative_stock === true,
       items_unit: record.items_unit !== false,
       default_unit: record.default_unit === true,
       item_category: record.item_category !== false,

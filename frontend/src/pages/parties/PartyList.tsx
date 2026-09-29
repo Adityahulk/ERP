@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParties, useCreateParty, useDeleteParty } from '@/hooks/useBusiness';
-import { formatMoney, rupeesToPaise } from '@/lib/formatters';
+import { formatMoney, paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Search, Users, IndianRupee, UserPlus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import MoneyInput from '@/components/transactions/MoneyInput';
 
 export default function PartyList() {
   const navigate = useNavigate();
@@ -281,7 +282,12 @@ export default function PartyList() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Credit limit (₹)</Label>
-                <Input className="mt-1" type="number" min={0} step={0.01} value={form.credit_limit || ''} onChange={(e) => u('credit_limit', e.target.value)} />
+                <MoneyInput
+                  className="mt-1"
+                  value={rupeesToPaise(form.credit_limit || 0)}
+                  onChange={(paise) => u('credit_limit', paiseToRupees(paise))}
+                  placeholder="0.00"
+                />
               </div>
               <div>
                 <Label>Payment terms (days)</Label>

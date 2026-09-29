@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2 } from 'lucide-react';
+import MoneyInput from '@/components/transactions/MoneyInput';
+import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
 
 type Props = {
   open: boolean;
@@ -291,13 +293,10 @@ export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCre
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>Credit limit (₹)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
+                <MoneyInput
                   className="mt-1 tabular-nums"
-                  value={f.credit_limit_rupees}
-                  onChange={(e) => u('credit_limit_rupees', e.target.value)}
+                  value={rupeesToPaise(f.credit_limit_rupees || 0)}
+                  onChange={(paise) => u('credit_limit_rupees', String(paiseToRupees(paise)))}
                   disabled={saving}
                 />
               </div>

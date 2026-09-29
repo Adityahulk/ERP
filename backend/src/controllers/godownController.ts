@@ -9,7 +9,10 @@ export async function listGodowns(req: Request, res: Response) {
     const result = await query(
       `SELECT g.*, u.name as manager_name,
               (SELECT COUNT(*) FROM item_stock s WHERE s.godown_id = g.id AND s.quantity > 0) as item_count,
-              (SELECT COALESCE(SUM(s.quantity * s.avg_cost_price), 0) FROM item_stock s WHERE s.godown_id = g.id) as stock_value
+              (SELECT COALESCE(SUM(GREATEST(s.quantity, 0) * COALESCE(NULLIF(s.avg_cost_price, 0), si.purchase_price, 0)), 0)
+               FROM item_stock s JOIN items si ON si.id = s.item_id WHERE s.godown_id = g.id) as stock_value,
+              (SELECT COALESCE(SUM(ABS(LEAST(s.quantity, 0)) * COALESCE(NULLIF(s.avg_cost_price, 0), si.purchase_price, 0)), 0)
+               FROM item_stock s JOIN items si ON si.id = s.item_id WHERE s.godown_id = g.id) as stock_shortfall_value
        FROM godowns g
        LEFT JOIN users u ON g.manager_id = u.id
        WHERE g.company_id = $1 AND g.is_deleted = false

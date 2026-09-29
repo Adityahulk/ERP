@@ -163,7 +163,8 @@ const reports: Record<string, ReportQuery> = {
 
   'stock-summary-by-item-category': undated(`
     SELECT COALESCE(ic.name,'Uncategorised') category,COUNT(DISTINCT i.id)::int item_count,COALESCE(SUM(s.quantity),0)::numeric stock_quantity,
-      COALESCE(SUM(ROUND(s.quantity*COALESCE(NULLIF(s.avg_cost_price,0),i.purchase_price,0))),0)::bigint stock_value_paise
+      COALESCE(SUM(ROUND(GREATEST(s.quantity,0)*COALESCE(NULLIF(s.avg_cost_price,0),i.purchase_price,0))),0)::bigint stock_value_paise,
+      COALESCE(SUM(ROUND(ABS(LEAST(s.quantity,0))*COALESCE(NULLIF(s.avg_cost_price,0),i.purchase_price,0))),0)::bigint stock_shortfall_value_paise
     FROM items i LEFT JOIN item_categories ic ON ic.id=i.category_id LEFT JOIN item_stock s ON s.item_id=i.id AND s.company_id=i.company_id
     WHERE i.company_id=$1 AND i.is_deleted=false GROUP BY COALESCE(ic.name,'Uncategorised') ORDER BY category`),
 
@@ -181,7 +182,10 @@ const reports: Record<string, ReportQuery> = {
       (SELECT COALESCE(SUM(total_amount),0) FROM purchase_invoices WHERE company_id=$1 AND is_deleted=false AND COALESCE(status,'')!='cancelled' AND bill_date BETWEEN $2 AND $3)::bigint purchases_paise,
       (SELECT COALESCE(SUM(COALESCE(total_amount,amount)),0) FROM expenses WHERE company_id=$1 AND is_deleted=false AND expense_date BETWEEN $2 AND $3)::bigint expenses_paise,
       (SELECT COALESCE(SUM(balance_due),0) FROM invoices WHERE company_id=$1 AND invoice_type IN ('sale','tax_invoice') AND is_deleted=false AND status!='cancelled')::bigint receivable_paise,
-      (SELECT COALESCE(SUM(quantity*COALESCE(NULLIF(avg_cost_price,0),0)),0) FROM item_stock WHERE company_id=$1)::bigint stock_value_paise`),
+      (SELECT COALESCE(SUM(GREATEST(s.quantity,0)*COALESCE(NULLIF(s.avg_cost_price,0),i.purchase_price,0)),0)
+       FROM item_stock s JOIN items i ON i.id=s.item_id WHERE s.company_id=$1)::bigint stock_value_paise,
+      (SELECT COALESCE(SUM(ABS(LEAST(s.quantity,0))*COALESCE(NULLIF(s.avg_cost_price,0),i.purchase_price,0)),0)
+       FROM item_stock s JOIN items i ON i.id=s.item_id WHERE s.company_id=$1)::bigint stock_shortfall_value_paise`),
 
   'bank-statement': dated(`
     SELECT p.payment_date,COALESCE(ba.account_label,ba.bank_name,p.bank_account,p.payment_mode) account,p.payment_number,p.reference_number,

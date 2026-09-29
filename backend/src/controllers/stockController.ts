@@ -36,7 +36,7 @@ export async function listStock(req: Request, res: Response) {
               c.name as category_name, u.name as unit_name, u.abbreviation as unit_abbr,
               COALESCE(s.quantity, 0) as quantity,
               COALESCE(s.available_quantity, 0) as available_quantity,
-              COALESCE(s.avg_cost_price, i.purchase_price) as avg_cost_price,
+              COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0) as avg_cost_price,
               g.name as godown_name, g.id as godown_id
        FROM items i
        LEFT JOIN item_stock s ON s.item_id = i.id ${stockWhere}
@@ -53,7 +53,8 @@ export async function listStock(req: Request, res: Response) {
     const statsRes = await query(
       `SELECT 
          COUNT(DISTINCT i.id) as total_items,
-         COALESCE(SUM(s.quantity * s.avg_cost_price), 0) as total_value,
+         COALESCE(SUM(GREATEST(s.quantity, 0) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as total_value,
+         COALESCE(SUM(ABS(LEAST(s.quantity, 0)) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as total_shortfall_value,
          COUNT(DISTINCT CASE WHEN s.quantity <= i.reorder_point AND s.quantity > 0 THEN i.id END) as low_stock_count,
          COUNT(DISTINCT CASE WHEN COALESCE(s.quantity, 0) = 0 THEN i.id END) as out_of_stock_count
        FROM items i
@@ -446,8 +447,9 @@ export async function stockValuation(req: Request, res: Response) {
       `SELECT c.name as category, 
               COUNT(DISTINCT i.id) as item_count,
               COALESCE(SUM(s.quantity), 0) as total_quantity,
-              COALESCE(SUM(s.quantity * s.avg_cost_price), 0) as cost_value,
-              COALESCE(SUM(s.quantity * i.selling_price), 0) as selling_value
+              COALESCE(SUM(GREATEST(s.quantity, 0) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as cost_value,
+              COALESCE(SUM(GREATEST(s.quantity, 0) * i.selling_price), 0) as selling_value,
+              COALESCE(SUM(ABS(LEAST(s.quantity, 0)) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as shortfall_value
        FROM items i
        LEFT JOIN item_categories c ON i.category_id = c.id
        LEFT JOIN item_stock s ON s.item_id = i.id
@@ -461,8 +463,9 @@ export async function stockValuation(req: Request, res: Response) {
       `SELECT g.name as godown, g.id as godown_id,
               COUNT(DISTINCT s.item_id) as item_count,
               COALESCE(SUM(s.quantity), 0) as total_quantity,
-              COALESCE(SUM(s.quantity * s.avg_cost_price), 0) as cost_value,
-              COALESCE(SUM(s.quantity * i.selling_price), 0) as selling_value
+              COALESCE(SUM(GREATEST(s.quantity, 0) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as cost_value,
+              COALESCE(SUM(GREATEST(s.quantity, 0) * i.selling_price), 0) as selling_value,
+              COALESCE(SUM(ABS(LEAST(s.quantity, 0)) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as shortfall_value
        FROM item_stock s
        JOIN godowns g ON s.godown_id = g.id
        JOIN items i ON s.item_id = i.id
@@ -474,10 +477,12 @@ export async function stockValuation(req: Request, res: Response) {
     // Totals
     const totalCost = byCategoryRes.rows.reduce((s: number, r: any) => s + parseInt(r.cost_value), 0);
     const totalSelling = byCategoryRes.rows.reduce((s: number, r: any) => s + parseInt(r.selling_value), 0);
+    const totalShortfall = byCategoryRes.rows.reduce((s: number, r: any) => s + parseInt(r.shortfall_value), 0);
 
     res.json(success({
       total_cost_value: totalCost,
       total_selling_value: totalSelling,
+      total_shortfall_value: totalShortfall,
       potential_profit: totalSelling - totalCost,
       by_category: byCategoryRes.rows,
       by_godown: byGodownRes.rows,

@@ -130,7 +130,8 @@ export async function getDashboard(req: Request, res: Response) {
 
     // Stock valuation
     const stockValue = await query(
-      `SELECT COALESCE(SUM(s.quantity * COALESCE(i.purchase_price, 0)), 0) as total_value,
+      `SELECT COALESCE(SUM(GREATEST(s.quantity, 0) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as total_value,
+               COALESCE(SUM(ABS(LEAST(s.quantity, 0)) * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)), 0) as shortfall_value,
                SUM(s.quantity) as total_qty
        FROM item_stock s
        JOIN items i ON s.item_id = i.id
@@ -161,6 +162,7 @@ export async function getDashboard(req: Request, res: Response) {
       overdue: overdue.rows[0],
       low_stock_count: parseInt(lowStock.rows[0].count),
       stock_value: Number(stockValue.rows[0].total_value || 0),
+      stock_shortfall_value: Number(stockValue.rows[0].shortfall_value || 0),
       stock_qty: Number(stockValue.rows[0].total_qty || 0),
       recent_invoices: recentInvoices.rows,
       sales_trend: salesTrend.rows,
@@ -443,22 +445,20 @@ export async function stockSummary(req: Request, res: Response) {
        SELECT i.name, i.sku,
               COALESCE(SUM(s.quantity), 0) AS total_qty,
               COALESCE(i.purchase_price, 0)::bigint AS purchase_price_paise,
-              COALESCE(
-                SUM(
-                  ROUND(
-                    s.quantity::numeric * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)::numeric
-                  )
-                ),
-                0
-              )::bigint AS total_value_paise
+              COALESCE(SUM(ROUND(
+                GREATEST(s.quantity, 0)::numeric * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)::numeric
+              )), 0)::bigint AS total_value_paise,
+              COALESCE(SUM(ROUND(
+                ABS(LEAST(s.quantity, 0))::numeric * COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0)::numeric
+              )), 0)::bigint AS stock_shortfall_value_paise
        FROM items i
        LEFT JOIN item_stock s ON s.item_id = i.id AND s.company_id = i.company_id
        WHERE i.company_id = $1 AND i.is_deleted = false
        GROUP BY i.id, i.name, i.sku, i.purchase_price
-       HAVING COALESCE(SUM(s.quantity), 0) > 0
+       HAVING COALESCE(SUM(s.quantity), 0) <> 0
        )
        SELECT LPAD(ROW_NUMBER() OVER (ORDER BY name, sku NULLS LAST)::text, 3, '0') AS serial_id,
-              name, sku, total_qty, purchase_price_paise, total_value_paise
+              name, sku, total_qty, purchase_price_paise, total_value_paise, stock_shortfall_value_paise
        FROM stock_rows
        ORDER BY name ASC`,
       [req.user!.company_id]

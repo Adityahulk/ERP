@@ -3,6 +3,7 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { parsePagination, buildPaginatedResponse } from '../lib/pagination';
 import { logAction } from '../lib/auditLog';
+import { parseMoneyPaise } from '../lib/money';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -11,9 +12,7 @@ function blankToNull(v: unknown): unknown {
 }
 
 function moneyInt(v: unknown, fallback = 0): number {
-  if (v === '' || v == null) return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : fallback;
+  return parseMoneyPaise(v, fallback);
 }
 
 function dayInt(v: unknown, fallback = 30): number {

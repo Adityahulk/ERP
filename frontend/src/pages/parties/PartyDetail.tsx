@@ -14,6 +14,7 @@ import {
   Receipt, IndianRupee, ShieldCheck, Hash
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import MoneyInput from '@/components/transactions/MoneyInput';
 
 function cleanText(value: unknown): string | null {
   const text = String(value ?? '').trim();
@@ -464,7 +465,12 @@ export default function PartyDetail() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Credit Limit (₹)</Label>
-                <Input className="mt-1" type="number" min={0} step={0.01} value={form.credit_limit || ''} onChange={(e) => setForm((p: any) => ({ ...p, credit_limit: e.target.value }))} />
+                <MoneyInput
+                  className="mt-1"
+                  value={rupeesToPaise(form.credit_limit || 0)}
+                  onChange={(paise) => setForm((p: any) => ({ ...p, credit_limit: paiseToRupees(paise) }))}
+                  placeholder="0.00"
+                />
               </div>
               <div>
                 <Label>Payment Terms (days)</Label>

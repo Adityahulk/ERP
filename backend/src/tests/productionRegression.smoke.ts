@@ -66,7 +66,7 @@ async function verifyPartyCreation(): Promise<void> {
         $7, $8, $9, $10, $7, $8, $9, $10,
         $11, $12, $12, $13, $13, $14, $15, $16::jsonb
       )
-      RETURNING id, name, balance`,
+      RETURNING id, name, credit_limit, balance`,
       [
         companyId,
         `Production Smoke ${marker}`,
@@ -78,7 +78,7 @@ async function verifyPartyCreation(): Promise<void> {
         'Gujarat',
         '395007',
         '24',
-        100_000,
+        9_000_000_000_000,
         30,
         12_345,
         'Smoke Contact',
@@ -87,6 +87,7 @@ async function verifyPartyCreation(): Promise<void> {
       ],
     );
     assert.ok(inserted.rows[0]?.id);
+    assert.equal(Number(inserted.rows[0].credit_limit), 9_000_000_000_000);
     assert.equal(Number(inserted.rows[0].balance), 12_345);
 
     await client.query(

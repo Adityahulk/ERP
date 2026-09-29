@@ -1,5 +1,14 @@
 export type CurrencyCode = 'INR' | 'USD';
 
+// Keep frontend currency arithmetic aligned with PostgreSQL bigint values that
+// are transported as safe JavaScript integer paise.
+export const MAX_MONEY_PAISE = Number.MAX_SAFE_INTEGER;
+
+export function isSafePaiseAmount(value: unknown): boolean {
+    const amount = Number(value);
+    return Number.isSafeInteger(amount) && Math.abs(amount) <= MAX_MONEY_PAISE;
+}
+
 export const SUPPORTED_CURRENCIES: { code: CurrencyCode; label: string; symbol: string; locale: string }[] = [
     { code: 'INR', label: 'Indian Rupee (INR)', symbol: '₹', locale: 'en-IN' },
     { code: 'USD', label: 'US Dollar (USD)', symbol: '$', locale: 'en-US' },
