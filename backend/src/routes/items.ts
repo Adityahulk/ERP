@@ -44,9 +44,14 @@ const scanSchema = z.object({
   godown_id: z.string().uuid().optional(),
 });
 
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, 'Select at least one item').max(200, 'Delete up to 200 visible items at a time'),
+});
+
 // Routes that must come BEFORE /:id to avoid param conflicts
 router.get('/import-template', ctrl.importTemplate);
 router.post('/bulk-import', requireMinRole('company_admin'), uploadImportFile, ctrl.bulkImport);
+router.post('/bulk-delete', requireMinRole('company_admin'), validateBody(bulkDeleteSchema), ctrl.bulkDeleteItems);
 router.post('/scan', validateBody(scanSchema), ctrl.scanBarcode);
 router.get('/barcode/:code', ctrl.getItemByBarcode);
 

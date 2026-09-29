@@ -852,31 +852,97 @@ export async function updateItem(req: Request, res: Response) {
   }
 }
 
+type ItemDeletionAssessment = {
+  id: string;
+  name: string;
+  reason: string | null;
+};
+
+async function assessItemsForDeletion(companyId: string, ids: string[]): Promise<ItemDeletionAssessment[]> {
+  if (!ids.length) return [];
+  const result = await query(
+    `SELECT i.id, i.name,
+            COALESCE((
+              SELECT SUM(ABS(s.quantity)) FROM item_stock s
+              WHERE s.item_id = i.id AND s.company_id = i.company_id
+            ), 0) AS absolute_stock,
+            EXISTS (
+              SELECT 1 FROM stock_movements sm
+              WHERE sm.item_id = i.id AND sm.company_id = i.company_id
+            )
+            OR EXISTS (
+              SELECT 1 FROM stock_transfer_items sti
+              JOIN stock_transfers st ON st.id = sti.transfer_id
+              WHERE sti.item_id = i.id AND st.company_id = i.company_id
+            )
+            OR EXISTS (
+              SELECT 1 FROM stock_adjustment_items sai
+              JOIN stock_adjustments sa ON sa.id = sai.adjustment_id
+              WHERE sai.item_id = i.id AND sa.company_id = i.company_id
+            ) AS has_stock_history,
+            EXISTS (
+              SELECT 1 FROM invoice_items ii
+              JOIN invoices inv ON inv.id = ii.invoice_id
+              WHERE ii.item_id = i.id AND inv.company_id = i.company_id
+            ) AS has_sales_history,
+            EXISTS (
+              SELECT 1 FROM purchase_invoice_items pii
+              JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+              WHERE pii.item_id = i.id AND pi.company_id = i.company_id
+            ) AS has_purchase_history,
+            (
+              EXISTS (SELECT 1 FROM quotation_items qi JOIN quotations q ON q.id = qi.quotation_id WHERE qi.item_id = i.id AND q.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM sale_order_items soi JOIN sale_orders so ON so.id = soi.order_id WHERE soi.item_id = i.id AND so.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM sale_return_items sri JOIN sale_returns sr ON sr.id = sri.return_id WHERE sri.item_id = i.id AND sr.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM delivery_challan_items dci JOIN delivery_challans dc ON dc.id = dci.challan_id WHERE dci.item_id = i.id AND dc.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM purchase_order_items poi JOIN purchase_orders po ON po.id = poi.po_id WHERE poi.item_id = i.id AND po.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM wholesale_order_items woi JOIN wholesale_orders wo ON wo.id = woi.order_id WHERE woi.item_id = i.id AND wo.company_id = i.company_id)
+            ) AS has_document_history,
+            (
+              EXISTS (SELECT 1 FROM bom b WHERE b.finished_item_id = i.id AND b.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM bom_items bi JOIN bom b ON b.id = bi.bom_id WHERE bi.item_id = i.id AND b.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM job_work_challan_items jwi JOIN job_work_challans jw ON jw.id = jwi.challan_id WHERE jwi.item_id = i.id AND jw.company_id = i.company_id)
+            ) AS has_manufacturing_history,
+            (
+              EXISTS (SELECT 1 FROM item_batches ib WHERE ib.item_id = i.id AND ib.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM item_serial_numbers isn WHERE isn.item_id = i.id AND isn.company_id = i.company_id)
+              OR EXISTS (SELECT 1 FROM wholesale_price_tiers wpt WHERE wpt.item_id = i.id AND wpt.company_id = i.company_id)
+            ) AS has_master_references
+     FROM items i
+     WHERE i.company_id = $1 AND i.is_deleted = false AND i.id = ANY($2::uuid[])`,
+    [companyId, ids],
+  );
+
+  const found = new Map(result.rows.map((row: any) => [String(row.id), row]));
+  return ids.map((id) => {
+    const row: any = found.get(id);
+    if (!row) return { id, name: 'Unknown item', reason: 'Item was not found or was already deleted.' };
+    let reason: string | null = null;
+    if (Number(row.absolute_stock || 0) > 0) reason = 'Active stock exists. Adjust every godown balance to zero first.';
+    else if (row.has_stock_history) reason = 'Stock movement history exists for this item.';
+    else if (row.has_sales_history) reason = 'The item is referenced by a sales invoice.';
+    else if (row.has_purchase_history) reason = 'The item is referenced by a purchase bill.';
+    else if (row.has_document_history) reason = 'The item is referenced by an order, quotation, return, challan, or wholesale document.';
+    else if (row.has_manufacturing_history) reason = 'The item is referenced by manufacturing or job-work records.';
+    else if (row.has_master_references) reason = 'The item is referenced by a batch or wholesale price configuration.';
+    return { id, name: String(row.name || 'Unnamed item'), reason };
+  });
+}
+
 // ── DELETE /api/items/:id ─────────────────────────────────────
 export async function deleteItem(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const companyId = req.user!.company_id;
-
-    // Check for stock
-    const stockCheck = await query(
-      'SELECT COALESCE(SUM(quantity), 0) as total FROM item_stock WHERE item_id = $1', [id]
-    );
-    if (Number(stockCheck.rows[0].total || 0) > 0) {
-      return res.status(400).json(error('Cannot delete item with active stock. Adjust stock to zero first.'));
+    const [assessment] = await assessItemsForDeletion(companyId, [id]);
+    if (!assessment || assessment.reason === 'Item was not found or was already deleted.') {
+      return res.status(404).json(error('Item not found'));
     }
-
-    // Check for active invoices
-    const invCheck = await query(
-      `SELECT COUNT(*) as cnt FROM invoice_items ii JOIN invoices inv ON ii.invoice_id = inv.id
-       WHERE ii.item_id = $1 AND inv.status != 'cancelled' AND inv.is_deleted = false`, [id]
-    );
-    if (parseInt(invCheck.rows[0].cnt) > 0) {
-      return res.status(400).json(error('Cannot delete item used in active invoices.'));
-    }
+    if (assessment.reason) return res.status(400).json(error(assessment.reason));
 
     const result = await query(
-      'UPDATE items SET is_deleted = true WHERE id = $1 AND company_id = $2 RETURNING id', [id, companyId]
+      'UPDATE items SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id',
+      [id, companyId],
     );
     if (!result.rows.length) return res.status(404).json(error('Item not found'));
 
@@ -885,6 +951,37 @@ export async function deleteItem(req: Request, res: Response) {
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));
+  }
+}
+
+// ── POST /api/items/bulk-delete ───────────────────────────────
+export async function bulkDeleteItems(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const ids = Array.from(new Set((req.body.ids as string[]).map(String)));
+    const assessments = await assessItemsForDeletion(companyId, ids);
+    const allowed = assessments.filter((item) => !item.reason);
+    const failed = assessments.filter((item) => item.reason);
+    const deleted: Array<{ id: string; name: string }> = [];
+
+    for (const item of allowed) {
+      const result = await query(
+        `UPDATE items SET is_deleted = true, updated_at = NOW()
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
+        [item.id, companyId],
+      );
+      if (!result.rows.length) {
+        failed.push({ ...item, reason: 'Item changed or was deleted before this request completed.' });
+        continue;
+      }
+      deleted.push({ id: item.id, name: item.name });
+      await logAction(req.user!.id, companyId, 'delete', 'item', item.id, null, { source: 'bulk_delete' }, req.ip);
+    }
+
+    res.json(success({ deleted, failed, requested: ids.length }));
+  } catch (err: any) {
+    console.error('itemController bulk delete error:', err.message, err.detail, err.position);
+    res.status(500).json(error(err.message || 'Bulk delete failed'));
   }
 }
 

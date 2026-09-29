@@ -8,6 +8,7 @@ import {
   useCreateUnitConversion,
   useDeleteUnitConversion,
   useDeleteItem,
+  useBulkDeleteItems,
   useItem,
   useItemCategories,
   useItems,
@@ -39,8 +40,10 @@ import {
 import type { Item } from '@/types';
 import ItemForm from './ItemForm';
 import toast from 'react-hot-toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 
 type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
+type BulkDeleteFailure = { id: string; name: string; reason: string };
 
 function qtyText(value: unknown) {
   const num = Number(value || 0);
@@ -79,6 +82,9 @@ export default function ItemList() {
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [barcodeLines, setBarcodeLines] = useState('');
   const [barcodeImporting, setBarcodeImporting] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteFailures, setBulkDeleteFailures] = useState<BulkDeleteFailure[]>([]);
 
   const isServiceTab = activeTab === 'services';
   const itemFilters = useMemo(() => {
@@ -100,17 +106,18 @@ export default function ItemList() {
   const { data: unitsRes } = useItemUnits();
   const { data: godownsRes } = useGodowns();
   const deleteMutation = useDeleteItem();
+  const bulkDeleteMutation = useBulkDeleteItems();
   const createCategory = useCreateItemCategory();
   const createUnit = useCreateItemUnit();
   const createConversion = useCreateUnitConversion();
   const deleteConversion = useDeleteUnitConversion();
 
-  const items: Item[] = itemsRes?.data?.data || [];
+  const items: Item[] = useMemo(() => itemsRes?.data?.data || [], [itemsRes]);
   const itemDetailQuery = useItem(selectedItemId);
   const selectedItem: any = itemDetailQuery.data?.data;
-  const categories = categoriesRes?.data?.flat || [];
-  const units = unitsRes?.data || [];
-  const godowns = godownsRes?.data || [];
+  const categories = useMemo(() => categoriesRes?.data?.flat || [], [categoriesRes]);
+  const units = useMemo(() => unitsRes?.data || [], [unitsRes]);
+  const godowns = useMemo(() => godownsRes?.data || [], [godownsRes]);
 
   const visibleItems = useMemo(() => {
     if (activeTab === 'services') return items.filter((item) => item.item_type === 'service');
@@ -128,6 +135,10 @@ export default function ItemList() {
     [items, selectedUnitId]
   );
 
+  const visibleItemIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
+  const allVisibleSelected = visibleItemIds.length > 0 && visibleItemIds.every((id) => selectedItemIds.has(id));
+  const someVisibleSelected = visibleItemIds.some((id) => selectedItemIds.has(id));
+
   useEffect(() => {
     if ((activeTab === 'products' || activeTab === 'services') && visibleItems.length > 0) {
       const exists = visibleItems.some((item) => item.id === selectedItemId);
@@ -137,6 +148,15 @@ export default function ItemList() {
       setSelectedItemId('');
     }
   }, [activeTab, selectedItemId, visibleItems]);
+
+  useEffect(() => {
+    const visible = new Set(activeTab === 'products' ? visibleItemIds : []);
+    setSelectedItemIds((previous) => {
+      const next = new Set(Array.from(previous).filter((id) => visible.has(id)));
+      if (next.size === previous.size && Array.from(next).every((id) => previous.has(id))) return previous;
+      return next;
+    });
+  }, [activeTab, visibleItemIds]);
 
   useEffect(() => {
     if (!selectedCategoryId && categories.length > 0) {
@@ -157,6 +177,47 @@ export default function ItemList() {
       toast.success('Item deleted');
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to delete');
+    }
+  };
+
+  const toggleItemSelection = (id: string, checked: boolean) => {
+    setBulkDeleteFailures([]);
+    setSelectedItemIds((previous) => {
+      const next = new Set(previous);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = (checked: boolean) => {
+    setBulkDeleteFailures([]);
+    setSelectedItemIds((previous) => {
+      const next = new Set(previous);
+      for (const id of visibleItemIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedItemIds);
+    if (!ids.length) return;
+    try {
+      const response = await bulkDeleteMutation.mutateAsync(ids);
+      const result = response?.data || {};
+      const deleted = Array.isArray(result.deleted) ? result.deleted : [];
+      const failed = (Array.isArray(result.failed) ? result.failed : []) as BulkDeleteFailure[];
+      setBulkDeleteFailures(failed);
+      setSelectedItemIds(new Set(failed.map((item) => item.id)));
+      if (deleted.some((item: any) => item.id === selectedItemId)) setSelectedItemId('');
+      if (deleted.length) toast.success(`${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted`);
+      if (failed.length) toast.error(`${failed.length} ${failed.length === 1 ? 'item was' : 'items were'} not deleted. Review the reasons shown.`);
+      setBulkDeleteOpen(false);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Bulk delete failed');
     }
   };
 
@@ -369,7 +430,50 @@ export default function ItemList() {
                   ))}
                 </div>
 
+                {selectedItemIds.size > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <span className="text-sm font-medium text-red-900">
+                      {selectedItemIds.size} {selectedItemIds.size === 1 ? 'item' : 'items'} selected
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedItemIds(new Set())}>
+                        Clear
+                      </Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}>
+                        <Trash2 className="mr-1 h-4 w-4" />
+                        Delete selected
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {bulkDeleteFailures.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold">Some items could not be deleted</p>
+                      <button type="button" className="text-xs font-medium underline" onClick={() => setBulkDeleteFailures([])}>Dismiss</button>
+                    </div>
+                    <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                      {bulkDeleteFailures.map((failure) => (
+                        <li key={failure.id}><span className="font-medium">{failure.name}:</span> {failure.reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 <div className="max-h-[70vh] overflow-y-auto rounded-lg border">
+                  {!isLoading && !isError && visibleItems.length > 0 && (
+                    <label className="sticky top-0 z-10 flex cursor-pointer items-center gap-2 border-b bg-background/95 px-4 py-2.5 text-xs font-medium text-muted-foreground backdrop-blur">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-muted-foreground/40 accent-primary"
+                        checked={allVisibleSelected}
+                        ref={(element) => { if (element) element.indeterminate = someVisibleSelected && !allVisibleSelected; }}
+                        onChange={(event) => toggleAllVisible(event.target.checked)}
+                      />
+                      Select all {visibleItems.length} visible {visibleItems.length === 1 ? 'item' : 'items'}
+                    </label>
+                  )}
                   {isLoading && <div className="p-8 text-center text-sm text-muted-foreground">Loading items...</div>}
                   {!isLoading && isError && (
                     <div className="p-8 text-center text-sm text-destructive space-y-3">
@@ -383,23 +487,32 @@ export default function ItemList() {
                     <div className="p-8 text-center text-sm text-muted-foreground">No products found for these filters.</div>
                   )}
                   {visibleItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setSelectedItemId(item.id)}
-                      className={`w-full border-b p-4 text-left transition hover:bg-muted/40 ${selectedItemId === item.id ? 'bg-primary/5' : ''}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium">{item.name}</div>
-                          <div className="text-xs text-muted-foreground mt-1">{item.sku || 'No SKU'}{item.category_name ? ` • ${item.category_name}` : ''}</div>
+                    <div key={item.id} className={`flex border-b transition hover:bg-muted/40 ${selectedItemId === item.id ? 'bg-primary/5' : ''}`}>
+                      <label className="flex cursor-pointer items-start px-4 py-4 pr-0" aria-label={`Select ${item.name}`}>
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border-muted-foreground/40 accent-primary"
+                          checked={selectedItemIds.has(item.id)}
+                          onChange={(event) => toggleItemSelection(item.id, event.target.checked)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedItemId(item.id)}
+                        className="min-w-0 flex-1 p-4 text-left"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{item.name}</div>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">{item.sku || 'No SKU'}{item.category_name ? ` • ${item.category_name}` : ''}</div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="font-semibold tabular-nums">{qtyText(item.total_stock || 0)}</div>
+                            <div className="text-xs text-muted-foreground">{formatMoney(item.selling_price || 0, item.price_currency_code)}</div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <div className="font-semibold tabular-nums">{qtyText(item.total_stock || 0)}</div>
-                          <div className="text-xs text-muted-foreground">{formatMoney(item.selling_price || 0, item.price_currency_code)}</div>
-                        </div>
-                      </div>
-                    </button>
+                      </button>
+                    </div>
                   ))}
                 </div>
               </CardContent>
@@ -747,6 +860,17 @@ export default function ItemList() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        title={`Delete ${selectedItemIds.size} selected ${selectedItemIds.size === 1 ? 'item' : 'items'}?`}
+        description="Only unreferenced items with no stock or transaction history will be deleted. Blocked items will remain and their reasons will be shown."
+        confirmLabel="Delete selected"
+        variant="destructive"
+        isPending={bulkDeleteMutation.isPending}
+        onConfirm={handleBulkDelete}
+      />
 
       <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} defaultItemType={activeTab === 'services' ? 'service' : 'product'} />
       {conversionOpen && (

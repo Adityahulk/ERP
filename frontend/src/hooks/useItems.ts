@@ -45,6 +45,17 @@ export function useDeleteItem() {
   });
 }
 
+export function useBulkDeleteItems() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => api.post('/items/bulk-delete', { ids }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['items'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
+    },
+  });
+}
+
 export function useItemCategories() {
   return useQuery({
     queryKey: ['item-categories'],
