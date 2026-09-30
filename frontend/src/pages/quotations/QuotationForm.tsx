@@ -20,6 +20,13 @@ import { useCompany } from '@/hooks/useBusiness';
 
 type QuoteDocumentType = 'quotation' | 'proforma';
 
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+function validUuid(value: unknown): string {
+  const normalized = String(value ?? '').trim();
+  return UUID_PATTERN.test(normalized) ? normalized : '';
+}
+
 function stateCodeFrom(value: unknown) {
   return String(value || '').trim().slice(0, 2);
 }
@@ -115,9 +122,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
   };
 
   const selectParty = (p: any) => {
-    const rawId = p?.id;
-    const id =
-      rawId != null && rawId !== '' && String(rawId) !== 'undefined' ? String(rawId) : '';
+    const id = validUuid(p?.id);
     if (!id) {
       toast.error('Could not select party — invalid id. Try again or add the party under Parties.');
       return;
@@ -155,9 +160,9 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
       customerNotes, termsAndConditions, paymentTerms, deliveryTerms, internalNotes, showExtras, items,
     },
     (draft: any) => {
-      setPartyId(String(draft.partyId || ''));
+      setPartyId(validUuid(draft.partyId));
       setPartyName(String(draft.partyName || ''));
-      setGodownId(String(draft.godownId || ''));
+      setGodownId(validUuid(draft.godownId));
       setQuotationNumber(String(draft.quotationNumber || ''));
       setQuotationDate(String(draft.quotationDate || new Date().toISOString().split('T')[0]));
       setValidUntil(String(draft.validUntil || validUntil));
@@ -179,7 +184,9 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
       setDeliveryTerms(String(draft.deliveryTerms || ''));
       setInternalNotes(String(draft.internalNotes || ''));
       setShowExtras(Boolean(draft.showExtras));
-      setItems(Array.isArray(draft.items) ? draft.items : []);
+      setItems(Array.isArray(draft.items)
+        ? draft.items.map((item: any) => ({ ...item, item_id: validUuid(item?.item_id) }))
+        : []);
     },
     {
       legacyKey: documentType === 'quotation' ? LEGACY_STORAGE_KEYS.drafts.quotation : undefined,
@@ -209,8 +216,8 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     mutationFn: async () => {
       const payload = {
         document_type: documentType,
-        party_id: partyId || undefined,
-        godown_id: godownId || undefined,
+        party_id: validUuid(partyId) || undefined,
+        godown_id: validUuid(godownId) || undefined,
         quotation_number: quotationNumber.trim() || undefined,
         quotation_date: quotationDate,
         valid_until: validUntil || undefined,
@@ -231,7 +238,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
         payment_terms: paymentTerms.trim() || undefined,
         delivery_terms: deliveryTerms.trim() || undefined,
         items: items.map((item) => ({
-          item_id: item.item_id,
+          item_id: validUuid(item.item_id) || undefined,
           item_name: item.name,
           item_description: item.description || undefined,
           hsn_code: item.hsn_code || undefined,

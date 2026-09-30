@@ -16,6 +16,68 @@ function isValidGstRate(value: unknown) {
   return Number.isFinite(rate) && rate >= 0 && rate <= 100 && Math.round(rate * 1000) === rate * 1000;
 }
 
+function normalizedImportHeader(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+const ITEM_NAME_HEADERS = new Set([
+  'name', 'itemname', 'productname', 'productservicename', 'itemservicename',
+  'nameofitem', 'nameofproduct', 'product', 'item', 'particulars', 'skuname',
+]);
+
+function findItemHeaderRow(matrix: unknown[][]): { index: number } | null {
+  const limit = Math.min(matrix.length, 30);
+  for (let index = 0; index < limit; index++) {
+    if (matrix[index].some((cell) => ITEM_NAME_HEADERS.has(normalizedImportHeader(cell)))) return { index };
+  }
+  return null;
+}
+
+function rowsFromMatrix(matrix: unknown[][], headerIndex: number): Record<string, unknown>[] {
+  const headers = matrix[headerIndex].map((value) => String(value ?? '').trim());
+  return matrix.slice(headerIndex + 1)
+    .map((values, index) => {
+      const row: Record<string, unknown> = { __sourceRow: headerIndex + index + 2 };
+      headers.forEach((header, column) => {
+        if (header) row[header] = values[column] ?? '';
+      });
+      return row;
+    })
+    .filter((row) => Object.entries(row).some(([key, value]) => key !== '__sourceRow' && String(value ?? '').trim() !== ''));
+}
+
+function itemImportReader(row: Record<string, unknown>) {
+  const values = new Map<string, unknown>();
+  Object.entries(row).forEach(([key, value]) => values.set(normalizedImportHeader(key), value));
+  return (...aliases: string[]) => {
+    for (const alias of aliases) {
+      const key = normalizedImportHeader(alias);
+      if (values.has(key)) return values.get(key);
+    }
+    return undefined;
+  };
+}
+
+function importNumber(value: unknown, fallback = 0): number {
+  if (value == null || String(value).trim() === '') return fallback;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+  const normalized = String(value).replace(/[₹,$%\s]/g, '').replace(/,/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function importQuantity(value: unknown): { quantity: number; unitText?: string } {
+  if (value == null || String(value).trim() === '') return { quantity: 0 };
+  const direct = importNumber(value, Number.NaN);
+  if (Number.isFinite(direct)) return { quantity: direct };
+  const match = String(value ?? '').trim().match(/^(\d+(?:\.\d+)?)\s+([a-zA-Z]+)$/);
+  return match ? { quantity: Number(match[1]), unitText: match[2] } : { quantity: Number.NaN };
+}
+
+function itemNameKey(value: unknown): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
 async function applyOpeningStock(
   client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
   args: {
@@ -670,6 +732,14 @@ export async function getItem(req: Request, res: Response) {
       [id, companyId]
     );
 
+    const serialNumbersRes = await query(
+      `SELECT id, serial_number, status, godown_id, created_at
+       FROM item_serial_numbers
+       WHERE item_id = $1 AND company_id = $2
+       ORDER BY serial_number`,
+      [id, companyId]
+    );
+
     const activity = await getItemActivity(companyId, id);
 
     // Batches if applicable
@@ -694,6 +764,7 @@ export async function getItem(req: Request, res: Response) {
       stock_shortfall_value: valuation.stockShortfallValue,
       has_negative_stock: valuation.hasNegativeStock,
       recent_movements: movementsRes.rows,
+      serial_numbers: serialNumbersRes.rows,
       activity_timeline: activity.timeline,
       activity_summary: activity.summary,
       batches,
@@ -1100,18 +1171,39 @@ export async function bulkImport(req: Request, res: Response) {
     const ext = path.extname(req.file.originalname).toLowerCase();
 
     let rows: any[] = [];
+    let headerRowIndex = 0;
 
     if (ext === '.xlsx' || ext === '.xls') {
-      const workbook = XLSX.readFile(req.file.path);
+      const workbook = XLSX.readFile(req.file.path, { cellDates: false });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      rows = XLSX.utils.sheet_to_json(sheet);
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: true, blankrows: true });
+      const candidate = findItemHeaderRow(matrix);
+      if (!candidate) {
+        try { fs.unlinkSync(req.file.path); } catch { }
+        return res.status(400).json(error('Could not find an item-name column. Use a header such as Name, Item Name, or Product Name.'));
+      }
+      headerRowIndex = candidate.index;
+      rows = rowsFromMatrix(matrix, candidate.index);
     } else if (ext === '.csv') {
       const workbook = XLSX.readFile(req.file.path, { type: 'file' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      rows = XLSX.utils.sheet_to_json(sheet);
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: true, blankrows: true });
+      const candidate = findItemHeaderRow(matrix);
+      if (!candidate) {
+        try { fs.unlinkSync(req.file.path); } catch { }
+        return res.status(400).json(error('Could not find an item-name column. Use a header such as Name, Item Name, or Product Name.'));
+      }
+      headerRowIndex = candidate.index;
+      rows = rowsFromMatrix(matrix, candidate.index);
     } else if (ext === '.json') {
       const content = fs.readFileSync(req.file.path, 'utf-8');
-      rows = JSON.parse(content);
+      const parsed = JSON.parse(content);
+      rows = Array.isArray(parsed) ? parsed.filter((row) => row && typeof row === 'object' && !Array.isArray(row)) : [];
+    }
+
+    if (!rows.length) {
+      try { fs.unlinkSync(req.file.path); } catch { }
+      return res.status(400).json(error('The uploaded file has no item rows below its header.'));
     }
 
     // Map headers and validate
@@ -1119,48 +1211,112 @@ export async function bulkImport(req: Request, res: Response) {
     const errors: any[] = [];
     const seenSkus = new Set<string>();
     const seenBarcodes = new Set<string>();
+    const seenSerials = new Set<string>();
+    const groupedByName = new Map<string, any>();
+    const existingItems = await query(
+      'SELECT name, sku, barcode FROM items WHERE company_id = $1 AND is_deleted = false',
+      [companyId],
+    );
+    const existingSkus = new Set(existingItems.rows.map((row: any) => String(row.sku || '').trim()).filter(Boolean));
+    const existingBarcodes = new Set(existingItems.rows.map((row: any) => String(row.barcode || '').trim()).filter(Boolean));
+    const existingNames = new Set(existingItems.rows.map((row: any) => itemNameKey(row.name)).filter(Boolean));
+    const existingSerialsResult = await query('SELECT serial_number FROM item_serial_numbers WHERE company_id = $1', [companyId]);
+    const existingSerials = new Set(existingSerialsResult.rows.map((row: any) => String(row.serial_number || '').trim().toLocaleLowerCase()).filter(Boolean));
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const importedType = String(row['Item Type'] || row['item_type'] || 'product').trim().toLowerCase();
+      const get = itemImportReader(row);
+      const importedType = String(get('Item Type', 'Type', 'Product Type') || 'product').trim().toLowerCase();
       const importedIsService = importedType === 'service';
+      const serialNumber = String(get('Serial No', 'Serial Number', 'Serial No.', 'S/N') ?? '').trim();
+      const quantityCell = get('Opening Stock', 'Opening Quantity', 'Opening Stock Qty', 'Stock Quantity', 'Current Stock', 'Balance Qty', 'Quantity', 'Qty');
+      const parsedQuantity = importQuantity(quantityCell);
       const item: any = {
-        name: row['Name'] || row['name'] || '',
-        sku: row['SKU'] || row['sku'] || null,
-        barcode: row['Barcode'] || row['barcode'] || row['EAN'] || row['ean'] || null,
-        hsn_code: row['HSN Code'] || row['SAC Code'] || row['hsn_code'] || row['sac_code'] || null,
-        brand: row['Brand'] || row['brand'] || null,
+        name: get('Name', 'Item Name', 'Product Name', 'Product/Service Name', 'Item/Service Name', 'Name of Item', 'Name of Product', 'Product', 'Item', 'Particulars', 'SKU Name') || '',
+        sku: get('SKU', 'Item SKU', 'Product SKU', 'Item Code', 'Product Code', 'Code') || null,
+        barcode: get('Barcode', 'Bar Code', 'Barcode No', 'Barcode Number', 'EAN', 'EAN Code', 'UPC', 'UPC Code') || null,
+        hsn_code: get('HSN Code', 'HSN/SAC', 'HSN', 'SAC Code', 'SAC', 'Tax Code') || null,
+        brand: get('Brand', 'Manufacturer', 'Make') || null,
         item_type: importedType,
-        selling_price: Math.round(Number(row['Selling Price'] || row['selling_price'] || 0) * 100),
-        purchase_price: Math.round(Number(row['Purchase Price'] || row['purchase_price'] || 0) * 100),
-        gst_rate: Number(row['GST Rate'] ?? row['gst_rate'] ?? 18),
-        opening_stock: importedIsService ? 0 : Number(row['Opening Stock'] || row['opening_stock'] || 0),
-        reorder_point: Number(row['Reorder Point'] || row['reorder_point'] || 0),
+        selling_price: Math.round(importNumber(get('Selling Price', 'Sale Price', 'Sales Price', 'Selling Rate', 'Sale Rate', 'Rate', 'Rate per Unit', 'MRP'), 0) * 100),
+        purchase_price: Math.round(importNumber(get('Purchase Price', 'Purchase Rate', 'Cost Price', 'Unit Cost'), 0) * 100),
+        gst_rate: importNumber(get('GST Rate', 'GST %', 'Tax Rate', 'Tax %'), 0),
+        opening_stock: importedIsService ? 0 : parsedQuantity.quantity,
+        reorder_point: importNumber(get('Reorder Point', 'Reorder Level', 'Minimum Stock', 'Min Stock')),
+        serial_number: serialNumber || null,
+        is_serialized: Boolean(serialNumber),
       };
+
+      const hasItemData = [
+        item.sku, item.barcode, item.hsn_code, item.brand, quantityCell,
+        get('Selling Price', 'Sale Price', 'Sales Price', 'Selling Rate', 'Sale Rate', 'Rate', 'Rate per Unit', 'MRP'),
+        get('Purchase Price', 'Purchase Rate', 'Cost Price', 'Unit Cost'),
+        get('GST Rate', 'GST %', 'Tax Rate', 'Tax %'),
+      ].some((value) => value != null && String(value).trim() !== '');
+      if (!item.name && !item.serial_number && !hasItemData) continue;
 
       const rowErrors: string[] = [];
       if (!item.name) rowErrors.push('Name is required');
+      if (!Number.isFinite(item.selling_price) || item.selling_price < 0) rowErrors.push('Selling price must be a valid non-negative amount');
+      if (!Number.isFinite(item.purchase_price) || item.purchase_price < 0) rowErrors.push('Purchase price must be a valid non-negative amount');
       if (!isValidGstRate(item.gst_rate)) rowErrors.push('GST rate must be between 0 and 100 with at most three decimal places');
-      if (item.selling_price < 0) rowErrors.push('Selling price cannot be negative');
+      if (!Number.isFinite(item.opening_stock) || item.opening_stock < 0) rowErrors.push('Opening stock must be a valid non-negative quantity');
+      if (!Number.isFinite(item.reorder_point) || item.reorder_point < 0) rowErrors.push('Reorder point must be a valid non-negative quantity');
+      const serialKey = String(item.serial_number || '').toLocaleLowerCase();
+      if (serialKey && (seenSerials.has(serialKey) || existingSerials.has(serialKey))) {
+        rowErrors.push(existingSerials.has(serialKey) ? 'Serial number already exists' : 'Duplicate serial number in import file');
+      }
       const skuKey = String(item.sku || '').trim();
       const barcodeKey = String(item.barcode || '').trim();
       if (skuKey) {
-        if (seenSkus.has(skuKey)) rowErrors.push('Duplicate SKU in import file');
+        if (seenSkus.has(skuKey) || existingSkus.has(skuKey)) rowErrors.push(existingSkus.has(skuKey) ? 'SKU already exists' : 'Duplicate SKU in import file');
         seenSkus.add(skuKey);
-        const dupSku = await query('SELECT id FROM items WHERE company_id = $1 AND sku = $2 AND is_deleted = false LIMIT 1', [companyId, skuKey]);
-        if (dupSku.rows.length) rowErrors.push('SKU already exists');
       }
       if (barcodeKey) {
-        if (seenBarcodes.has(barcodeKey)) rowErrors.push('Duplicate barcode in import file');
+        if (seenBarcodes.has(barcodeKey) || existingBarcodes.has(barcodeKey)) rowErrors.push(existingBarcodes.has(barcodeKey) ? 'Barcode already exists' : 'Duplicate barcode in import file');
         seenBarcodes.add(barcodeKey);
-        const dupBarcode = await query('SELECT id FROM items WHERE company_id = $1 AND barcode = $2 AND is_deleted = false LIMIT 1', [companyId, barcodeKey]);
-        if (dupBarcode.rows.length) rowErrors.push('Barcode already exists');
       }
 
       if (rowErrors.length) {
-        errors.push({ row: i + 2, errors: rowErrors, data: item });
+        errors.push({ row: Number(row.__sourceRow) || i + headerRowIndex + 2, errors: rowErrors, data: item });
       } else {
-        preview.push({ row: i + 2, data: item, valid: true });
+        if (serialKey) seenSerials.add(serialKey);
+        const sourceRow = Number(row.__sourceRow) || i + headerRowIndex + 2;
+        const warnings: string[] = [];
+        if (parsedQuantity.unitText) warnings.push(`Quantity was read as ${parsedQuantity.quantity}; review the unit "${parsedQuantity.unitText}" after import.`);
+        if (item.serial_number && item.opening_stock > 1) warnings.push('One serial number is listed with quantity greater than 1; review the serial/stock count.');
+        if (item.serial_number && item.opening_stock === 0) warnings.push('Serial number will be saved as unavailable because opening quantity is zero.');
+        if (get('Selling Price', 'Sale Price', 'Sales Price', 'Selling Rate', 'Sale Rate', 'Rate', 'Rate per Unit', 'MRP') == null || String(get('Selling Price', 'Sale Price', 'Sales Price', 'Selling Rate', 'Sale Rate', 'Rate', 'Rate per Unit', 'MRP')).trim() === '') {
+          warnings.push('Selling price is missing and will be set to 0.');
+        }
+        if (get('Purchase Price', 'Purchase Rate', 'Cost Price', 'Unit Cost') == null || String(get('Purchase Price', 'Purchase Rate', 'Cost Price', 'Unit Cost')).trim() === '') {
+          warnings.push('Purchase price is missing and will be set to 0.');
+        }
+        if (get('GST Rate', 'GST %', 'Tax Rate', 'Tax %') == null || String(get('GST Rate', 'GST %', 'Tax Rate', 'Tax %')).trim() === '') {
+          warnings.push('GST rate is missing and will be set to 0%.');
+        }
+
+        if (!item.serial_number) {
+          const key = itemNameKey(item.name);
+          const existingGroup = groupedByName.get(key);
+          if (existingNames.has(key)) {
+            errors.push({ row: sourceRow, errors: ['An item with this name already exists. Add a serial number or SKU to identify a separate item.'], data: item });
+            continue;
+          }
+          if (existingGroup) {
+            existingGroup.data.opening_stock += item.opening_stock;
+            existingGroup.sourceRows.push(sourceRow);
+            existingGroup.warnings = Array.from(new Set(existingGroup.warnings.filter((warning: string) => !warning.startsWith('Combined '))));
+            existingGroup.warnings.push(...warnings.filter((warning) => !existingGroup.warnings.includes(warning)));
+            existingGroup.warnings.push(`Combined ${existingGroup.sourceRows.length} rows with this item name and no serial number; quantities were added together.`);
+            continue;
+          }
+          const entry = { row: sourceRow, sourceRows: [sourceRow], data: item, valid: true, warnings };
+          groupedByName.set(key, entry);
+          preview.push(entry);
+        } else {
+          preview.push({ row: sourceRow, sourceRows: [sourceRow], data: item, valid: true, warnings });
+        }
       }
     }
 
@@ -1182,9 +1338,9 @@ export async function bulkImport(req: Request, res: Response) {
           const halfRate = d.gst_rate / 2;
           const isService = d.item_type === 'service';
           const itemIns = await client.query(
-            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, brand, item_type, track_inventory, purchase_price, selling_price,
+            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, brand, item_type, track_inventory, is_serialized, purchase_price, selling_price,
               gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock, opening_stock_value, reorder_point)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
              RETURNING id`,
             [
               companyId,
@@ -1195,6 +1351,7 @@ export async function bulkImport(req: Request, res: Response) {
               d.brand,
               d.item_type,
               !isService,
+              Boolean(d.is_serialized),
               d.purchase_price,
               d.selling_price,
               d.gst_rate,
@@ -1207,6 +1364,13 @@ export async function bulkImport(req: Request, res: Response) {
             ]
           );
           const openingQty = isService ? 0 : Number(d.opening_stock || 0);
+          if (d.serial_number) {
+            await client.query(
+              `INSERT INTO item_serial_numbers (company_id, item_id, serial_number, status, godown_id)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [companyId, itemIns.rows[0].id, d.serial_number, openingQty > 0 ? 'available' : 'unavailable', openingQty > 0 ? importGodownId : null],
+            );
+          }
           if (openingQty > 0) {
             await applyOpeningStock(client, {
               companyId,
@@ -1224,7 +1388,14 @@ export async function bulkImport(req: Request, res: Response) {
       return res.json(success({ inserted, errors: errors.length }));
     }
 
-    res.json(success({ preview, errors, total: rows.length, valid: preview.length, invalid: errors.length }));
+    res.json(success({
+      preview,
+      errors,
+      total: preview.length + errors.length,
+      valid: preview.length,
+      invalid: errors.length,
+      note: 'Rows with serial numbers are imported as separate items. Rows without serial numbers are grouped by item name and their quantities are added. Missing price and GST values are set to 0.',
+    }));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
     res.status(500).json(error(err.message));

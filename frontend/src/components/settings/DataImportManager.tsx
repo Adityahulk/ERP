@@ -73,6 +73,15 @@ function csvCell(value: unknown) {
 function previewSummary(row: PreviewRow) {
   if (row.key) return row.key;
   const data = row.data || {};
+  const name = String(data.name || data.item_name || data.product_name || '').trim();
+  const serialNumber = String(data.serial_number || '').trim();
+  if (name && serialNumber) {
+    const quantity = Number(data.opening_stock || 0);
+    return `${name} · Serial ${serialNumber} · Opening qty ${quantity}`;
+  }
+  if (name && data.opening_stock != null) {
+    return `${name} · Opening qty ${Number(data.opening_stock || 0)}`;
+  }
   const first = Object.values(data).find((value) => typeof value === 'string' && value.trim());
   return String(first || `Row ${row.row}`);
 }

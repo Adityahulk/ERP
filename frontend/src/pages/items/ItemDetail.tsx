@@ -120,6 +120,25 @@ export default function ItemDetail() {
               <div><span className="text-muted-foreground">Serialized</span><p className="font-medium mt-0.5">{item.is_serialized ? 'Yes' : 'No'}</p></div>
               <div><span className="text-muted-foreground">Created</span><p className="font-medium mt-0.5">{item.created_at ? formatDate(item.created_at) : '—'}</p></div>
             </div>
+            {item.is_serialized && (
+              <div className="mt-4 border-t pt-4">
+                <span className="text-sm text-muted-foreground">Serial numbers</span>
+                {item.serial_numbers?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {item.serial_numbers.map((serial: any) => (
+                      <div key={serial.id} className="flex max-w-full items-center gap-2 rounded border bg-muted/30 px-2.5 py-1.5 text-sm">
+                        <span className="break-all font-mono">{serial.serial_number}</span>
+                        <Badge variant={serial.status === 'available' ? 'success' : 'secondary'} className="shrink-0 capitalize">
+                          {serial.status || 'unknown'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm">No serial numbers recorded</p>
+                )}
+              </div>
+            )}
             {item.description && <div className="mt-4 pt-4 border-t"><span className="text-muted-foreground text-sm">Description</span><p className="mt-1 text-sm">{item.description}</p></div>}
             {item.custom_fields && Object.keys(item.custom_fields).length > 0 && (
               <div className="mt-4 pt-4 border-t"><span className="text-muted-foreground text-sm">Custom Fields</span>

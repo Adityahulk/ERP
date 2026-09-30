@@ -15,6 +15,13 @@ function trimOrNull(v: unknown): string | null {
 
 type QuoteDocumentType = 'quotation' | 'proforma';
 
+const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+function uuidOrNull(value: unknown): string | null {
+  const normalized = trimOrNull(value);
+  return normalized && UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
 function normalizeDocumentType(value: unknown): QuoteDocumentType {
   return String(value || '').trim().toLowerCase() === 'proforma' ? 'proforma' : 'quotation';
 }
@@ -90,7 +97,10 @@ type QuotationItemInput = {
 function normalizeItems(itemsRaw: unknown): QuotationItemInput[] {
   if (!Array.isArray(itemsRaw)) return [];
   return itemsRaw
-    .map((it) => (it && typeof it === 'object' ? (it as QuotationItemInput) : {}))
+    .map((it) => {
+      const item = it && typeof it === 'object' ? (it as QuotationItemInput) : {};
+      return { ...item, item_id: uuidOrNull(item.item_id) };
+    })
     .filter((it) => (Number(it.quantity) || 0) > 0 && (Number(it.unit_price) || 0) >= 0);
 }
 
@@ -152,14 +162,16 @@ export async function createQuotation(req: Request, res: Response) {
   try {
     const d = req.body;
     const documentType = normalizeDocumentType(d.document_type);
-    if (!d.party_id) return res.status(400).json(error('party_id is required'));
+    const partyId = uuidOrNull(d.party_id);
+    const godownId = uuidOrNull(d.godown_id);
+    if (!partyId) return res.status(400).json(error('Select a valid party before saving'));
+    if (d.godown_id && !godownId) return res.status(400).json(error('Select a valid godown before saving'));
     if (!d.quotation_date) return res.status(400).json(error('quotation_date is required'));
     const items = normalizeItems(d.items);
     if (!items.length) return res.status(400).json(error('At least one line item is required'));
 
     const created = await withTransaction(async (client) => {
       const companyId = req.user!.company_id;
-      const godownId = d.godown_id || null;
       const customNo = trimOrNull(d.quotation_number);
       const qn = customNo || (await generateQuotationNumber(companyId, godownId, documentType));
 
@@ -170,7 +182,7 @@ export async function createQuotation(req: Request, res: Response) {
          FROM parties
          WHERE id = $1 AND company_id = $2 AND is_deleted = false
          FOR SHARE`,
-        [d.party_id, companyId],
+        [partyId, companyId],
         ),
         client.query(
           `SELECT state_code, proforma_validity_days, quotation_validity_days,
@@ -258,7 +270,7 @@ export async function createQuotation(req: Request, res: Response) {
           qn,
           d.quotation_date,
           validUntil,
-          d.party_id,
+          partyId,
           trimOrNull(d.party_name_override) || trimOrNull(party.name),
           trimOrNull(d.party_phone_override) || trimOrNull(party.phone),
           trimOrNull(d.party_email_override) || trimOrNull(party.email),

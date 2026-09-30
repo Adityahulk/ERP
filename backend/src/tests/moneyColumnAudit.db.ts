@@ -7,18 +7,28 @@ async function main(): Promise<void> {
      FROM information_schema.columns
      WHERE table_schema = 'public'
        AND data_type IN ('smallint', 'integer')
+       AND is_generated = 'NEVER'
        AND (
          column_name LIKE '%\_amount' ESCAPE '\'
+         OR column_name LIKE '%\_subtotal' ESCAPE '\'
+         OR column_name LIKE '%\_total' ESCAPE '\'
          OR column_name LIKE '%\_price' ESCAPE '\'
          OR column_name LIKE '%\_cost' ESCAPE '\'
          OR column_name LIKE '%\_value' ESCAPE '\'
          OR column_name LIKE '%\_balance' ESCAPE '\'
          OR column_name LIKE '%\_salary' ESCAPE '\'
+         OR column_name LIKE '%\_debit' ESCAPE '\'
+         OR column_name LIKE '%\_credit' ESCAPE '\'
+         OR column_name LIKE '%\_limit' ESCAPE '\'
          OR column_name LIKE '%\_charges' ESCAPE '\'
+         OR column_name LIKE '%\_charge' ESCAPE '\'
+         OR column_name LIKE '%\_principal' ESCAPE '\'
+         OR column_name LIKE '%\_fee' ESCAPE '\'
          OR column_name IN (
            'amount', 'subtotal', 'balance', 'balance_after', 'round_off',
            'debit', 'credit', 'total_debit', 'total_credit', 'price', 'price_inr',
-           'hra', 'allowances', 'deductions', 'credit_limit'
+           'hra', 'allowances', 'deductions', 'credit_limit', 'total',
+           'current_balance', 'principal', 'fee'
          )
        )
      ORDER BY table_name, column_name`,
