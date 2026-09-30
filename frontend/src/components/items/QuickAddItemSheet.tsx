@@ -70,7 +70,6 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
   const [taxPreference, setTaxPreference] = useState<string>('taxable');
   const [cessRate, setCessRate] = useState('');
   const [openingStock, setOpeningStock] = useState('');
-  const [openingStockValueRupee, setOpeningStockValueRupee] = useState('');
   const [openingStockDate, setOpeningStockDate] = useState('');
   const [godownId, setGodownId] = useState('');
   const [reorderPoint, setReorderPoint] = useState('');
@@ -100,7 +99,6 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     setTaxPreference('taxable');
     setCessRate('');
     setOpeningStock('');
-    setOpeningStockValueRupee('');
     setOpeningStockDate('');
     setGodownId('');
     setReorderPoint('');
@@ -133,6 +131,10 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
       return [...prev, { key, value }];
     });
   };
+
+  const calculatedOpeningStockValue = Math.round(
+    Math.max(0, parseFloat(openingStock) || 0) * Math.max(0, parseFloat(purchaseRupee) || 0) * 100,
+  ) / 100;
 
   const submit = async () => {
     const trimmedName = name.trim();
@@ -192,7 +194,7 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
     if (!Number.isNaN(cess) && cess >= 0) body.cess_rate = cess;
 
     if (itemSettings.stock_maintenance && os > 0) body.opening_stock = os;
-    const osv = parseMoneyPaise(openingStockValueRupee);
+    const osv = parseMoneyPaise(String(calculatedOpeningStockValue));
     if (os > 0 && osv > 0) body.opening_stock_value = osv;
     const osd = openingStockDate.trim();
     if (osd) body.opening_stock_date = osd;
@@ -500,14 +502,14 @@ export function QuickAddItemSheet({ open, onOpenChange, defaultName = '', onCrea
                         <div>
                           <Label>Opening stock value (₹)</Label>
                           <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            type="text"
                             className="mt-1 tabular-nums"
-                            value={openingStockValueRupee}
-                            onChange={(e) => setOpeningStockValueRupee(e.target.value)}
+                            value={calculatedOpeningStockValue.toFixed(2)}
+                            readOnly
+                            aria-readonly="true"
                             disabled={createItem.isPending}
                           />
+                          <p className="mt-1 text-[11px] text-muted-foreground">Opening quantity × purchase price</p>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

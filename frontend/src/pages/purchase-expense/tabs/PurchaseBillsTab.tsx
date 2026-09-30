@@ -175,7 +175,7 @@ export default function PurchaseBillsTab() {
     setPartySearch(q);
     if (q.length < 2) { setPartyResults([]); return; }
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -384,7 +384,7 @@ export default function PurchaseBillsTab() {
       const lookup = String(result.supplier_gstin || result.party_name || '').trim();
       if (lookup) {
         try {
-          const response = await api.get('/parties/search', { params: { q: lookup } });
+          const response = await api.get('/parties/search', { params: { q: lookup, party_type: 'supplier' } });
           const matches = response.data?.data || [];
           const exact = matches.find((party: any) =>
             (result.supplier_gstin && party.gstin === result.supplier_gstin)
@@ -703,7 +703,7 @@ export default function PurchaseBillsTab() {
         </div>
       )}
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" defaultPartyType="supplier" onCreated={(row) => selectSupplier(row)} />
       <OcrBillSheet open={ocrOpen} onOpenChange={setOcrOpen} context="Purchase Bill" onConfirm={applyOcrResult} />
     </div>
   );

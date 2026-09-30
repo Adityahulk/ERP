@@ -16,6 +16,16 @@ import {
 import toast from 'react-hot-toast';
 import MoneyInput from '@/components/transactions/MoneyInput';
 
+const partyTypeOptions = [
+  { value: 'customer', label: 'Customer' },
+  { value: 'supplier', label: 'Supplier' },
+  { value: 'both', label: 'Both' },
+] as const;
+
+function partyTypeLabel(value: unknown) {
+  return partyTypeOptions.find((option) => option.value === value)?.label || 'Both';
+}
+
 function cleanText(value: unknown): string | null {
   const text = String(value ?? '').trim();
   return text ? text : null;
@@ -64,6 +74,7 @@ export default function PartyDetail() {
     if (!party) return;
     setForm({
       name: party.name,
+      party_type: party.party_type || 'both',
       phone: party.phone || '',
       email: party.email || '',
       gstin: party.gstin || '',
@@ -93,6 +104,7 @@ export default function PartyDetail() {
     try {
       const payload: any = {
         name: String(form.name || '').trim(),
+        party_type: form.party_type || 'both',
         phone: cleanText(form.phone),
         email: cleanText(form.email),
         gstin: g.length === 15 ? g : null,
@@ -210,7 +222,7 @@ export default function PartyDetail() {
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold">{party.name}</h1>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-200">
-                Party
+                {partyTypeLabel(party.party_type)}
               </span>
               {!party.is_active && (
                 <Badge variant="outline" className="text-[10px]">Inactive</Badge>
@@ -405,6 +417,21 @@ export default function PartyDetail() {
             <SheetTitle>Edit Party — {party.name}</SheetTitle>
           </SheetHeader>
           <div className="space-y-4">
+            <div>
+              <Label>Party type *</Label>
+              <div className="mt-1 grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-1">
+                {partyTypeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setForm((current: any) => ({ ...current, party_type: option.value }))}
+                    className={`rounded px-2 py-2 text-sm font-medium ${String(form.party_type || 'both') === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <Label>Name *</Label>
               <Input className="mt-1" value={form.name || ''} onChange={(e) => setForm((p: any) => ({ ...p, name: e.target.value }))} />

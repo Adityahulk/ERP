@@ -15,11 +15,13 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultName?: string;
+  defaultPartyType?: 'customer' | 'supplier' | 'both';
   onCreated: (party: Record<string, unknown>) => void;
 };
 
 type PartyForm = {
   name: string;
+  party_type: 'customer' | 'supplier' | 'both';
   gstin: string;
   phone: string;
   email: string;
@@ -37,9 +39,10 @@ type PartyForm = {
   opening_balance_rupees: string;
 };
 
-function emptyForm(defaultName: string): PartyForm {
+function emptyForm(defaultName: string, defaultPartyType: PartyForm['party_type']): PartyForm {
   return {
     name: defaultName.trim(),
+    party_type: defaultPartyType,
     gstin: '',
     phone: '',
     email: '',
@@ -75,15 +78,15 @@ function extractPartyRow(resBody: unknown): Record<string, unknown> | null {
   return { ...row, id: normalizedId };
 }
 
-export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCreated }: Props) {
+export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', defaultPartyType = 'customer', onCreated }: Props) {
   const qc = useQueryClient();
-  const [f, setF] = useState<PartyForm>(() => emptyForm(''));
+  const [f, setF] = useState<PartyForm>(() => emptyForm('', defaultPartyType));
   const [saving, setSaving] = useState(false);
   const u = <K extends keyof PartyForm>(k: K, v: PartyForm[K]) => setF((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
-    if (open) setF(emptyForm(defaultName));
-  }, [open, defaultName]);
+    if (open) setF(emptyForm(defaultName, defaultPartyType));
+  }, [open, defaultName, defaultPartyType]);
 
   const submit = async () => {
     const trimmedName = f.name.trim();
@@ -107,7 +110,7 @@ export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCre
       return;
     }
 
-    const body: Record<string, unknown> = { name: trimmedName };
+    const body: Record<string, unknown> = { name: trimmedName, party_type: f.party_type };
     if (g.length === 15) body.gstin = g;
     const phone = f.phone.trim();
     if (phone) body.phone = phone;
@@ -184,6 +187,22 @@ export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', onCre
           </TabsList>
 
           <TabsContent value="essentials" className="mt-0 space-y-4 data-[state=inactive]:hidden">
+            <div>
+              <Label>Party type *</Label>
+              <div className="mt-1 grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-1">
+                {(['customer', 'supplier', 'both'] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => u('party_type', value)}
+                    className={`rounded px-2 py-2 text-sm font-medium capitalize ${f.party_type === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    disabled={saving}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <Label htmlFor="qa-party-name">Name *</Label>
               <Input id="qa-party-name" className="mt-1" value={f.name} onChange={(e) => u('name', e.target.value)} autoFocus disabled={saving} />

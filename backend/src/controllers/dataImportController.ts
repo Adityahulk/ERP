@@ -28,9 +28,9 @@ const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const templates: Record<ImportType, { sheet: string; headers: string[]; rows: unknown[][]; note: string }> = {
   parties: {
     sheet: 'Parties',
-    headers: ['Name', 'Phone', 'Email', 'GSTIN', 'PAN', 'Billing Address', 'Shipping Address', 'City', 'State', 'Pincode', 'State Code', 'Opening Balance', 'Balance Type', 'Payment Terms Days', 'Contact Person', 'Notes'],
-    rows: [['ABC Traders', '9876543210', 'accounts@example.com', '24ABCDE1234F1Z5', 'ABCDE1234F', 'Surat, Gujarat', 'Surat, Gujarat', 'Surat', 'Gujarat', '395001', '24', 15000, 'debit', 30, 'Mr. Patel', 'Imported opening party']],
-    note: 'Amounts are in rupees. Balance Type must be debit or credit. Name is required; duplicate phone/GSTIN rows are rejected with a reason.',
+    headers: ['Name', 'Party Type', 'Phone', 'Email', 'GSTIN', 'PAN', 'Billing Address', 'Shipping Address', 'City', 'State', 'Pincode', 'State Code', 'Opening Balance', 'Balance Type', 'Payment Terms Days', 'Contact Person', 'Notes'],
+    rows: [['ABC Traders', 'both', '9876543210', 'accounts@example.com', '24ABCDE1234F1Z5', 'ABCDE1234F', 'Surat, Gujarat', 'Surat, Gujarat', 'Surat', 'Gujarat', '395001', '24', 15000, 'debit', 30, 'Mr. Patel', 'Imported opening party']],
+    note: 'Party Type must be customer, supplier, or both. Amounts are in rupees. Balance Type must be debit or credit. Name is required; duplicate phone/GSTIN rows are rejected with a reason.',
   },
   purchases: {
     sheet: 'Purchases',
@@ -187,11 +187,15 @@ async function validateParties(rows: Record<string, unknown>[], refs: Awaited<Re
     const phone = normalizePhone(get('Phone', 'Phone Number', 'Mobile', 'Mobile Number'));
     const email = cleanText(get('Email', 'Email Address'), 200).toLowerCase();
     const gstin = normalizeGstin(get('GSTIN', 'GST No', 'GST Number'));
+    const rawPartyType = cleanText(get('Party Type', 'Type') || 'both', 20).toLowerCase();
+    const partyType = rawPartyType === 'customer' || rawPartyType === 'supplier' || rawPartyType === 'both'
+      ? rawPartyType
+      : '';
     const balanceType = cleanText(get('Balance Type', 'Opening Balance Type') || 'debit', 10).toLowerCase();
     const openingRupees = numberValue(get('Opening Balance', 'Balance'));
     const opening = Number.isFinite(openingRupees) ? Math.round(openingRupees * 100) * (['credit', 'cr'].includes(balanceType) ? -1 : 1) : 0;
     const data = {
-      name, phone, email, gstin, pan: cleanText(get('PAN'), 10).toUpperCase(),
+      name, party_type: partyType, phone, email, gstin, pan: cleanText(get('PAN'), 10).toUpperCase(),
       billing_address: cleanText(get('Billing Address', 'Address'), 3000),
       shipping_address: cleanText(get('Shipping Address', 'Ship To'), 3000),
       city: cleanText(get('City'), 200), state: cleanText(get('State'), 200),
@@ -202,6 +206,7 @@ async function validateParties(rows: Record<string, unknown>[], refs: Awaited<Re
     };
     const rowErrors: string[] = [];
     if (!name) rowErrors.push('Name is required');
+    if (!partyType) rowErrors.push('Party Type must be customer, supplier, or both');
     if (phone && phone.length > 20) rowErrors.push('Phone must be 20 characters or fewer');
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) rowErrors.push('Email format is invalid');
     if (gstin && !GSTIN_RE.test(gstin)) rowErrors.push('GSTIN format is invalid');
@@ -406,8 +411,8 @@ async function importParties(records: ImportPreview[], companyId: string, userId
           company_id, party_type, name, phone, email, gstin, pan, billing_address, shipping_address,
           billing_city, billing_state, billing_pincode, billing_state_code, city, state, pincode, state_code,
           credit_days, payment_terms, opening_balance, balance, contact_person, notes, custom_fields
-        ) VALUES ($1,'party',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$9,$10,$11,$12,$13,$13,$14,$14,$15,$16,'{}') RETURNING id`,
-        [companyId, d.name, d.phone || null, d.email || null, d.gstin || null, d.pan || null,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$10,$11,$12,$13,$14,$14,$15,$15,$16,$17,'{}') RETURNING id`,
+        [companyId, d.party_type || 'both', d.name, d.phone || null, d.email || null, d.gstin || null, d.pan || null,
           d.billing_address || null, d.shipping_address || null, d.city || null, d.state || null,
           d.pincode || null, d.state_code || null, d.payment_terms || 0, d.opening_balance || 0,
           d.contact_person || null, d.notes || null],

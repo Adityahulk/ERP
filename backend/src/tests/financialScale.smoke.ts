@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateStockValuation } from '../lib/stockValuation';
+import { calculateOpeningStockValuePaise, calculateStockValuation } from '../lib/stockValuation';
 import { isSafePaise, MAX_MONEY_PAISE, nonNegativeMoneyPaiseSchema, parseMoneyPaise } from '../lib/money';
 
 const zeroStock = calculateStockValuation([
@@ -38,5 +38,8 @@ assert.equal(nonNegativeMoneyPaiseSchema.parse(ninetyBillionRupeesInPaise), nine
 assert.equal(parseMoneyPaise(String(ninetyBillionRupeesInPaise)), ninetyBillionRupeesInPaise);
 assert.equal(isSafePaise(MAX_MONEY_PAISE), true);
 assert.equal(isSafePaise(MAX_MONEY_PAISE + 1), false);
+assert.equal(calculateOpeningStockValuePaise(2, 200_000), 400_000);
+assert.equal(calculateOpeningStockValuePaise(2.5, 200_000), 500_000);
+assert.throws(() => calculateOpeningStockValuePaise(2, MAX_MONEY_PAISE), /exceeds the supported range/);
 
 console.log('Large-value money validation and stock valuation checks passed.');

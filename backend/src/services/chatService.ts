@@ -47,7 +47,7 @@ export const processChatMessage = async (message: string, companyId: string) => 
       const res = await pool.query(
         `SELECT name, phone 
          FROM parties 
-         WHERE company_id = $1 AND is_deleted = false AND party_type = 'customer' 
+         WHERE company_id = $1 AND is_deleted = false AND party_type IN ('customer', 'both')
          ORDER BY created_at DESC LIMIT 5`,
         [companyId]
       );
@@ -99,7 +99,7 @@ export const processChatMessage = async (message: string, companyId: string) => 
     const res = await pool.query(
       `SELECT COUNT(*) as total 
        FROM parties 
-       WHERE company_id = $1 AND is_deleted = false AND party_type = 'customer'`,
+       WHERE company_id = $1 AND is_deleted = false AND party_type IN ('customer', 'both')`,
       [companyId]
     );
     return `You have ${res.rows[0].total} active customers.`;

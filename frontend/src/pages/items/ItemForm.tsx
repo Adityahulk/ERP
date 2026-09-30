@@ -156,6 +156,9 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
   };
   const purchaseBase = getBasePrice(form.purchase_price, form.purchase_price_includes_tax);
   const sellingBase = getBasePrice(form.selling_price, form.selling_price_includes_tax);
+  const calculatedOpeningStockValue = Math.round(
+    Math.max(0, Number(form.opening_stock || 0)) * Math.max(0, Number(form.purchase_price || 0)) * 100,
+  ) / 100;
   const margin = sellingBase - purchaseBase;
   const marginPct = purchaseBase > 0 ? ((margin / purchaseBase) * 100).toFixed(1) : '—';
 
@@ -173,7 +176,7 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
       purchase_price_includes_tax: form.purchase_price_includes_tax === true,
       selling_price_includes_tax: form.selling_price_includes_tax === true,
       price_currency_code: normalizeCurrencyCode(form.price_currency_code),
-      opening_stock_value: isService || form.opening_stock_value === '' ? undefined : rupeesToPaise(form.opening_stock_value),
+      opening_stock_value: isService ? undefined : rupeesToPaise(calculatedOpeningStockValue),
     };
     if (!itemSettings.item_wise_tax) {
       if (isEdit) {
@@ -728,7 +731,8 @@ export default function ItemForm({ open, onOpenChange, item, defaultItemType = '
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label>Opening Stock Value (₹)</Label>
-                        <Input type="number" className="mt-1 tabular-nums" min={0} step={0.01} value={form.opening_stock_value || ''} onChange={e => update('opening_stock_value', e.target.value)} />
+                        <Input type="text" className="mt-1 tabular-nums bg-muted/40" value={calculatedOpeningStockValue.toFixed(2)} readOnly aria-readonly="true" />
+                        <p className="mt-1 text-[11px] text-muted-foreground">Opening quantity × purchase price</p>
                       </div>
                       <div>
                         <Label>Opening Stock Godown</Label>

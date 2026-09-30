@@ -113,7 +113,7 @@ export default function BillingScreen() {
     }
     setPartySearchLoading(true);
     try {
-      const res = await api.get('/parties/search', { params: { q } });
+      const res = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
       setPartySearchResults(res.data?.data || res.data || []);
     } catch (e) {
       console.error(e);

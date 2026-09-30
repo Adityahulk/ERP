@@ -63,7 +63,7 @@ export default function PurchaseReturnTab() {
     if (q.length < 2) { setPartyResults([]); return; }
 
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };
@@ -201,7 +201,7 @@ export default function PurchaseReturnTab() {
         </SheetContent>
       </Sheet>
 
-      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" onCreated={(row) => selectSupplier(row)} />
+      <QuickAddPartySheet open={quickAddOpen} onOpenChange={setQuickAddOpen} defaultName="" defaultPartyType="supplier" onCreated={(row) => selectSupplier(row)} />
     </div>
   );
 }

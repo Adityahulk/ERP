@@ -655,7 +655,7 @@ export default function InvoiceCreate() {
     }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
       setPartyResults(res.data || []);
     } catch {
       setPartyResults([]);

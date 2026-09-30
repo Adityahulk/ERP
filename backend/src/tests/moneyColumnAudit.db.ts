@@ -39,6 +39,10 @@ async function main(): Promise<void> {
          ('parties', 'opening_balance'),
          ('items', 'purchase_price'),
          ('items', 'selling_price'),
+         ('items', 'opening_stock_value'),
+         ('item_stock', 'avg_cost_price'),
+         ('item_batches', 'purchase_price'),
+         ('stock_movements', 'unit_cost'),
          ('invoices', 'total_amount'),
          ('invoice_items', 'unit_price'),
          ('purchase_invoices', 'total_amount'),
@@ -54,7 +58,7 @@ async function main(): Promise<void> {
   );
   // Proforma invoices share quotations.total_amount and are distinguished by
   // quotations.document_type, so that one column validates both document types.
-  assert.equal(critical.rows.length, 15, 'One or more critical monetary columns are missing from the schema');
+  assert.equal(critical.rows.length, 19, 'One or more critical monetary columns are missing from the schema');
   for (const column of critical.rows) {
     assert.equal(column.data_type, 'bigint', `${column.table_name}.${column.column_name} must use bigint paise`);
   }

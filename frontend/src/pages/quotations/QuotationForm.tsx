@@ -108,7 +108,7 @@ export default function QuotationForm({ documentType = 'quotation' }: { document
     if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
     finally { setPartySearchLoading(false); }

@@ -60,7 +60,7 @@ export default function PurchaseOrderForm() {
     if (q.length < 2) { setPartyResults([]); setPartySearchLoading(false); return; }
     setPartySearchLoading(true);
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'supplier' } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
     finally { setPartySearchLoading(false); }
@@ -311,6 +311,7 @@ export default function PurchaseOrderForm() {
       </div>
 
       <QuickAddPartySheet
+        defaultPartyType="supplier"
         open={quickAddOpen}
         onOpenChange={setQuickAddOpen}
         defaultName={quickAddDefaultName}

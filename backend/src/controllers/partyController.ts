@@ -21,6 +21,11 @@ function dayInt(v: unknown, fallback = 30): number {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
 }
 
+function partyType(value: unknown): 'customer' | 'supplier' | 'both' {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'customer' || normalized === 'supplier' ? normalized : 'both';
+}
+
 // ── GET /api/parties ──────────────────────────────────────────
 export async function listParties(req: Request, res: Response) {
   try {
@@ -36,7 +41,11 @@ export async function listParties(req: Request, res: Response) {
       where += ` AND (p.name ILIKE $${idx} OR p.phone ILIKE $${idx} OR p.gstin ILIKE $${idx} OR p.email ILIKE $${idx})`;
       params.push(`%${search}%`); idx++;
     }
-    if (party_type) { where += ` AND p.party_type = $${idx}`; params.push(party_type); idx++; }
+    if (party_type && ['customer', 'supplier', 'both'].includes(String(party_type))) {
+      where += ` AND p.party_type = $${idx}`;
+      params.push(party_type);
+      idx++;
+    }
     if (is_active !== undefined) { where += ` AND p.is_active = $${idx}`; params.push(is_active === 'true'); idx++; }
     if (has_balance === 'true') { where += ` AND p.balance != 0`; }
 
@@ -148,16 +157,17 @@ export async function createParty(req: Request, res: Response) {
           opening_balance, balance,
           contact_person, notes, custom_fields
         ) VALUES (
-          $1, $2, 'party', $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12,
-          $9, $10, $11, $12,
-          $13, $14, $14,
-          $15, $15,
-          $16, $17, $18
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13,
+          $10, $11, $12, $13,
+          $14, $15, $15,
+          $16, $16,
+          $17, $18, $19
         ) RETURNING *`,
         [
           companyId,
           String(d.name).trim(),
+          partyType(d.party_type),
           blankToNull(typeof d.phone === 'string' ? d.phone.trim() : d.phone),
           blankToNull(typeof d.email === 'string' ? d.email.trim().toLowerCase() : d.email),
           gstin,
@@ -234,7 +244,7 @@ export async function updateParty(req: Request, res: Response) {
     }
 
     const fields = [
-      'name','phone','email','gstin','pan',
+      'name','party_type','phone','email','gstin','pan',
       'billing_address','shipping_address',
       'credit_limit','contact_person','notes','is_active','custom_fields',
     ];
@@ -248,7 +258,9 @@ export async function updateParty(req: Request, res: Response) {
             ? JSON.stringify(req.body[f])
             : numericFields.has(f)
               ? moneyInt(req.body[f], 0)
-              : blankToNull(req.body[f]),
+              : f === 'party_type'
+                ? partyType(req.body[f])
+                : blankToNull(req.body[f]),
         );
       }
     }
@@ -356,7 +368,7 @@ export async function getPartyLedger(req: Request, res: Response) {
 // ── GET /api/parties/search ───────────────────────────────────
 export async function searchParties(req: Request, res: Response) {
   try {
-    const { q } = req.query;
+    const { q, party_type } = req.query;
     const companyId = req.user!.company_id;
 
     let where = 'company_id = $1 AND is_deleted = false AND is_active = true';
@@ -364,6 +376,11 @@ export async function searchParties(req: Request, res: Response) {
     let idx = 2;
 
     if (q) { where += ` AND (name ILIKE $${idx} OR phone ILIKE $${idx} OR gstin ILIKE $${idx})`; params.push(`%${q}%`); idx++; }
+    if (party_type === 'customer' || party_type === 'supplier') {
+      where += ` AND party_type IN ($${idx}, 'both')`;
+      params.push(party_type);
+      idx++;
+    }
 
     const result = await query(
       `SELECT id, name, phone, email, gstin, city, state, state_code, billing_state_code,

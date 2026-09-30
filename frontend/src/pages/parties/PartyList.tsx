@@ -12,6 +12,16 @@ import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import MoneyInput from '@/components/transactions/MoneyInput';
 
+const partyTypeOptions = [
+  { value: 'customer', label: 'Customer' },
+  { value: 'supplier', label: 'Supplier' },
+  { value: 'both', label: 'Both' },
+] as const;
+
+function partyTypeLabel(value: unknown) {
+  return partyTypeOptions.find((option) => option.value === value)?.label || 'Both';
+}
+
 export default function PartyList() {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<any>({ page: 1, limit: 25 });
@@ -101,7 +111,7 @@ export default function PartyList() {
           <h1 className="text-2xl font-bold">Parties</h1>
           <p className="text-muted-foreground text-sm">One place for every business you deal with — add basics anywhere, complete the profile here.</p>
         </div>
-        <Button size="sm" onClick={() => setShowForm(true)}>
+        <Button size="sm" onClick={() => { setForm({ party_type: 'customer' }); setShowForm(true); }}>
           <UserPlus className="w-4 h-4 mr-1" />
           Add party
         </Button>
@@ -123,17 +133,31 @@ export default function PartyList() {
         ))}
       </div>
 
-      <div className="relative flex-1 max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search by name, phone, GSTIN…"
-          className="pl-9"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setFilters((f: any) => ({ ...f, page: 1 }));
-          }}
-        />
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, phone, GSTIN…"
+            className="pl-9"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setFilters((f: any) => ({ ...f, page: 1 }));
+            }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-1 rounded-md border bg-muted/30 p-1">
+          {[{ value: '', label: 'All' }, ...partyTypeOptions].map((option) => (
+            <button
+              key={option.value || 'all'}
+              type="button"
+              onClick={() => setFilters((current: any) => ({ ...current, page: 1, party_type: option.value || undefined }))}
+              className={`rounded px-3 py-1.5 text-xs font-medium ${String(filters.party_type || '') === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="border rounded-xl bg-card overflow-hidden">
@@ -143,6 +167,7 @@ export default function PartyList() {
               <th className="p-3 text-left font-medium">Name</th>
               <th className="p-3 text-left font-medium hidden md:table-cell">Phone</th>
               <th className="p-3 text-left font-medium hidden lg:table-cell">GSTIN</th>
+              <th className="p-3 text-left font-medium hidden md:table-cell">Type</th>
               <th className="p-3 text-right font-medium">Balance</th>
               <th className="p-3 text-right font-medium hidden md:table-cell">Business</th>
               <th className="w-16 p-3"></th>
@@ -151,14 +176,14 @@ export default function PartyList() {
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={6} className="p-12 text-center text-muted-foreground">
+                <td colSpan={7} className="p-12 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             )}
             {!isLoading && parties.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-12 text-center text-muted-foreground">
+                <td colSpan={7} className="p-12 text-center text-muted-foreground">
                   <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
                   No parties yet
                 </td>
@@ -177,6 +202,7 @@ export default function PartyList() {
                 </td>
                 <td className="p-3 hidden md:table-cell text-muted-foreground">{p.phone || '—'}</td>
                 <td className="p-3 hidden lg:table-cell font-mono text-xs text-muted-foreground">{p.gstin || '—'}</td>
+                <td className="p-3 hidden md:table-cell"><span className="rounded bg-muted px-2 py-1 text-xs font-medium">{partyTypeLabel(p.party_type)}</span></td>
                 <td
                   className={`p-3 text-right tabular-nums font-semibold ${p.balance > 0 ? 'text-emerald-600' : p.balance < 0 ? 'text-red-500' : ''}`}
                 >
@@ -226,6 +252,21 @@ export default function PartyList() {
           </SheetHeader>
           <p className="text-sm text-muted-foreground -mt-2 mb-4">Name is required. GSTIN and everything else are optional and can be edited later.</p>
           <div className="space-y-4">
+            <div>
+              <Label>Party type *</Label>
+              <div className="mt-1 grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-1">
+                {partyTypeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => u('party_type', option.value)}
+                    className={`rounded px-2 py-2 text-sm font-medium ${String(form.party_type || 'customer') === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <Label>Name *</Label>
               <Input className="mt-1" value={form.name || ''} onChange={(e) => u('name', e.target.value)} autoFocus />

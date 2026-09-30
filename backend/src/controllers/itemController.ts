@@ -8,7 +8,7 @@ import * as bwipjs from 'bwip-js';
 import fs from 'fs';
 import path from 'path';
 import { decodeSmartBarcode, isSmartBarcode, getOrCreateItemBarcode } from '../utils/barcodeUtils';
-import { calculateStockValuation } from '../lib/stockValuation';
+import { calculateOpeningStockValuePaise, calculateStockValuation } from '../lib/stockValuation';
 import { isSafePaise } from '../lib/money';
 
 function isValidGstRate(value: unknown) {
@@ -30,7 +30,7 @@ async function applyOpeningStock(
 ) {
   const qty = Math.round(Number(args.quantity || 0) * 10_000) / 10_000;
   if (qty <= 0) return;
-  const unitCost = Number(args.unitCost || 0);
+  const unitCost = Math.round(Number(args.unitCost || 0));
 
   await client.query(
     `INSERT INTO item_stock (company_id, item_id, godown_id, quantity, avg_cost_price)
@@ -74,7 +74,7 @@ async function adjustOpeningStock(
 ) {
   const delta = Math.round(Number(args.delta || 0) * 10_000) / 10_000;
   if (delta === 0) return;
-  const unitCost = Number(args.unitCost || 0);
+  const unitCost = Math.round(Number(args.unitCost || 0));
 
   const stockRes = await client.query(
     `SELECT quantity FROM item_stock
@@ -402,8 +402,12 @@ export async function createItem(req: Request, res: Response) {
     const itemType = String(data.item_type || 'product').toLowerCase();
     const isService = itemType === 'service';
     const trackInventory = isService ? false : data.track_inventory !== false;
-    const openingStock = trackInventory ? Number(data.opening_stock || 0) : 0;
-    const openingStockValue = trackInventory ? Number(data.opening_stock_value || 0) : 0;
+    const openingStock = trackInventory
+      ? Math.round(Number(data.opening_stock || 0) * 10_000) / 10_000
+      : 0;
+    const openingStockValue = trackInventory
+      ? calculateOpeningStockValuePaise(openingStock, data.purchase_price || 0)
+      : 0;
 
     // SKU uniqueness
     if (data.sku) {
@@ -537,7 +541,8 @@ export async function createItem(req: Request, res: Response) {
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
     if (err?.code === '23505') return res.status(409).json(error('An item with this SKU or barcode already exists'));
-    res.status(500).json(error(err.message));
+    const status = /Opening stock|Purchase price|supported range|Select a godown|Enable inventory/i.test(err.message) ? 400 : 500;
+    res.status(status).json(error(err.message));
   }
 }
 
@@ -734,6 +739,11 @@ export async function updateItem(req: Request, res: Response) {
     const oldRes = await query('SELECT * FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false', [id, companyId]);
     if (!oldRes.rows.length) return res.status(404).json(error('Item not found'));
     const old = oldRes.rows[0];
+    const enteredPurchasePrice = Math.round(
+      data.purchase_price !== undefined
+        ? Number(data.purchase_price || 0)
+        : Number(old.purchase_price || 0) * (old.purchase_price_includes_tax ? 1 + Number(old.gst_rate || 0) / 100 : 1),
+    );
 
     // SKU uniqueness check
     if (data.sku && data.sku !== old.sku) {
@@ -770,6 +780,12 @@ export async function updateItem(req: Request, res: Response) {
     }
     if (data.purchase_price !== undefined) {
       data.purchase_price = normalizePrice(data.purchase_price, nextGst, purchaseIncludes);
+    }
+    if (nextItemType !== 'service' && (data.opening_stock !== undefined || data.purchase_price !== undefined)) {
+      data.opening_stock_value = calculateOpeningStockValuePaise(
+        data.opening_stock ?? old.opening_stock ?? 0,
+        enteredPurchasePrice,
+      );
     }
 
     const result = await withTransaction(async (client) => {
@@ -971,8 +987,7 @@ export async function clearItemStockForDeletion(
   }
 
   await client.query(
-    `UPDATE item_stock
-     SET quantity = 0, reserved_quantity = 0, updated_at = NOW()
+    `DELETE FROM item_stock
      WHERE company_id = $1 AND item_id = $2`,
     [companyId, itemId],
   );
@@ -988,6 +1003,11 @@ export async function clearItemStockForDeletion(
      WHERE company_id = $1 AND item_id = $2 AND status = 'available'`,
     [companyId, itemId],
   );
+  await client.query(
+    `DELETE FROM barcode_label_profiles
+     WHERE company_id = $1 AND item_id = $2`,
+    [companyId, itemId],
+  );
 }
 
 // ── DELETE /api/items/:id ─────────────────────────────────────
@@ -998,7 +1018,7 @@ export async function deleteItem(req: Request, res: Response) {
     const outcome = await withTransaction(async (client) => {
       const assessment = await lockAndAssessItemForDeletion(client, companyId, id);
       if (assessment.reasonCode === 'not_found') return { status: 'not_found' as const };
-      if (assessment.reason) return { status: 'blocked' as const, reason: assessment.reason };
+      await clearItemStockForDeletion(client, companyId, id, req.user!.id);
       const result = await client.query(
         `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
@@ -1009,7 +1029,6 @@ export async function deleteItem(req: Request, res: Response) {
       return { status: 'deleted' as const };
     });
     if (outcome.status === 'not_found') return res.status(404).json(error('Item not found'));
-    if (outcome.status === 'blocked') return res.status(400).json(error(outcome.reason));
 
     await logAction(req.user!.id, companyId, 'delete', 'item', id, null, null, req.ip);
     res.json(success({ message: 'Item deleted' }));
@@ -1024,19 +1043,16 @@ export async function bulkDeleteItems(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const ids = Array.from(new Set((req.body.ids as string[]).map(String)));
-    const clearStock = req.body.clear_stock === true;
     const failed: ItemDeletionAssessment[] = [];
     const deleted = await withTransaction(async (client) => {
       const completed: Array<{ id: string; name: string; stock_cleared: boolean }> = [];
       for (const id of ids) {
         const item = await lockAndAssessItemForDeletion(client, companyId, id);
-        if (item.reasonCode === 'not_found' || (item.reason && !clearStock)) {
+        if (item.reasonCode === 'not_found') {
           failed.push(item);
           continue;
         }
-        if (clearStock) {
-          await clearItemStockForDeletion(client, companyId, item.id, req.user!.id);
-        }
+        await clearItemStockForDeletion(client, companyId, item.id, req.user!.id);
         const result = await client.query(
           `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
            WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
@@ -1051,7 +1067,7 @@ export async function bulkDeleteItems(req: Request, res: Response) {
           continue;
         }
         await client.query('DELETE FROM barcode_registry WHERE company_id = $1 AND item_id = $2', [companyId, item.id]);
-        completed.push({ id: item.id, name: item.name, stock_cleared: clearStock });
+        completed.push({ id: item.id, name: item.name, stock_cleared: true });
       }
       return completed;
     });

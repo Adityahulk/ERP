@@ -14,6 +14,17 @@ export type StockValuationSummary = {
 
 const ZERO_TOLERANCE = 0.00005;
 
+/** Calculate an opening inventory value from decimal quantity and paise/unit. */
+export function calculateOpeningStockValuePaise(quantityValue: unknown, unitPricePaiseValue: unknown): number {
+  const quantity = Number(quantityValue || 0);
+  const unitPricePaise = Number(unitPricePaiseValue || 0);
+  if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Opening stock quantity must be a non-negative number');
+  if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise < 0) throw new Error('Purchase price exceeds the supported range');
+  const value = Math.round(quantity * unitPricePaise);
+  if (!Number.isSafeInteger(value)) throw new Error('Opening stock value exceeds the supported range');
+  return value;
+}
+
 /**
  * Stock quantities are decimal units and costs are integer paise. Keep the
  * valuation in paise and force a true zero balance to a zero asset value.

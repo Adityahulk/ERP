@@ -76,7 +76,7 @@ export default function PaymentInTab() {
     setPartySearch(q);
     if (q.length < 2) { setPartyResults([]); return; }
     try {
-      const { data: res } = await api.get('/parties/search', { params: { q } });
+      const { data: res } = await api.get('/parties/search', { params: { q, party_type: 'customer' } });
       setPartyResults(res.data || []);
     } catch { setPartyResults([]); }
   };

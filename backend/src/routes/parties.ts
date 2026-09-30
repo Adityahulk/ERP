@@ -11,6 +11,7 @@ router.use(verifyToken);
 
 const createSchema = z.object({
   name: z.string().min(1, 'Name is required').max(500),
+  party_type: z.enum(['customer', 'supplier', 'both']).optional(),
   phone: z.union([z.string().max(20), z.literal('')]).optional(),
   email: z.union([z.string().email(), z.literal('')]).optional(),
   gstin: z.preprocess(

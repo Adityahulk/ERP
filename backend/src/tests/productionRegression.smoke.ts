@@ -62,7 +62,7 @@ async function verifyPartyCreation(): Promise<void> {
         opening_balance, balance,
         contact_person, notes, custom_fields
       ) VALUES (
-        $1, $2, 'party', $3, $4, NULL, NULL, $5, $6,
+        $1, $2, 'both', $3, $4, NULL, NULL, $5, $6,
         $7, $8, $9, $10, $7, $8, $9, $10,
         $11, $12, $12, $13, $13, $14, $15, $16::jsonb
       )

@@ -28,9 +28,9 @@ async function main() {
   assert.equal(movementCalls[1].params[3], 3, 'Negative stock must be balanced with a positive movement');
   assert.ok(movementCalls.every((call) => call.params[5].includes('bulk item deletion')));
 
-  const resetCall = calls.find((call) => call.sql.includes('SET quantity = 0, reserved_quantity = 0'));
-  assert.ok(resetCall, 'Stock and reservations must be reset in the same deletion transaction');
-  assert.deepEqual(resetCall?.params, ['company-id', 'item-id']);
+  const deleteStockCall = calls.find((call) => call.sql.includes('DELETE FROM item_stock'));
+  assert.ok(deleteStockCall, 'Item-to-godown stock rows must be removed in the same deletion transaction');
+  assert.deepEqual(deleteStockCall?.params, ['company-id', 'item-id']);
 
   const batchCall = calls.find((call) => call.sql.includes('UPDATE item_batches'));
   assert.ok(batchCall, 'Active batch quantities must be cleared and archived');
@@ -39,6 +39,10 @@ async function main() {
   const serialCall = calls.find((call) => call.sql.includes('UPDATE item_serial_numbers'));
   assert.ok(serialCall, 'Available serial numbers must be written off');
   assert.deepEqual(serialCall?.params, ['company-id', 'item-id']);
+
+  const labelProfileCall = calls.find((call) => call.sql.includes('DELETE FROM barcode_label_profiles'));
+  assert.ok(labelProfileCall, 'Saved barcode label configuration must be removed');
+  assert.deepEqual(labelProfileCall?.params, ['company-id', 'item-id']);
 
   console.log('Bulk item deletion stock-clearing checks passed.');
 }

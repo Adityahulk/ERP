@@ -233,7 +233,7 @@ export default function ItemDetail() {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Delete item?"
-        description={`This will remove “${item.name}” from the catalog. Linked stock history may be retained depending on company policy.`}
+        description={`This removes “${item.name}” even when stock exists. Its current stock, godown links, reservations, barcode, active batches, and available serial numbers will be cleared. Historical invoices and purchases remain intact for accounting records.`}
         confirmLabel="Delete"
         variant="destructive"
         isPending={deleteMutation.isPending}

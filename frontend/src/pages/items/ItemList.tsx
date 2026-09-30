@@ -89,7 +89,6 @@ export default function ItemList() {
   const [barcodeImporting, setBarcodeImporting] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [clearStockDeleteOpen, setClearStockDeleteOpen] = useState(false);
   const [bulkDeleteFailures, setBulkDeleteFailures] = useState<BulkDeleteFailure[]>([]);
 
   const isServiceTab = activeTab === 'services';
@@ -156,7 +155,7 @@ export default function ItemList() {
   }, [activeTab, selectedItemId, visibleItems]);
 
   useEffect(() => {
-    const visible = new Set(activeTab === 'products' ? visibleItemIds : []);
+    const visible = new Set(activeTab === 'products' || activeTab === 'services' ? visibleItemIds : []);
     setSelectedItemIds((previous) => {
       const next = new Set(Array.from(previous).filter((id) => visible.has(id)));
       if (next.size === previous.size && Array.from(next).every((id) => previous.has(id))) return previous;
@@ -176,7 +175,7 @@ export default function ItemList() {
   }, [selectedUnitId, units]);
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete "${name}"?`)) return;
+    if (!confirm(`Delete "${name}" and clear its current stock, godown links, reservations, barcode, active batches, and available serial numbers? Historical invoices and purchases will remain intact.`)) return;
     try {
       await deleteMutation.mutateAsync(id);
       if (selectedItemId === id) setSelectedItemId('');
@@ -229,7 +228,6 @@ export default function ItemList() {
       }
       if (failed.length) toast.error(`${failed.length} ${failed.length === 1 ? 'item was' : 'items were'} not deleted. Review the reasons shown.`);
       setBulkDeleteOpen(false);
-      setClearStockDeleteOpen(false);
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Bulk delete failed');
     }
@@ -469,14 +467,7 @@ export default function ItemList() {
                           ? 'Some items still have stock'
                           : 'Some items could not be deleted'}
                       </p>
-                      <div className="flex items-center gap-2">
-                        {bulkDeleteFailures.some((failure) => failure.reasonCode === 'active_stock' || failure.reasonCode === 'reserved_stock') && (
-                          <Button type="button" size="sm" variant="destructive" onClick={() => setClearStockDeleteOpen(true)}>
-                            Clear stock and delete
-                          </Button>
-                        )}
-                        <button type="button" className="text-xs font-medium underline" onClick={() => setBulkDeleteFailures([])}>Dismiss</button>
-                      </div>
+                      <button type="button" className="text-xs font-medium underline" onClick={() => setBulkDeleteFailures([])}>Dismiss</button>
                     </div>
                     <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
                       {bulkDeleteFailures.map((failure) => (
@@ -903,19 +894,8 @@ export default function ItemList() {
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
         title={`Delete ${selectedItemIds.size} selected ${selectedItemIds.size === 1 ? 'item' : 'items'}?`}
-        description="Items with zero available and reserved stock will be removed from active lists. Historical invoices, purchases, and stock movements remain preserved. Items with current stock will stay and show an actionable reason."
+        description="This removes the selected items even when stock exists. Current godown stock links, reservations, barcodes, active batches, and available serial numbers will be cleared with balancing audit movements. Shared godown masters and historical invoices or purchases remain intact."
         confirmLabel="Delete selected"
-        variant="destructive"
-        isPending={bulkDeleteMutation.isPending}
-        onConfirm={() => handleBulkDelete(false)}
-      />
-
-      <ConfirmDialog
-        open={clearStockDeleteOpen}
-        onOpenChange={setClearStockDeleteOpen}
-        title={`Clear stock and delete ${selectedItemIds.size} ${selectedItemIds.size === 1 ? 'item' : 'items'}?`}
-        description="This will set every selected item's godown quantity and reservation to zero, record balancing stock-adjustment movements, then remove the items from active lists. Historical invoices and purchases remain unchanged."
-        confirmLabel="Clear stock and delete"
         variant="destructive"
         isPending={bulkDeleteMutation.isPending}
         onConfirm={() => handleBulkDelete(true)}
