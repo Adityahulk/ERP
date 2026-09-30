@@ -46,6 +46,7 @@ const scanSchema = z.object({
 
 const bulkDeleteSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, 'Select at least one item').max(200, 'Delete up to 200 visible items at a time'),
+  clear_stock: z.boolean().optional().default(false),
 });
 
 // Routes that must come BEFORE /:id to avoid param conflicts

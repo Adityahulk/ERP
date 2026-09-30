@@ -43,7 +43,12 @@ import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 
 type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
-type BulkDeleteFailure = { id: string; name: string; reason: string };
+type BulkDeleteFailure = {
+  id: string;
+  name: string;
+  reason: string;
+  reasonCode?: 'not_found' | 'active_stock' | 'reserved_stock' | null;
+};
 
 function qtyText(value: unknown) {
   const num = Number(value || 0);
@@ -84,6 +89,7 @@ export default function ItemList() {
   const [barcodeImporting, setBarcodeImporting] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [clearStockDeleteOpen, setClearStockDeleteOpen] = useState(false);
   const [bulkDeleteFailures, setBulkDeleteFailures] = useState<BulkDeleteFailure[]>([]);
 
   const isServiceTab = activeTab === 'services';
@@ -202,20 +208,28 @@ export default function ItemList() {
     });
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = async (clearStock = false) => {
     const ids = Array.from(selectedItemIds);
     if (!ids.length) return;
     try {
-      const response = await bulkDeleteMutation.mutateAsync(ids);
+      const response = await bulkDeleteMutation.mutateAsync({ ids, clearStock });
       const result = response?.data || {};
       const deleted = Array.isArray(result.deleted) ? result.deleted : [];
       const failed = (Array.isArray(result.failed) ? result.failed : []) as BulkDeleteFailure[];
       setBulkDeleteFailures(failed);
       setSelectedItemIds(new Set(failed.map((item) => item.id)));
       if (deleted.some((item: any) => item.id === selectedItemId)) setSelectedItemId('');
-      if (deleted.length) toast.success(`${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted. Historical transactions were preserved.`);
+      if (deleted.length) {
+        const clearedCount = deleted.filter((item: any) => item.stock_cleared).length;
+        toast.success(
+          clearStock && clearedCount > 0
+            ? `${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted; ${clearedCount} stock ${clearedCount === 1 ? 'balance was' : 'balances were'} cleared with audit entries.`
+            : `${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} deleted. Historical transactions were preserved.`,
+        );
+      }
       if (failed.length) toast.error(`${failed.length} ${failed.length === 1 ? 'item was' : 'items were'} not deleted. Review the reasons shown.`);
       setBulkDeleteOpen(false);
+      setClearStockDeleteOpen(false);
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Bulk delete failed');
     }
@@ -449,9 +463,20 @@ export default function ItemList() {
 
                 {bulkDeleteFailures.length > 0 && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold">Some items could not be deleted</p>
-                      <button type="button" className="text-xs font-medium underline" onClick={() => setBulkDeleteFailures([])}>Dismiss</button>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-semibold">
+                        {bulkDeleteFailures.some((failure) => failure.reasonCode === 'active_stock' || failure.reasonCode === 'reserved_stock')
+                          ? 'Some items still have stock'
+                          : 'Some items could not be deleted'}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        {bulkDeleteFailures.some((failure) => failure.reasonCode === 'active_stock' || failure.reasonCode === 'reserved_stock') && (
+                          <Button type="button" size="sm" variant="destructive" onClick={() => setClearStockDeleteOpen(true)}>
+                            Clear stock and delete
+                          </Button>
+                        )}
+                        <button type="button" className="text-xs font-medium underline" onClick={() => setBulkDeleteFailures([])}>Dismiss</button>
+                      </div>
                     </div>
                     <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
                       {bulkDeleteFailures.map((failure) => (
@@ -882,7 +907,18 @@ export default function ItemList() {
         confirmLabel="Delete selected"
         variant="destructive"
         isPending={bulkDeleteMutation.isPending}
-        onConfirm={handleBulkDelete}
+        onConfirm={() => handleBulkDelete(false)}
+      />
+
+      <ConfirmDialog
+        open={clearStockDeleteOpen}
+        onOpenChange={setClearStockDeleteOpen}
+        title={`Clear stock and delete ${selectedItemIds.size} ${selectedItemIds.size === 1 ? 'item' : 'items'}?`}
+        description="This will set every selected item's godown quantity and reservation to zero, record balancing stock-adjustment movements, then remove the items from active lists. Historical invoices and purchases remain unchanged."
+        confirmLabel="Clear stock and delete"
+        variant="destructive"
+        isPending={bulkDeleteMutation.isPending}
+        onConfirm={() => handleBulkDelete(true)}
       />
 
       <ItemForm open={showForm} onOpenChange={setShowForm} item={editItem} defaultItemType={activeTab === 'services' ? 'service' : 'product'} />

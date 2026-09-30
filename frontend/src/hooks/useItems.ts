@@ -48,7 +48,8 @@ export function useDeleteItem() {
 export function useBulkDeleteItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ids: string[]) => api.post('/items/bulk-delete', { ids }).then(r => r.data),
+    mutationFn: ({ ids, clearStock = false }: { ids: string[]; clearStock?: boolean }) =>
+      api.post('/items/bulk-delete', { ids, clear_stock: clearStock }).then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['items'] });
       qc.invalidateQueries({ queryKey: ['stock'] });

@@ -23,6 +23,7 @@
     "test:reports": "ts-node --files src/tests/reportCatalog.smoke.ts",
     "test:reports:db": "ts-node --files src/tests/reportCatalogDb.smoke.ts",
     "test:financial-scale": "ts-node src/tests/financialScale.smoke.ts",
+    "test:bulk-item-delete": "ts-node src/tests/bulkItemDeletion.smoke.ts",
     "test:money-schema": "ts-node src/tests/moneyColumnAudit.db.ts",
     "reset": "ts-node src/db/reset.ts && npm run migrate:dev && npm run seed:dev"
   },

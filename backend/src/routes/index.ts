@@ -97,6 +97,15 @@ router.use('/job-work', verifyToken, moduleGuard('job-work'), jobWorkRoutes);
 router.use('/ocr', verifyToken, moduleGuard('ocr'), ocrRoutes);
 
 // API info
+router.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'microtechnique-accounts-api',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
 router.get('/', (_req, res) => {
   res.json({
     name: 'Microtechnique Accounts API',

@@ -864,34 +864,130 @@ type ItemDeletionAssessment = {
   id: string;
   name: string;
   reason: string | null;
+  reasonCode: 'not_found' | 'active_stock' | 'reserved_stock' | null;
 };
 
-async function assessItemsForDeletion(companyId: string, ids: string[]): Promise<ItemDeletionAssessment[]> {
-  if (!ids.length) return [];
-  const result = await query(
-    `SELECT i.id, i.name,
-            COALESCE((
-              SELECT SUM(ABS(s.quantity)) FROM item_stock s
-              WHERE s.item_id = i.id AND s.company_id = i.company_id
-            ), 0) AS absolute_stock,
-            COALESCE((
-              SELECT SUM(ABS(COALESCE(s.reserved_quantity, 0))) FROM item_stock s
-              WHERE s.item_id = i.id AND s.company_id = i.company_id
-            ), 0) AS absolute_reserved_stock
-     FROM items i
-     WHERE i.company_id = $1 AND i.is_deleted = false AND i.id = ANY($2::uuid[])`,
-    [companyId, ids],
+async function lockAndAssessItemForDeletion(
+  client: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> },
+  companyId: string,
+  id: string,
+): Promise<ItemDeletionAssessment> {
+  const itemResult = await client.query(
+    `SELECT id, name
+     FROM items
+     WHERE company_id = $1 AND id = $2 AND is_deleted = false
+     FOR UPDATE`,
+    [companyId, id],
+  );
+  const item = itemResult.rows[0];
+  if (!item) {
+    return {
+      id,
+      name: 'Unknown item',
+      reason: 'Item was not found or was already deleted.',
+      reasonCode: 'not_found',
+    };
+  }
+
+  const stockResult = await client.query(
+    `SELECT quantity, COALESCE(reserved_quantity, 0) AS reserved_quantity
+     FROM item_stock
+     WHERE company_id = $1 AND item_id = $2
+     FOR UPDATE`,
+    [companyId, id],
+  );
+  const batchResult = await client.query(
+    `SELECT quantity
+     FROM item_batches
+     WHERE company_id = $1 AND item_id = $2 AND is_deleted = false
+     FOR UPDATE`,
+    [companyId, id],
+  );
+  const serialResult = await client.query(
+    `SELECT id
+     FROM item_serial_numbers
+     WHERE company_id = $1 AND item_id = $2 AND status = 'available'
+     FOR UPDATE`,
+    [companyId, id],
+  );
+  const hasStock = stockResult.rows.some((row: any) => Math.abs(Number(row.quantity || 0)) > 0)
+    || batchResult.rows.some((row: any) => Math.abs(Number(row.quantity || 0)) > 0)
+    || serialResult.rows.length > 0;
+  const hasReservations = stockResult.rows.some((row: any) => Math.abs(Number(row.reserved_quantity || 0)) > 0);
+
+  if (hasStock) {
+    return {
+      id,
+      name: String(item.name || 'Unnamed item'),
+      reason: 'Active stock exists. Use Clear stock and delete, or adjust every godown balance to zero first.',
+      reasonCode: 'active_stock',
+    };
+  }
+  if (hasReservations) {
+    return {
+      id,
+      name: String(item.name || 'Unnamed item'),
+      reason: 'Reserved stock exists. Use Clear stock and delete, or release the reservation first.',
+      reasonCode: 'reserved_stock',
+    };
+  }
+  return { id, name: String(item.name || 'Unnamed item'), reason: null, reasonCode: null };
+}
+
+export async function clearItemStockForDeletion(
+  client: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> },
+  companyId: string,
+  itemId: string,
+  userId: string,
+) {
+  const stockRows = await client.query(
+    `SELECT godown_id, quantity, COALESCE(reserved_quantity, 0) AS reserved_quantity,
+            COALESCE(avg_cost_price, 0) AS avg_cost_price
+     FROM item_stock
+     WHERE company_id = $1 AND item_id = $2
+     FOR UPDATE`,
+    [companyId, itemId],
   );
 
-  const found = new Map(result.rows.map((row: any) => [String(row.id), row]));
-  return ids.map((id) => {
-    const row: any = found.get(id);
-    if (!row) return { id, name: 'Unknown item', reason: 'Item was not found or was already deleted.' };
-    let reason: string | null = null;
-    if (Number(row.absolute_stock || 0) > 0) reason = 'Active stock exists. Adjust every godown balance to zero first.';
-    else if (Number(row.absolute_reserved_stock || 0) > 0) reason = 'Reserved stock exists. Release the reservation before deleting this item.';
-    return { id, name: String(row.name || 'Unnamed item'), reason };
-  });
+  for (const stock of stockRows.rows) {
+    const quantity = Number(stock.quantity || 0);
+    if (quantity !== 0) {
+      await client.query(
+        `INSERT INTO stock_movements (
+           company_id, item_id, godown_id, movement_type, reference_type, reference_id,
+           quantity, unit_cost, balance_after, notes, created_by
+         ) VALUES ($1,$2,$3,'adjustment','bulk_item_delete',$2,$4,$5,0,$6,$7)`,
+        [
+          companyId,
+          itemId,
+          stock.godown_id,
+          -quantity,
+          Number(stock.avg_cost_price || 0),
+          'Stock cleared by administrator before bulk item deletion',
+          userId,
+        ],
+      );
+    }
+  }
+
+  await client.query(
+    `UPDATE item_stock
+     SET quantity = 0, reserved_quantity = 0, updated_at = NOW()
+     WHERE company_id = $1 AND item_id = $2`,
+    [companyId, itemId],
+  );
+  await client.query(
+    `UPDATE item_batches
+     SET quantity = 0, is_deleted = true, updated_at = NOW()
+     WHERE company_id = $1 AND item_id = $2 AND is_deleted = false`,
+    [companyId, itemId],
+  );
+  await client.query(
+    `UPDATE item_serial_numbers
+     SET status = 'written_off', updated_at = NOW()
+     WHERE company_id = $1 AND item_id = $2 AND status = 'available'`,
+    [companyId, itemId],
+  );
 }
 
 // ── DELETE /api/items/:id ─────────────────────────────────────
@@ -899,23 +995,21 @@ export async function deleteItem(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const companyId = req.user!.company_id;
-    const [assessment] = await assessItemsForDeletion(companyId, [id]);
-    if (!assessment || assessment.reason === 'Item was not found or was already deleted.') {
-      return res.status(404).json(error('Item not found'));
-    }
-    if (assessment.reason) return res.status(400).json(error(assessment.reason));
-
-    const wasDeleted = await withTransaction(async (client) => {
+    const outcome = await withTransaction(async (client) => {
+      const assessment = await lockAndAssessItemForDeletion(client, companyId, id);
+      if (assessment.reasonCode === 'not_found') return { status: 'not_found' as const };
+      if (assessment.reason) return { status: 'blocked' as const, reason: assessment.reason };
       const result = await client.query(
         `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
          WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
         [id, companyId],
       );
-      if (!result.rows.length) return false;
+      if (!result.rows.length) return { status: 'not_found' as const };
       await client.query('DELETE FROM barcode_registry WHERE company_id = $1 AND item_id = $2', [companyId, id]);
-      return true;
+      return { status: 'deleted' as const };
     });
-    if (!wasDeleted) return res.status(404).json(error('Item not found'));
+    if (outcome.status === 'not_found') return res.status(404).json(error('Item not found'));
+    if (outcome.status === 'blocked') return res.status(400).json(error(outcome.reason));
 
     await logAction(req.user!.id, companyId, 'delete', 'item', id, null, null, req.ip);
     res.json(success({ message: 'Item deleted' }));
@@ -930,29 +1024,49 @@ export async function bulkDeleteItems(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const ids = Array.from(new Set((req.body.ids as string[]).map(String)));
-    const assessments = await assessItemsForDeletion(companyId, ids);
-    const allowed = assessments.filter((item) => !item.reason);
-    const failed = assessments.filter((item) => item.reason);
+    const clearStock = req.body.clear_stock === true;
+    const failed: ItemDeletionAssessment[] = [];
     const deleted = await withTransaction(async (client) => {
-      const completed: Array<{ id: string; name: string }> = [];
-      for (const item of allowed) {
+      const completed: Array<{ id: string; name: string; stock_cleared: boolean }> = [];
+      for (const id of ids) {
+        const item = await lockAndAssessItemForDeletion(client, companyId, id);
+        if (item.reasonCode === 'not_found' || (item.reason && !clearStock)) {
+          failed.push(item);
+          continue;
+        }
+        if (clearStock) {
+          await clearItemStockForDeletion(client, companyId, item.id, req.user!.id);
+        }
         const result = await client.query(
           `UPDATE items SET is_deleted = true, is_active = false, updated_at = NOW()
            WHERE id = $1 AND company_id = $2 AND is_deleted = false RETURNING id`,
           [item.id, companyId],
         );
         if (!result.rows.length) {
-          failed.push({ ...item, reason: 'Item changed or was deleted before this request completed.' });
+          failed.push({
+            ...item,
+            reason: 'Item changed or was deleted before this request completed.',
+            reasonCode: 'not_found',
+          });
           continue;
         }
         await client.query('DELETE FROM barcode_registry WHERE company_id = $1 AND item_id = $2', [companyId, item.id]);
-        completed.push({ id: item.id, name: item.name });
+        completed.push({ id: item.id, name: item.name, stock_cleared: clearStock });
       }
       return completed;
     });
 
     for (const item of deleted) {
-      await logAction(req.user!.id, companyId, 'delete', 'item', item.id, null, { source: 'bulk_delete' }, req.ip);
+      await logAction(
+        req.user!.id,
+        companyId,
+        'delete',
+        'item',
+        item.id,
+        null,
+        { source: 'bulk_delete', stock_cleared: item.stock_cleared },
+        req.ip,
+      );
     }
 
     res.json(success({ deleted, failed, requested: ids.length }));
