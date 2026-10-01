@@ -14,6 +14,34 @@ async function nextCreditNoteNumber(companyId: string, client: any) {
   return `CN/${yr}/${seq}`;
 }
 
+async function resolveReturnInvoice(client: any, companyId: string, invoiceId: unknown, requestedPartyId: unknown) {
+  const id = String(invoiceId || '').trim();
+  if (!id) return { invoiceId: null, partyId: requestedPartyId ? String(requestedPartyId) : null, partyName: null as string | null };
+  const result = await client.query(
+    `SELECT id, invoice_number, invoice_type, status, party_id, party_name_snapshot
+     FROM invoices
+     WHERE id = $1 AND company_id = $2 AND is_deleted = false
+     FOR SHARE`,
+    [id, companyId],
+  );
+  const invoice = result.rows[0];
+  if (!invoice) throw Object.assign(new Error('The selected original sales invoice was not found in this company.'), { status: 400 });
+  if (!['sale', 'tax_invoice'].includes(String(invoice.invoice_type || ''))) {
+    throw Object.assign(new Error('Only a sales invoice can be linked to a sale return.'), { status: 400 });
+  }
+  if (invoice.status === 'cancelled') {
+    throw Object.assign(new Error('A cancelled sales invoice cannot be linked to a new return.'), { status: 400 });
+  }
+  if (requestedPartyId && String(requestedPartyId) !== String(invoice.party_id || '')) {
+    throw Object.assign(new Error('The return customer must match the customer on the original invoice.'), { status: 400 });
+  }
+  return {
+    invoiceId: invoice.id as string,
+    partyId: (invoice.party_id || null) as string | null,
+    partyName: (invoice.party_name_snapshot || null) as string | null,
+  };
+}
+
 export async function listSaleReturns(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
@@ -24,7 +52,7 @@ export async function listSaleReturns(req: Request, res: Response) {
     let idx = 2;
 
     if (search) {
-      conditions.push(`(r.credit_note_number ILIKE $${idx} OR r.party_name_snapshot ILIKE $${idx})`);
+      conditions.push(`(r.credit_note_number ILIKE $${idx} OR r.party_name_snapshot ILIKE $${idx} OR i.invoice_number ILIKE $${idx})`);
       values.push(`%${search}%`); idx++;
     }
 
@@ -56,9 +84,10 @@ export async function createSaleReturn(req: Request, res: Response) {
 
     const result = await withTransaction(async (client) => {
       const cnNumber = d.credit_note_number?.trim() || await nextCreditNoteNumber(companyId, client);
+      const linkedInvoice = await resolveReturnInvoice(client, companyId, d.invoice_id, d.party_id);
 
-      const partySnap = d.party_id
-        ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
+      const partySnap = linkedInvoice.partyId
+        ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [linkedInvoice.partyId, companyId])
         : { rows: [] };
 
       const totalAmount = (d.items as any[]).reduce(
@@ -71,10 +100,10 @@ export async function createSaleReturn(req: Request, res: Response) {
             total_amount, party_name_snapshot, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [
-          companyId, d.party_id || null, d.invoice_id || null, cnNumber,
+          companyId, linkedInvoice.partyId, linkedInvoice.invoiceId, cnNumber,
           d.return_date || new Date().toISOString().split('T')[0],
           d.reason || null, totalAmount,
-          partySnap.rows[0]?.name || d.party_name || null,
+          partySnap.rows[0]?.name || linkedInvoice.partyName || d.party_name || null,
           req.user!.id,
         ],
       );
@@ -90,16 +119,16 @@ export async function createSaleReturn(req: Request, res: Response) {
       }
 
       // Reduce party balance (credit note reduces what they owe)
-      if (d.party_id) {
+      if (linkedInvoice.partyId) {
         await client.query(
           `UPDATE parties SET balance = balance - $1 WHERE id = $2`,
-          [totalAmount, d.party_id],
+          [totalAmount, linkedInvoice.partyId],
         );
         await client.query(
           `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration)
            SELECT $1, $2, 'credit', $3, balance, 'credit_note', $4, 'Sale return / credit note'
            FROM parties WHERE id = $2`,
-          [companyId, d.party_id, totalAmount, returnId],
+          [companyId, linkedInvoice.partyId, totalAmount, returnId],
         );
       }
 
@@ -138,13 +167,15 @@ export async function updateSaleReturn(req: Request, res: Response) {
       );
       await client.query(`DELETE FROM sale_return_items WHERE return_id = $1`, [id]);
 
+      const linkedInvoice = await resolveReturnInvoice(client, companyId, d.invoice_id, d.party_id);
+
       const totalAmount = (d.items as any[]).reduce(
         (s: number, it: any) => s + Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)),
         0,
       );
 
-      const partySnap = d.party_id
-        ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [d.party_id, companyId])
+      const partySnap = linkedInvoice.partyId
+        ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [linkedInvoice.partyId, companyId])
         : { rows: [] };
 
       const updated = await client.query(
@@ -160,13 +191,13 @@ export async function updateSaleReturn(req: Request, res: Response) {
          WHERE id = $8 AND company_id = $9
          RETURNING *`,
         [
-          d.party_id || null,
-          d.invoice_id || null,
+          linkedInvoice.partyId,
+          linkedInvoice.invoiceId,
           String(d.credit_note_number || old.credit_note_number).trim(),
           d.return_date || old.return_date,
           d.reason || null,
           totalAmount,
-          partySnap.rows[0]?.name || d.party_name || null,
+          partySnap.rows[0]?.name || linkedInvoice.partyName || d.party_name || null,
           id,
           companyId,
         ],
@@ -189,16 +220,16 @@ export async function updateSaleReturn(req: Request, res: Response) {
         );
       }
 
-      if (d.party_id) {
+      if (linkedInvoice.partyId) {
         await client.query(
           `UPDATE parties SET balance = balance - $1 WHERE id = $2 AND company_id = $3`,
-          [totalAmount, d.party_id, companyId],
+          [totalAmount, linkedInvoice.partyId, companyId],
         );
         await client.query(
           `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration)
            SELECT $1, $2, 'credit', $3, balance, 'credit_note', $4, 'Sale return / credit note updated'
            FROM parties WHERE id = $2 AND company_id = $1`,
-          [companyId, d.party_id, totalAmount, id],
+          [companyId, linkedInvoice.partyId, totalAmount, id],
         );
       }
 

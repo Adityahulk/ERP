@@ -11,6 +11,7 @@ import { QuickAddPartySheet } from '@/components/parties/QuickAddPartySheet';
 import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/VyaparLineItems';
 import toast from 'react-hot-toast';
 import SalesDocumentActionMenu from '@/components/transactions/SalesDocumentActionMenu';
+import { Link } from 'react-router-dom';
 
 export default function SaleReturnTab() {
   const qc = useQueryClient();
@@ -36,14 +37,43 @@ export default function SaleReturnTab() {
 
   // Lookup invoice by number to get its id
   const [invoiceId, setInvoiceId] = useState('');
+  const [invoiceResults, setInvoiceResults] = useState<any[]>([]);
   const lookupInvoice = async (num: string) => {
     setRefInvoiceNo(num);
-    if (!num.trim()) { setInvoiceId(''); return; }
+    setInvoiceId('');
+    if (num.trim().length < 2) { setInvoiceResults([]); return; }
     try {
-      const res = await api.get('/invoices', { params: { search: num, limit: 5 } });
-      const found = res.data?.data?.data?.find((inv: any) => inv.invoice_number === num.trim());
-      setInvoiceId(found?.id || '');
-    } catch { setInvoiceId(''); }
+      const res = await api.get('/invoices', { params: { search: num.trim(), limit: 10 } });
+      setInvoiceResults((res.data?.data?.data || []).filter((inv: any) => inv.status !== 'cancelled'));
+    } catch { setInvoiceResults([]); }
+  };
+
+  const selectInvoice = async (invoice: any) => {
+    try {
+      const response = await api.get(`/invoices/${invoice.id}`);
+      const inv = response.data?.data ?? response.data;
+      setInvoiceId(String(inv.id));
+      setRefInvoiceNo(String(inv.invoice_number || invoice.invoice_number));
+      setInvoiceResults([]);
+      setPartyId(String(inv.party_id || ''));
+      setPartyName(String(inv.party_display_name || inv.party_name_snapshot || inv.party_name || ''));
+      setPartySearch('');
+      setPartyResults([]);
+      if (Array.isArray(inv.items) && inv.items.length) {
+        setItems(inv.items.map((item: any) => ({
+          item_id: item.item_id || '',
+          name: item.item_name || item.name || 'Item',
+          hsn_code: item.hsn_code || '',
+          unit: item.unit_abbr || item.unit || '',
+          quantity: Number(item.quantity) || 0,
+          unit_price: Number(item.unit_price) || 0,
+          discount_amount: Number(item.discount_amount) || 0,
+          gst_rate: Number(item.gst_rate) || 0,
+        })));
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not load the selected invoice');
+    }
   };
 
   const createMut = useMutation({
@@ -66,6 +96,11 @@ export default function SaleReturnTab() {
   };
 
   const selectCustomer = (p: any) => { setPartyId(p.id); setPartyName(p.name); setPartySearch(''); setPartyResults([]); };
+  const useCustomerForReturn = () => {
+    const name = partySearch.trim();
+    if (!name) return;
+    setPartyId(''); setPartyName(name); setPartySearch(''); setPartyResults([]);
+  };
   const clearCustomer = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
   const resetForm = () => { setEditingId(null); setCreditNoteNumber(''); clearCustomer(); setReturnDate(new Date().toISOString().split('T')[0]); setRefInvoiceNo(''); setInvoiceId(''); setReason(''); setItems([]); };
 
@@ -124,6 +159,7 @@ export default function SaleReturnTab() {
             <tr className="border-b bg-muted/40">
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Date</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden md:table-cell">Credit Note No.</th>
+              <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Original Invoice</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground">Party</th>
               <th className="px-4 py-2.5 text-left font-medium text-xs text-muted-foreground hidden lg:table-cell">Reason</th>
               <th className="px-4 py-2.5 text-right font-medium text-xs text-muted-foreground">Total</th>
@@ -132,9 +168,9 @@ export default function SaleReturnTab() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
+            {isLoading && <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">Loading…</td></tr>}
             {!isLoading && returns.length === 0 && (
-              <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">
+              <tr><td colSpan={8} className="p-10 text-center text-muted-foreground">
                 <RotateCcw className="w-10 h-10 mx-auto mb-2 opacity-30" />No sale returns / credit notes yet.
               </td></tr>
             )}
@@ -142,6 +178,9 @@ export default function SaleReturnTab() {
               <tr key={r.id} className="border-b hover:bg-muted/20">
                 <td className="px-4 py-2.5 text-muted-foreground text-xs">{formatDate(r.return_date)}</td>
                 <td className="px-4 py-2.5 font-mono text-xs hidden md:table-cell">{r.credit_note_number}</td>
+                <td className="px-4 py-2.5 text-xs hidden lg:table-cell">
+                  {r.invoice_id ? <Link className="font-medium text-primary hover:underline" to={`/sales/${r.invoice_id}`}>{r.invoice_number || 'View invoice'}</Link> : <span className="text-muted-foreground">Not linked</span>}
+                </td>
                 <td className="px-4 py-2.5 font-medium">{r.party_name_snapshot || r.party_name || '—'}</td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground hidden lg:table-cell truncate max-w-[200px]">{r.reason || '—'}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-red-500">{formatMoney(parseInt(r.total_amount)||0)}</td>
@@ -186,9 +225,9 @@ export default function SaleReturnTab() {
           <div className="space-y-4">
             <div>
               <Label className="text-xs">Party *</Label>
-              {partyId ? (
+              {partyName && !partySearch ? (
                 <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
-                  <span className="font-medium text-sm">{partyName}</span>
+                  <span className="font-medium text-sm">{partyName}{!partyId && <span className="ml-2 text-xs font-normal text-muted-foreground">Invoice customer / no Party master</span>}</span>
                   <button type="button" className="text-xs text-primary hover:underline" onClick={clearCustomer}>Change</button>
                 </div>
               ) : (
@@ -203,6 +242,11 @@ export default function SaleReturnTab() {
                           </button>
                         ))}
                       </div>
+                    )}
+                    {!partyId && partySearch.trim().length > 1 && !partyResults.some((p: any) => String(p.name).toLowerCase() === partySearch.trim().toLowerCase()) && (
+                      <button type="button" className="absolute z-20 top-full mt-1 w-full rounded-md border bg-card px-3 py-2 text-left text-sm text-primary shadow-lg hover:bg-muted" onClick={useCustomerForReturn}>
+                        Use “{partySearch.trim()}” for this return only
+                      </button>
                     )}
                   </div>
                   <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setQuickAddOpen(true)}>
@@ -224,11 +268,28 @@ export default function SaleReturnTab() {
                 <Input type="date" className="mt-1 h-9" value={returnDate} onChange={e => setReturnDate(e.target.value)} />
               </div>
               <div className={editingId ? 'col-span-2' : ''}>
-                <Label className="text-xs">Against Invoice No. (optional)</Label>
-                <Input className="mt-1 h-9 font-mono text-xs" placeholder="Original invoice number" value={refInvoiceNo} onChange={e => lookupInvoice(e.target.value)} />
-                {refInvoiceNo && (
-                  <p className="text-[10px] mt-0.5 text-muted-foreground">{invoiceId ? '✓ Invoice found' : 'Invoice not found (will record without link)'}</p>
+                <Label className="text-xs">Original Sales Invoice (optional)</Label>
+                {invoiceId ? (
+                  <div className="mt-1 flex items-center justify-between rounded-md border bg-muted/30 px-3 h-9">
+                    <span className="font-mono text-xs">{refInvoiceNo}</span>
+                    <button type="button" className="text-xs text-primary hover:underline" onClick={() => { setInvoiceId(''); setRefInvoiceNo(''); }}>Change</button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <Input className="h-9 font-mono text-xs" placeholder="Search invoice number or customer" value={refInvoiceNo} onChange={e => lookupInvoice(e.target.value)} />
+                    {invoiceResults.length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-md border bg-card shadow-lg">
+                        {invoiceResults.map((inv: any) => (
+                          <button key={inv.id} type="button" className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => selectInvoice(inv)}>
+                            <span><span className="font-mono font-medium">{inv.invoice_number}</span><span className="ml-2 text-muted-foreground">{inv.party_name || 'Walk-in customer'}</span></span>
+                            <span className="text-xs text-muted-foreground">{formatDate(inv.invoice_date)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
+                <p className="mt-1 text-[10px] text-muted-foreground">Select the original invoice to link this return and prefill its customer and items.</p>
               </div>
             </div>
 
