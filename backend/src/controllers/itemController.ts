@@ -951,7 +951,7 @@ type ItemDeletionAssessment = {
   id: string;
   name: string;
   reason: string | null;
-  reasonCode: 'not_found' | 'active_stock' | 'reserved_stock' | null;
+  reasonCode: 'not_found' | null;
 };
 
 async function lockAndAssessItemForDeletion(
@@ -976,48 +976,6 @@ async function lockAndAssessItemForDeletion(
     };
   }
 
-  const stockResult = await client.query(
-    `SELECT quantity, COALESCE(reserved_quantity, 0) AS reserved_quantity
-     FROM item_stock
-     WHERE company_id = $1 AND item_id = $2
-     FOR UPDATE`,
-    [companyId, id],
-  );
-  const batchResult = await client.query(
-    `SELECT quantity
-     FROM item_batches
-     WHERE company_id = $1 AND item_id = $2 AND is_deleted = false
-     FOR UPDATE`,
-    [companyId, id],
-  );
-  const serialResult = await client.query(
-    `SELECT id
-     FROM item_serial_numbers
-     WHERE company_id = $1 AND item_id = $2 AND status = 'available'
-     FOR UPDATE`,
-    [companyId, id],
-  );
-  const hasStock = stockResult.rows.some((row: any) => Math.abs(Number(row.quantity || 0)) > 0)
-    || batchResult.rows.some((row: any) => Math.abs(Number(row.quantity || 0)) > 0)
-    || serialResult.rows.length > 0;
-  const hasReservations = stockResult.rows.some((row: any) => Math.abs(Number(row.reserved_quantity || 0)) > 0);
-
-  if (hasStock) {
-    return {
-      id,
-      name: String(item.name || 'Unnamed item'),
-      reason: 'Active stock exists. Use Clear stock and delete, or adjust every godown balance to zero first.',
-      reasonCode: 'active_stock',
-    };
-  }
-  if (hasReservations) {
-    return {
-      id,
-      name: String(item.name || 'Unnamed item'),
-      reason: 'Reserved stock exists. Use Clear stock and delete, or release the reservation first.',
-      reasonCode: 'reserved_stock',
-    };
-  }
   return { id, name: String(item.name || 'Unnamed item'), reason: null, reasonCode: null };
 }
 
