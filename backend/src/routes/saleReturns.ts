@@ -10,6 +10,7 @@ router.get('/', ctrl.listSaleReturns);
 router.post('/', requireMinRole('staff'), ctrl.createSaleReturn);
 router.get('/:id/pdf', ctrl.getSaleReturnPDF);
 router.post('/:id/email', requireMinRole('staff'), ctrl.emailSaleReturn);
+router.post('/:id/refund', requireMinRole('manager'), ctrl.refundSaleReturn);
 router.get('/:id', ctrl.getSaleReturn);
 router.put('/:id', requireMinRole('manager'), ctrl.updateSaleReturn);
 router.patch('/:id/cancel', requireMinRole('manager'), ctrl.cancelSaleReturn);

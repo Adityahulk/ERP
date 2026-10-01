@@ -3,6 +3,8 @@ import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { generateSalesDocumentPDF } from '../services/pdfService';
 import { isMailerConfigured, sendMail } from '../services/mailer';
+import { postPaymentAccounting, postSaleReturnAccounting, reverseAccountingForReference } from '../services/accountingService';
+import { saleReturnTotal } from '../lib/saleReturnTotal';
 
 async function nextCreditNoteNumber(companyId: string, client: any) {
   const yr = new Date().getFullYear().toString().slice(-2);
@@ -59,7 +61,7 @@ export async function listSaleReturns(req: Request, res: Response) {
     const where = conditions.join(' AND ');
     const rows = await query(
       `SELECT r.*, p.name AS party_name, p.phone AS party_phone, p.email AS party_email,
-              i.invoice_number,
+              i.invoice_number, rp.id AS refund_payment_id, rp.amount AS refunded_amount,
               COALESCE((
                 SELECT json_agg(ri ORDER BY ri.created_at, ri.id)
                 FROM sale_return_items ri
@@ -68,6 +70,7 @@ export async function listSaleReturns(req: Request, res: Response) {
        FROM sale_returns r
        LEFT JOIN parties p ON p.id = r.party_id AND p.company_id = r.company_id
        LEFT JOIN invoices i ON i.id = r.invoice_id AND i.company_id = r.company_id
+       LEFT JOIN payments rp ON rp.sale_return_id = r.id AND rp.company_id = r.company_id AND rp.is_deleted = false
        WHERE ${where} ORDER BY r.return_date DESC, r.created_at DESC
        LIMIT $${idx} OFFSET $${idx + 1}`,
       [...values, limit, offset],
@@ -90,9 +93,7 @@ export async function createSaleReturn(req: Request, res: Response) {
         ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [linkedInvoice.partyId, companyId])
         : { rows: [] };
 
-      const totalAmount = (d.items as any[]).reduce(
-        (s: number, it: any) => s + Math.round(it.quantity * it.unit_price), 0,
-      );
+      const totalAmount = saleReturnTotal(d.items as any[]);
 
       const returnRes = await client.query(
         `INSERT INTO sale_returns
@@ -132,11 +133,13 @@ export async function createSaleReturn(req: Request, res: Response) {
         );
       }
 
+      await postSaleReturnAccounting(client, companyId, returnRes.rows[0], req.user!.id);
+
       return returnRes.rows[0];
     });
 
     res.status(201).json(success(result));
-  } catch (err: any) { res.status(500).json(error(err.message)); }
+  } catch (err: any) { res.status(err?.status || 500).json(error(err.message)); }
 }
 
 export async function updateSaleReturn(req: Request, res: Response) {
@@ -154,6 +157,13 @@ export async function updateSaleReturn(req: Request, res: Response) {
       if (!oldRes.rows.length) throw new Error('Credit note not found');
       const old = oldRes.rows[0];
       if (old.status === 'cancelled') throw new Error('A cancelled credit note cannot be edited');
+      const refundRes = await client.query(
+        `SELECT id FROM payments WHERE company_id = $1 AND sale_return_id = $2 AND is_deleted = false LIMIT 1`,
+        [companyId, id],
+      );
+      if (refundRes.rows.length) {
+        throw Object.assign(new Error('Reverse the linked refund payment before editing this credit note.'), { status: 409 });
+      }
 
       if (old.party_id && Number(old.total_amount || 0) !== 0) {
         await client.query(
@@ -169,10 +179,7 @@ export async function updateSaleReturn(req: Request, res: Response) {
 
       const linkedInvoice = await resolveReturnInvoice(client, companyId, d.invoice_id, d.party_id);
 
-      const totalAmount = (d.items as any[]).reduce(
-        (s: number, it: any) => s + Math.round((Number(it.quantity) || 0) * (Number(it.unit_price) || 0)),
-        0,
-      );
+      const totalAmount = saleReturnTotal(d.items as any[]);
 
       const partySnap = linkedInvoice.partyId
         ? await client.query(`SELECT name FROM parties WHERE id = $1 AND company_id = $2`, [linkedInvoice.partyId, companyId])
@@ -233,13 +240,15 @@ export async function updateSaleReturn(req: Request, res: Response) {
         );
       }
 
+      await postSaleReturnAccounting(client, companyId, updated.rows[0], req.user!.id, true);
+
       return updated.rows[0];
     });
 
     res.json(success(result));
   } catch (err: any) {
     const msg = err?.message || 'Failed to update credit note';
-    res.status(/not found|required/i.test(msg) ? 400 : 500).json(error(msg));
+    res.status(err?.status || (/not found|required/i.test(msg) ? 400 : 500)).json(error(msg));
   }
 }
 
@@ -247,10 +256,12 @@ async function loadSaleReturnDocument(id: string, companyId: string) {
   const [returnRes, itemsRes, companyRes] = await Promise.all([
     query(
       `SELECT r.*, p.name AS party_name, p.phone AS party_phone, p.email AS party_email,
-              p.gstin AS party_gstin, p.billing_address AS party_address, i.invoice_number
+              p.gstin AS party_gstin, p.billing_address AS party_address, i.invoice_number,
+              rp.id AS refund_payment_id, rp.amount AS refunded_amount
        FROM sale_returns r
        LEFT JOIN parties p ON p.id = r.party_id AND p.company_id = r.company_id
        LEFT JOIN invoices i ON i.id = r.invoice_id AND i.company_id = r.company_id
+       LEFT JOIN payments rp ON rp.sale_return_id = r.id AND rp.company_id = r.company_id AND rp.is_deleted = false
        WHERE r.id = $1 AND r.company_id = $2 AND r.is_deleted = false`,
       [id, companyId],
     ),
@@ -272,6 +283,126 @@ export async function getSaleReturn(req: Request, res: Response) {
     res.json(success({ ...loaded.creditNote, items: loaded.items }));
   } catch (err: any) {
     res.status(err?.status || 500).json(error(err?.message || 'Failed to load credit note'));
+  }
+}
+
+export async function refundSaleReturn(req: Request, res: Response) {
+  try {
+    const companyId = req.user!.company_id;
+    const mode = String(req.body?.payment_mode || 'cash').toLowerCase();
+    const allowedModes = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'other'];
+    if (!allowedModes.includes(mode)) return res.status(400).json(error('Select a valid refund payment mode'));
+    const paymentDate = String(req.body?.payment_date || new Date().toISOString().split('T')[0]);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate) || Number.isNaN(Date.parse(paymentDate))) {
+      return res.status(400).json(error('Enter a valid refund date'));
+    }
+
+    const result = await withTransaction(async (client) => {
+      const returnRes = await client.query(
+        `SELECT * FROM sale_returns
+         WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+        [req.params.id, companyId],
+      );
+      if (!returnRes.rows.length) throw Object.assign(new Error('Sale return not found'), { status: 404 });
+      const saleReturn = returnRes.rows[0];
+      if (saleReturn.status === 'cancelled') {
+        throw Object.assign(new Error('A cancelled sale return cannot be refunded'), { status: 409 });
+      }
+      const amount = Number(saleReturn.total_amount);
+      if (!Number.isSafeInteger(amount) || amount <= 0) {
+        throw Object.assign(new Error('This sale return amount cannot be posted as a refund payment'), { status: 400 });
+      }
+      const existing = await client.query(
+        `SELECT id FROM payments WHERE company_id = $1 AND sale_return_id = $2 AND is_deleted = false LIMIT 1`,
+        [companyId, saleReturn.id],
+      );
+      if (existing.rows.length) {
+        throw Object.assign(new Error('A refund payment is already linked to this sale return'), { status: 409 });
+      }
+
+      if (saleReturn.invoice_id) {
+        const invoiceRes = await client.query(
+          `SELECT paid_amount FROM invoices
+           WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+          [saleReturn.invoice_id, companyId],
+        );
+        if (!invoiceRes.rows.length) {
+          throw Object.assign(new Error('The linked sales invoice is no longer available'), { status: 409 });
+        }
+        const previousRefunds = await client.query(
+          `SELECT COALESCE(SUM(p.amount), 0) AS amount
+           FROM payments p
+           JOIN sale_returns r ON r.id = p.sale_return_id AND r.company_id = p.company_id
+           WHERE r.invoice_id = $1 AND p.company_id = $2 AND p.is_deleted = false`,
+          [saleReturn.invoice_id, companyId],
+        );
+        const refundable = Number(invoiceRes.rows[0].paid_amount || 0) - Number(previousRefunds.rows[0].amount || 0);
+        if (refundable < amount) {
+          throw Object.assign(
+            new Error(`Only ₹${(Math.max(0, refundable) / 100).toFixed(2)} of received payment remains refundable on the original invoice. Record a payment or adjust the return before paying this refund.`),
+            { status: 409 },
+          );
+        }
+      } else if (saleReturn.party_id) {
+        const partyRes = await client.query(
+          `SELECT balance FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+          [saleReturn.party_id, companyId],
+        );
+        if (!partyRes.rows.length || Number(partyRes.rows[0].balance || 0) > -amount) {
+          throw Object.assign(new Error('The customer does not have enough credit balance for a full refund. Link the original paid invoice or settle the credit first.'), { status: 409 });
+        }
+      } else {
+        throw Object.assign(new Error('Link the original paid invoice or select a customer party before paying a refund.'), { status: 409 });
+      }
+
+      // Older credit notes predate sale-return accounting. Post the missing
+      // journal once before paying out, so the refund clears the receivable.
+      await postSaleReturnAccounting(client, companyId, saleReturn, req.user!.id);
+
+      const paymentRes = await client.query(
+        `INSERT INTO payments
+           (company_id, payment_type, payment_number, payment_date, party_id,
+            amount, payment_mode, reference_number, notes, sale_return_id, created_by)
+         VALUES ($1,'outgoing',$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING *`,
+        [
+          companyId,
+          `PAY-REF-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          paymentDate,
+          saleReturn.party_id || null,
+          amount,
+          mode,
+          saleReturn.credit_note_number,
+          `Sales return refund ${saleReturn.credit_note_number}`,
+          saleReturn.id,
+          req.user!.id,
+        ],
+      );
+      const payment = paymentRes.rows[0];
+      if (saleReturn.party_id) {
+        const party = await client.query(
+          `UPDATE parties SET balance = balance + $1
+           WHERE id = $2 AND company_id = $3 AND is_deleted = false
+           RETURNING balance`,
+          [amount, saleReturn.party_id, companyId],
+        );
+        if (!party.rows.length) throw Object.assign(new Error('Customer party was not found'), { status: 409 });
+        await client.query(
+          `INSERT INTO party_ledger
+             (company_id, party_id, type, amount, balance_after, reference_type,
+              reference_id, narration, created_by)
+           VALUES ($1,$2,'debit',$3,$4,'payment',$5,$6,$7)`,
+          [companyId, saleReturn.party_id, amount, party.rows[0].balance, payment.id,
+            `Refund for credit note ${saleReturn.credit_note_number}`, req.user!.id],
+        );
+      }
+      await postPaymentAccounting(client, companyId, payment, req.user!.id);
+      return { payment, sale_return_id: saleReturn.id, credit_note_number: saleReturn.credit_note_number };
+    });
+
+    res.status(201).json(success(result));
+  } catch (err: any) {
+    res.status(err?.status || 500).json(error(err?.message || 'Failed to pay sale return refund'));
   }
 }
 
@@ -319,6 +450,13 @@ async function deactivateSaleReturn(id: string, companyId: string, softDelete: b
     );
     if (!current.rows.length) throw Object.assign(new Error('Credit note not found'), { status: 404 });
     const row = current.rows[0];
+    const refundRes = await client.query(
+      `SELECT id FROM payments WHERE company_id = $1 AND sale_return_id = $2 AND is_deleted = false LIMIT 1`,
+      [companyId, id],
+    );
+    if (refundRes.rows.length) {
+      throw Object.assign(new Error('Reverse the linked refund payment before cancelling this credit note.'), { status: 409 });
+    }
     if (row.status !== 'cancelled' && row.party_id && Number(row.total_amount || 0) !== 0) {
       await client.query(
         `UPDATE parties SET balance = balance + $1 WHERE id = $2 AND company_id = $3`,
@@ -334,6 +472,9 @@ async function deactivateSaleReturn(id: string, companyId: string, softDelete: b
        WHERE id = $2 AND company_id = $3 RETURNING *`,
       [softDelete, id, companyId],
     );
+    if (row.status !== 'cancelled') {
+      await reverseAccountingForReference(client, companyId, 'sale_return', id);
+    }
     return updated.rows[0];
   });
 }

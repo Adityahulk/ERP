@@ -27,12 +27,28 @@ export async function getDashboard(req: Request, res: Response) {
       [companyId, today]
     );
 
+    const todayReturns = await query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total
+       FROM sale_returns
+       WHERE company_id = $1 AND return_date = $2
+         AND status != 'cancelled' AND is_deleted = false`,
+      [companyId, today],
+    );
+
     // This month's sales
     const monthSales = await query(
       `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
        FROM invoices WHERE company_id = $1 AND (invoice_type = 'sale' OR invoice_type = 'tax_invoice')
        AND invoice_date >= date_trunc('month', CURRENT_DATE) AND status != 'cancelled' AND is_deleted = false`,
       [companyId]
+    );
+
+    const monthReturns = await query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total
+       FROM sale_returns
+       WHERE company_id = $1 AND return_date >= date_trunc('month', CURRENT_DATE)
+         AND status != 'cancelled' AND is_deleted = false`,
+      [companyId],
     );
 
     // Total receivable & payable (calculated from unpaid invoices and party records)
@@ -91,10 +107,25 @@ export async function getDashboard(req: Request, res: Response) {
 
     // Sales trend (last 7 days)
     const salesTrend = await query(
-      `SELECT d::date as date, COALESCE(SUM(i.total_amount), 0) as total, COUNT(i.id) as count
+      `SELECT d::date AS date,
+              (COALESCE(i.total, 0) - COALESCE(r.total, 0)) AS total,
+              COALESCE(i.count, 0) AS count,
+              COALESCE(r.total, 0) AS returns_total
        FROM generate_series(CURRENT_DATE - interval '6 days', CURRENT_DATE, '1 day') d
-       LEFT JOIN invoices i ON i.invoice_date = d::date AND i.company_id = $1 AND (i.invoice_type = 'sale' OR i.invoice_type = 'tax_invoice') AND i.status != 'cancelled' AND i.is_deleted = false
-       GROUP BY d::date ORDER BY d::date`,
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS count
+         FROM invoices
+         WHERE invoice_date = d::date AND company_id = $1
+           AND invoice_type IN ('sale', 'tax_invoice')
+           AND status != 'cancelled' AND is_deleted = false
+       ) i ON true
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(total_amount), 0) AS total
+         FROM sale_returns
+         WHERE return_date = d::date AND company_id = $1
+           AND status != 'cancelled' AND is_deleted = false
+       ) r ON true
+       ORDER BY d::date`,
       [companyId]
     );
 
@@ -123,7 +154,8 @@ export async function getDashboard(req: Request, res: Response) {
     const todayPayments = await query(
       `SELECT 
          COALESCE(SUM(amount) FILTER (WHERE payment_type IN ('payment_in', 'incoming')), 0) as received,
-         COALESCE(SUM(amount) FILTER (WHERE payment_type IN ('payment_out', 'outgoing')), 0) as paid
+         COALESCE(SUM(amount) FILTER (WHERE payment_type IN ('payment_out', 'outgoing')), 0) as paid,
+         COALESCE(SUM(amount) FILTER (WHERE sale_return_id IS NOT NULL AND payment_type IN ('payment_out', 'outgoing')), 0) as refunds_paid
        FROM payments WHERE company_id = $1 AND payment_date = $2 AND is_deleted = false`,
       [companyId, today]
     );
@@ -149,13 +181,21 @@ export async function getDashboard(req: Request, res: Response) {
 
     res.json(success({
       today: {
-        sales: todaySales.rows[0],
+        sales: {
+          ...todaySales.rows[0],
+          net_total: Number(todaySales.rows[0].total || 0) - Number(todayReturns.rows[0].total || 0),
+        },
+        returns: todayReturns.rows[0],
         payments: todayPayments.rows[0],
       },
       month: {
-        sales: monthSales.rows[0],
+        sales: {
+          ...monthSales.rows[0],
+          net_total: Number(monthSales.rows[0].total || 0) - Number(monthReturns.rows[0].total || 0),
+        },
+        returns: monthReturns.rows[0],
         expenses: Number(monthExpenses.rows[0].total || 0),
-        profit: Number(monthSales.rows[0].total || 0) - Number(monthExpenses.rows[0].total || 0),
+        profit: Number(monthSales.rows[0].total || 0) - Number(monthReturns.rows[0].total || 0) - Number(monthExpenses.rows[0].total || 0),
         production: monthProduction.rows[0],
       },
       balances: balances.rows[0],

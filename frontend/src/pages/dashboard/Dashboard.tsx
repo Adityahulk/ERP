@@ -42,7 +42,7 @@ export default function Dashboard() {
     return <Navigate to="/attendance" replace />;
   }
 
-  const todaySales = rawData?.today?.sales?.total || 0;
+  const todaySales = rawData?.today?.sales?.net_total ?? rawData?.today?.sales?.total ?? 0;
   const totalReceivable = rawData?.balances?.total_receivable || 0;
   const netProfit = rawData?.month?.profit || 0;
   
@@ -83,8 +83,10 @@ export default function Dashboard() {
          <Card className="hover:shadow-md transition-shadow">
             <CardContent className="p-5 flex items-center justify-between">
                <div>
-                  <p className="text-sm font-medium text-slate-500">Today's Revenue</p>
+                  <p className="text-sm font-medium text-slate-500">Today's Net Sales</p>
                   <p className="text-2xl font-bold text-slate-900 mt-1">{formatMoney(todaySales)}</p>
+                  <p className="text-xs text-red-500 mt-1">Returns: {formatMoney(rawData?.today?.returns?.total || 0)}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Refunds paid: {formatMoney(rawData?.today?.payments?.refunds_paid || 0)}</p>
                </div>
                <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600"><IndianRupee className="w-5 h-5"/></div>
             </CardContent>

@@ -472,6 +472,35 @@ export async function postSalesInvoiceAccounting(db: Queryable, companyId: strin
   });
 }
 
+export async function postSaleReturnAccounting(
+  db: Queryable,
+  companyId: string,
+  saleReturn: any,
+  createdBy?: string | null,
+  replaceExisting = false,
+) {
+  const returns = await getOrCreateDefaultAccount(db, companyId, 'Sales Returns', 'income', 'Sale Accounts');
+  const debtor = await getOrCreateDefaultAccount(db, companyId, 'Sundry Debtors', 'asset', 'Current Assets');
+  const amount = paise(saleReturn.total_amount);
+  return postJournalEntry(db, {
+    companyId,
+    entryDate: toSqlDate(saleReturn.return_date),
+    entryType: 'system',
+    voucherType: 'sale_return',
+    voucherNumber: saleReturn.credit_note_number,
+    referenceType: 'sale_return',
+    referenceId: saleReturn.id,
+    description: `Sales return ${saleReturn.credit_note_number}`,
+    createdBy,
+    replaceExisting,
+    skipIfEmpty: true,
+    lines: [
+      { accountId: returns, debit: amount },
+      { accountId: debtor, credit: amount, partyId: saleReturn.party_id || null },
+    ],
+  });
+}
+
 export async function postPurchaseInvoiceAccounting(db: Queryable, companyId: string, invoice: any, createdBy?: string | null) {
   const creditors = await getOrCreateDefaultAccount(db, companyId, 'Sundry Creditors', 'liability', 'Current Liabilities');
   const purchase = await getOrCreateDefaultAccount(db, companyId, 'Purchase', 'expense', 'Purchase Accounts');
@@ -547,6 +576,7 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
   const mode = String(payment.payment_mode || '').toLowerCase();
   const isCash = mode === 'cash';
   const isIncoming = ['incoming', 'receipt', 'payment_in'].includes(String(payment.payment_type || '').toLowerCase());
+  const isSaleReturnRefund = !!payment.sale_return_id;
   const assetAccount = isCash ? cash : bank;
   const amount = Number(payment.amount || 0);
 
@@ -602,6 +632,11 @@ export async function postPaymentAccounting(db: Queryable, companyId: string, pa
       ? [
           { accountId: assetAccount, debit: amount, referenceNumber: payment.reference_number || null },
           { accountId: debtors, credit: amount, partyId: payment.party_id || null },
+        ]
+      : isSaleReturnRefund
+      ? [
+          { accountId: debtors, debit: amount, partyId: payment.party_id || null },
+          { accountId: assetAccount, credit: amount, referenceNumber: payment.reference_number || null },
         ]
       : [
           { accountId: creditors, debit: amount, partyId: payment.party_id || null },

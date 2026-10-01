@@ -12,8 +12,12 @@ import VyaparLineItems, { type VyaparLineItem } from '@/components/shared/Vyapar
 import toast from 'react-hot-toast';
 import SalesDocumentActionMenu from '@/components/transactions/SalesDocumentActionMenu';
 import { Link } from 'react-router-dom';
+import { useAuthStore } from '@/store/authStore';
+import { normalizeRole } from '@/lib/roles';
 
 export default function SaleReturnTab() {
+  const user = useAuthStore((state) => state.user);
+  const canRefund = normalizeRole(user?.role) !== 'staff';
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -28,6 +32,9 @@ export default function SaleReturnTab() {
   const [refInvoiceNo, setRefInvoiceNo] = useState('');
   const [reason, setReason] = useState('');
   const [items, setItems] = useState<VyaparLineItem[]>([]);
+  const [refundTarget, setRefundTarget] = useState<any | null>(null);
+  const [refundMode, setRefundMode] = useState('cash');
+  const [refunding, setRefunding] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['sale-returns'],
@@ -144,6 +151,25 @@ export default function SaleReturnTab() {
     });
   };
 
+  const payRefund = async () => {
+    if (!refundTarget || refunding) return;
+    setRefunding(true);
+    try {
+      await api.post(`/sales/returns/${refundTarget.id}/refund`, { payment_mode: refundMode });
+      toast.success('Refund recorded in Payment Out');
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['sale-returns'] }),
+        qc.invalidateQueries({ queryKey: ['dashboard_hub'] }),
+        qc.invalidateQueries({ queryKey: ['payments'] }),
+      ]);
+      setRefundTarget(null);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Could not record refund');
+    } finally {
+      setRefunding(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -188,15 +214,21 @@ export default function SaleReturnTab() {
                   <span className={`rounded px-2 py-0.5 text-[11px] font-medium capitalize ${r.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{r.status || 'active'}</span>
                 </td>
                 <td className="px-4 py-2.5 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                  {r.refund_payment_id ? (
+                    <span className="text-xs font-medium text-emerald-700">Refund paid</span>
+                  ) : canRefund && r.status !== 'cancelled' && Number(r.total_amount || 0) > 0 ? (
+                    <Button size="sm" variant="outline" onClick={() => { setRefundMode('cash'); setRefundTarget(r); }}>Pay refund</Button>
+                  ) : null}
                   <SalesDocumentActionMenu
                     basePath={`/sales/returns/${r.id}`}
                     documentNumber={r.credit_note_number}
                     documentTitle="Credit Note"
                     phone={r.party_phone}
                     email={r.party_email}
-                    canModify={r.status !== 'cancelled'}
-                    canCancel={r.status !== 'cancelled'}
-                    canDelete={r.status === 'draft'}
+                    canModify={r.status !== 'cancelled' && !r.refund_payment_id}
+                    canCancel={r.status !== 'cancelled' && !r.refund_payment_id}
+                    canDelete={r.status === 'draft' && !r.refund_payment_id}
                     onEdit={() => openEdit(r)}
                     onDuplicate={() => openEdit(r, true)}
                     onCancel={async () => {
@@ -212,12 +244,35 @@ export default function SaleReturnTab() {
                       await qc.invalidateQueries({ queryKey: ['sale-returns'] });
                     }}
                   />
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <Sheet open={!!refundTarget} onOpenChange={(open) => { if (!open && !refunding) setRefundTarget(null); }}>
+        <SheetContent side="right" className="w-full max-w-md">
+          <SheetHeader><SheetTitle>Pay sale-return refund</SheetTitle></SheetHeader>
+          <div className="space-y-4 mt-6">
+            <p className="text-sm text-muted-foreground">This posts a full Payment Out for credit note {refundTarget?.credit_note_number}. The credit note remains in net sales; it is not counted twice.</p>
+            <p className="text-xl font-semibold">{formatMoney(Number(refundTarget?.total_amount || 0))}</p>
+            <div>
+              <Label htmlFor="sale-refund-mode">Payment mode</Label>
+              <select id="sale-refund-mode" className="mt-1 h-10 w-full rounded-md border bg-background px-3" value={refundMode} onChange={(e) => setRefundMode(e.target.value)}>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="bank_transfer">Bank transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <Button className="w-full" disabled={refunding} onClick={payRefund}>{refunding ? 'Recording refund…' : 'Confirm Payment Out'}</Button>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Sheet open={showForm} onOpenChange={(v) => { if (!v) resetForm(); setShowForm(v); }}>
         <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto">
