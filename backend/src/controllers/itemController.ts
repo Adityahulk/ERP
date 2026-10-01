@@ -1209,6 +1209,7 @@ export async function bulkImport(req: Request, res: Response) {
     // Map headers and validate
     const preview: any[] = [];
     const errors: any[] = [];
+    const alreadyPresent: any[] = [];
     const seenSkus = new Set<string>();
     const seenBarcodes = new Set<string>();
     const seenSerials = new Set<string>();
@@ -1220,8 +1221,19 @@ export async function bulkImport(req: Request, res: Response) {
     const existingSkus = new Set(existingItems.rows.map((row: any) => String(row.sku || '').trim()).filter(Boolean));
     const existingBarcodes = new Set(existingItems.rows.map((row: any) => String(row.barcode || '').trim()).filter(Boolean));
     const existingNames = new Set(existingItems.rows.map((row: any) => itemNameKey(row.name)).filter(Boolean));
-    const existingSerialsResult = await query('SELECT serial_number FROM item_serial_numbers WHERE company_id = $1', [companyId]);
-    const existingSerials = new Set(existingSerialsResult.rows.map((row: any) => String(row.serial_number || '').trim().toLocaleLowerCase()).filter(Boolean));
+    const existingSerialsResult = await query(
+      `SELECT s.serial_number, i.name AS item_name, i.id AS item_id
+       FROM item_serial_numbers s
+       JOIN items i ON i.id = s.item_id AND i.company_id = s.company_id
+       WHERE s.company_id = $1 AND i.is_deleted = false`,
+      [companyId],
+    );
+    const existingSerials = new Map<string, { itemId: string; itemName: string }>();
+    for (const row of existingSerialsResult.rows) {
+      const serial = String(row.serial_number || '').trim().toLocaleLowerCase();
+      const name = itemNameKey(row.item_name);
+      if (serial && name) existingSerials.set(`${name}\u0000${serial}`, { itemId: row.item_id, itemName: row.item_name });
+    }
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -1262,9 +1274,21 @@ export async function bulkImport(req: Request, res: Response) {
       if (!isValidGstRate(item.gst_rate)) rowErrors.push('GST rate must be between 0 and 100 with at most three decimal places');
       if (!Number.isFinite(item.opening_stock) || item.opening_stock < 0) rowErrors.push('Opening stock must be a valid non-negative quantity');
       if (!Number.isFinite(item.reorder_point) || item.reorder_point < 0) rowErrors.push('Reorder point must be a valid non-negative quantity');
-      const serialKey = String(item.serial_number || '').toLocaleLowerCase();
-      if (serialKey && (seenSerials.has(serialKey) || existingSerials.has(serialKey))) {
-        rowErrors.push(existingSerials.has(serialKey) ? 'Serial number already exists' : 'Duplicate serial number in import file');
+      const serialKey = String(item.serial_number || '').trim().toLocaleLowerCase();
+      const productSerialKey = serialKey ? `${itemNameKey(item.name)}\u0000${serialKey}` : '';
+      const existingSerial = productSerialKey ? existingSerials.get(productSerialKey) : undefined;
+      if (existingSerial) {
+        alreadyPresent.push({
+          row: Number(row.__sourceRow) || i + headerRowIndex + 2,
+          data: item,
+          existing_item_id: existingSerial.itemId,
+          existing_item_name: existingSerial.itemName,
+          message: 'This item and serial number are already in the account. It will be skipped to avoid duplicate stock.',
+        });
+        continue;
+      }
+      if (productSerialKey && seenSerials.has(productSerialKey)) {
+        rowErrors.push('Duplicate serial number for this item in the import file');
       }
       const skuKey = String(item.sku || '').trim();
       const barcodeKey = String(item.barcode || '').trim();
@@ -1280,7 +1304,7 @@ export async function bulkImport(req: Request, res: Response) {
       if (rowErrors.length) {
         errors.push({ row: Number(row.__sourceRow) || i + headerRowIndex + 2, errors: rowErrors, data: item });
       } else {
-        if (serialKey) seenSerials.add(serialKey);
+        if (productSerialKey) seenSerials.add(productSerialKey);
         const sourceRow = Number(row.__sourceRow) || i + headerRowIndex + 2;
         const warnings: string[] = [];
         if (parsedQuantity.unitText) warnings.push(`Quantity was read as ${parsedQuantity.quantity}; review the unit "${parsedQuantity.unitText}" after import.`);
@@ -1385,13 +1409,14 @@ export async function bulkImport(req: Request, res: Response) {
           inserted++;
         }
       });
-      return res.json(success({ inserted, errors: errors.length }));
+      return res.json(success({ inserted, skipped: alreadyPresent.length, errors: errors.length }));
     }
 
     res.json(success({
       preview,
       errors,
-      total: preview.length + errors.length,
+      alreadyPresent,
+      total: preview.length + errors.length + alreadyPresent.length,
       valid: preview.length,
       invalid: errors.length,
       note: 'Rows with serial numbers are imported as separate items. Rows without serial numbers are grouped by item name and their quantities are added. Missing price and GST values are set to 0.',

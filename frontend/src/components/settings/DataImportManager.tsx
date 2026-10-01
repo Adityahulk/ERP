@@ -30,6 +30,7 @@ type ImportPreview = {
   invalid: number;
   preview: PreviewRow[];
   errors: ErrorRow[];
+  alreadyPresent: Array<PreviewRow & { existing_item_id?: string; existing_item_name?: string; message?: string }>;
   note?: string;
 };
 
@@ -89,6 +90,7 @@ function previewSummary(row: PreviewRow) {
 export function DataImportManager() {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const readTokenRef = useRef(0);
   const [kind, setKind] = useState<ImportKind>('items');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -112,6 +114,7 @@ export function DataImportManager() {
   const selected = importKinds.find((entry) => entry.id === kind)!;
 
   const resetFile = () => {
+    readTokenRef.current += 1;
     setFile(null);
     setPreview(null);
     if (inputRef.current) inputRef.current.value = '';
@@ -151,20 +154,24 @@ export function DataImportManager() {
 
   const readFile = async (nextFile?: File) => {
     if (!nextFile) return;
+    const token = ++readTokenRef.current;
     setFile(nextFile);
     setPreview(null);
     setReading(true);
+    if (inputRef.current) inputRef.current.value = '';
     try {
       const form = new FormData();
       form.append('file', nextFile);
       const response = await api.post(endpoint(), form);
       const data = responseData(response);
+      if (token !== readTokenRef.current) return;
       setPreview({
         total: Number(data.total || 0),
         valid: Number(data.valid ?? data.preview?.length ?? 0),
         invalid: Number(data.invalid ?? data.errors?.length ?? 0),
         preview: data.preview || [],
         errors: data.errors || [],
+        alreadyPresent: data.alreadyPresent || [],
         note: data.note,
         type: data.type,
       });
@@ -174,10 +181,11 @@ export function DataImportManager() {
         toast.success(`${data.preview?.length || 0} valid row(s) ready to import`);
       }
     } catch (err: any) {
+      if (token !== readTokenRef.current) return;
       setPreview(null);
       toast.error(err.response?.data?.error || 'Could not read this file');
     } finally {
-      setReading(false);
+      if (token === readTokenRef.current) setReading(false);
     }
   };
 
@@ -300,10 +308,11 @@ export function DataImportManager() {
 
         {preview && (
           <div className="mt-5 space-y-4">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-md border bg-slate-50 p-3"><p className="text-xs text-slate-500">Total records</p><p className="mt-1 text-xl font-bold">{preview.total}</p></div>
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs text-emerald-700">Valid</p><p className="mt-1 text-xl font-bold text-emerald-800">{preview.valid}</p></div>
               <div className="rounded-md border border-rose-200 bg-rose-50 p-3"><p className="text-xs text-rose-700">Invalid</p><p className="mt-1 text-xl font-bold text-rose-800">{preview.invalid}</p></div>
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3"><p className="text-xs text-sky-700">Already imported · skipped</p><p className="mt-1 text-xl font-bold text-sky-800">{preview.alreadyPresent.length}</p></div>
             </div>
 
             {preview.note && (
@@ -324,6 +333,23 @@ export function DataImportManager() {
                       {entry.warnings?.map((warning) => <p key={warning} className="ml-[68px] mt-1 text-amber-700">{warning}</p>)}
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {preview.alreadyPresent.length > 0 && (
+              <div className="rounded-md border border-sky-200">
+                <div className="flex items-center gap-2 border-b border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800">
+                  <Info className="h-4 w-4" /> Already imported; will be skipped
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-sky-100">
+                  {preview.alreadyPresent.slice(0, 100).map((entry) => (
+                    <div key={`${entry.row}-${entry.existing_item_id}`} className="px-3 py-2 text-xs">
+                      <p className="font-semibold text-slate-800">Row {entry.row}: {previewSummary(entry)}</p>
+                      <p className="mt-1 text-sky-800">{entry.message || `Already exists as ${entry.existing_item_name || 'an item'}; will not be imported twice.`}</p>
+                    </div>
+                  ))}
+                  {preview.alreadyPresent.length > 100 && <p className="px-3 py-2 text-xs text-sky-800">And {preview.alreadyPresent.length - 100} more already-imported rows.</p>}
                 </div>
               </div>
             )}
