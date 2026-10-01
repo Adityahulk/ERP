@@ -158,7 +158,7 @@ async function referenceData(companyId: string) {
   const [parties, items, godowns, banks, company] = await Promise.all([
     query(`SELECT id, name, phone, gstin, state_code FROM parties WHERE company_id=$1 AND is_deleted=false`, [companyId]),
     query(`SELECT id, name, sku, hsn_code, item_type, track_inventory FROM items WHERE company_id=$1 AND is_deleted=false`, [companyId]),
-    query(`SELECT id, name, code FROM godowns WHERE company_id=$1 AND is_deleted=false`, [companyId]),
+    query(`SELECT id, name, code FROM godowns WHERE company_id=$1 AND is_deleted=false AND is_active=true`, [companyId]),
     query(`SELECT id, account_label, bank_name, account_number, ifsc FROM company_bank_accounts WHERE company_id=$1 AND is_deleted=false`, [companyId]),
     query(`SELECT state_code, gstin FROM companies WHERE id=$1`, [companyId]),
   ]);
@@ -463,13 +463,18 @@ async function importExpenses(records: ImportPreview[], companyId: string, userI
 async function importStock(records: ImportPreview[], companyId: string, userId: string) {
   let inserted = 0;
   await withTransaction(async (client) => {
+    await client.query('SELECT id FROM companies WHERE id = $1 FOR UPDATE', [companyId]);
     for (const record of records) {
       const d: any = record.data;
       let godown = await client.query(
-        `SELECT id FROM godowns WHERE company_id=$1 AND is_deleted=false AND
-         (($2 <> '' AND lower(code)=lower($2)) OR ($3 <> '' AND lower(name)=lower($3))) LIMIT 1`,
+        `SELECT id, is_active FROM godowns WHERE company_id=$1 AND is_deleted=false AND
+         (($2 <> '' AND lower(btrim(code))=lower(btrim($2))) OR ($3 <> '' AND lower(btrim(name))=lower(btrim($3))))
+         ORDER BY CASE WHEN $2 <> '' AND lower(btrim(code))=lower(btrim($2)) THEN 0 ELSE 1 END LIMIT 1`,
         [companyId, d.godown_code || '', d.godown_name || ''],
       );
+      if (godown.rows[0]?.is_active === false) {
+        throw new Error(`Row ${record.row}: godown "${d.godown_name || d.godown_code}" is disabled. Select an active godown or enable it in Settings → Locations/Godowns.`);
+      }
       if (!godown.rows.length) {
         godown = await client.query(
           `INSERT INTO godowns (company_id,name,code,address,city,state,pincode,is_default)

@@ -597,20 +597,24 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
   try {
     const companyId = req.user!.company_id;
     const d = req.body;
-    if (!d.party_id) return res.status(400).json(error('party_id is required'));
+    const partyNameSnapshot = String(d.party_name || d.party_name_snapshot || '').trim();
+    if (!d.party_id && !partyNameSnapshot) return res.status(400).json(error('Select a supplier or enter a supplier name for this bill'));
     if (!d.bill_date) return res.status(400).json(error('bill_date is required'));
     if (!Array.isArray(d.items) || d.items.length === 0) return res.status(400).json(error('items are required'));
 
     const result = await withTransaction(async (client) => {
       const billNumber = await resolvePurchaseBillNumber(client, companyId, d.bill_number);
 
-      const pRes = await client.query(
-        'SELECT state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-        [d.party_id, companyId],
-      );
-      if (!pRes.rows.length) throw new Error('Party not found');
+      const pRes = d.party_id
+        ? await client.query(
+            'SELECT name, phone, gstin, state_code, billing_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+            [d.party_id, companyId],
+          )
+        : { rows: [] };
+      if (d.party_id && !pRes.rows.length) throw new Error('Party not found');
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-      const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const supplierStateCode = pRes.rows[0]?.state_code || d.party_state_code || cRes.rows[0].state_code;
+      const gstType = determineGSTType(supplierStateCode, cRes.rows[0].state_code);
       const isGst = d.is_gst_invoice !== false;
 
       const normalizedItems = normalizePurchaseItems(d.items, isGst);
@@ -626,14 +630,21 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       const invRes = await client.query(
         `INSERT INTO purchase_invoices (
           company_id, godown_id, bill_number, bill_date, due_date, po_id, party_id,
+          party_name_snapshot, party_phone_snapshot, party_gstin_snapshot,
+          party_state_code_snapshot, billing_address_snapshot,
           subtotal, discount_amount, taxable_amount, cgst_amount, sgst_amount, igst_amount, total_amount,
           paid_amount, payment_status, status, notes, created_by,
           company_bank_account_id, bank_label_snapshot, bank_name_snapshot, bank_account_number_snapshot,
           bank_ifsc_snapshot, bank_branch_snapshot, upi_id_snapshot
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,0,'unpaid','received',$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING *`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,0,'unpaid','received',$20,$21,$22,$23,$24,$25,$26,$27,$28) RETURNING *`,
         [
           companyId, d.godown_id || null, billNumber, d.bill_date,
-          d.due_date || null, d.po_id || null, d.party_id,
+          d.due_date || null, d.po_id || null, d.party_id || null,
+          pRes.rows[0]?.name || partyNameSnapshot,
+          pRes.rows[0]?.phone || d.party_phone || null,
+          pRes.rows[0]?.gstin || d.party_gstin || null,
+          pRes.rows[0]?.state_code || d.party_state_code || null,
+          pRes.rows[0]?.billing_address || d.party_address || null,
           totals.subtotal, totals.totalDiscount, totals.totalTaxable,
           totals.totalCgst, totals.totalSgst, totals.totalIgst, totals.totalAmount,
           d.notes || null, req.user!.id,
@@ -683,13 +694,15 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
       }
 
       // Update party ledger (purchase increases payable = decreases balance)
-      await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2', [totals.totalAmount, d.party_id]);
-      const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
-      await client.query(
-        `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
-         VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
-        [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, inv.id, `Purchase Bill ${billNumber}`, req.user!.id],
-      );
+      if (d.party_id) {
+        await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2', [totals.totalAmount, d.party_id]);
+        const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
+          [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, inv.id, `Purchase Bill ${billNumber}`, req.user!.id],
+        );
+      }
 
       await postPurchaseInvoiceAccounting(client, companyId, inv, req.user!.id);
       return inv;
@@ -700,7 +713,7 @@ export async function createPurchaseInvoiceDirect(req: Request, res: Response) {
   } catch (err: any) {
     console.error('createPurchaseInvoiceDirect error:', err.message);
     const msg = err?.message || 'Failed to create bill';
-    const status = /Bill number|party_id|bill_date|items are required|Party not found|quantity|rate|GST rate/i.test(msg) ? 400 : 500;
+    const status = /Bill number|supplier|party_id|bill_date|items are required|Party not found|quantity|rate|GST rate/i.test(msg) ? 400 : 500;
     res.status(status).json(error(msg));
   }
 }
@@ -719,12 +732,13 @@ export async function listPurchaseInvoices(req: Request, res: Response) {
       where += ` AND pi.payment_status <> 'paid' AND pi.status <> 'cancelled' AND pi.due_date IS NOT NULL AND pi.due_date < CURRENT_DATE`;
     } else if (payment_status) { where += ` AND pi.payment_status = $${idx++}`; params.push(payment_status); }
     if (party_id) { where += ` AND pi.party_id = $${idx++}`; params.push(party_id); }
-    if (search) { where += ` AND (pi.bill_number ILIKE $${idx} OR p.name ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
+    if (search) { where += ` AND (pi.bill_number ILIKE $${idx} OR COALESCE(pi.party_name_snapshot, p.name) ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
     if (outstanding === 'true') { where += ` AND pi.status != 'cancelled' AND pi.total_amount > pi.paid_amount`; }
 
     const countRes = await query(`SELECT COUNT(*) FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id WHERE ${where}`, params);
     const result = await query(
-      `SELECT pi.*, p.name as party_name, p.phone as party_phone
+      `SELECT pi.*, COALESCE(pi.party_name_snapshot, p.name) as party_name,
+              COALESCE(pi.party_phone_snapshot, p.phone) as party_phone
        FROM purchase_invoices pi LEFT JOIN parties p ON pi.party_id = p.id
        WHERE ${where} ORDER BY pi.bill_date DESC LIMIT $${idx} OFFSET $${idx+1}`,
       [...params, limit, offset],
@@ -765,7 +779,8 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
     const { id } = req.params;
     const companyId = req.user!.company_id;
     const d = req.body;
-    if (!d.party_id) return res.status(400).json(error('party_id is required'));
+    const partyNameSnapshot = String(d.party_name || d.party_name_snapshot || '').trim();
+    if (!d.party_id && !partyNameSnapshot) return res.status(400).json(error('Select a supplier or enter a supplier name for this bill'));
     if (!d.bill_date) return res.status(400).json(error('bill_date is required'));
     if (!Array.isArray(d.items) || d.items.length === 0) return res.status(400).json(error('items are required'));
 
@@ -825,13 +840,15 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 
       await client.query(`DELETE FROM purchase_invoice_items WHERE purchase_invoice_id = $1`, [id]);
 
-      const pRes = await client.query(
-        'SELECT state_code FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
-        [d.party_id, companyId],
-      );
-      if (!pRes.rows.length) throw new Error('Party not found');
+      const pRes = d.party_id
+        ? await client.query(
+            'SELECT name, phone, gstin, state_code, billing_address FROM parties WHERE id = $1 AND company_id = $2 AND is_deleted = false',
+            [d.party_id, companyId],
+          )
+        : { rows: [] };
+      if (d.party_id && !pRes.rows.length) throw new Error('Party not found');
       const cRes = await client.query('SELECT state_code FROM companies WHERE id = $1', [companyId]);
-      const gstType = determineGSTType(pRes.rows[0].state_code, cRes.rows[0].state_code);
+      const gstType = determineGSTType(pRes.rows[0]?.state_code || d.party_state_code || cRes.rows[0].state_code, cRes.rows[0].state_code);
       const isGst = d.is_gst_invoice !== false;
 
       const normalizedItems = normalizePurchaseItems(d.items, isGst);
@@ -853,17 +870,24 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
 
       await client.query(
         `UPDATE purchase_invoices SET
-          party_id = $1, godown_id = $2, bill_number = $3, bill_date = $4, due_date = $5,
-          subtotal = $6, discount_amount = $7, taxable_amount = $8,
-          cgst_amount = $9, sgst_amount = $10, igst_amount = $11, total_amount = $12,
-          notes = $13, is_gst_invoice = $14,
-          company_bank_account_id = $15, bank_label_snapshot = $16, bank_name_snapshot = $17,
-          bank_account_number_snapshot = $18, bank_ifsc_snapshot = $19, bank_branch_snapshot = $20, upi_id_snapshot = $21,
-          pdf_template = $22, document_theme = $23,
+          party_id = $1, party_name_snapshot = $2, party_phone_snapshot = $3,
+          party_gstin_snapshot = $4, party_state_code_snapshot = $5, billing_address_snapshot = $6,
+          godown_id = $7, bill_number = $8, bill_date = $9, due_date = $10,
+          subtotal = $11, discount_amount = $12, taxable_amount = $13,
+          cgst_amount = $14, sgst_amount = $15, igst_amount = $16, total_amount = $17,
+          notes = $18, is_gst_invoice = $19,
+          company_bank_account_id = $20, bank_label_snapshot = $21, bank_name_snapshot = $22,
+          bank_account_number_snapshot = $23, bank_ifsc_snapshot = $24, bank_branch_snapshot = $25, upi_id_snapshot = $26,
+          pdf_template = $27, document_theme = $28,
           updated_at = NOW()
-        WHERE id = $24 AND company_id = $25`,
+        WHERE id = $29 AND company_id = $30`,
         [
-          d.party_id,
+          d.party_id || null,
+          pRes.rows[0]?.name || partyNameSnapshot,
+          pRes.rows[0]?.phone || d.party_phone || null,
+          pRes.rows[0]?.gstin || d.party_gstin || null,
+          pRes.rows[0]?.state_code || d.party_state_code || null,
+          pRes.rows[0]?.billing_address || d.party_address || null,
           d.godown_id || null,
           billNumber,
           d.bill_date,
@@ -932,17 +956,15 @@ export async function updatePurchaseInvoice(req: Request, res: Response) {
         }
       }
 
-      await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2 AND company_id = $3', [
-        totals.totalAmount,
-        d.party_id,
-        companyId,
-      ]);
-      const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
-      await client.query(
-        `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
-         VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
-        [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, id, `Purchase Bill ${billNumber}`, req.user!.id],
-      );
+      if (d.party_id) {
+        await client.query('UPDATE parties SET balance = balance - $1 WHERE id = $2 AND company_id = $3', [totals.totalAmount, d.party_id, companyId]);
+        const balRes = await client.query('SELECT balance FROM parties WHERE id = $1', [d.party_id]);
+        await client.query(
+          `INSERT INTO party_ledger (company_id, party_id, type, amount, balance_after, reference_type, reference_id, narration, created_by)
+           VALUES ($1,$2,'credit',$3,$4,'purchase_invoice',$5,$6,$7)`,
+          [companyId, d.party_id, totals.totalAmount, balRes.rows[0].balance, id, `Purchase Bill ${billNumber}`, req.user!.id],
+        );
+      }
 
       const fresh = await client.query(`SELECT * FROM purchase_invoices WHERE id = $1 AND company_id = $2`, [id, companyId]);
       return fresh.rows[0];
@@ -1115,7 +1137,14 @@ export async function getPurchaseInvoicePDF(req: Request, res: Response) {
 
     const partyRes = invRes.rows[0].party_id
       ? await query(`SELECT * FROM parties WHERE id = $1 AND company_id = $2`, [invRes.rows[0].party_id, req.user!.company_id])
-      : { rows: [null] };
+      : { rows: [{
+          name: invRes.rows[0].party_name_snapshot,
+          phone: invRes.rows[0].party_phone_snapshot,
+          gstin: invRes.rows[0].party_gstin_snapshot,
+          state_code: invRes.rows[0].party_state_code_snapshot,
+          billing_address: invRes.rows[0].billing_address_snapshot,
+          shipping_address: null,
+        }] };
     const itemsRes = await query(
       `SELECT
          purchase_invoice_id as invoice_id,
@@ -1143,7 +1172,7 @@ export async function getPurchaseInvoicePDF(req: Request, res: Response) {
       invoice_number: invRes.rows[0].bill_number || `PB-${String(id).slice(0, 8)}`,
       invoice_date: invRes.rows[0].bill_date,
       due_date: invRes.rows[0].due_date || null,
-      party_name_snapshot: invRes.rows[0].party_name_snapshot,
+      party_name_snapshot: invRes.rows[0].party_name_snapshot || partyRes.rows[0]?.name,
       party_gstin_snapshot: partyRes.rows[0]?.gstin || null,
       billing_address_snapshot: partyRes.rows[0]?.billing_address || null,
       shipping_address_snapshot: partyRes.rows[0]?.shipping_address || null,

@@ -50,6 +50,8 @@ export default function PurchaseBillsTab() {
   // Form state
   const [partyId, setPartyId] = useState('');
   const [partyName, setPartyName] = useState('');
+  const [partyGstin, setPartyGstin] = useState('');
+  const [partyStateCode, setPartyStateCode] = useState('');
   const [partySearch, setPartySearch] = useState('');
   const [partyResults, setPartyResults] = useState<any[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -90,10 +92,12 @@ export default function PurchaseBillsTab() {
 
   const { clearDraft, saveDraft, loadDraft, hasDraft } = useTransactionDraft(
     STORAGE_KEYS.drafts.purchaseBill,
-    { partyId, partyName, billDate, dueDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
+    { partyId, partyName, partyGstin, partyStateCode, billDate, dueDate, billNumber, godownId, isGst, notes, items, companyBankAccountId },
     (draft: any) => {
       setPartyId(String(draft.partyId || ''));
       setPartyName(String(draft.partyName || ''));
+      setPartyGstin(String(draft.partyGstin || ''));
+      setPartyStateCode(String(draft.partyStateCode || ''));
       setBillDate(String(draft.billDate || new Date().toISOString().split('T')[0]));
       setDueDate(String(draft.dueDate || ''));
       setBillNumber(String(draft.billNumber || ''));
@@ -190,13 +194,23 @@ export default function PurchaseBillsTab() {
     }
     setPartyId(id);
     setPartyName(String(p.name ?? ''));
+    setPartyGstin(String(p.gstin ?? ''));
+    setPartyStateCode(String(p.state_code ?? ''));
     setPartySearch('');
     setPartyResults([]);
   };
-  const clearSupplier = () => { setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]); };
+  const useSupplierForThisBill = () => {
+    const name = partySearch.trim();
+    if (!name) return;
+    setPartyId('');
+    setPartyName(name);
+    setPartySearch('');
+    setPartyResults([]);
+  };
+  const clearSupplier = () => { setPartyId(''); setPartyName(''); setPartyGstin(''); setPartyStateCode(''); setPartySearch(''); setPartyResults([]); };
 
   const resetForm = () => {
-    setPartyId(''); setPartyName(''); setPartySearch(''); setPartyResults([]);
+    setPartyId(''); setPartyName(''); setPartyGstin(''); setPartyStateCode(''); setPartySearch(''); setPartyResults([]);
     setBillDate(new Date().toISOString().split('T')[0]); setDueDate(''); setBillNumber('');
     setGodownId(''); setNotes(''); setItems([]);
     setCompanyBankAccountId('');
@@ -211,6 +225,9 @@ export default function PurchaseBillsTab() {
     if (String(b.id) !== editingBillId) return;
 
     setPartyId(String(b.party_id || ''));
+    setPartyName(String(b.party_name_snapshot || ''));
+    setPartyGstin(String(b.party_gstin_snapshot || ''));
+    setPartyStateCode(String(b.party_state_code_snapshot || ''));
     setBillDate(b.bill_date ? String(b.bill_date).slice(0, 10) : new Date().toISOString().split('T')[0]);
     setDueDate(b.due_date ? String(b.due_date).slice(0, 10) : '');
     setBillNumber(String(b.bill_number || ''));
@@ -254,7 +271,10 @@ export default function PurchaseBillsTab() {
   };
 
   const buildPayload = () => ({
-    party_id: partyId,
+    party_id: partyId || undefined,
+    party_name: partyId ? undefined : partyName.trim(),
+    party_gstin: partyGstin.trim() || undefined,
+    party_state_code: partyStateCode.trim() || undefined,
     bill_date: billDate,
     due_date: dueDate || undefined,
     bill_number: billNumber.trim() || undefined,
@@ -275,7 +295,7 @@ export default function PurchaseBillsTab() {
   });
 
   const handleSave = () => {
-    if (!partyId) { toast.error('Select a party'); return; }
+    if (!partyId && !partyName.trim()) { toast.error('Select a supplier or enter a supplier name'); return; }
     if (items.length === 0) { toast.error('Add at least one item'); return; }
     const normalizedBillNumber = billNumber.trim();
     if (editingBillId && !normalizedBillNumber) { toast.error('Bill number is required while editing'); return; }
@@ -380,6 +400,7 @@ export default function PurchaseBillsTab() {
     if (result.matched_party_id) {
       setPartyId(result.matched_party_id);
       setPartyName(result.matched_party_name || result.party_name || 'Matched supplier');
+      setPartyGstin(result.supplier_gstin || '');
     } else {
       const lookup = String(result.supplier_gstin || result.party_name || '').trim();
       if (lookup) {
@@ -571,10 +592,10 @@ export default function PurchaseBillsTab() {
             {/* Party */}
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <Label className="text-xs">Party *</Label>
-                {partyId ? (
+                  <Label className="text-xs">Supplier / Party *</Label>
+                {partyName && !partySearch ? (
                   <div className="mt-1 flex items-center justify-between p-2 rounded-lg border bg-muted/30">
-                    <span className="font-medium text-sm">{partyName || 'Selected party'}</span>
+                    <span className="font-medium text-sm">{partyName}{!partyId && <span className="ml-2 text-xs font-normal text-muted-foreground">This bill only</span>}</span>
                     <button type="button" className="text-xs text-primary hover:underline" onClick={clearSupplier}>Change</button>
                   </div>
                 ) : (
@@ -591,10 +612,21 @@ export default function PurchaseBillsTab() {
                           ))}
                         </div>
                       )}
+                      {!partyId && partySearch.trim().length > 1 && !partyResults.some((p: any) => String(p.name).toLowerCase() === partySearch.trim().toLowerCase()) && (
+                        <button type="button" className="absolute z-20 w-full mt-1 top-full text-left px-3 py-2 border rounded-lg bg-card shadow-lg text-sm text-primary hover:bg-muted" onClick={useSupplierForThisBill}>
+                          Use “{partySearch.trim()}” for this bill only
+                        </button>
+                      )}
                     </div>
                     <Button type="button" variant="outline" size="sm" className="h-9 gap-1" onClick={() => { setQuickAddOpen(true); }}>
                       <UserPlus className="w-4 h-4" />
                     </Button>
+                  </div>
+                )}
+                {partyName && !partyId && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div><Label className="text-xs">Supplier GSTIN (optional)</Label><Input className="mt-1 h-9" value={partyGstin} onChange={(e) => setPartyGstin(e.target.value)} maxLength={50} /></div>
+                    <div><Label className="text-xs">State code (optional)</Label><Input className="mt-1 h-9" value={partyStateCode} onChange={(e) => setPartyStateCode(e.target.value)} maxLength={20} /></div>
                   </div>
                 )}
               </div>
@@ -666,7 +698,7 @@ export default function PurchaseBillsTab() {
                 className="flex-1"
                 loading={createMutation.isPending || updateBillMutation.isPending}
                 onClick={handleSave}
-                disabled={!partyId || items.length === 0 || (!!editingBillId && editBillLoading)}
+                disabled={(!partyId && !partyName.trim()) || items.length === 0 || (!!editingBillId && editBillLoading)}
               >
                 {editingBillId ? 'Save changes' : 'Save Bill'}
               </Button>

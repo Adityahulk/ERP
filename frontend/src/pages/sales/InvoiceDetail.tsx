@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink, Printer } from 'lucide-react';
+import { ArrowLeft, Download, Send, AlertTriangle, QrCode, FileDown, Ban, Eye, Pencil, Truck, Paperclip, ExternalLink, Printer, Share2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
 import { normalizeRole } from '@/lib/roles';
@@ -293,21 +293,25 @@ export default function InvoiceDetail() {
     }
   };
 
-  const openReceiptPdf = async () => {
+  const shareReceiptPdf = async () => {
     const width = thermalWidthMm(company?.print_settings?.thermal);
-    const t = toast.loading('Preparing receipt PDF…');
+    const t = toast.loading('Preparing receipt to share…');
     try {
       const res = await api.get(`/print/receipt/${id}`, { params: { width }, responseType: 'blob' });
-      const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-      // Open in a new tab so the user can save, share, or print from the browser
+      const file = new File([new Blob([res.data], { type: 'application/pdf' })], `${inv.invoice_number || 'sale-receipt'}.pdf`, { type: 'application/pdf' });
+      if (await sharePdfWithNative(file, { title: `Invoice ${inv.invoice_number}`, text: `Invoice ${inv.invoice_number}` })) {
+        toast.dismiss(t);
+        return;
+      }
+      const blobUrl = window.URL.createObjectURL(file);
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+      link.download = file.name;
       document.body.appendChild(link);
       link.click();
       link.remove();
-      toast.success('Receipt PDF ready', { id: t });
+      window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 30000);
+      toast.success('Receipt PDF downloaded. Attach it in your sharing app.', { id: t });
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Failed to open receipt', { id: t });
     }
@@ -504,11 +508,11 @@ Thank you.
           <Button
             variant="ghost"
             size="sm"
-            onClick={openReceiptPdf}
-            title="Open thermal receipt PDF in a new browser tab (save / share / print from there)"
+            onClick={shareReceiptPdf}
+            title="Share the thermal receipt PDF where supported; otherwise download it to attach manually"
             className="gap-1 text-slate-500 hover:text-indigo-600 border border-slate-200 hover:border-indigo-300"
           >
-            <ExternalLink className="h-3.5 w-3.5" /> Direct PDF
+            <Share2 className="h-3.5 w-3.5" /> Share
           </Button>
           <Button variant="outline" size="sm" onClick={downloadInvoicePdf} loading={pdfLoading}>
             <Download className="h-4 w-4 mr-2" /> Download PDF

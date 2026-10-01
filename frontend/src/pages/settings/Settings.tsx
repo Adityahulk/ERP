@@ -863,7 +863,7 @@ export default function Settings() {
 
   const { data: godownsData, isLoading: godownsLoading } = useQuery({
     queryKey: ['settings-godowns'],
-    queryFn: () => api.get('/godowns').then((r) => r.data?.data ?? r.data),
+    queryFn: () => api.get('/godowns', { params: { include_inactive: true } }).then((r) => r.data?.data ?? r.data),
   });
   const godownRows = (godownsData as any) ?? [];
 
@@ -1035,7 +1035,7 @@ export default function Settings() {
         api.get('/items', { params: { page: 1, limit: 5000 } }),
         api.get('/parties', { params: { page: 1, limit: 5000 } }),
         api.get('/invoices', { params: { page: 1, limit: 5000 } }),
-        api.get('/godowns'),
+        api.get('/godowns', { params: { include_inactive: true } }),
         api.get('/users', { params: { page: 1, limit: 5000 } }),
       ]);
       const dump = {
