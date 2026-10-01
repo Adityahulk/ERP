@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
+import { sharePdfFile } from '@/lib/sharePdf';
 
 type Props = {
   basePath: string;
@@ -38,7 +39,7 @@ export default function SalesDocumentActionMenu(props: Props) {
     close();
     setBusy(key);
     try { await task(); } catch (error: any) {
-      toast.error(error?.response?.data?.error || error?.message || `${props.documentTitle} action failed`);
+      if (error?.name !== 'AbortError') toast.error(error?.response?.data?.error || error?.message || `${props.documentTitle} action failed`);
     } finally { setBusy(null); }
   };
   const downloadBlob = (blob: Blob) => {
@@ -73,9 +74,10 @@ export default function SalesDocumentActionMenu(props: Props) {
   const shareFile = async (whatsAppOnly = false) => {
     const blob = await loadPdf();
     const file = new File([blob], `${safeFilename(props.documentNumber)}.pdf`, { type: 'application/pdf' });
-    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-    if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
-      await navigator.share({ title: `${props.documentTitle} ${props.documentNumber}`, text: `${props.documentTitle} ${props.documentNumber}`, files: [file] });
+    const title = `${props.documentTitle} ${props.documentNumber}`;
+    const text = props.phone ? `${title} for ${props.phone}` : title;
+    if (await sharePdfFile(file, { title, text })) {
+      toast.success('Choose WhatsApp in the share sheet to send the PDF.');
       return;
     }
     downloadBlob(blob);

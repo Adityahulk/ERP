@@ -8,6 +8,7 @@ import { PRINT_LAYOUT_OPTIONS, PRINT_LAYOUT_LEGACY_ID_MAP, type PrintLayoutId } 
 import { LEGACY_STORAGE_KEYS, removeStorageWithLegacy, STORAGE_KEYS } from '@/lib/storageKeys';
 import { apiErrorMessage } from '@/lib/blobError';
 import { printPdfBlob } from '@/lib/printPdf';
+import { sharePdfFile } from '@/lib/sharePdf';
 
 const SKIP_PREVIEW_KEY = STORAGE_KEYS.skipInvoicePreview;
 const LEGACY_SKIP_PREVIEW_KEY = LEGACY_STORAGE_KEYS.skipInvoicePreview;
@@ -242,26 +243,22 @@ Thank you.
     const text = buildWaMessage();
     setWaSending(true);
     try {
-      if (target === 'app') {
-        if (navigator.share) {
-          const file = await fetchCurrentPdfFile();
-          const navAny = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-          const canShareFiles = typeof navAny.canShare === 'function' ? navAny.canShare({ files: [file] }) : false;
-          if (canShareFiles) {
-            await navigator.share({
-              title: `Invoice ${shareContext.invoiceNumber}`,
-              text,
-              files: [file],
-            });
-            toast.success('Shared');
-            return;
-          }
+      const file = await fetchCurrentPdfFile();
+      try {
+        if (await sharePdfFile(file, { title: `Invoice ${shareContext.invoiceNumber}`, text })) {
+          toast.success('Choose WhatsApp in the share sheet to send the PDF.');
+          return;
         }
+      } catch (shareError: any) {
+        if (shareError?.name === 'AbortError') return;
+      }
+
+      if (target === 'app') {
+        downloadShareFile(file);
         window.open(`whatsapp://send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`, '_blank');
-        toast.success('Opening WhatsApp…');
+        toast('PDF sharing is unavailable here. The invoice PDF was downloaded; attach it in WhatsApp.');
         return;
       }
-      const file = await fetchCurrentPdfFile();
       const localUrl = window.URL.createObjectURL(file);
       const a = document.createElement('a');
       a.href = localUrl;
@@ -273,7 +270,7 @@ Thank you.
       window.open(`https://web.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
       toast.success('PDF downloaded — attach it in WhatsApp Web and send.');
     } catch (e: any) {
-      toast.error(e?.message || 'WhatsApp failed');
+      if (e?.name !== 'AbortError') toast.error(e?.message || 'WhatsApp failed');
     } finally {
       setWaSending(false);
     }
@@ -341,10 +338,7 @@ Thank you.
   };
 
   const shareFileNatively = async (file: File) => {
-    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-    if (!navigator.share || (nav.canShare && !nav.canShare({ files: [file] }))) return false;
-    await navigator.share({ title: `Invoice ${shareContext.invoiceNumber}`, text: buildWaMessage(), files: [file] });
-    return true;
+    return sharePdfFile(file, { title: `Invoice ${shareContext.invoiceNumber}`, text: buildWaMessage() });
   };
 
   const openGmail = async () => {

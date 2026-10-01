@@ -24,6 +24,7 @@ import {
 } from '@/hooks/useBusiness';
 import { getApiBaseURL } from '@/lib/api';
 import { thermalWidthMm } from '@/lib/thermalSettings';
+import { sharePdfFile as sharePdfWithNative } from '@/lib/sharePdf';
 
 const ROLE_RANK: Record<string, number> = {
   staff: 1,
@@ -377,6 +378,15 @@ Thank you.
     return new File([blob], `${inv.invoice_number}.pdf`, { type: 'application/pdf' });
   };
 
+  const downloadInvoicePdfFile = (file: File) => {
+    const url = window.URL.createObjectURL(file);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = file.name;
+    anchor.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 30_000);
+  };
+
   const openWhatsApp = async (target: 'web' | 'app') => {
     const phone = normalizePhone(sharePhone);
     if (!phone) {
@@ -387,47 +397,35 @@ Thank you.
     const text = buildWaMessage();
     setWaSending(true);
     try {
-      if (target === 'app') {
-        // On supported devices this opens native share sheet with WhatsApp option and PDF attached.
-        if (navigator.share) {
-          const file = await fetchInvoicePdfFile();
-          const navAny = navigator as any;
-          const canShareFiles = typeof navAny.canShare === 'function' ? navAny.canShare({ files: [file] }) : false;
-          if (canShareFiles) {
-            await navigator.share({
-              title: `Invoice ${inv.invoice_number}`,
-              text,
-              files: [file],
-            });
-            toast.success('Shared via app chooser');
-            setWaPickerOpen(false);
-            return;
-          }
+      const file = await fetchInvoicePdfFile();
+      try {
+        if (await sharePdfWithNative(file, { title: `Invoice ${inv.invoice_number}`, text })) {
+          toast.success('Choose WhatsApp in the share sheet to send the PDF.');
+          setWaPickerOpen(false);
+          return;
         }
+      } catch (shareError: any) {
+        if (shareError?.name === 'AbortError') return;
+      }
+
+      if (target === 'app') {
+        downloadInvoicePdfFile(file);
         const appUrl = `whatsapp://send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`;
         window.open(appUrl, '_blank');
-        toast.success('Opening WhatsApp app…');
+        toast('PDF sharing is unavailable here. The invoice PDF was downloaded; attach it in WhatsApp.');
         setWaPickerOpen(false);
         return;
       }
 
       // Web flow: open WhatsApp Web with prefilled message and auto-download invoice PDF for manual attach.
-      const file = await fetchInvoicePdfFile();
-      const localUrl = window.URL.createObjectURL(file);
-      const a = document.createElement('a');
-      a.href = localUrl;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(localUrl);
+      downloadInvoicePdfFile(file);
 
       const webUrl = `https://web.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`;
       window.open(webUrl, '_blank', 'noopener,noreferrer');
       toast.success('Opening WhatsApp Web. Attach the downloaded PDF and send.');
       setWaPickerOpen(false);
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to open WhatsApp');
+      if (e?.name !== 'AbortError') toast.error(e?.message || 'Failed to open WhatsApp');
     } finally {
       setWaSending(false);
     }
@@ -435,11 +433,7 @@ Thank you.
 
   const sharePdfFile = async (channel: 'email' | 'sms') => {
     const file = await fetchInvoicePdfFile();
-    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-    if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
-      await navigator.share({ title: `Invoice ${inv.invoice_number}`, text: buildWaMessage(), files: [file] });
-      return true;
-    }
+    if (await sharePdfWithNative(file, { title: `Invoice ${inv.invoice_number}`, text: buildWaMessage() })) return true;
     const url = window.URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url; a.download = file.name; a.click();
