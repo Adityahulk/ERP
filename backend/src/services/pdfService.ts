@@ -220,6 +220,88 @@ async function withBrowserPage<T>(render: (page: Page) => Promise<T>): Promise<T
   }
 }
 
+const PAPER_MM: Record<string, [number, number]> = {
+  A1: [594, 841], A2: [420, 594], A3: [297, 420], A4: [210, 297],
+  A5: [148, 210], Letter: [215.9, 279.4], Legal: [215.9, 355.6],
+};
+
+async function fitInvoicePage(page: Page, paper: string, landscape: boolean, kind: string): Promise<void> {
+  const [portraitWidth, portraitHeight] = PAPER_MM[paper] || PAPER_MM.A4;
+  const pageWidth = landscape ? portraitHeight : portraitWidth;
+  const pageHeight = landscape ? portraitWidth : portraitHeight;
+  const margin = kind === 'simple' ? 0 : kind === 'monochrome' ? 10 : 8;
+  const pxPerMm = 96 / 25.4;
+  const availableWidth = Math.floor((pageWidth - 2 * margin) * pxPerMm);
+  const availableHeight = Math.floor((pageHeight - 2 * margin) * pxPerMm);
+
+  await page.setViewport({ width: availableWidth, height: availableHeight, deviceScaleFactor: 1 });
+  await page.emulateMediaType('print');
+  await page.evaluate(async () => {
+    const doc = (globalThis as any).document;
+    await doc.fonts.ready;
+    await Promise.all(Array.from(doc.images).map((image: any) => image.complete ? Promise.resolve() : new Promise<void>((resolve) => {
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', resolve, { once: true });
+      setTimeout(resolve, 3000);
+    })));
+  });
+  await page.addStyleTag({ content: `
+    .pdf-compact-1 .page{padding-top:4px;padding-bottom:4px}
+    .pdf-compact-1 .bill-grid{gap:8px;margin:7px 0}
+    .pdf-compact-1 .bill-card{min-height:0;padding:7px}
+    .pdf-compact-1 .meta-grid div{padding:5px 7px}
+    .pdf-compact-1 table.items{margin-top:7px}
+    .pdf-compact-1 table.items th{padding:6px 7px}
+    .pdf-compact-1 table.items td{padding:6px 7px}
+    .pdf-compact-1 .lower{gap:12px;margin-top:7px}
+    .pdf-compact-1 .info-card{padding:7px;margin-bottom:5px}
+    .pdf-compact-1 .note-block,.pdf-compact-1 .signature-card{margin-top:6px}
+    .pdf-compact-1 .total-row{padding:3px 0}
+    .pdf-compact-1 .signature-line{height:24px}
+    .pdf-compact-1 .qr-card img{width:58px;height:58px}
+    .pdf-compact-2 .page{font-size:10.5px;line-height:1.26;padding-top:2px}
+    .pdf-compact-2 .business-block{line-height:1.32}
+    .pdf-compact-2 .bill-grid{margin:5px 0}
+    .pdf-compact-2 .bill-card{padding:6px}
+    .pdf-compact-2 .business-lines{margin-top:2px}
+    .pdf-compact-2 .footer-line{margin-top:6px}
+    .pdf-compact-2 .lower{grid-template-columns:minmax(0,1fr) 300px}
+    .pdf-compact-2 .logo img{max-height:68px}
+    .pdf-compact-2 .payment-grid{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:start;margin:5px 0}
+    .pdf-compact-2 .payment-grid .bank-card{margin:0}
+    .pdf-compact-2 .payment-grid .qr-card{margin:0}
+    .pdf-compact-2 .doc-title{line-height:1.05}
+    .pdf-compact-2 .performa .doc-title{font-size:32px;margin-top:3px}
+    .pdf-compact-2 .performa .rule{margin:4px 0}
+    .pdf-compact-2 .performa .logo img{max-height:60px}
+    .pdf-compact-2 .performa .center>div[style]{margin-top:5px!important}
+    .pdf-compact-2 .extra-bottom-lines div{height:9px}
+    .pdf-multipage .lower{break-inside:auto}
+    .pdf-multipage .info-card,.pdf-multipage .note-block,.pdf-multipage .signature-card{break-inside:avoid}
+    .pdf-multipage table.items tr{break-inside:avoid}
+    .pdf-multipage table.items tfoot{display:table-row-group}
+  ` });
+
+  const measure = () => page.evaluate(() => {
+    const doc = (globalThis as any).document;
+    const main = doc.querySelector('main.page');
+    return { height: main?.scrollHeight || 0, width: main?.scrollWidth || 0 };
+  });
+  let size = await measure();
+  if (process.env.DEBUG_INVOICE_PDF_LAYOUT) console.log('Invoice PDF layout', { kind, availableWidth, availableHeight, size, level: 0 });
+  if (size.height <= availableHeight - 2 && size.width <= availableWidth + 2) return;
+  await page.evaluate(() => (globalThis as any).document.body.classList.add('pdf-compact-1'));
+  size = await measure();
+  if (process.env.DEBUG_INVOICE_PDF_LAYOUT) console.log('Invoice PDF layout', { kind, availableWidth, availableHeight, size, level: 1 });
+  if (size.height <= availableHeight - 2 && size.width <= availableWidth + 2) return;
+  await page.evaluate(() => (globalThis as any).document.body.classList.add('pdf-compact-2'));
+  size = await measure();
+  if (process.env.DEBUG_INVOICE_PDF_LAYOUT) console.log('Invoice PDF layout', { kind, availableWidth, availableHeight, size, level: 2 });
+  if (size.height > availableHeight - 2 || size.width > availableWidth + 2) {
+    await page.evaluate(() => (globalThis as any).document.body.classList.add('pdf-multipage'));
+  }
+}
+
 function escapeHtml(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -1220,6 +1302,7 @@ function buildInvoiceHtml(args: {
     ? `<section class="bill-grid" style="margin-top:0"><div class="bill-card">${shipToBlock}</div><div>${gstSummary}</div></section>`
     : `<section style="margin-top:0">${gstSummary}</section>`;
   const bank = `<div class="info-card bank-card"><h3>Bank Details</h3>${bankBlock(company)}</div>`;
+  const bankAndQr = qrBlock ? `<div class="payment-grid">${bank}${qrBlock}</div>` : bank;
   const visibleSignBlock = printSettings.footer.signature_enabled === false
     ? ''
     : `<div class="signature-card"><p>For <b>${escapeHtml(legalCompanyName)}</b></p>${signature}<p>${escapeHtml(printSettings.footer.signature_text || 'Authorized Signatory')}</p></div>`;
@@ -1238,6 +1321,9 @@ function buildInvoiceHtml(args: {
   const settingsDetailsBlock = invoiceSettingsDetailsBlock(invoice);
   const receivedByBlock = printSettings.footer.print_received_by === false ? '' : `<div class="info-card"><h3>Received By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
   const deliveredByBlock = printSettings.footer.print_delivered_by === false ? '' : `<div class="info-card"><h3>Delivered By</h3><div>Name:</div><div>Comment:</div><div>Date:</div></div>`;
+  const handoverBlock = receivedByBlock && deliveredByBlock
+    ? `<div class="handover-grid">${receivedByBlock}${deliveredByBlock}</div>`
+    : receivedByBlock || deliveredByBlock;
   const paymentModeBlock = printSettings.footer.payment_mode ? `<div class="info-card"><h3>Payment Mode</h3>${escapeHtml(invoice.payment_mode || invoice.payment_type || '—')}</div>` : '';
   const acknowledgementBlock = printSettings.footer.acknowledgement ? '<div class="info-card"><h3>Acknowledgement</h3><div>Goods/services received in good condition.</div><div class="signature-line"></div><div>Receiver signature</div></div>' : '';
   const extraBottomLines = Math.max(0, Math.min(20, Number(printSettings.regular.extra_bottom_lines || 0)));
@@ -1248,7 +1334,7 @@ function buildInvoiceHtml(args: {
 
   const baseCss = `<!doctype html><html><head><meta charset="utf-8"/>
   <style>
-    ${isThermal ? `@page{size:${thermalWidth || '80mm'} auto;margin:0}\n    html,body{width:${thermalWidth || '80mm'};min-width:${thermalWidth || '80mm'}}\n    .page{padding:5px!important}` : `@page{size:${['A1','A2','A3','A4','A5','Letter','Legal'].includes(printSettings.regular.paper_size as string) ? printSettings.regular.paper_size : 'A4'};margin:8mm}`}
+    ${isThermal ? `@page{size:${thermalWidth || '80mm'} auto;margin:0}\n    html,body{width:${thermalWidth || '80mm'};min-width:${thermalWidth || '80mm'}}\n    .page{padding:5px!important}` : `@page{size:${['A1','A2','A3','A4','A5','Letter','Legal'].includes(printSettings.regular.paper_size as string) ? printSettings.regular.paper_size : 'A4'} ${printSettings.regular.orientation === 'landscape' || configuredLayout.startsWith('landscape-') ? 'landscape' : 'portrait'};margin:8mm}`}
     *{box-sizing:border-box}
     body{margin:0;color:${palette.ink};font-family:Inter,Segoe UI,Arial,sans-serif;font-size:11px;line-height:1.34;background:#fff}${printSettings.regular.print_original_duplicate ? '\n    body::before{content:"ORIGINAL FOR RECIPIENT";position:fixed;right:9mm;top:3mm;border:1px solid #52525b;padding:2px 6px;font-size:8px;font-weight:800;letter-spacing:.05em;z-index:10;background:#fff}' : ''}
     .page{padding:${8 + topSpace}px 14px 8px;position:relative}
@@ -1262,6 +1348,8 @@ function buildInvoiceHtml(args: {
     table.items{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}table.items thead{display:${printSettings.regular.repeat_header === false ? 'table-row-group' : 'table-header-group'}}table.items th{background:${palette.primary};color:#fff;padding:8px 9px;text-align:left;font-weight:650}table.items td{padding:9px 9px;border-bottom:1px solid #e5e7eb;vertical-align:top}table.items tr:nth-child(even) td{background:#fafafa}table.items tfoot td{border-top:1px solid #d4d4d8;background:#fff!important}.right{text-align:right}.idx{width:34px}.mono{white-space:nowrap}.item-name{font-weight:700;font-size:12px}.item-desc{white-space:pre-line;margin-top:2px}.item-meta{font-size:9.5px;margin-top:2px}.amount{font-weight:800}
     .lower{display:grid;grid-template-columns:1fr 330px;gap:18px;margin-top:10px}.totals{background:${palette.soft};padding:9px 12px}.total-row{display:flex;justify-content:space-between;gap:14px;padding:4px 0}.grand{font-size:14px;border-top:2px solid #d4d4d8;margin-top:3px;padding-top:8px}.due{margin:8px -12px -9px;padding:9px 12px;background:${palette.primary};color:#fff;font-size:14px;font-weight:900}
     .info-card{border:1px solid #e5e7eb;padding:10px;margin-bottom:8px}.bank-card{line-height:1.55}.tax-summary{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px;margin-top:6px;color:#52525b}.tax-summary span{color:#71717a}
+    .handover-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.handover-grid .info-card{min-width:0;margin-bottom:0}
+    .payment-grid{min-width:0}.payment-grid .bank-card{overflow-wrap:anywhere}
     .custom-details{break-inside:avoid}.custom-detail-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:3px 0;border-bottom:1px solid #f1f5f9}.custom-detail-row:last-child{border-bottom:0}.custom-detail-row span{color:#71717a}.custom-detail-row b{text-align:right;white-space:pre-wrap;overflow-wrap:anywhere}
     .note-block{margin-top:10px;color:#52525b}.note-block h3{font-size:13px;color:#111827;margin:0 0 3px}.signature-card{text-align:right;margin-top:10px;break-inside:avoid}.signature-card img{max-height:48px;max-width:160px;object-fit:contain}.signature-line{height:34px;border-bottom:1px solid #9ca3af;margin-left:auto;width:160px}.qr-card{display:inline-flex;gap:8px;align-items:center;border:1px solid #e5e7eb;padding:6px;margin-top:6px}.qr-card img{width:70px;height:70px}.einv{font-size:9px;border:1px dashed ${palette.primary};padding:6px;margin-top:6px;word-break:break-all}.einv img{width:76px;height:76px}
     .lower{break-inside:avoid}.footer-line{margin-top:10px;border-top:1px solid #e5e7eb;padding-top:5px;color:#71717a;font-size:9px}.extra-bottom-lines div{height:12px;border-bottom:1px solid #e5e7eb}
@@ -1274,7 +1362,7 @@ function buildInvoiceHtml(args: {
     </section>
     <section class="bill-grid"><div class="bill-card">${primaryPartyBlock}</div><div>${invoiceMeta}</div></section>
     ${shipToSection}
-    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}${bank}${qrBlock}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
+    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}${bankAndQr}${einvBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${handoverBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
     <div class="footer-line">${escapeHtml(legalCompanyName)}${company.gstin ? ` · GSTIN ${escapeHtml(company.gstin)}` : ''}${company.phone ? ` · ${escapeHtml(company.phone)}` : ''}</div>
   </main></body></html>`;
 
@@ -1282,13 +1370,13 @@ function buildInvoiceHtml(args: {
     <section class="hero"><div><h1 class="doc-title">${title}</h1></div><div style="text-align:right"><div class="logo" style="display:flex;justify-content:flex-end;margin-bottom:8px">${logo}</div>${sellerBlock}</div></section>
     <section style="background:${palette.soft};padding:10px 34px;text-align:right;font-size:18px">BALANCE DUE <b>${fmtMoney(balanceDue, currencyCode)}</b></section>
     <section class="simple-body"><div class="bill-grid"><div>${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:24px">${shipToBlock}</div>` : ''}</div>${invoiceMeta}</div>
-    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}</section>
+    ${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bankAndQr}${einvBlock}${handoverBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}</section>
   </main></body></html>`;
 
   const performa = `${baseCss}<style>.performa{font-size:10.5px}.center{text-align:center}.performa .doc-title{font-size:40px;font-weight:800;color:${palette.primary};line-height:1.02;margin-top:6px}.performa .logo img{margin:0 auto;max-width:150px;max-height:82px}.performa .logo-fallback{margin:0 auto;width:64px;height:64px;font-size:30px}.performa .rule{height:2px;background:${palette.primary};margin:8px 0}.performa .bill-card{border:0;text-align:center;min-height:0;padding:4px}.performa .meta-grid div{padding:5px 8px}.performa table.items{margin-top:9px}.performa table.items th{background:#fff;color:${palette.primary};border-bottom:2px solid #e5e7eb;padding:6px 7px}.performa table.items td{border-bottom:1px solid #e5e7eb;padding:6px 7px}.performa .lower{grid-template-columns:1fr 310px;gap:14px;margin-top:8px}.performa .totals{background:#fff;padding:6px 10px}.performa .due{background:#fff;color:${palette.primary};border-top:2px solid ${palette.primary};border-bottom:2px solid ${palette.primary};margin-top:5px}.performa .note-block{margin-top:6px}.performa .signature-card{margin-top:6px}</style></head><body><main class="page performa">
     <section class="center"><div class="logo">${logo}</div><div style="margin-top:10px">${sellerBlock}</div><h1 class="doc-title">${title}</h1></section>
     <div class="rule"></div><section class="bill-card">${primaryPartyBlock}${shouldShowShipToBlock ? `<div style="margin-top:10px">${shipToBlock}</div>` : ''}</section><div class="rule"></div>
-    ${invoiceMeta}${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bank}${qrBlock}${einvBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
+    ${invoiceMeta}${itemTable}<section class="lower"><div>${settingsDetailsBlock}<div class="note-block"><h3>Amount in Words</h3>${amountWords}</div>${notesBlock}${termsBlock}${bankAndQr}${einvBlock}${handoverBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
   </main></body></html>`;
 
   const monochrome = `${baseCss}<style>
@@ -1319,7 +1407,7 @@ function buildInvoiceHtml(args: {
       <tr><td><b>Invoice No.</b><br/>${escapeHtml(invoice.invoice_number || invoice.bill_number || '—')}</td><td><b>Date</b><br/>${formatDocDate(invoice.invoice_date || invoice.bill_date)}</td><td><b>Due Date</b><br/>${formatDocDate(invoice.due_date)}</td><td><b>Supply State Code</b><br/>${escapeHtml(supplyStateCode)}</td></tr>
     </table>
     ${itemTable}
-    <section class="lower"><div>${settingsDetailsBlock}${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bank}${termsBlock}${notesBlock}${receivedByBlock}${deliveredByBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
+    <section class="lower"><div>${settingsDetailsBlock}${einvBlock}<div class="info-card"><h3>Amount in Words</h3>${amountWords}</div>${bankAndQr}${termsBlock}${notesBlock}${handoverBlock}${paymentModeBlock}${acknowledgementBlock}</div><div>${totals}${visibleSignBlock}</div></section>${extraBottomBlock}
     <div class="footer-line">${escapeHtml(notes || 'Thank you for your business.')}</div>
   </main></body></html>`;
 
@@ -1561,6 +1649,11 @@ export async function generateInvoicePDF(
   const tpl = buildInvoiceHtml({ invoice, company, party, items: convertedItems, kind, theme: docTheme, printSettings: effectivePrintSettings, logoSrc, signatureSrc, upiQr, einvBlock });
   return withBrowserPage(async (page) => {
     await page.setContent(tpl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const requestedPaperSize = ['A1', 'A2', 'A3', 'A4', 'A5', 'Letter', 'Legal'].includes(String(effectivePrintSettings.regular.paper_size))
+      ? effectivePrintSettings.regular.paper_size
+      : 'A4';
+    const landscape = effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-');
+    if (requestedPaperSize === 'A4') await fitInvoicePage(page, requestedPaperSize, landscape, kind);
     const copyCount = Math.max(1, Math.min(10, Number(effectivePrintSettings.regular.number_of_copies || 1)));
     if (copyCount > 1) {
       await page.evaluate((copies) => {
@@ -1574,14 +1667,12 @@ export async function generateInvoicePDF(
         }
       }, copyCount);
     }
-    const requestedPaperSize = ['A1', 'A2', 'A3', 'A4', 'A5', 'Letter', 'Legal'].includes(String(effectivePrintSettings.regular.paper_size))
-      ? effectivePrintSettings.regular.paper_size
-      : 'A4';
     const pdf = await page.pdf({
       format: requestedPaperSize as any,
-      landscape: effectivePrintSettings.regular.orientation === 'landscape' || resolvedTheme.startsWith('landscape-'),
+      landscape,
+      preferCSSPageSize: true,
       printBackground: true,
-      margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' },
+      margin: { top: '0', bottom: '0', left: '0', right: '0' },
     });
     return Buffer.from(pdf);
   });

@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2 } from 'lucide-react';
 import MoneyInput from '@/components/transactions/MoneyInput';
 import { paiseToRupees, rupeesToPaise } from '@/lib/formatters';
+import { PartyGstinLookup, type RegisteredPartyDetails } from '@/components/parties/PartyGstinLookup';
 
 type Props = {
   open: boolean;
@@ -210,15 +211,17 @@ export function QuickAddPartySheet({ open, onOpenChange, defaultName = '', defau
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="qa-party-gstin">GSTIN</Label>
-                <Input
-                  id="qa-party-gstin"
-                  className="mt-1 font-mono text-sm uppercase"
-                  value={f.gstin}
-                  onChange={(e) => u('gstin', e.target.value.toUpperCase())}
-                  maxLength={15}
-                  placeholder="15 characters if registered"
-                  disabled={saving}
-                />
+                <PartyGstinLookup id="qa-party-gstin" value={f.gstin} disabled={saving}
+                  onChange={(value) => u('gstin', value)}
+                  onDetails={(details: RegisteredPartyDetails) => setF((current) => ({
+                    ...current,
+                    name: details.trade_name || details.legal_name || current.name,
+                    billing_address: details.address || current.billing_address,
+                    city: details.city || current.city,
+                    state: details.state || current.state,
+                    state_code: details.state_code || current.state_code,
+                    pincode: details.pincode || current.pincode,
+                  }))} />
               </div>
               <div>
                 <Label htmlFor="qa-party-pan">PAN</Label>

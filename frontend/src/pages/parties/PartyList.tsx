@@ -11,6 +11,7 @@ import { Search, Users, IndianRupee, UserPlus, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import MoneyInput from '@/components/transactions/MoneyInput';
+import { PartyGstinLookup, type RegisteredPartyDetails } from '@/components/parties/PartyGstinLookup';
 
 const partyTypeOptions = [
   { value: 'customer', label: 'Customer' },
@@ -40,6 +41,15 @@ export default function PartyList() {
 
   const [form, setForm] = useState<any>({});
   const u = (f: string, v: any) => setForm((p: any) => ({ ...p, [f]: v }));
+  const applyGstinDetails = (details: RegisteredPartyDetails) => setForm((current: any) => ({
+    ...current,
+    name: details.trade_name || details.legal_name || current.name,
+    billing_address: details.address || current.billing_address,
+    city: details.city || current.city,
+    state: details.state || current.state,
+    state_code: details.state_code || current.state_code,
+    pincode: details.pincode || current.pincode,
+  }));
 
   const handleCreate = async () => {
     if (!form.name?.trim()) {
@@ -273,13 +283,7 @@ export default function PartyList() {
             </div>
             <div>
               <Label>GSTIN (optional)</Label>
-              <Input
-                className="mt-1 uppercase font-mono"
-                maxLength={15}
-                value={form.gstin || ''}
-                onChange={(e) => u('gstin', e.target.value.toUpperCase())}
-                placeholder="15-character GSTIN"
-              />
+              <PartyGstinLookup value={form.gstin || ''} onChange={(value) => u('gstin', value)} onDetails={applyGstinDetails} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -319,6 +323,10 @@ export default function PartyList() {
                 <Label>Pincode</Label>
                 <Input className="mt-1" maxLength={6} value={form.pincode || ''} onChange={(e) => u('pincode', e.target.value)} />
               </div>
+            </div>
+            <div>
+              <Label>State code (GST)</Label>
+              <Input className="mt-1 max-w-24 font-mono" maxLength={2} value={form.state_code || ''} onChange={(e) => u('state_code', e.target.value.replace(/\D/g, ''))} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

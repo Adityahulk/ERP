@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MoneyInput from '@/components/transactions/MoneyInput';
+import { PartyGstinLookup, type RegisteredPartyDetails } from '@/components/parties/PartyGstinLookup';
 
 const partyTypeOptions = [
   { value: 'customer', label: 'Customer' },
@@ -83,6 +84,7 @@ export default function PartyDetail() {
       city: party.billing_city || party.city || '',
       state: party.billing_state || party.state || '',
       pincode: party.billing_pincode || party.pincode || '',
+      state_code: party.billing_state_code || party.state_code || '',
       credit_limit: party.credit_limit ? paiseToRupees(party.credit_limit).toFixed(2) : '',
       credit_days: party.credit_days || party.payment_terms || 30,
     });
@@ -113,6 +115,7 @@ export default function PartyDetail() {
         city: cleanText(form.city),
         state: cleanText(form.state),
         pincode: cleanText(form.pincode),
+        state_code: cleanText(form.state_code),
         credit_limit: cleanMoneyPaise(form.credit_limit),
         credit_days: cleanDays(form.credit_days),
       };
@@ -451,12 +454,17 @@ export default function PartyDetail() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>GSTIN (optional)</Label>
-                <Input
-                  className="mt-1 font-mono uppercase"
-                  maxLength={15}
-                  value={form.gstin || ''}
-                  onChange={(e) => setForm((p: any) => ({ ...p, gstin: e.target.value.toUpperCase() }))}
-                />
+                <PartyGstinLookup value={form.gstin || ''} initialGstin={party?.gstin || ''}
+                  onChange={(value) => setForm((current: any) => ({ ...current, gstin: value }))}
+                  onDetails={(details: RegisteredPartyDetails) => setForm((current: any) => ({
+                    ...current,
+                    name: details.trade_name || details.legal_name || current.name,
+                    billing_address: details.address || current.billing_address,
+                    city: details.city || current.city,
+                    state: details.state || current.state,
+                    state_code: details.state_code || current.state_code,
+                    pincode: details.pincode || current.pincode,
+                  }))} />
               </div>
               <div>
                 <Label>PAN</Label>
@@ -487,6 +495,11 @@ export default function PartyDetail() {
                 <Label>Pincode</Label>
                 <Input className="mt-1" maxLength={6} value={form.pincode || ''} onChange={(e) => setForm((p: any) => ({ ...p, pincode: e.target.value }))} />
               </div>
+            </div>
+            <div>
+              <Label>State code (GST)</Label>
+              <Input className="mt-1 max-w-24 font-mono" maxLength={2} value={form.state_code || ''}
+                onChange={(e) => setForm((current: any) => ({ ...current, state_code: e.target.value.replace(/\D/g, '') }))} />
             </div>
 
             <div className="grid grid-cols-2 gap-3">

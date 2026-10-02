@@ -62,7 +62,7 @@ function isValidGstinChecksum(gstin: string): boolean {
 function pickProviderField(raw: any, keys: string[]) {
   for (const key of keys) {
     const value = key.split('.').reduce((acc, part) => (acc == null ? acc : acc[part]), raw);
-    if (value != null && String(value).trim() !== '') return String(value).trim();
+    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim() !== '') return String(value).trim();
   }
   return null;
 }
@@ -246,13 +246,30 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
     const url = env.GSTIN_LOOKUP_API_URL.includes('{gstin}')
       ? env.GSTIN_LOOKUP_API_URL.replace('{gstin}', encodeURIComponent(gstin))
       : `${env.GSTIN_LOOKUP_API_URL.replace(/\/$/, '')}/${encodeURIComponent(gstin)}`;
-    const response = await fetch(url, { headers });
-    if (!response.ok) throw new Error(`GSTIN lookup failed (${response.status})`);
-    const raw = await response.json();
-    const address = extractAddress(raw);
-    const city = extractCity(raw);
-    const pincode = extractPincode(raw, address);
-    const providerState = pickProviderField(raw, [
+    let response: Response;
+    try {
+      response = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    } catch {
+      throw new Error('GSTIN registry is unavailable. Enter party details manually or retry.');
+    }
+    if (response.status === 404) throw new Error('GSTIN was not found in the registry.');
+    if (!response.ok) throw new Error(`GSTIN registry lookup failed (${response.status}). Please retry later.`);
+    const raw: any = await response.json();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('GSTIN registry returned an invalid response.');
+    }
+    const providerError = pickProviderField(raw, ['error', 'error.message', 'data.error', 'message']);
+    if (raw.success === false || raw.status === false || raw.data?.success === false) {
+      throw new Error(providerError || 'GSTIN was not found in the registry.');
+    }
+    const legalName = pickProviderField(raw, ['legal_name', 'legalName', 'lgnm', 'data.legal_name', 'data.legalName', 'data.lgnm', 'data.data.lgnm', 'result.lgnm', 'taxpayer.lgnm']);
+    const tradeName = pickProviderField(raw, ['trade_name', 'tradeName', 'tradeNam', 'data.trade_name', 'data.tradeName', 'data.tradeNam', 'data.data.tradeNam', 'result.tradeNam', 'taxpayer.tradeNam']);
+    if (!legalName && !tradeName) throw new Error('GSTIN registry did not return registered business details.');
+    const details = raw.data?.data ?? raw.data ?? raw.result ?? raw.taxpayer ?? raw;
+    const address = extractAddress(details);
+    const city = extractCity(details);
+    const pincode = extractPincode(details, address);
+    const providerState = pickProviderField(details, [
       'state',
       'state_name',
       'stateName',
@@ -269,15 +286,15 @@ export async function lookupGstinDetails(input: string): Promise<GstinLookupDeta
       gstin,
       valid: true,
       source: 'provider',
-      legal_name: pickProviderField(raw, ['legal_name', 'legalName', 'lgnm', 'data.legal_name', 'data.legalName', 'data.lgnm', 'result.lgnm', 'taxpayer.lgnm']),
-      trade_name: pickProviderField(raw, ['trade_name', 'tradeName', 'tradeNam', 'data.trade_name', 'data.tradeName', 'data.tradeNam', 'result.tradeNam', 'taxpayer.tradeNam']),
-      status: pickProviderField(raw, ['status', 'sts', 'data.status', 'data.sts', 'result.sts', 'taxpayer.sts']),
+      legal_name: legalName,
+      trade_name: tradeName,
+      status: pickProviderField(raw, ['status', 'sts', 'data.status', 'data.sts', 'data.data.sts', 'result.sts', 'taxpayer.sts']),
       taxpayer_type: pickProviderField(raw, ['taxpayer_type', 'taxpayerType', 'dty', 'ctb', 'data.taxpayer_type', 'data.taxpayerType', 'data.dty', 'data.ctb', 'result.dty', 'taxpayer.dty']),
       address,
       city,
       pincode,
       state_code: stateCode,
-      state: providerState || state,
+      state: providerState ? (STATE_NAMES[providerState] || providerState) : state,
       raw: raw as Record<string, unknown>,
     };
   }
