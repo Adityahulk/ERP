@@ -122,6 +122,8 @@ export default function InvoiceDetail() {
   const canGenEinvRole = normalizedRole === 'admin' || normalizedRole === 'super_admin';
   const canGenEinv = canGenEinvRole && company?.einvoice_enabled === true && company?.einvoice_turnover_above_5cr === true;
   const canGenEwb = canGenEinvRole;
+  const ewbNeedsIrn = company?.einvoice_turnover_above_5cr === true;
+  const ewbBelowCompanyMinimum = company?.eway_bill_only_above_50k === true && Number(inv.total_amount || 0) < 5000000;
   const canCancelEwb = normalizedRole === 'admin' || normalizedRole === 'super_admin';
   const canCancelInvoice =
     userRank >= ROLE_RANK.manager &&
@@ -826,9 +828,13 @@ Thank you.
                       Previous E-Way Bill was cancelled. You can generate a new one with updated transport details.
                     </p>
                   )}
-                  {!inv.irn || einvStatus !== 'generated' ? (
+                  {inv.status === 'cancelled' ? (
+                    <p className="text-sm text-muted-foreground text-left">Cancelled invoices cannot generate an E-Way Bill.</p>
+                  ) : ewbBelowCompanyMinimum ? (
+                    <p className="text-sm text-muted-foreground text-left">Company settings allow E-Way Bills only for invoices of ₹50,000 or more.</p>
+                  ) : ewbNeedsIrn && (!inv.irn || einvStatus !== 'generated') ? (
                     <p className="text-sm text-muted-foreground text-left">
-                      Generate a valid IRN first; E-Way Bill is created against the e-invoice.
+                      This company is marked as e-invoice applicable. Generate a valid IRN first.
                     </p>
                   ) : !canGenEwb ? (
                     <p className="text-sm text-muted-foreground text-left">

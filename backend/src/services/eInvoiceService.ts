@@ -595,7 +595,7 @@ export async function generateEinvoiceQR(
 
 export async function generateEwayBill(params: {
   sellerGstin: string;
-  irn: string;
+  irn?: string;
   transporter_id: string;
   transporter_name?: string;
   transport_mode?: string;

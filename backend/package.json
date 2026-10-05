@@ -18,6 +18,7 @@
     "migrate:seed": "npm run migrate && npm run seed",
     "migrate:seed:dev": "npm run migrate:dev && npm run seed:dev",
     "test:smoke": "ts-node src/tests/gstService.smoke.ts",
+    "test:eway-eligibility": "ts-node src/tests/ewayBillEligibility.smoke.ts",
     "test:invoice-pdf": "ts-node src/tests/invoicePdfLayout.smoke.ts",
     "test:party-gstin": "ts-node src/tests/partyGstinLookup.smoke.ts",
     "test:pos": "ts-node src/tests/posWorkflow.smoke.ts",

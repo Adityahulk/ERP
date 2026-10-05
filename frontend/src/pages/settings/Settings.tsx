@@ -2160,13 +2160,14 @@ export default function Settings() {
                           <a href="https://tutorial.gst.gov.in/downloads/news/e_invoice_overview.pdf" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">GSTN guidance</a>
                         </p>
                         {einvEnabled && !einvTurnover && <p className="text-xs text-amber-700">IRN generation remains unavailable until applicability is confirmed and these settings are saved.</p>}
+                        <p className="max-w-xl text-xs text-slate-500">The e-Way Bill amount threshold is separate from e-invoice applicability. A ₹50,000 invoice does not by itself qualify for an IRN.</p>
                         <div className="flex items-center justify-between gap-4 max-w-md">
                            <span className="text-sm">Sandbox mode</span>
                            <Switch checked={einvSandbox} onCheckedChange={setEinvSandbox} />
                         </div>
                         <div className="flex items-center justify-between gap-4 max-w-xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                            <div>
-                              <p className="text-sm font-medium text-slate-900">Allow E-Way Bill only above ₹50,000</p>
+                              <p className="text-sm font-medium text-slate-900">Allow E-Way Bill only for ₹50,000 or more</p>
                               <p className="text-xs text-slate-600">When enabled, users cannot generate E-Way Bills for smaller invoices.</p>
                            </div>
                            <Switch checked={ewayBillOnlyAbove50k} onCheckedChange={setEwayBillOnlyAbove50k} />

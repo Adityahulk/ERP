@@ -40,6 +40,7 @@ import {
   reverseAccountingForReference,
 } from '../services/accountingService';
 import { normalizeInvoicePrintTheme } from '../lib/printThemes';
+import { ewayBillSettingsError } from '../services/ewayBillEligibility';
 
 function paymentStatusFor(totalAmount: number, paidAmount: number): 'unpaid' | 'partial' | 'paid' {
   if (paidAmount >= totalAmount) return 'paid';
@@ -2739,11 +2740,10 @@ export async function generateEwayBill(req: Request, res: Response) {
     );
     if (!invRes.rows.length) return res.status(404).json(error('Invoice not found'));
     const inv = invRes.rows[0];
+    if (inv.status === 'cancelled') return res.status(400).json(error('Cannot generate an E-Way Bill for a cancelled invoice'));
     if (normalizeCurrencyCode(inv.currency_code) !== 'INR') {
       return res.status(400).json(error('E-Way Bill generation is supported only for INR GST invoices.'));
     }
-    if (!inv.irn) return res.status(400).json(error('Generate IRN before generating E-Way Bill'));
-    if (inv.einvoice_status !== 'generated') return res.status(400).json(error('E-invoice must be in generated state'));
     if (inv.eway_bill_no && inv.eway_bill_status !== 'cancelled') {
       return res.status(400).json(error('E-Way Bill already generated for this invoice'));
     }
@@ -2751,11 +2751,11 @@ export async function generateEwayBill(req: Request, res: Response) {
     const compRes = await query(`SELECT * FROM companies WHERE id = $1 AND is_deleted = false`, [companyId]);
     if (!compRes.rows.length) return res.status(400).json(error('Company not found'));
     const company = compRes.rows[0];
+    const hasActiveIrn = Boolean(inv.irn && inv.einvoice_status === 'generated');
+    const settingsError = ewayBillSettingsError(company, inv);
+    if (settingsError) return res.status(400).json(error(settingsError));
     const sellerGstin = String(company.gstin || '').trim().toUpperCase();
     if (sellerGstin.length !== 15) return res.status(400).json(error('Company GSTIN is required to generate E-Way Bill'));
-    if (company.eway_bill_only_above_50k && Number(inv.total_amount || 0) <= 5000000) {
-      return res.status(400).json(error('Company setting allows E-Way Bill generation only for invoices above ₹50,000.'));
-    }
 
     const itemsRes = await query(
       `SELECT * FROM invoice_items WHERE invoice_id = $1 AND company_id = $2 ORDER BY sort_order, id`,
@@ -2801,7 +2801,7 @@ export async function generateEwayBill(req: Request, res: Response) {
 
     const out = await generateEwayBillViaService({
       sellerGstin,
-      irn: inv.irn,
+      irn: hasActiveIrn ? inv.irn : undefined,
       transporter_id: cleanTransporterId,
       transporter_name: transporter_name ? String(transporter_name) : undefined,
       transport_mode: transport_mode ? String(transport_mode) : undefined,
