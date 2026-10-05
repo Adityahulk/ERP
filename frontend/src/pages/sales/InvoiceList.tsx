@@ -755,6 +755,12 @@ export default function InvoiceList() {
             <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanIRN || irnLoadingId === activeMenuInvoice.id} onClick={() => { closeActionMenu(); if (activeMenuCanIRN) generateIRN(activeMenuInvoice.id); }}>
               <FileCheck className="h-4 w-4" /> Generate e-Invoice
             </button>
+            {company?.einvoice_enabled === true && company?.einvoice_turnover_above_5cr !== true && (
+              <button type="button" className="w-full px-3 py-1 text-left text-xs text-primary hover:underline"
+                onClick={() => { closeActionMenu(); navigate('/settings?section=company#einvoice-settings'); }}>
+                Confirm applicability in Company settings
+              </button>
+            )}
             <button type="button" className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-40" disabled={!activeMenuCanEWB} onClick={() => { closeActionMenu(); if (activeMenuCanEWB) navigate(`/sales/${activeMenuInvoice.id}?tab=ewb`); }}>
               <Truck className="h-4 w-4" /> Generate E-Way Bill
             </button>

@@ -120,7 +120,7 @@ export default function InvoiceDetail() {
     : '';
 
   const canGenEinvRole = normalizedRole === 'admin' || normalizedRole === 'super_admin';
-  const canGenEinv = canGenEinvRole && !!company?.einvoice_enabled;
+  const canGenEinv = canGenEinvRole && company?.einvoice_enabled === true && company?.einvoice_turnover_above_5cr === true;
   const canGenEwb = canGenEinvRole;
   const canCancelEwb = normalizedRole === 'admin' || normalizedRole === 'super_admin';
   const canCancelInvoice =
@@ -749,10 +749,18 @@ Thank you.
                       {!company?.einvoice_enabled ? (
                         <p>
                           Turn on e-Invoice in{' '}
-                          <Link to="/settings" className="text-primary font-medium underline underline-offset-2">
+                          <Link to="/settings?section=company#einvoice-settings" className="text-primary font-medium underline underline-offset-2">
                             Company settings
                           </Link>
                           .
+                        </p>
+                      ) : !company?.einvoice_turnover_above_5cr ? (
+                        <p>
+                          Confirm e-Invoice applicability in{' '}
+                          <Link to="/settings?section=company#einvoice-settings" className="text-primary font-medium underline underline-offset-2">
+                            Company settings
+                          </Link>{' '}
+                          and save before generating an IRN.
                         </p>
                       ) : !canGenEinvRole ? (
                         <p>Only accountant, company admin, or super admin can generate IRN.</p>

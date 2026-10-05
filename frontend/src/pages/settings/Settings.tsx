@@ -855,6 +855,12 @@ export default function Settings() {
     if (requestedSection) setTab(requestedSection);
   }, [requestedSection]);
 
+  useEffect(() => {
+    if (tab !== 'company' || !company || window.location.hash !== '#einvoice-settings') return;
+    const frame = window.requestAnimationFrame(() => document.getElementById('einvoice-settings')?.scrollIntoView({ block: 'start' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [tab, company]);
+
   const { data: usersPage, isLoading: usersLoading } = useQuery({
     queryKey: ['settings-users'],
     queryFn: () => api.get('/users', { params: { page: 1, limit: 50 } }).then((r) => r.data?.data ?? r.data),
@@ -2138,7 +2144,7 @@ export default function Settings() {
                       </div>
                     </div>
 
-                     <div className="border-t pt-8 space-y-4">
+                     <div id="einvoice-settings" className="border-t pt-8 space-y-4 scroll-mt-6">
                         <h3 className="font-semibold text-slate-900">e-Invoice (GST / NIC)</h3>
                         <p className="text-xs text-slate-500">GSP password is encrypted at rest. Leave password blank to keep the current secret.</p>
                         <div className="flex items-center justify-between gap-4 max-w-md">
@@ -2146,9 +2152,14 @@ export default function Settings() {
                            <Switch checked={einvEnabled} onCheckedChange={setEinvEnabled} />
                         </div>
                         <div className="flex items-center justify-between gap-4 max-w-md">
-                           <span className="text-sm">Turnover above ₹5 Cr (statutory / reporting flag)</span>
+                           <span className="text-sm">Confirm e-Invoice applicability for this company</span>
                            <Switch checked={einvTurnover} onCheckedChange={setEinvTurnover} />
                         </div>
+                        <p className="max-w-xl text-xs text-slate-500">
+                          Confirm only after checking the company&apos;s aggregate turnover across GSTINs under its PAN and any applicable exemptions. The current notified threshold is ₹5 Cr or more in a preceding financial year.{' '}
+                          <a href="https://tutorial.gst.gov.in/downloads/news/e_invoice_overview.pdf" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">GSTN guidance</a>
+                        </p>
+                        {einvEnabled && !einvTurnover && <p className="text-xs text-amber-700">IRN generation remains unavailable until applicability is confirmed and these settings are saved.</p>}
                         <div className="flex items-center justify-between gap-4 max-w-md">
                            <span className="text-sm">Sandbox mode</span>
                            <Switch checked={einvSandbox} onCheckedChange={setEinvSandbox} />
