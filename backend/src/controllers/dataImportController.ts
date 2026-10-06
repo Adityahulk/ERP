@@ -16,6 +16,7 @@ import {
   determineGSTType,
   stateCodeFromGstin,
 } from '../services/gstService';
+import { resolveStockImportGodown } from '../services/stockImportGodown';
 
 type ImportType = 'parties' | 'purchases' | 'expenses' | 'stock' | 'cash';
 type ImportError = { row: number; key?: string; errors: string[]; data: Record<string, unknown> };
@@ -51,7 +52,7 @@ const templates: Record<ImportType, { sheet: string; headers: string[]; rows: un
     sheet: 'Stock Godowns',
     headers: ['Item Name', 'Item SKU', 'Godown Name', 'Godown Code', 'Godown Address', 'City', 'State', 'Pincode', 'Opening Quantity', 'Average Cost'],
     rows: [['Basmati Rice 5kg', 'RICE-5KG', 'Main Godown', 'MAIN', 'Ring Road', 'Surat', 'Gujarat', '395002', 100, 350]],
-    note: 'Items must already exist. Missing godowns are created. Opening Quantity is treated as the absolute stock balance, so re-importing does not duplicate stock.',
+    note: 'Items and godowns must already exist. Choose one target godown or provide its exact name/code on each row. Opening Quantity replaces that item’s balance only in the matched godown; it never changes other branches.',
   },
   cash: {
     sheet: 'Cash Bank Balances',
@@ -158,7 +159,7 @@ async function referenceData(companyId: string) {
   const [parties, items, godowns, banks, company] = await Promise.all([
     query(`SELECT id, name, phone, gstin, state_code FROM parties WHERE company_id=$1 AND is_deleted=false`, [companyId]),
     query(`SELECT id, name, sku, hsn_code, item_type, track_inventory FROM items WHERE company_id=$1 AND is_deleted=false`, [companyId]),
-    query(`SELECT id, name, code FROM godowns WHERE company_id=$1 AND is_deleted=false AND is_active=true`, [companyId]),
+    query(`SELECT id, name, code, is_active FROM godowns WHERE company_id=$1 AND is_deleted=false`, [companyId]),
     query(`SELECT id, account_label, bank_name, account_number, ifsc FROM company_bank_accounts WHERE company_id=$1 AND is_deleted=false`, [companyId]),
     query(`SELECT state_code, gstin FROM companies WHERE id=$1`, [companyId]),
   ]);
@@ -252,32 +253,40 @@ async function validateExpenses(rows: Record<string, unknown>[]) {
   return { preview, errors };
 }
 
-async function validateStock(rows: Record<string, unknown>[], refs: Awaited<ReturnType<typeof referenceData>>) {
+async function validateStock(rows: Record<string, unknown>[], refs: Awaited<ReturnType<typeof referenceData>>, selectedGodownId: string) {
   const preview: ImportPreview[] = [];
   const errors: ImportError[] = [];
-  const itemMap = mapBy(refs.items, ['sku', 'name']);
   const seen = new Set<string>();
   rows.forEach((raw, index) => {
     const get = rowReader(raw);
     const itemName = cleanText(get('Item Name', 'Name'), 500);
     const itemSku = cleanText(get('Item SKU', 'SKU', 'Item Code'), 200);
-    const item = itemMap.get(normalizedKey(itemSku)) || itemMap.get(normalizedKey(itemName));
+    const itemMatches = refs.items.filter((candidate: any) => itemSku
+      ? normalizedKey(candidate.sku) === normalizedKey(itemSku)
+      : normalizedKey(candidate.name) === normalizedKey(itemName));
+    const item = itemMatches.length === 1 ? itemMatches[0] : undefined;
+    const rowGodownName = cleanText(get('Godown Name', 'Godown', 'Warehouse'), 500);
+    const rowGodownCode = cleanText(get('Godown Code', 'Warehouse Code'), 20);
+    const resolved = resolveStockImportGodown(refs.godowns, selectedGodownId, rowGodownName, rowGodownCode);
     const quantity = numberValue(get('Opening Quantity', 'Quantity', 'Stock'));
     const avgCost = rupeesToPaise(get('Average Cost', 'Purchase Price', 'Cost'));
     const data = {
       item_id: item?.id || '', item_name: itemName || item?.name || '', item_sku: itemSku || item?.sku || '',
-      godown_name: cleanText(get('Godown Name', 'Godown', 'Warehouse'), 500),
-      godown_code: cleanText(get('Godown Code', 'Warehouse Code'), 20),
+      godown_id: resolved.godown?.id || '',
+      godown_name: resolved.godown?.name || rowGodownName,
+      godown_code: resolved.godown?.code || rowGodownCode,
       godown_address: cleanText(get('Godown Address', 'Address'), 3000), city: cleanText(get('City'), 200),
       state: cleanText(get('State'), 200), pincode: cleanText(get('Pincode', 'PIN Code'), 10),
       quantity, avg_cost_price: Number.isFinite(avgCost) ? avgCost : 0,
     };
     const rowErrors: string[] = [];
-    if (!item) rowErrors.push('Item not found; match an existing Item Name or SKU');
-    if (!data.godown_name && !data.godown_code) rowErrors.push('Godown Name or Godown Code is required');
+    if (itemMatches.length > 1) rowErrors.push('Multiple items match this name/code; provide a unique Item SKU');
+    else if (!item) rowErrors.push('Item not found; match an existing Item Name or SKU');
+    if (item && itemName && normalizedKey(item.name) !== normalizedKey(itemName)) rowErrors.push('Item Name does not match the selected SKU');
+    if (resolved.error) rowErrors.push(resolved.error);
     if (!Number.isFinite(quantity) || quantity < 0) rowErrors.push('Opening Quantity must be zero or greater');
     if (item && !item.track_inventory) rowErrors.push('Selected item is not inventory-tracked');
-    const duplicateKey = `${item?.id || normalizedKey(itemSku || itemName)}:${normalizedKey(data.godown_code || data.godown_name)}`;
+    const duplicateKey = `${item?.id || normalizedKey(itemSku || itemName)}:${data.godown_id || normalizedKey(rowGodownCode || rowGodownName)}`;
     if (seen.has(duplicateKey)) rowErrors.push('Duplicate item and godown combination in this file');
     seen.add(duplicateKey);
     const record = { row: index + 2, key: `${data.item_name || itemSku} / ${data.godown_name || data.godown_code}`, data };
@@ -323,7 +332,7 @@ async function validateCash(rows: Record<string, unknown>[], refs: Awaited<Retur
 async function validatePurchases(rows: Record<string, unknown>[], refs: Awaited<ReturnType<typeof referenceData>>, companyId: string) {
   const partyMap = mapBy(refs.parties, ['gstin', 'name']);
   const itemMap = mapBy(refs.items, ['sku', 'name']);
-  const godownMap = mapBy(refs.godowns, ['code', 'name']);
+  const godownMap = mapBy(refs.godowns.filter((godown: any) => godown.is_active), ['code', 'name']);
   const grouped = new Map<string, Array<{ raw: Record<string, unknown>; row: number }>>();
   rows.forEach((raw, index) => {
     const get = rowReader(raw);
@@ -392,11 +401,11 @@ async function validatePurchases(rows: Record<string, unknown>[], refs: Awaited<
   return { preview, errors };
 }
 
-async function validate(type: ImportType, rows: Record<string, unknown>[], companyId: string) {
+async function validate(type: ImportType, rows: Record<string, unknown>[], companyId: string, selectedGodownId = '') {
   const refs = await referenceData(companyId);
   if (type === 'parties') return validateParties(rows, refs);
   if (type === 'expenses') return validateExpenses(rows);
-  if (type === 'stock') return validateStock(rows, refs);
+  if (type === 'stock') return validateStock(rows, refs, selectedGodownId);
   if (type === 'cash') return validateCash(rows, refs);
   return validatePurchases(rows, refs, companyId);
 }
@@ -466,23 +475,11 @@ async function importStock(records: ImportPreview[], companyId: string, userId: 
     await client.query('SELECT id FROM companies WHERE id = $1 FOR UPDATE', [companyId]);
     for (const record of records) {
       const d: any = record.data;
-      let godown = await client.query(
-        `SELECT id, is_active FROM godowns WHERE company_id=$1 AND is_deleted=false AND
-         (($2 <> '' AND lower(btrim(code))=lower(btrim($2))) OR ($3 <> '' AND lower(btrim(name))=lower(btrim($3))))
-         ORDER BY CASE WHEN $2 <> '' AND lower(btrim(code))=lower(btrim($2)) THEN 0 ELSE 1 END LIMIT 1`,
-        [companyId, d.godown_code || '', d.godown_name || ''],
+      const godown = await client.query(
+        `SELECT id FROM godowns WHERE id=$1 AND company_id=$2 AND is_deleted=false AND is_active=true FOR UPDATE`,
+        [d.godown_id, companyId],
       );
-      if (godown.rows[0]?.is_active === false) {
-        throw new Error(`Row ${record.row}: godown "${d.godown_name || d.godown_code}" is disabled. Select an active godown or enable it in Settings → Locations/Godowns.`);
-      }
-      if (!godown.rows.length) {
-        godown = await client.query(
-          `INSERT INTO godowns (company_id,name,code,address,city,state,pincode,is_default)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,false) RETURNING id`,
-          [companyId, d.godown_name || d.godown_code, d.godown_code || null, d.godown_address || null,
-            d.city || null, d.state || null, d.pincode || null],
-        );
-      }
+      if (!godown.rows.length) throw new Error(`Row ${record.row}: the selected godown is missing or inactive; review the import again.`);
       const current = await client.query(
         `SELECT quantity FROM item_stock WHERE company_id=$1 AND item_id=$2 AND godown_id=$3 FOR UPDATE`,
         [companyId, d.item_id, godown.rows[0].id],
@@ -681,7 +678,8 @@ export async function importData(req: Request, res: Response) {
   try {
     const rows = fileRows(req.file);
     if (!rows.length) return res.status(400).json(error('The uploaded file has no data rows'));
-    const result = await validate(type, rows, req.user!.company_id);
+    const selectedGodownId = type === 'stock' ? String(req.body?.godown_id || '').trim() : '';
+    const result = await validate(type, rows, req.user!.company_id, selectedGodownId);
     if (String(req.query.action || '') !== 'confirm') {
       return res.json(success({ type, total: type === 'purchases' ? result.preview.length + result.errors.length : rows.length, valid: result.preview.length, invalid: result.errors.length, preview: result.preview, errors: result.errors, note: templates[type].note }));
     }

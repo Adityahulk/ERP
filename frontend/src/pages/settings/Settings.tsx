@@ -980,6 +980,7 @@ export default function Settings() {
       toast.success('Godown added');
       setNewGodown({ name: '', code: '', city: '', state: '', is_default: false });
       qc.invalidateQueries({ queryKey: ['settings-godowns'] });
+      qc.invalidateQueries({ queryKey: ['godowns'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Add failed'),
   });
@@ -990,6 +991,7 @@ export default function Settings() {
       toast.success('Godown updated');
       setEditingGodownId(null);
       qc.invalidateQueries({ queryKey: ['settings-godowns'] });
+      qc.invalidateQueries({ queryKey: ['godowns'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Update failed'),
   });
@@ -2300,7 +2302,7 @@ export default function Settings() {
                             <div className="flex gap-4 items-center">
                               <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center font-bold">{(g.code || g.name || 'G').slice(0, 2).toUpperCase()}</div>
                               <div>
-                                <p className="font-semibold text-slate-900">{g.name} {g.is_default ? <span className="text-xs text-indigo-600">(Default)</span> : null}</p>
+                                <p className="font-semibold text-slate-900">{g.name} {g.is_default ? <span className="text-xs text-indigo-600">(Default)</span> : null} <span className={`text-xs ${g.is_active ? 'text-emerald-700' : 'text-amber-700'}`}>({g.is_active ? 'Active' : 'Inactive'})</span></p>
                                 <p className="text-xs text-slate-500">{[g.city, g.state].filter(Boolean).join(', ') || '—'} • {g.manager_name || 'No manager'}</p>
                               </div>
                             </div>
@@ -2310,6 +2312,8 @@ export default function Settings() {
                                 variant="ghost"
                                 size="sm"
                                 loading={updateGodown.isPending && updateGodown.variables?.id === g.id}
+                                disabled={g.is_default && g.is_active}
+                                title={g.is_default && g.is_active ? 'Choose another default godown before disabling this one' : undefined}
                                 onClick={() => updateGodown.mutate({ id: g.id, data: { is_active: !g.is_active } })}
                               >
                                 {g.is_active ? 'Disable' : 'Enable'}
@@ -2324,8 +2328,8 @@ export default function Settings() {
                          <Input placeholder="Code" value={editGodownForm.code} onChange={(e) => setEditGodownForm((s) => ({ ...s, code: e.target.value }))} />
                          <Input placeholder="City" value={editGodownForm.city} onChange={(e) => setEditGodownForm((s) => ({ ...s, city: e.target.value }))} />
                          <Input placeholder="State" value={editGodownForm.state} onChange={(e) => setEditGodownForm((s) => ({ ...s, state: e.target.value }))} />
-                         <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_default} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_default: e.target.checked }))} />Set as default</label>
-                         <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_active} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_active: e.target.checked }))} />Active</label>
+                         <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_default} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_default: e.target.checked, is_active: e.target.checked ? true : s.is_active }))} />Set as default</label>
+                         <label className="md:col-span-4 text-sm flex items-center gap-2"><input type="checkbox" checked={editGodownForm.is_active} disabled={editGodownForm.is_default} onChange={(e) => setEditGodownForm((s) => ({ ...s, is_active: e.target.checked }))} />Active</label>
                          <div className="md:col-span-4 flex gap-2">
                            <Button onClick={() => updateGodown.mutate({ id: editingGodownId!, data: editGodownForm })} disabled={!editGodownForm.name} loading={updateGodown.isPending}>Save changes</Button>
                            <Button variant="outline" onClick={() => setEditingGodownId(null)}>Cancel</Button>

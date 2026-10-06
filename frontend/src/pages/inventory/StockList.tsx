@@ -73,9 +73,9 @@ export default function StockList() {
 
       {/* Godown Tabs */}
       <div className="flex gap-2 overflow-x-auto pb-1">
-        <button onClick={() => setGodownId('')} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${!godownId ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>All Godowns</button>
+        <button onClick={() => { setGodownId(''); setPage(1); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${!godownId ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>All Godowns</button>
         {godowns.map((g: any) => (
-          <button key={g.id} onClick={() => setGodownId(g.id)} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${godownId === g.id ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+          <button key={g.id} onClick={() => { setGodownId(g.id); setPage(1); }} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${godownId === g.id ? 'bg-primary text-primary-foreground shadow' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
             {g.name} {g.is_default && '★'}
           </button>
         ))}
@@ -83,7 +83,7 @@ export default function StockList() {
 
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
-        <select className="h-9 rounded-md border bg-transparent px-3 text-sm" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+        <select className="h-9 rounded-md border bg-transparent px-3 text-sm" value={categoryId} onChange={e => { setCategoryId(e.target.value); setPage(1); }}>
           <option value="">All Categories</option>
           {categories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>

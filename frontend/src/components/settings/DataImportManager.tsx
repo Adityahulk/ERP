@@ -44,7 +44,7 @@ const importKinds: Array<{
   { id: 'parties', name: 'Parties', description: 'Customers and suppliers with addresses, GSTIN and opening balances.' },
   { id: 'purchases', name: 'Purchase Bills', description: 'Supplier bills with multiple line items, GST and inventory updates.', prerequisite: 'Import parties and item masters first.' },
   { id: 'expenses', name: 'Expenses', description: 'Expense vouchers with GST, vendor, payment mode and accounting entries.' },
-  { id: 'stock', name: 'Stock / Godowns', description: 'Absolute opening stock by item and godown. Missing godowns are created.', prerequisite: 'Import item masters first.' },
+  { id: 'stock', name: 'Stock / Godowns', description: 'Absolute opening stock by item and existing godown.', prerequisite: 'Import item masters and create the godowns first.' },
   { id: 'cash', name: 'Cash / Bank Balances', description: 'Opening cash and bank balances with accounting entries.' },
 ];
 
@@ -98,18 +98,21 @@ export function DataImportManager() {
   const [confirming, setConfirming] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [godownId, setGodownId] = useState('');
+  const [stockGodownId, setStockGodownId] = useState('');
 
   const { data: godowns = [] } = useQuery({
     queryKey: ['godowns', 'data-import'],
-    queryFn: async () => (await api.get('/godowns')).data?.data || [],
+    queryFn: async () => (await api.get('/godowns', { params: { include_inactive: true } })).data?.data || [],
   });
 
   useEffect(() => {
-    if (!godownId && godowns.length) {
-      const preferred = godowns.find((entry: any) => entry.is_default) || godowns[0];
+    const active = godowns.filter((entry: any) => entry.is_active);
+    if ((!godownId || !active.some((entry: any) => entry.id === godownId)) && active.length) {
+      const preferred = active.find((entry: any) => entry.is_default) || active[0];
       setGodownId(preferred?.id || '');
     }
-  }, [godownId, godowns]);
+    if (stockGodownId && !active.some((entry: any) => entry.id === stockGodownId)) setStockGodownId('');
+  }, [godownId, godowns, stockGodownId]);
 
   const selected = importKinds.find((entry) => entry.id === kind)!;
 
@@ -162,6 +165,7 @@ export function DataImportManager() {
     try {
       const form = new FormData();
       form.append('file', nextFile);
+      if (kind === 'stock' && stockGodownId) form.append('godown_id', stockGodownId);
       const response = await api.post(endpoint(), form);
       const data = responseData(response);
       if (token !== readTokenRef.current) return;
@@ -195,11 +199,17 @@ export function DataImportManager() {
       toast.error('Select a godown for item opening stock');
       return;
     }
+    if ((kind === 'items' && !godowns.some((entry: any) => entry.id === godownId && entry.is_active)) ||
+        (kind === 'stock' && stockGodownId && !godowns.some((entry: any) => entry.id === stockGodownId && entry.is_active))) {
+      toast.error('Select an active godown before importing stock');
+      return;
+    }
     setConfirming(true);
     try {
       const form = new FormData();
       form.append('file', file);
       if (kind === 'items' && godownId) form.append('godown_id', godownId);
+      if (kind === 'stock' && stockGodownId) form.append('godown_id', stockGodownId);
       const response = await api.post(endpoint('confirm'), form);
       const data = responseData(response);
       toast.success(`Import complete: ${Number(data.inserted || 0)} record(s) saved${data.skipped ? `, ${data.skipped} skipped` : ''}`);
@@ -280,20 +290,28 @@ export function DataImportManager() {
           className="hidden"
           onChange={(event) => readFile(event.target.files?.[0])}
         />
-        {kind === 'items' && (
+        {(kind === 'items' || kind === 'stock') && (
           <label className="mt-4 block max-w-md text-sm font-medium text-slate-700">
-            Opening-stock godown
+            {kind === 'items' ? 'Opening-stock godown' : 'Target godown'}
             <select
               className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
-              value={godownId}
-              onChange={(event) => setGodownId(event.target.value)}
+              value={kind === 'items' ? godownId : stockGodownId}
+              onChange={(event) => {
+                if (kind === 'items') setGodownId(event.target.value);
+                else setStockGodownId(event.target.value);
+                resetFile();
+              }}
             >
-              <option value="">Select godown</option>
+              <option value="">{kind === 'items' ? 'Select godown' : 'Use godown name/code from each row'}</option>
               {godowns.map((entry: any) => (
-                <option key={entry.id} value={entry.id}>{entry.name}{entry.code ? ` (${entry.code})` : ''}</option>
+                <option key={entry.id} value={entry.id} disabled={!entry.is_active}>{entry.name}{entry.code ? ` (${entry.code})` : ''}{!entry.is_active ? ' (Inactive)' : ''}</option>
               ))}
             </select>
-            <span className="mt-1 block text-xs font-normal text-slate-500">Used only for rows containing Opening Stock.</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">
+              {kind === 'items'
+                ? 'Opening stock goes only to this active godown.'
+                : 'For a single branch, select it here. Any godown name/code in the file must match; otherwise each row must name an existing active godown.'}
+            </span>
           </label>
         )}
         <button

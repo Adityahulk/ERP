@@ -1307,7 +1307,7 @@ export async function bulkImport(req: Request, res: Response) {
 
     // If action=confirm, insert the valid rows
     if (req.query.action === 'confirm') {
-      const importGodownId = String(req.body?.godown_id || req.user!.godown_id || '').trim();
+      const importGodownId = String(req.body?.godown_id || '').trim();
       const hasOpeningRows = preview.some((p) => Number(p.data.opening_stock || 0) > 0);
       if (hasOpeningRows && !importGodownId) {
         return res.status(400).json(error('Pick a godown before importing rows with opening stock'));
@@ -1315,6 +1315,13 @@ export async function bulkImport(req: Request, res: Response) {
 
       let inserted = 0;
       await withTransaction(async (client) => {
+        if (hasOpeningRows) {
+          const target = await client.query(
+            `SELECT id FROM godowns WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true FOR UPDATE`,
+            [importGodownId, companyId],
+          );
+          if (!target.rows.length) throw Object.assign(new Error('Selected opening-stock godown is missing or inactive. Select an active godown in this company.'), { status: 400 });
+        }
         for (const p of preview) {
           const d = p.data;
           const halfRate = d.gst_rate / 2;
@@ -1381,7 +1388,7 @@ export async function bulkImport(req: Request, res: Response) {
     }));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);
-    res.status(500).json(error(err.message));
+    res.status(err.status || 500).json(error(err.message));
   }
 }
 

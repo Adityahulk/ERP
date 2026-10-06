@@ -11,21 +11,24 @@ export async function listStock(req: Request, res: Response) {
     const { page, limit, offset } = parsePagination(req.query);
     const { godown_id, category_id, low_stock, out_of_stock } = req.query;
 
-    let where = 'i.company_id = $1 AND i.is_deleted = false AND i.track_inventory = true';
+    let baseWhere = 'i.company_id = $1 AND i.is_deleted = false AND i.track_inventory = true';
     const params: any[] = [companyId];
     let idx = 2;
 
-    if (category_id) { where += ` AND i.category_id = $${idx}`; params.push(category_id); idx++; }
+    if (category_id) { baseWhere += ` AND i.category_id = $${idx}`; params.push(category_id); idx++; }
 
     let stockWhere = '';
     if (godown_id) { stockWhere = ` AND s.godown_id = $${idx}`; params.push(godown_id); idx++; }
+    const stockJoin = `JOIN item_stock s ON s.item_id = i.id AND s.company_id = i.company_id${stockWhere}`;
+    let where = baseWhere;
 
     if (low_stock === 'true') { where += ` AND COALESCE(s.quantity, 0) > 0 AND COALESCE(s.quantity, 0) <= i.reorder_point`; }
     if (out_of_stock === 'true') { where += ` AND COALESCE(s.quantity, 0) = 0`; }
 
     const countRes = await query(
-      `SELECT COUNT(DISTINCT i.id) FROM items i
-       LEFT JOIN item_stock s ON s.item_id = i.id ${stockWhere}
+      `SELECT COUNT(*) FROM items i
+       ${stockJoin}
+       JOIN godowns g ON s.godown_id = g.id AND g.company_id = i.company_id AND g.is_deleted = false
        WHERE ${where}`, params
     );
     const total = parseInt(countRes.rows[0].count);
@@ -39,8 +42,8 @@ export async function listStock(req: Request, res: Response) {
               COALESCE(NULLIF(s.avg_cost_price, 0), i.purchase_price, 0) as avg_cost_price,
               g.name as godown_name, g.id as godown_id
        FROM items i
-       LEFT JOIN item_stock s ON s.item_id = i.id ${stockWhere}
-       LEFT JOIN godowns g ON s.godown_id = g.id
+       ${stockJoin}
+       JOIN godowns g ON s.godown_id = g.id AND g.company_id = i.company_id AND g.is_deleted = false
        LEFT JOIN item_categories c ON i.category_id = c.id
        LEFT JOIN item_units u ON i.unit_id = u.id
        WHERE ${where}
@@ -58,8 +61,9 @@ export async function listStock(req: Request, res: Response) {
          COUNT(DISTINCT CASE WHEN s.quantity <= i.reorder_point AND s.quantity > 0 THEN i.id END) as low_stock_count,
          COUNT(DISTINCT CASE WHEN COALESCE(s.quantity, 0) = 0 THEN i.id END) as out_of_stock_count
        FROM items i
-       LEFT JOIN item_stock s ON s.item_id = i.id ${stockWhere}
-       WHERE ${where.replace(/ AND COALESCE\(s\.quantity.*$/g, '')}`, params.slice(0, godown_id ? 3 : 2)
+       ${stockJoin}
+       JOIN godowns g ON s.godown_id = g.id AND g.company_id = i.company_id AND g.is_deleted = false
+       WHERE ${baseWhere}`, params
     );
 
     const resp = buildPaginatedResponse(result.rows, total, page, limit);
