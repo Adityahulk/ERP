@@ -9,6 +9,47 @@ import { env } from '../config/env';
 const router = Router();
 router.use(verifyToken);
 
+router.get('/in-app', async (req: Request, res: Response) => {
+  try {
+    const companyId = req.user!.company_id;
+    const [overdue, lowStock] = await Promise.all([
+      query(
+        `SELECT id, invoice_number, due_date, COUNT(*) OVER()::int AS total_count
+         FROM invoices
+         WHERE company_id = $1 AND is_deleted = false
+           AND invoice_type IN ('sale', 'tax_invoice')
+           AND status NOT IN ('cancelled', 'draft')
+           AND due_date < CURRENT_DATE AND balance_due > 0
+         ORDER BY due_date ASC, id ASC LIMIT 5`,
+        [companyId],
+      ),
+      query(
+        `SELECT i.id, i.name, COALESCE(stock.quantity, 0) AS quantity,
+                i.reorder_point, COUNT(*) OVER()::int AS total_count
+         FROM items i
+         LEFT JOIN (
+           SELECT item_id, SUM(quantity) AS quantity
+           FROM item_stock WHERE company_id = $1 GROUP BY item_id
+         ) stock ON stock.item_id = i.id
+         WHERE i.company_id = $1 AND i.is_deleted = false
+           AND i.track_inventory = true AND i.reorder_point > 0
+           AND COALESCE(stock.quantity, 0) <= i.reorder_point
+         ORDER BY COALESCE(stock.quantity, 0) ASC, i.name ASC LIMIT 5`,
+        [companyId],
+      ),
+    ]);
+
+    res.json(success({
+      overdueCount: overdue.rows[0]?.total_count ?? 0,
+      lowStockCount: lowStock.rows[0]?.total_count ?? 0,
+      overdueInvoices: overdue.rows.map(({ id, invoice_number, due_date }) => ({ id, invoice_number, due_date })),
+      lowStockItems: lowStock.rows.map(({ id, name, quantity, reorder_point }) => ({ id, name, quantity, reorder_point })),
+    }));
+  } catch (err: any) {
+    res.status(500).json(error(err.message));
+  }
+});
+
 router.post('/send-invoice/:invoiceId', async (req: Request, res: Response) => {
   try {
     const invQuery = await query(

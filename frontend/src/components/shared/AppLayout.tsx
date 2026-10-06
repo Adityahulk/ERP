@@ -2,12 +2,13 @@ import { useState, useEffect, Suspense, useRef, type Dispatch, type SetStateActi
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { RouteErrorBoundary } from '@/components/shared/RouteErrorBoundary';
 import NavbarQuickAdd from '@/components/shared/NavbarQuickAdd';
+import NotificationBell from '@/components/shared/NotificationBell';
 import TrialBanner from '@/components/shared/TrialBanner';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, ShoppingBag, FileText, Receipt,
   Warehouse, BarChart3, Cloud, UserCheck, Barcode,
-  Settings, LogOut, Menu, X, Search, Bell, ClipboardList, Package,
+  Settings, LogOut, Menu, X, Search, ClipboardList, Package,
   Wrench, Users, ArrowDownLeft, RotateCcw, Truck, ArrowUpRight, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FileCheck
 } from 'lucide-react';
@@ -763,10 +764,7 @@ export default function AppLayout() {
           </div>
           <div className="flex items-center gap-2 sm:gap-3 ml-auto">
              <NavbarQuickAdd />
-             <Button variant="ghost" size="icon" className="relative text-slate-500 shrink-0">
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
-             </Button>
+             <NotificationBell />
              <button
                type="button"
                onClick={() => navigate('/profile')}
