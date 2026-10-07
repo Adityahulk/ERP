@@ -212,7 +212,7 @@ export function DataImportManager() {
       if (kind === 'stock' && stockGodownId) form.append('godown_id', stockGodownId);
       const response = await api.post(endpoint('confirm'), form);
       const data = responseData(response);
-      toast.success(`Import complete: ${Number(data.inserted || 0)} record(s) saved${data.skipped ? `, ${data.skipped} skipped` : ''}`);
+      toast.success(`Import complete: ${Number(data.inserted || 0)} new item(s), ${Number(data.reused || 0)} existing item(s) stocked${data.skipped ? `, ${data.skipped} skipped` : ''}`);
       for (const queryKey of invalidationKeys[kind]) {
         queryClient.invalidateQueries({ queryKey });
       }

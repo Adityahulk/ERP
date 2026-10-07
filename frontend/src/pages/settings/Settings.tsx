@@ -838,6 +838,7 @@ export default function Settings() {
       : `${uploadsBase()}${company.signature_url}`);
 
   const requestedSection = searchParams.get('section');
+  const requestedAdd = searchParams.get('add');
   const [tab, setTab] = useState(requestedSection || 'company');
   const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(() => localStorage.getItem('settings_sidebar_collapsed') !== 'false');
 
@@ -854,6 +855,10 @@ export default function Settings() {
   useEffect(() => {
     if (requestedSection) setTab(requestedSection);
   }, [requestedSection]);
+
+  useEffect(() => {
+    if (requestedSection === 'users' && requestedAdd === 'employee') setEditingUserId('new');
+  }, [requestedSection, requestedAdd]);
 
   useEffect(() => {
     if (tab !== 'company' || !company || window.location.hash !== '#einvoice-settings') return;
@@ -959,6 +964,7 @@ export default function Settings() {
     onSuccess: () => {
       toast.success('User invited');
       setNewUser({ name: '', email: '', phone: '', role: 'staff', password: '' });
+      setEditingUserId(null);
       qc.invalidateQueries({ queryKey: ['settings-users'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Invite failed'),
@@ -2139,7 +2145,10 @@ export default function Settings() {
                           variant="outline"
                           size="sm"
                           className="gap-2"
-                          onClick={() => navigate('/hr/employees')}
+                          onClick={() => {
+                            setTab('users');
+                            setEditingUserId('new');
+                          }}
                         >
                           <UserRound className="w-4 h-4" /> Add Employees
                         </Button>

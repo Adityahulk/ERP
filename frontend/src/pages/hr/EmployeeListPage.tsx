@@ -58,7 +58,7 @@ export default function EmployeeListPage() {
           <p className="text-sm text-muted-foreground">{employees.length} team member{employees.length !== 1 ? 's' : ''}</p>
         </div>
         {isAdmin && (
-          <Button size="sm" className="gap-1.5" onClick={() => navigate('/settings')}>
+          <Button size="sm" className="gap-1.5" onClick={() => navigate('/settings?section=users&add=employee')}>
             <UserPlus className="w-4 h-4" /> Add Employee
           </Button>
         )}

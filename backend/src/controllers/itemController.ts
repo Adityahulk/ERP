@@ -10,6 +10,8 @@ import path from 'path';
 import { decodeSmartBarcode, isSmartBarcode, getOrCreateItemBarcode } from '../utils/barcodeUtils';
 import { calculateOpeningStockValuePaise, calculateStockValuation } from '../lib/stockValuation';
 import { isSafePaise } from '../lib/money';
+import { matchExistingImportItem, type ExistingImportItem } from '../services/itemImportMatch';
+import { setImportedGodownStock } from '../services/itemImportStock';
 
 function isValidGstRate(value: unknown) {
   const rate = Number(value);
@@ -1168,17 +1170,17 @@ export async function bulkImport(req: Request, res: Response) {
     const preview: any[] = [];
     const errors: any[] = [];
     const alreadyPresent: any[] = [];
-    const seenSkus = new Set<string>();
-    const seenBarcodes = new Set<string>();
+    const seenSkus = new Map<string, { name: string; serialized: boolean }>();
+    const seenBarcodes = new Map<string, { name: string; serialized: boolean }>();
     const seenSerials = new Set<string>();
     const groupedByName = new Map<string, any>();
     const existingItems = await query(
-      'SELECT name, sku, barcode FROM items WHERE company_id = $1 AND is_deleted = false',
+      'SELECT id, name, sku, barcode, item_type, track_inventory, is_serialized FROM items WHERE company_id = $1 AND is_deleted = false',
       [companyId],
     );
-    const existingSkus = new Set(existingItems.rows.map((row: any) => String(row.sku || '').trim()).filter(Boolean));
-    const existingBarcodes = new Set(existingItems.rows.map((row: any) => String(row.barcode || '').trim()).filter(Boolean));
-    const existingNames = new Set(existingItems.rows.map((row: any) => itemNameKey(row.name)).filter(Boolean));
+    const accountItems = existingItems.rows as ExistingImportItem[];
+    const existingSkus = new Map(accountItems.filter((row) => row.sku).map((row) => [String(row.sku).trim().toLowerCase(), row.id]));
+    const existingBarcodes = new Map(accountItems.filter((row) => row.barcode).map((row) => [String(row.barcode).trim().toLowerCase(), row.id]));
     const existingSerialsResult = await query(
       `SELECT s.serial_number, i.name AS item_name, i.id AS item_id
        FROM item_serial_numbers s
@@ -1241,28 +1243,49 @@ export async function bulkImport(req: Request, res: Response) {
           data: item,
           existing_item_id: existingSerial.itemId,
           existing_item_name: existingSerial.itemName,
-          message: 'This item and serial number are already in the account. It will be skipped to avoid duplicate stock.',
+          message: 'This serial number already identifies an existing physical item. It cannot be stocked in two godowns at once; use a different serial number or transfer the item.',
+        });
+        continue;
+      }
+      const matched = !item.serial_number
+        ? matchExistingImportItem(accountItems, item)
+        : {};
+      if (matched.error) rowErrors.push(matched.error);
+      if (matched.item?.is_serialized) rowErrors.push('Existing item is serial-tracked; provide a new serial number or transfer the existing unit between godowns');
+      if (matched.item && (matched.item.item_type === 'service' || !matched.item.track_inventory) && item.opening_stock > 0) {
+        rowErrors.push('Existing item is not inventory-tracked; opening stock cannot be imported');
+      }
+      if (matched.item && !matched.item.track_inventory && item.opening_stock === 0 && !rowErrors.length) {
+        alreadyPresent.push({
+          row: Number(row.__sourceRow) || i + headerRowIndex + 2,
+          data: item, existing_item_id: matched.item.id, existing_item_name: matched.item.name,
+          message: 'This non-stock item already exists. No godown stock is needed.',
         });
         continue;
       }
       if (productSerialKey && seenSerials.has(productSerialKey)) {
         rowErrors.push('Duplicate serial number for this item in the import file');
       }
-      const skuKey = String(item.sku || '').trim();
-      const barcodeKey = String(item.barcode || '').trim();
+      const skuKey = String(item.sku || '').trim().toLowerCase();
+      const barcodeKey = String(item.barcode || '').trim().toLowerCase();
+      const rowKey = itemNameKey(item.name);
       if (skuKey) {
-        if (seenSkus.has(skuKey) || existingSkus.has(skuKey)) rowErrors.push(existingSkus.has(skuKey) ? 'SKU already exists' : 'Duplicate SKU in import file');
-        seenSkus.add(skuKey);
+        if (existingSkus.has(skuKey) && existingSkus.get(skuKey) !== matched.item?.id) rowErrors.push('SKU already belongs to another item');
+        const prior = seenSkus.get(skuKey);
+        if (prior && (item.serial_number || prior.serialized || prior.name !== rowKey)) rowErrors.push('Duplicate SKU in import file');
       }
       if (barcodeKey) {
-        if (seenBarcodes.has(barcodeKey) || existingBarcodes.has(barcodeKey)) rowErrors.push(existingBarcodes.has(barcodeKey) ? 'Barcode already exists' : 'Duplicate barcode in import file');
-        seenBarcodes.add(barcodeKey);
+        if (existingBarcodes.has(barcodeKey) && existingBarcodes.get(barcodeKey) !== matched.item?.id) rowErrors.push('Barcode already belongs to another item');
+        const prior = seenBarcodes.get(barcodeKey);
+        if (prior && (item.serial_number || prior.serialized || prior.name !== rowKey)) rowErrors.push('Duplicate barcode in import file');
       }
 
       if (rowErrors.length) {
         errors.push({ row: Number(row.__sourceRow) || i + headerRowIndex + 2, errors: rowErrors, data: item });
       } else {
         if (productSerialKey) seenSerials.add(productSerialKey);
+        if (skuKey) seenSkus.set(skuKey, { name: rowKey, serialized: Boolean(item.serial_number) });
+        if (barcodeKey) seenBarcodes.set(barcodeKey, { name: rowKey, serialized: Boolean(item.serial_number) });
         const sourceRow = Number(row.__sourceRow) || i + headerRowIndex + 2;
         const warnings: string[] = [];
         if (parsedQuantity.unitText) warnings.push(`Quantity was read as ${parsedQuantity.quantity}; review the unit "${parsedQuantity.unitText}" after import.`);
@@ -1281,17 +1304,25 @@ export async function bulkImport(req: Request, res: Response) {
         if (!item.serial_number) {
           const key = itemNameKey(item.name);
           const existingGroup = groupedByName.get(key);
-          if (existingNames.has(key)) {
-            errors.push({ row: sourceRow, errors: ['An item with this name already exists. Add a serial number or SKU to identify a separate item.'], data: item });
-            continue;
-          }
           if (existingGroup) {
+            if (existingGroup.data.existing_item_id !== matched.item?.id ||
+                (existingGroup.data.sku && item.sku && String(existingGroup.data.sku).toLowerCase() !== String(item.sku).toLowerCase()) ||
+                (existingGroup.data.barcode && item.barcode && String(existingGroup.data.barcode).toLowerCase() !== String(item.barcode).toLowerCase())) {
+              errors.push({ row: sourceRow, errors: ['Rows with this name identify different items; use a unique SKU or barcode'], data: item });
+              continue;
+            }
             existingGroup.data.opening_stock += item.opening_stock;
+            if (!existingGroup.data.sku && item.sku) existingGroup.data.sku = item.sku;
+            if (!existingGroup.data.barcode && item.barcode) existingGroup.data.barcode = item.barcode;
             existingGroup.sourceRows.push(sourceRow);
             existingGroup.warnings = Array.from(new Set(existingGroup.warnings.filter((warning: string) => !warning.startsWith('Combined '))));
             existingGroup.warnings.push(...warnings.filter((warning) => !existingGroup.warnings.includes(warning)));
             existingGroup.warnings.push(`Combined ${existingGroup.sourceRows.length} rows with this item name and no serial number; quantities were added together.`);
             continue;
+          }
+          if (matched.item) {
+            item.existing_item_id = matched.item.id;
+            warnings.push('Existing item will be reused; only the selected godown quantity will be set. Other godowns are unchanged.');
           }
           const entry = { row: sourceRow, sourceRows: [sourceRow], data: item, valid: true, warnings };
           groupedByName.set(key, entry);
@@ -1308,14 +1339,16 @@ export async function bulkImport(req: Request, res: Response) {
     // If action=confirm, insert the valid rows
     if (req.query.action === 'confirm') {
       const importGodownId = String(req.body?.godown_id || '').trim();
-      const hasOpeningRows = preview.some((p) => Number(p.data.opening_stock || 0) > 0);
-      if (hasOpeningRows && !importGodownId) {
-        return res.status(400).json(error('Pick a godown before importing rows with opening stock'));
+      const needsGodown = preview.some((p) => Number(p.data.opening_stock || 0) > 0 || (p.data.existing_item_id && p.data.item_type !== 'service'));
+      if (needsGodown && !importGodownId) {
+        return res.status(400).json(error('Pick a godown before importing item stock'));
       }
 
       let inserted = 0;
+      let reused = 0;
       await withTransaction(async (client) => {
-        if (hasOpeningRows) {
+        if (needsGodown) {
+          await client.query('SELECT id FROM companies WHERE id = $1 FOR UPDATE', [companyId]);
           const target = await client.query(
             `SELECT id FROM godowns WHERE id = $1 AND company_id = $2 AND is_deleted = false AND is_active = true FOR UPDATE`,
             [importGodownId, companyId],
@@ -1324,6 +1357,21 @@ export async function bulkImport(req: Request, res: Response) {
         }
         for (const p of preview) {
           const d = p.data;
+          if (d.existing_item_id) {
+            const existing = await client.query(
+              `SELECT id, track_inventory FROM items WHERE id = $1 AND company_id = $2 AND is_deleted = false FOR UPDATE`,
+              [d.existing_item_id, companyId],
+            );
+            if (!existing.rows.length || !existing.rows[0].track_inventory) {
+              throw Object.assign(new Error(`Row ${p.row}: existing item is no longer available for stock import; preview the file again.`), { status: 409 });
+            }
+            await setImportedGodownStock(client, {
+              companyId, itemId: d.existing_item_id, godownId: importGodownId,
+              quantity: Number(d.opening_stock || 0), unitCost: Number(d.purchase_price || 0), createdBy: req.user!.id,
+            });
+            reused++;
+            continue;
+          }
           const halfRate = d.gst_rate / 2;
           const isService = d.item_type === 'service';
           const itemIns = await client.query(
@@ -1374,7 +1422,7 @@ export async function bulkImport(req: Request, res: Response) {
           inserted++;
         }
       });
-      return res.json(success({ inserted, skipped: alreadyPresent.length, errors: errors.length }));
+      return res.json(success({ inserted, reused, skipped: alreadyPresent.length, errors: errors.length }));
     }
 
     res.json(success({
@@ -1384,7 +1432,7 @@ export async function bulkImport(req: Request, res: Response) {
       total: preview.length + errors.length + alreadyPresent.length,
       valid: preview.length,
       invalid: errors.length,
-      note: 'Rows with serial numbers are imported as separate items. Rows without serial numbers are grouped by item name and their quantities are added. Missing price and GST values are set to 0.',
+      note: 'Rows with serial numbers are separate physical items. Existing non-serialized items are reused across godowns; the selected godown quantity is set from the file without changing other godowns. Missing price and GST values are set to 0.',
     }));
   } catch (err: any) {
     console.error('itemController error:', err.message, err.detail, err.position);

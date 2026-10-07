@@ -85,6 +85,7 @@ export default function ItemList() {
   const [conversionSecondaryUnitId, setConversionSecondaryUnitId] = useState('');
   const [importing, setImporting] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
+  const [importGodownId, setImportGodownId] = useState('');
   const [barcodeLines, setBarcodeLines] = useState('');
   const [barcodeImporting, setBarcodeImporting] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
@@ -283,19 +284,26 @@ export default function ItemList() {
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!importGodownId) {
+      toast.error('Select the godown for imported item stock');
+      event.target.value = '';
+      return;
+    }
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('godown_id', importGodownId);
     setImporting(true);
     try {
       const response = await api.post('/items/bulk-import?action=confirm', formData);
       const inserted = Number(response.data?.data?.inserted || 0);
+      const reused = Number(response.data?.data?.reused || 0);
       const errors = Number(response.data?.data?.errors || 0);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['items'] }),
         qc.invalidateQueries({ queryKey: ['stock'] }),
       ]);
-      toast.success(`Imported ${inserted} ${inserted === 1 ? 'item' : 'items'}${errors ? `, ${errors} rejected` : ''}`);
+      toast.success(`${inserted} new item(s), ${reused} existing item(s) stocked in the selected godown${errors ? `, ${errors} rejected` : ''}`);
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Import failed');
     } finally {
@@ -960,6 +968,19 @@ export default function ItemList() {
                     Excel / CSV
                   </div>
                   <p className="text-sm text-muted-foreground">Download the template, fill item details, then upload it here.</p>
+                  <label className="block text-sm font-medium text-slate-700">
+                    Stock godown
+                    <select
+                      className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm"
+                      value={importGodownId}
+                      onChange={(event) => setImportGodownId(event.target.value)}
+                    >
+                      <option value="">Select godown</option>
+                      {godowns.filter((godown: any) => godown.is_active).map((godown: any) => (
+                        <option key={godown.id} value={godown.id}>{godown.name}</option>
+                      ))}
+                    </select>
+                  </label>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" onClick={downloadTemplate}>
                       <Download className="w-4 h-4 mr-1" />
