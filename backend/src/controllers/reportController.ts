@@ -1,9 +1,13 @@
 import { Request, Response } from 'express';
-import { query } from '../config/db';
+import { query, withTransaction } from '../config/db';
 import { success, error } from '../lib/response';
 import { getExpenseGstSql } from '../services/expenseReportingService';
 import fs from 'fs';
-import { XMLParser } from 'fast-xml-parser';
+import { readTallyMasters } from '../services/tallyMasters';
+import { loadItemImportRefs, planItemImport } from '../services/itemImportPlan';
+import { saveItemImportPlan } from '../services/itemImportSave';
+import { importKey, importPreviewHash } from '../services/importFile';
+import { isSafePaise } from '../lib/money';
 
 /** Default report window: first day of current month → today (inclusive). */
 function parseRange(req: Request): { from: string; to: string } {
@@ -945,6 +949,7 @@ async function getTallyExportData(companyId: string) {
   ]);
 
   return {
+    money_unit: 'paise',
     company: companyRes.rows[0] || null,
     units: unitsRes.rows,
     categories: categoriesRes.rows,
@@ -1012,125 +1017,51 @@ export async function tallyExport(req: Request, res: Response) {
 }
 
 export async function tallyImport(req: Request, res: Response) {
+  if (!req.file) return res.status(400).json(error('Choose a Tally JSON or XML file'));
   try {
-    if (!req.file) return res.status(400).json(error('No import file uploaded'));
+    const source = readTallyMasters(fs.readFileSync(req.file.path, 'utf8'), req.file.originalname.split('.').pop()!.toLowerCase());
     const companyId = req.user!.company_id;
-    const content = fs.readFileSync(req.file.path, 'utf-8');
-    const ext = (req.file.originalname.split('.').pop() || '').toLowerCase();
-
-    let createdUnits = 0;
-    let createdParties = 0;
-    let createdItems = 0;
-
-    if (ext === 'json') {
-      const body = JSON.parse(content);
-      const data = body?.data || body;
-
-      for (const u of data.units || []) {
-        const name = String(u.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM item_units WHERE company_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          await query('INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,$4)', [companyId, name, u.abbreviation || null, !!u.is_default]);
-          createdUnits++;
-        }
+    const confirm = req.query.action === 'confirm';
+    const result = await withTransaction(async (client) => {
+      if (confirm) await client.query('SELECT id FROM companies WHERE id=$1 FOR UPDATE', [companyId]);
+      const refs = await loadItemImportRefs(client, companyId, confirm);
+      const itemPlan = planItemImport(source.items, refs, { godownId: String(req.body?.godown_id || ''), resolutions: {} });
+      const unitRows = await client.query('SELECT name FROM item_units WHERE company_id=$1', [companyId]);
+      const partyRows = await client.query('SELECT name FROM parties WHERE company_id=$1 AND is_deleted=false', [companyId]);
+      const units = source.units.filter((unit) => unit.name && !unitRows.rows.some((row) => importKey(row.name) === importKey(unit.name)));
+      const parties = source.parties.filter((party) => party.name && !partyRows.rows.some((row) => importKey(row.name) === importKey(party.name)));
+      const reasons = itemPlan.errors.flatMap((record) => record.errors.map((reason) => `Item row ${record.row}: ${reason}`));
+      if (parties.some((party) => !isSafePaise(Math.round(Number(party.opening_balance || 0) * 100)))) reasons.push('Party opening balance exceeds the supported currency range');
+      const snapshot = { units, parties, items: itemPlan.preview, skipped: itemPlan.alreadyPresent.length, errors: reasons };
+      const hash = importPreviewHash(snapshot);
+      if (!confirm) return { status: 200, body: success({ ...snapshot, preview_hash: hash, created_units: units.length, created_parties: parties.length, created_items: itemPlan.preview.length }) };
+      if (req.body?.preview_hash !== hash) return { status: 409, body: error('Tally preview changed; review the file again before importing') };
+      if (reasons.length) return { status: 400, body: error(reasons.join('; ')) };
+      const unitSeen = new Set<string>();
+      for (const unit of units) {
+        const key = importKey(unit.name);
+        if (unitSeen.has(key)) continue;
+        unitSeen.add(key);
+        await client.query('INSERT INTO item_units (company_id,name,abbreviation,is_default) VALUES ($1,$2,$3,false)', [companyId, String(unit.name).trim(), unit.abbreviation || null]);
       }
-
-      for (const p of data.parties || []) {
-        const name = String(p.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM parties WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          await query(
-            `INSERT INTO parties (company_id, party_type, name, gstin, phone, email, billing_address, billing_city, billing_state, billing_pincode, opening_balance)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [companyId, ['customer', 'supplier', 'both'].includes(String(p.party_type || '').toLowerCase()) ? String(p.party_type).toLowerCase() : 'both', name, p.gstin || null, p.phone || null, p.email || null, p.billing_address || null, p.billing_city || null, p.billing_state || null, p.billing_pincode || null, Number(p.opening_balance || 0)]
-          );
-          createdParties++;
-        }
+      const partySeen = new Set<string>();
+      for (const party of parties) {
+        const key = importKey(party.name);
+        if (partySeen.has(key)) continue;
+        partySeen.add(key);
+        const opening = Math.round(Number(party.opening_balance || 0) * 100);
+        const inserted = await client.query(`INSERT INTO parties (company_id,name,party_type,gstin,phone,email,billing_address,opening_balance,balance)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id`,
+          [companyId, String(party.name).trim(), ['customer','supplier','both'].includes(party.party_type) ? party.party_type : 'both',
+            party.gstin || null, party.phone || null, party.email || null, party.billing_address || null, opening]);
+        if (opening) await client.query(`INSERT INTO party_ledger (company_id,party_id,type,amount,balance_after,narration,created_by)
+          VALUES ($1,$2,$3,$4,$5,'Opening Balance (Tally import)',$6)`,
+          [companyId, inserted.rows[0].id, opening > 0 ? 'debit' : 'credit', Math.abs(opening), opening, req.user!.id]);
       }
-
-      for (const i of data.items || []) {
-        const name = String(i.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          await query(
-            `INSERT INTO items (company_id, name, sku, barcode, hsn_code, gst_rate, cgst_rate, sgst_rate, igst_rate, purchase_price, selling_price, opening_stock, opening_stock_value)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-            [
-              companyId,
-              name,
-              i.sku || null,
-              i.barcode || null,
-              i.hsn_code || null,
-              Number(i.gst_rate || 0),
-              Number(i.gst_rate || 0) / 2,
-              Number(i.gst_rate || 0) / 2,
-              Number(i.gst_rate || 0),
-              Number(i.purchase_price || 0),
-              Number(i.selling_price || 0),
-              Number(i.opening_stock || 0),
-              Number(i.opening_stock_value || 0),
-            ]
-          );
-          createdItems++;
-        }
-      }
-    } else if (ext === 'xml') {
-      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
-      const parsed = parser.parse(content);
-      const message = parsed?.ENVELOPE?.BODY?.IMPORTDATA?.REQUESTDATA?.TALLYMESSAGE;
-
-      const stockItems = Array.isArray(message?.STOCKITEM) ? message.STOCKITEM : message?.STOCKITEM ? [message.STOCKITEM] : [];
-      const ledgers = Array.isArray(message?.LEDGER) ? message.LEDGER : message?.LEDGER ? [message.LEDGER] : [];
-      const units = Array.isArray(message?.UNIT) ? message.UNIT : message?.UNIT ? [message.UNIT] : [];
-
-      for (const u of units) {
-        const name = String(u.NAME || u.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM item_units WHERE company_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          await query('INSERT INTO item_units (company_id, name, abbreviation, is_default) VALUES ($1,$2,$3,false)', [companyId, name, u.ORIGINALNAME || null]);
-          createdUnits++;
-        }
-      }
-
-      for (const l of ledgers) {
-        const name = String(l.NAME || l.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM parties WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          await query(
-            `INSERT INTO parties (company_id, party_type, name, gstin)
-             VALUES ($1,'both',$2,$3)`,
-            [companyId, name, l.GSTIN || null]
-          );
-          createdParties++;
-        }
-      }
-
-      for (const s of stockItems) {
-        const name = String(s.NAME || s.name || '').trim();
-        if (!name) continue;
-        const exists = await query('SELECT id FROM items WHERE company_id = $1 AND LOWER(name) = LOWER($2) AND is_deleted = false LIMIT 1', [companyId, name]);
-        if (!exists.rows.length) {
-          const gstRate = Number(s.RATEOFTAXCALCULATION || 0);
-          await query(
-            `INSERT INTO items (company_id, name, gst_rate, cgst_rate, sgst_rate, igst_rate, opening_stock)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [companyId, name, gstRate, gstRate / 2, gstRate / 2, gstRate, Number(s.OPENINGBALANCE || 0)]
-          );
-          createdItems++;
-        }
-      }
-    } else {
-      return res.status(400).json(error('Unsupported file format. Upload JSON or XML.'));
-    }
-
-    try { fs.unlinkSync(req.file.path); } catch {}
-    res.json(success({ created_units: createdUnits, created_parties: createdParties, created_items: createdItems }));
-  } catch (err: any) {
-    res.status(500).json(error(err.message));
-  }
+      const saved = await saveItemImportPlan(client, itemPlan, companyId, req.user!.id);
+      return { status: 200, body: success({ created_units: unitSeen.size, created_parties: partySeen.size, created_items: saved.inserted, reused: saved.reused }) };
+    });
+    return res.status(result.status).json(result.body);
+  } catch (err: any) { return res.status(400).json(error(err.message)); }
+  finally { try { fs.unlinkSync(req.file.path); } catch { /* upload cleanup */ } }
 }

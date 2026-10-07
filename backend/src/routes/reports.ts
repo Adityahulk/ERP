@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { verifyToken } from '../middleware/auth';
 import * as ctrl from '../controllers/reportController';
-import { uploadImportFile } from '../services/fileUpload';
+import { uploadTallyFile } from '../services/fileUpload';
+import { requireMinRole } from '../middleware/role';
 import { catalogReport } from '../controllers/reportCatalogController';
 
 const router = Router();
@@ -30,6 +31,6 @@ router.get('/balance-sheet', ctrl.balanceSheet);
 router.get('/trial-balance', ctrl.trialBalance);
 router.get('/catalog/:reportKey', catalogReport);
 router.get('/tally-export', ctrl.tallyExport);
-router.post('/tally-import', uploadImportFile, ctrl.tallyImport);
+router.post('/tally-import', requireMinRole('company_admin'), uploadTallyFile, ctrl.tallyImport);
 
 export default router;

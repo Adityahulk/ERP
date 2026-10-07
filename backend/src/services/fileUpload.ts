@@ -2,6 +2,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { env } from '../config/env';
+import { type Request, type Response, type NextFunction, type RequestHandler } from 'express';
+import { error } from '../lib/response';
 
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -26,7 +28,7 @@ const imageFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilter
 };
 
 const importFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowed = /xlsx|xls|csv|json/i;
+  const allowed = /^\.(xlsx|xls|csv|json)$/i;
   if (allowed.test(path.extname(file.originalname))) cb(null, true);
   else cb(new Error('Only xlsx, csv, or json files are allowed'));
 };
@@ -55,11 +57,25 @@ export const uploadItemImage = multer({
 }).single('image');
 
 /** Import file upload: /uploads/imports/ — max 10MB, xlsx/csv/json */
-export const uploadImportFile = multer({
+function importUpload(upload: RequestHandler) {
+  return (req: Request, res: Response, next: NextFunction) => upload(req, res, (err: any) => {
+    if (!err) return next();
+    res.status(400).json(error(err.code === 'LIMIT_FILE_SIZE' ? 'Import file exceeds the 10 MB limit' : err.message || 'Could not upload the import file'));
+  });
+}
+
+export const uploadImportFile = importUpload(multer({
   storage: makeStorage('imports'),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: importFilter,
-}).single('file');
+}).single('file'));
+
+export const uploadTallyFile = importUpload(multer({
+  storage: makeStorage('imports'),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => /^\.(json|xml)$/i.test(path.extname(file.originalname))
+    ? cb(null, true) : cb(new Error('Choose a Tally JSON or XML file')),
+}).single('file'));
 
 /** Bill attachment upload: /uploads/bills/ — max 10MB */
 export const uploadBill = multer({

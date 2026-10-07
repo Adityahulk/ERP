@@ -12,7 +12,7 @@ assert.equal(matchExistingImportItem(items, { name: 'Rice', barcode: '1234' }).i
 assert.equal(matchExistingImportItem(items, { name: 'rice' }).item?.id, 'item-1');
 assert.match(matchExistingImportItem(items, { name: 'Rice', sku: 'OIL-1' }).error || '', /name does not match/i);
 assert.match(matchExistingImportItem(items, { name: 'Rice', sku: 'RICE-1', barcode: '5678' }).error || '', /different existing items/i);
-assert.match(matchExistingImportItem([...items, { ...items[0], id: 'item-3', sku: null, barcode: null }], { name: 'Rice' }).error || '', /Multiple existing items/i);
+assert.ok(matchExistingImportItem([...items, { ...items[0], id: 'item-3', sku: null, barcode: null }], { name: 'Rice' }).candidates?.length === 2);
 
 async function main() {
   const stock = new Map([['varachha', 5]]);

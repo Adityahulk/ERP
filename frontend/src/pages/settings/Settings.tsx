@@ -841,12 +841,16 @@ export default function Settings() {
   const requestedAdd = searchParams.get('add');
   const [tab, setTab] = useState(requestedSection || 'company');
   const [settingsSidebarCollapsed, setSettingsSidebarCollapsed] = useState(() => localStorage.getItem('settings_sidebar_collapsed') !== 'false');
+  const settingsNavRef = useRef<HTMLDivElement>(null);
 
   const [deleteConf, setDeleteConf] = useState('');
   const [dataDumping, setDataDumping] = useState(false);
   const [testPrintRunning, setTestPrintRunning] = useState(false);
   const [tallyExporting, setTallyExporting] = useState(false);
   const [tallyImporting, setTallyImporting] = useState(false);
+  const [tallyGodownId, setTallyGodownId] = useState('');
+  const [tallyFile, setTallyFile] = useState<File | null>(null);
+  const [tallyPreview, setTallyPreview] = useState<any>(null);
 
   useEffect(() => {
     localStorage.setItem('settings_sidebar_collapsed', settingsSidebarCollapsed ? 'true' : 'false');
@@ -855,6 +859,10 @@ export default function Settings() {
   useEffect(() => {
     if (requestedSection) setTab(requestedSection);
   }, [requestedSection]);
+
+  useEffect(() => {
+    if (window.innerWidth < 768) settingsNavRef.current?.querySelector(`[data-setting-tab="${tab}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [tab]);
 
   useEffect(() => {
     if (requestedSection === 'users' && requestedAdd === 'employee') setEditingUserId('new');
@@ -1042,35 +1050,17 @@ export default function Settings() {
 
   const dumpData = async () => {
     setDataDumping(true);
-    const t = toast.loading('Gathering export…');
     try {
-      const [companyRes, itemsRes, partiesRes, invoicesRes, godownsRes, usersRes] = await Promise.all([
-        api.get('/company'),
-        api.get('/items', { params: { page: 1, limit: 5000 } }),
-        api.get('/parties', { params: { page: 1, limit: 5000 } }),
-        api.get('/invoices', { params: { page: 1, limit: 5000 } }),
-        api.get('/godowns', { params: { include_inactive: true } }),
-        api.get('/users', { params: { page: 1, limit: 5000 } }),
-      ]);
-      const dump = {
-        generated_at: new Date().toISOString(),
-        company: companyRes.data?.data ?? companyRes.data,
-        items: (itemsRes.data?.data ?? itemsRes.data)?.data ?? [],
-        parties: (partiesRes.data?.data ?? partiesRes.data)?.data ?? [],
-        invoices: (invoicesRes.data?.data ?? invoicesRes.data)?.data ?? [],
-        godowns: godownsRes.data?.data ?? godownsRes.data,
-        users: (usersRes.data?.data ?? usersRes.data)?.data ?? [],
-      };
-      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `microtechnique-accounts-data-dump-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      toast.success('Data dump downloaded', { id: t });
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Export failed', { id: t });
+      const response = await api.get('/data-import/backup', { responseType: 'blob', timeout: 120_000 });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `microtechnique-company-data-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success('Company data downloaded');
+    } catch {
+      toast.error('Company export failed');
     } finally {
       setDataDumping(false);
     }
@@ -1681,17 +1671,28 @@ export default function Settings() {
     }
   };
 
-  const importTally = async (file?: File) => {
+  const importTally = async (file?: File, confirm = false) => {
     if (!file) return;
     setTallyImporting(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await api.post('/reports/tally-import', fd);
+      if (tallyGodownId) fd.append('godown_id', tallyGodownId);
+      if (confirm) fd.append('preview_hash', tallyPreview.preview_hash);
+      const res = await api.post(`/reports/tally-import${confirm ? '?action=confirm' : ''}`, fd);
       const d = res.data?.data ?? res.data;
+      if (!confirm) {
+        setTallyFile(file);
+        setTallyPreview(d);
+        return;
+      }
+      setTallyFile(null);
+      setTallyPreview(null);
       toast.success(`Imported from Tally: ${d.created_items || 0} items, ${d.created_parties || 0} parties, ${d.created_units || 0} units`);
       qc.invalidateQueries({ queryKey: ['items'] });
       qc.invalidateQueries({ queryKey: ['item-units'] });
+      qc.invalidateQueries({ queryKey: ['parties'] });
+      qc.invalidateQueries({ queryKey: ['stock'] });
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Tally import failed');
     } finally {
@@ -1776,11 +1777,11 @@ export default function Settings() {
 
       <div className="flex flex-col md:flex-row gap-4">
          {/* Navigation Sidebar */}
-         <div className={`shrink-0 rounded-xl border bg-white p-2 shadow-sm transition-all duration-200 ease-in-out ${settingsSidebarCollapsed ? 'md:w-14' : 'md:w-64'} flex flex-col gap-1`}>
+         <div ref={settingsNavRef} aria-label="Settings sections" className={`flex max-w-full shrink-0 flex-row gap-1 overflow-x-auto rounded-lg border bg-white p-2 shadow-sm transition-all duration-200 ease-in-out md:flex-col md:overflow-visible ${settingsSidebarCollapsed ? 'md:w-14' : 'md:w-64'}`}>
             <button
               type="button"
               onClick={() => setSettingsSidebarCollapsed((value) => !value)}
-              className="mb-1 flex h-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              className="mb-1 hidden h-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 md:flex"
               title={settingsSidebarCollapsed ? 'Expand settings sidebar' : 'Collapse settings sidebar'}
             >
               {settingsSidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -1788,19 +1789,22 @@ export default function Settings() {
             {TABS.map(t => (
                <button 
                   key={t.id} 
+                  data-setting-tab={t.id}
+                  aria-label={t.label}
+                  aria-current={tab === t.id ? 'page' : undefined}
                   onClick={() => {
                     setTab(t.id);
                     setSettingsSidebarCollapsed(true);
                   }}
-                  title={settingsSidebarCollapsed ? t.label : undefined}
-                  className={`flex items-center rounded-lg text-sm font-medium transition-colors ${settingsSidebarCollapsed ? 'h-10 justify-center px-0' : 'gap-3 px-4 py-3'} ${
+                  title={t.label}
+                  className={`flex h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors ${settingsSidebarCollapsed ? 'md:justify-center md:px-0' : 'md:h-auto md:gap-3 md:px-4 md:py-3'} ${
                      tab === t.id 
                        ? t.error ? 'border-l-4 border-red-500 bg-red-50 text-red-700' : 'border-l-4 border-indigo-500 bg-indigo-50 text-indigo-700'
                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                >
-                  <t.icon className={`w-4 h-4 ${tab === t.id && t.error ? 'text-red-600' : tab === t.id ? 'text-indigo-600' : 'text-slate-400'}`} /> 
-                  {!settingsSidebarCollapsed && <span className="truncate">{t.label}</span>}
+                  <t.icon className={`h-4 w-4 shrink-0 ${tab === t.id && t.error ? 'text-red-600' : tab === t.id ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  <span className={`whitespace-nowrap ${settingsSidebarCollapsed ? 'md:hidden' : ''}`}>{t.label}</span>
                </button>
             ))}
          </div>
@@ -4320,12 +4324,28 @@ export default function Settings() {
                       className="hidden"
                       onChange={(e) => importTally(e.target.files?.[0])}
                     />
+                    {tallyPreview && <div role="dialog" aria-label="Review Tally import" className="rounded-md border bg-slate-50 p-4 space-y-3">
+                      <h3 className="font-semibold">Review Tally import</h3>
+                      <p className="text-sm">{tallyPreview.created_items} item actions, {tallyPreview.created_parties} new parties, {tallyPreview.created_units} new units</p>
+                      <ul className="max-h-48 overflow-y-auto text-sm text-slate-700 space-y-1">
+                        {[
+                          ...(tallyPreview.units || []).map((unit: any) => `Unit: ${unit.name}`),
+                          ...(tallyPreview.parties || []).map((party: any) => `Party: ${party.name}`),
+                          ...(tallyPreview.items || []).map((item: any) => `${item.data.name} | Qty ${item.data.opening_stock} | ${item.data.godown_name || 'No stock godown'}`),
+                        ].map((label: string, index: number) => <li key={index}>{label}</li>)}
+                      </ul>
+                      <div className="max-h-48 overflow-y-auto text-sm text-red-700">{tallyPreview.errors?.map((reason: string, index: number) => <p key={index}>{reason}</p>)}</div>
+                      <div className="flex gap-2">
+                        <Button onClick={() => importTally(tallyFile || undefined, true)} disabled={!!tallyPreview.errors?.length} loading={tallyImporting}>Confirm import</Button>
+                        <Button variant="outline" onClick={() => { setTallyPreview(null); setTallyFile(null); }}>Cancel</Button>
+                      </div>
+                    </div>}
                      <div className="grid gap-6 border-t pt-6 md:grid-cols-2">
                         <Card className="border-emerald-100 shadow-sm">
                            <CardContent className="p-6 flex flex-col items-center text-center">
                               <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 mb-3"><Database className="w-6 h-6"/></div>
-                              <h3 className="font-bold text-slate-900 mb-1">Export JSON / Tally DB</h3>
-                              <p className="text-sm text-slate-500 mb-4">Push localized records to universal schemas.</p>
+                              <h3 className="font-bold text-slate-900 mb-1">Company Data Export</h3>
+                              <p className="text-sm text-slate-500 mb-4">Company records, transaction lines, godown stock and accounting history.</p>
                               <Button variant="outline" className="w-full border-emerald-600 text-emerald-700" onClick={dumpData} loading={dataDumping}>Dump Data</Button>
                            </CardContent>
                         </Card>
@@ -4333,8 +4353,14 @@ export default function Settings() {
                           <CardContent className="p-6 flex flex-col items-center text-center">
                             <div className="w-12 h-12 bg-violet-50 rounded-full flex items-center justify-center text-violet-600 mb-3"><FileText className="w-6 h-6"/></div>
                             <h3 className="font-bold text-slate-900 mb-1">Tally Data Bridge</h3>
-                            <p className="text-sm text-slate-500 mb-4">Export entire company data for Tally and import Tally JSON/XML back.</p>
+                            <p className="text-sm text-slate-500 mb-4">Export company masters for Tally or review a Tally JSON/XML import.</p>
                             <div className="w-full space-y-2">
+                              <label className="block text-left text-sm">Stock godown
+                                <select value={tallyGodownId} onChange={(event) => { setTallyGodownId(event.target.value); setTallyPreview(null); }} className="mt-1 h-9 w-full rounded-md border px-2">
+                                  <option value="">Select godown before importing stock</option>
+                                  {godownRows.filter((godown: any) => godown.is_active).map((godown: any) => <option key={godown.id} value={godown.id}>{godown.name}</option>)}
+                                </select>
+                              </label>
                               <Button variant="outline" className="w-full" onClick={() => exportTally('json')} loading={tallyExporting}>
                                 <Download className="w-4 h-4 mr-2" /> Export Tally JSON
                               </Button>

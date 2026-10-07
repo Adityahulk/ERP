@@ -1,6 +1,6 @@
 export async function setImportedGodownStock(
   client: { query: (q: string, p?: any[]) => Promise<{ rows: any[] }> },
-  args: { companyId: string; itemId: string; godownId: string; quantity: number; unitCost: number; createdBy: string },
+  args: { companyId: string; itemId: string; godownId: string; quantity: number; unitCost: number; createdBy: string; movementType?: string; notes?: string },
 ) {
   const current = await client.query(
     `SELECT quantity FROM item_stock WHERE company_id = $1 AND item_id = $2 AND godown_id = $3 FOR UPDATE`,
@@ -21,7 +21,7 @@ export async function setImportedGodownStock(
   );
   await client.query(
     `INSERT INTO stock_movements (company_id, item_id, godown_id, movement_type, reference_type, quantity, unit_cost, balance_after, notes, created_by)
-     VALUES ($1, $2, $3, 'opening_stock', 'bulk_import', $4, $5, $6, $7, $8)`,
-    [args.companyId, args.itemId, args.godownId, delta, Math.round(args.unitCost), quantity, 'Item import: target godown stock set', args.createdBy],
+     VALUES ($1, $2, $3, $9, 'bulk_import', $4, $5, $6, $7, $8)`,
+    [args.companyId, args.itemId, args.godownId, delta, Math.round(args.unitCost), quantity, args.notes || 'Item import: target godown stock set', args.createdBy, args.movementType || 'opening_stock'],
   );
 }

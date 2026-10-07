@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
@@ -26,10 +26,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowRight,
   AlertTriangle,
-  Barcode,
   Download,
   Edit2,
-  FileSpreadsheet,
   Package,
   Plus,
   Search,
@@ -41,6 +39,7 @@ import type { Item } from '@/types';
 import ItemForm from './ItemForm';
 import toast from 'react-hot-toast';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { DataImportManager } from '@/components/settings/DataImportManager';
 
 type ItemWorkspaceTab = 'products' | 'services' | 'categories' | 'units';
 type BulkDeleteFailure = {
@@ -64,7 +63,6 @@ function activityBadge(activityType: string) {
 export default function ItemList() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { company } = useAuthStore();
   const termSingle = company?.itemTerminology || 'Item';
 
@@ -83,9 +81,7 @@ export default function ItemList() {
   const [conversionBaseUnitId, setConversionBaseUnitId] = useState('');
   const [conversionFactor, setConversionFactor] = useState('');
   const [conversionSecondaryUnitId, setConversionSecondaryUnitId] = useState('');
-  const [importing, setImporting] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
-  const [importGodownId, setImportGodownId] = useState('');
   const [barcodeLines, setBarcodeLines] = useState('');
   const [barcodeImporting, setBarcodeImporting] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
@@ -281,37 +277,6 @@ export default function ItemList() {
     }
   };
 
-  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!importGodownId) {
-      toast.error('Select the godown for imported item stock');
-      event.target.value = '';
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('godown_id', importGodownId);
-    setImporting(true);
-    try {
-      const response = await api.post('/items/bulk-import?action=confirm', formData);
-      const inserted = Number(response.data?.data?.inserted || 0);
-      const reused = Number(response.data?.data?.reused || 0);
-      const errors = Number(response.data?.data?.errors || 0);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['items'] }),
-        qc.invalidateQueries({ queryKey: ['stock'] }),
-      ]);
-      toast.success(`${inserted} new item(s), ${reused} existing item(s) stocked in the selected godown${errors ? `, ${errors} rejected` : ''}`);
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Import failed');
-    } finally {
-      setImporting(false);
-      event.target.value = '';
-    }
-  };
-
   const saveCategory = async () => {
     if (!categoryName.trim()) return toast.error('Category name is required');
     try {
@@ -372,7 +337,6 @@ export default function ItemList() {
 
   return (
     <div className="space-y-6">
-      <input ref={fileInputRef} type="file" className="hidden" accept=".xlsx,.xls,.csv,.json" onChange={handleImportFile} />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
@@ -386,7 +350,7 @@ export default function ItemList() {
             <Download className="w-4 h-4 mr-1" />
             Template
           </Button>
-          <Button variant="outline" size="sm" loading={importing} onClick={handleImportClick}>
+          <Button variant="outline" size="sm" onClick={handleImportClick}>
             <Upload className="w-4 h-4 mr-1" />
             Import Items
           </Button>
@@ -952,65 +916,20 @@ export default function ItemList() {
       )}
       {showImportPanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <Card className="w-full max-w-2xl bg-background shadow-xl">
-            <CardContent className="p-5 space-y-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold">Import Items</h2>
-                  <p className="text-sm text-muted-foreground">Create items from an Excel/CSV sheet or paste scanned barcode values.</p>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setShowImportPanel(false)}>Close</Button>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center gap-2 font-medium">
-                    <FileSpreadsheet className="h-4 w-4" />
-                    Excel / CSV
-                  </div>
-                  <p className="text-sm text-muted-foreground">Download the template, fill item details, then upload it here.</p>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Stock godown
-                    <select
-                      className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm"
-                      value={importGodownId}
-                      onChange={(event) => setImportGodownId(event.target.value)}
-                    >
-                      <option value="">Select godown</option>
-                      {godowns.filter((godown: any) => godown.is_active).map((godown: any) => (
-                        <option key={godown.id} value={godown.id}>{godown.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" onClick={downloadTemplate}>
-                      <Download className="w-4 h-4 mr-1" />
-                      Template
-                    </Button>
-                    <Button size="sm" loading={importing} onClick={() => fileInputRef.current?.click()}>
-                      <Upload className="w-4 h-4 mr-1" />
-                      Upload File
-                    </Button>
-                  </div>
-                </div>
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center gap-2 font-medium">
-                    <Barcode className="h-4 w-4" />
-                    Barcodes
-                  </div>
-                  <p className="text-sm text-muted-foreground">Paste one barcode per line. Item name, SKU, and barcode will be set to that value.</p>
-                  <textarea
-                    className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm font-mono"
-                    value={barcodeLines}
-                    onChange={(e) => setBarcodeLines(e.target.value)}
-                    placeholder={'8901234567890\nITEM-CODE-002'}
-                  />
-                  <Button size="sm" loading={barcodeImporting} onClick={importBarcodeItems}>
-                    Import Barcodes
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div role="dialog" aria-modal="true" aria-label="Import Items" className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-md bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Import Items</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowImportPanel(false)}>Close</Button>
+            </div>
+            <DataImportManager itemsOnly />
+            <details className="mt-4 border-t pt-4">
+              <summary className="cursor-pointer text-sm font-medium">Import barcode-only items</summary>
+              <textarea className="mt-3 min-h-28 w-full rounded-md border px-3 py-2 text-sm font-mono"
+                value={barcodeLines} onChange={(event) => setBarcodeLines(event.target.value)}
+                placeholder={'8901234567890\nITEM-CODE-002'} />
+              <Button size="sm" loading={barcodeImporting} onClick={importBarcodeItems}>Import Barcodes</Button>
+            </details>
+          </div>
         </div>
       )}
     </div>

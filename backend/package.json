@@ -21,6 +21,7 @@
     "test:eway-eligibility": "ts-node src/tests/ewayBillEligibility.smoke.ts",
     "test:stock-import-godown": "ts-node src/tests/stockImportGodown.smoke.ts",
     "test:item-import-godowns": "ts-node src/tests/itemImportAcrossGodowns.smoke.ts",
+    "test:import-export": "ts-node --files src/tests/importExportWorkflow.smoke.ts",
     "test:invoice-pdf": "ts-node src/tests/invoicePdfLayout.smoke.ts",
     "test:party-gstin": "ts-node src/tests/partyGstinLookup.smoke.ts",
     "test:pos": "ts-node src/tests/posWorkflow.smoke.ts",
@@ -64,6 +65,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/bwip-js": "^3.2.3",
     "@types/compression": "^1.7.5",

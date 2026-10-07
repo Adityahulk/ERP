@@ -19,9 +19,10 @@ type PreviewRow = {
   key?: string;
   data: Record<string, unknown>;
   warnings?: string[];
+  action?: string;
 };
 
-type ErrorRow = PreviewRow & { errors: string[] };
+type ErrorRow = PreviewRow & { errors: string[]; resolutionKey?: string; choices?: Array<{ value: string; label: string }> };
 
 type ImportPreview = {
   type?: string;
@@ -32,6 +33,9 @@ type ImportPreview = {
   errors: ErrorRow[];
   alreadyPresent: Array<PreviewRow & { existing_item_id?: string; existing_item_name?: string; message?: string }>;
   note?: string;
+  preview_hash: string;
+  transfers?: number;
+  conversions?: number;
 };
 
 const importKinds: Array<{
@@ -51,7 +55,7 @@ const importKinds: Array<{
 const invalidationKeys: Record<ImportKind, string[][]> = {
   items: [['items'], ['stock']],
   parties: [['parties'], ['accounting']],
-  purchases: [['purchase-invoices'], ['stock'], ['parties'], ['accounting']],
+  purchases: [['purchase-bills'], ['party-outstanding-purchase-bills'], ['stock'], ['parties'], ['accounting']],
   expenses: [['expenses'], ['accounting'], ['cash-bank']],
   stock: [['stock'], ['godowns'], ['items']],
   cash: [['cash-bank'], ['accounting']],
@@ -67,7 +71,8 @@ function fileNameFromHeader(header: unknown, fallback: string) {
 }
 
 function csvCell(value: unknown) {
-  const text = String(value ?? '').replace(/"/g, '""');
+  const raw = String(value ?? '');
+  const text = (/^[=+\-@]/.test(raw) ? `'${raw}` : raw).replace(/"/g, '""');
   return `"${text}"`;
 }
 
@@ -76,10 +81,12 @@ function previewSummary(row: PreviewRow) {
   const data = row.data || {};
   const name = String(data.name || data.item_name || data.product_name || '').trim();
   const serialNumber = String(data.serial_number || '').trim();
+  const reference = String(data.serial_reference || '').trim();
   if (name && serialNumber) {
     const quantity = Number(data.opening_stock || 0);
     return `${name} · Serial ${serialNumber} · Opening qty ${quantity}`;
   }
+  if (name && reference) return `${name} · Reference ${reference} · Opening qty ${Number(data.opening_stock || 0)}`;
   if (name && data.opening_stock != null) {
     return `${name} · Opening qty ${Number(data.opening_stock || 0)}`;
   }
@@ -87,7 +94,7 @@ function previewSummary(row: PreviewRow) {
   return String(first || `Row ${row.row}`);
 }
 
-export function DataImportManager() {
+export function DataImportManager({ itemsOnly = false }: { itemsOnly?: boolean }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const readTokenRef = useRef(0);
@@ -99,6 +106,12 @@ export function DataImportManager() {
   const [downloading, setDownloading] = useState(false);
   const [godownId, setGodownId] = useState('');
   const [stockGodownId, setStockGodownId] = useState('');
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const [needsRecheck, setNeedsRecheck] = useState(false);
+  const [allowPartial, setAllowPartial] = useState(false);
+  const [confirmTransfers, setConfirmTransfers] = useState(false);
+  const [confirmConversions, setConfirmConversions] = useState(false);
+  const [lastResult, setLastResult] = useState<string | null>(null);
 
   const { data: godowns = [] } = useQuery({
     queryKey: ['godowns', 'data-import'],
@@ -120,6 +133,12 @@ export function DataImportManager() {
     readTokenRef.current += 1;
     setFile(null);
     setPreview(null);
+    setResolutions({});
+    setNeedsRecheck(false);
+    setAllowPartial(false);
+    setConfirmTransfers(false);
+    setConfirmConversions(false);
+    setLastResult(null);
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -155,17 +174,24 @@ export function DataImportManager() {
     }
   };
 
-  const readFile = async (nextFile?: File) => {
+  const readFile = async (nextFile?: File, selections: Record<string, string> = {}) => {
     if (!nextFile) return;
     const token = ++readTokenRef.current;
     setFile(nextFile);
     setPreview(null);
     setReading(true);
+    setLastResult(null);
+    setResolutions(selections);
+    setAllowPartial(false);
+    setConfirmTransfers(false);
+    setConfirmConversions(false);
     if (inputRef.current) inputRef.current.value = '';
     try {
       const form = new FormData();
       form.append('file', nextFile);
-      if (kind === 'stock' && stockGodownId) form.append('godown_id', stockGodownId);
+      if (kind === 'items' && godownId) form.append('godown_id', godownId);
+      if ((kind === 'stock' || kind === 'purchases') && stockGodownId) form.append('godown_id', stockGodownId);
+      form.append('resolutions', JSON.stringify(selections));
       const response = await api.post(endpoint(), form);
       const data = responseData(response);
       if (token !== readTokenRef.current) return;
@@ -178,7 +204,11 @@ export function DataImportManager() {
         alreadyPresent: data.alreadyPresent || [],
         note: data.note,
         type: data.type,
+        preview_hash: data.preview_hash || '',
+        transfers: data.transfers || 0,
+        conversions: data.conversions || 0,
       });
+      setNeedsRecheck(false);
       if ((data.errors?.length || 0) > 0) {
         toast(`${data.errors.length} row(s) need attention. Exact reasons are shown below.`);
       } else {
@@ -200,7 +230,7 @@ export function DataImportManager() {
       return;
     }
     if ((kind === 'items' && !godowns.some((entry: any) => entry.id === godownId && entry.is_active)) ||
-        (kind === 'stock' && stockGodownId && !godowns.some((entry: any) => entry.id === stockGodownId && entry.is_active))) {
+        ((kind === 'stock' || kind === 'purchases') && stockGodownId && !godowns.some((entry: any) => entry.id === stockGodownId && entry.is_active))) {
       toast.error('Select an active godown before importing stock');
       return;
     }
@@ -209,21 +239,58 @@ export function DataImportManager() {
       const form = new FormData();
       form.append('file', file);
       if (kind === 'items' && godownId) form.append('godown_id', godownId);
-      if (kind === 'stock' && stockGodownId) form.append('godown_id', stockGodownId);
+      if ((kind === 'stock' || kind === 'purchases') && stockGodownId) form.append('godown_id', stockGodownId);
+      form.append('resolutions', JSON.stringify(resolutions));
+      form.append('preview_hash', preview.preview_hash);
+      form.append('allow_partial', String(allowPartial));
+      form.append('confirm_transfers', String(confirmTransfers));
+      form.append('confirm_conversions', String(confirmConversions));
       const response = await api.post(endpoint('confirm'), form);
       const data = responseData(response);
-      toast.success(`Import complete: ${Number(data.inserted || 0)} new item(s), ${Number(data.reused || 0)} existing item(s) stocked${data.skipped ? `, ${data.skipped} skipped` : ''}`);
+      const message = kind === 'items' || kind === 'stock'
+        ? `${Number(data.inserted || 0)} new items, ${Number(data.reused || 0)} existing items processed, ${Number(data.transferred || 0)} units transferred, ${Number(data.skipped || 0)} skipped`
+        : `${Number(data.inserted || 0)} records saved, ${Number(data.skipped || 0)} skipped`;
+      toast.success(message);
       for (const queryKey of invalidationKeys[kind]) {
         queryClient.invalidateQueries({ queryKey });
       }
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard_hub'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-ws-stats'] });
       queryClient.invalidateQueries({ queryKey: ['reports'] });
+      queryClient.invalidateQueries({ queryKey: ['business-report'] });
+      queryClient.invalidateQueries({ queryKey: ['in-app-alerts'] });
       resetFile();
+      setLastResult(message);
     } catch (err: any) {
+      const refreshed = err.response?.data?.data;
+      if (refreshed?.preview_hash) {
+        setPreview({ ...refreshed, alreadyPresent: refreshed.alreadyPresent || [] });
+        setAllowPartial(false);
+        setConfirmTransfers(false);
+        setConfirmConversions(false);
+      }
       toast.error(err.response?.data?.error || 'Import failed');
     } finally {
       setConfirming(false);
     }
+  };
+
+  const downloadExport = async () => {
+    setDownloading(true);
+    try {
+      const response = await api.get(`/data-import/export/${kind}`, {
+        params: { godown_id: kind === 'items' ? godownId || undefined : kind === 'stock' || kind === 'purchases' ? stockGodownId || undefined : undefined },
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileNameFromHeader(response.headers['content-disposition'], `${kind}-export.xlsx`);
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error('Export failed. Please try again.'); }
+    finally { setDownloading(false); }
   };
 
   const downloadErrors = () => {
@@ -247,14 +314,14 @@ export function DataImportManager() {
 
   return (
     <section className="space-y-5">
-      <div>
+      {!itemsOnly && <div>
         <h2 className="text-xl font-bold text-slate-900">Structured Data Import</h2>
         <p className="mt-1 text-sm text-slate-500">
           Choose the data type first. Every dataset has its own template and validation rules.
         </p>
-      </div>
+      </div>}
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {!itemsOnly && <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {importKinds.map((entry) => (
           <button
             key={entry.id}
@@ -269,7 +336,8 @@ export function DataImportManager() {
             <p className="mt-1.5 text-xs leading-5 text-slate-500">{entry.description}</p>
           </button>
         ))}
-      </div>
+      </div>}
+      {lastResult && <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{lastResult}</p>}
 
       <div className="rounded-md border bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -278,9 +346,12 @@ export function DataImportManager() {
             <p className="mt-1 text-sm text-slate-500">{selected.description}</p>
             {selected.prerequisite && <p className="mt-1 text-xs font-medium text-amber-700">{selected.prerequisite}</p>}
           </div>
+          <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={downloadExport} disabled={downloading}><Download className="mr-2 h-4 w-4" /> Export data</Button>
           <Button type="button" variant="outline" size="sm" onClick={downloadTemplate} loading={downloading}>
             <Download className="mr-2 h-4 w-4" /> Download template
           </Button>
+          </div>
         </div>
 
         <input
@@ -290,12 +361,13 @@ export function DataImportManager() {
           className="hidden"
           onChange={(event) => readFile(event.target.files?.[0])}
         />
-        {(kind === 'items' || kind === 'stock') && (
+        {(kind === 'items' || kind === 'stock' || kind === 'purchases') && (
           <label className="mt-4 block max-w-md text-sm font-medium text-slate-700">
             {kind === 'items' ? 'Opening-stock godown' : 'Target godown'}
             <select
               className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
               value={kind === 'items' ? godownId : stockGodownId}
+              disabled={confirming || reading}
               onChange={(event) => {
                 if (kind === 'items') setGodownId(event.target.value);
                 else setStockGodownId(event.target.value);
@@ -327,7 +399,7 @@ export function DataImportManager() {
         {preview && (
           <div className="mt-5 space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-md border bg-slate-50 p-3"><p className="text-xs text-slate-500">Total records</p><p className="mt-1 text-xl font-bold">{preview.total}</p></div>
+              <div className="rounded-md border bg-slate-50 p-3"><p className="text-xs text-slate-500">Source rows</p><p className="mt-1 text-xl font-bold">{preview.total}</p></div>
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs text-emerald-700">Valid</p><p className="mt-1 text-xl font-bold text-emerald-800">{preview.valid}</p></div>
               <div className="rounded-md border border-rose-200 bg-rose-50 p-3"><p className="text-xs text-rose-700">Invalid</p><p className="mt-1 text-xl font-bold text-rose-800">{preview.invalid}</p></div>
               <div className="rounded-md border border-sky-200 bg-sky-50 p-3"><p className="text-xs text-sky-700">Already imported · skipped</p><p className="mt-1 text-xl font-bold text-sky-800">{preview.alreadyPresent.length}</p></div>
@@ -385,15 +457,33 @@ export function DataImportManager() {
                       <ul className="mt-1 space-y-0.5 text-rose-700">
                         {entry.errors.map((reason) => <li key={reason}>- {reason}</li>)}
                       </ul>
+                      {entry.resolutionKey && entry.choices && (
+                        <select
+                          aria-label={`Resolve row ${entry.row}`}
+                          className="mt-2 h-9 w-full max-w-lg rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800"
+                          value={resolutions[entry.resolutionKey] || ''}
+                          onChange={(event) => {
+                            setResolutions((current) => ({ ...current, [entry.resolutionKey!]: event.target.value }));
+                            setNeedsRecheck(true);
+                          }}
+                        >
+                          <option value="">Choose how to handle this item</option>
+                          {entry.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                        </select>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
+            {preview.invalid > 0 && <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={allowPartial} onChange={(event) => setAllowPartial(event.target.checked)} />Import valid records only; leave {preview.invalid} invalid records unchanged</label>}
+            {!!preview.transfers && <label className="flex items-center gap-2 text-sm font-medium text-amber-800"><input type="checkbox" checked={confirmTransfers} onChange={(event) => setConfirmTransfers(event.target.checked)} />I confirm transferring {preview.transfers} serial-numbered unit(s) between the godowns shown above</label>}
+            {!!preview.conversions && <label className="flex items-center gap-2 text-sm font-medium text-amber-800"><input type="checkbox" checked={confirmConversions} onChange={(event) => setConfirmConversions(event.target.checked)} />I confirm treating {preview.conversions} legacy serial record(s) as bulk item references; existing branch stock is kept</label>}
             <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
               <Button type="button" variant="outline" onClick={resetFile}>Cancel</Button>
-              <Button type="button" onClick={confirmImport} disabled={!preview.valid} loading={confirming}>
+              {needsRecheck && <Button type="button" variant="outline" onClick={() => readFile(file || undefined, resolutions)} loading={reading}>Recheck selections</Button>}
+              <Button type="button" onClick={confirmImport} disabled={!preview.valid || needsRecheck || (preview.invalid > 0 && !allowPartial) || (!!preview.transfers && !confirmTransfers) || (!!preview.conversions && !confirmConversions)} loading={confirming}>
                 Import {preview.valid} valid record{preview.valid === 1 ? '' : 's'}
               </Button>
             </div>
@@ -401,7 +491,7 @@ export function DataImportManager() {
         )}
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      {!itemsOnly && <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-md border bg-slate-50 p-4">
           <h3 className="font-semibold text-slate-900">Projects data</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">Job Work tracks material challans and production work, not generic projects. Projects should not be imported into Job Work until a dedicated project schema is approved.</p>
@@ -414,7 +504,7 @@ export function DataImportManager() {
           <h3 className="font-semibold text-slate-900">Dashboard</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">No dashboard file is needed. Dashboard values refresh automatically from imported masters, purchases, expenses, stock and balances.</p>
         </div>
-      </div>
+      </div>}
     </section>
   );
 }
